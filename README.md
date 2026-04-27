@@ -57,13 +57,12 @@ The APEX AI agent (Gemini 1.5 Pro) receives structured athletic context on every
 ```
 apex-coach/
 ├── LICENSE
-├── README.md
+├── README.md                          ← This file
 ├── .env.example
 ├── .gitignore
 ├── .gitattributes
 │
 ├── docs/                              ← Full documentation suite
-│   ├── README.md                      ← This file
 │   ├── ARCHITECTURE.md
 │   ├── TECH_STACK.md
 │   ├── DATA_MODELS.md
