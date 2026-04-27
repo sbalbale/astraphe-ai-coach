@@ -37,7 +37,7 @@ def main():
         print("Refreshing biometrics recovery scores...")
         bio_res = db.table("biometrics").select("*").eq("athlete_id", athlete_id).execute()
         
-        updates = []
+        updates_map = {}
         for row in bio_res.data:
             new_score = calculate_recovery_score(
                 hrv=row.get("hrv_rmssd") or 0.0,
@@ -46,16 +46,18 @@ def main():
                 resting_hr=row.get("resting_hr") or 0,
                 baseline_rhr=baseline_rhr
             )
-            updates.append({
+            # Use date as key to deduplicate
+            updates_map[row["date"]] = {
                 "athlete_id": athlete_id,
                 "date": row["date"],
                 "recovery_score": new_score
-            })
+            }
         
+        updates = list(updates_map.values())
         if updates:
-            # Batch upsert in chunks of 100
+            print(f"Upserting {len(updates)} recovery scores...")
             for i in range(0, len(updates), 100):
-                db.table("biometrics").upsert(updates[i:i+100]).execute()
+                db.table("biometrics").upsert(updates[i:i+100], on_conflict="athlete_id,date").execute()
         
         # 3. Refresh TSS History (PMC)
         print("Recalculating TSS history (PMC)...")
@@ -71,33 +73,21 @@ def main():
             continue
             
         sorted_dates = sorted(daily_tss.keys())
-        all_tss_values = [daily_tss[d] for d in sorted_dates]
-        
-        # We need to compute PMC longitudinally
-        # The calculate_training_load function in algorithms.py only gives the LATEST value
-        # We need a variant or just loop through and build it
-        
-        # Standard constants
-        ctl_decay = 1 - (1/42)
-        atl_decay = 1 - (1/7)
+        start_date = date.fromisoformat(sorted_dates[0])
+        end_date = date.fromisoformat(sorted_dates[-1])
         
         history_updates = []
         current_ctl = 0.0
         current_atl = 0.0
         
-        # Fill date gaps to ensure decay works correctly
-        start_date = date.fromisoformat(sorted_dates[0])
-        end_date = date.fromisoformat(sorted_dates[-1])
+        # Standard constants matching pandas ewm span=42/7
+        alpha_ctl = 2 / (42 + 1)
+        alpha_atl = 2 / (7 + 1)
+        
         curr = start_date
         while curr <= end_date:
             curr_str = curr.isoformat()
             tss = daily_tss.get(curr_str, 0.0)
-            
-            # Simple EMA implementation matching pandas span=42/7 adjust=False
-            # current = last * (1 - alpha) + new * alpha
-            # for span=N, alpha = 2/(N+1)
-            alpha_ctl = 2 / (42 + 1)
-            alpha_atl = 2 / (7 + 1)
             
             if curr == start_date:
                 current_ctl = tss
@@ -117,10 +107,11 @@ def main():
             curr += timedelta(days=1)
             
         if history_updates:
+            print(f"Upserting {len(history_updates)} days of TSS history...")
             for i in range(0, len(history_updates), 100):
-                db.table("tss_history").upsert(history_updates[i:i+100]).execute()
+                db.table("tss_history").upsert(history_updates[i:i+100], on_conflict="athlete_id,date").execute()
         
-        print(f"Done. Processed {len(updates)} biometrics and {len(history_updates)} days of TSS history.")
+        print(f"Done for {athlete['display_name']}.")
 
 if __name__ == "__main__":
     main()
