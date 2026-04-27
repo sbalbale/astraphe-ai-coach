@@ -1,0 +1,2347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>APEX — Documentation</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Space+Mono:ital,wght@0,400;0,700;1,400&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg0: #06060E;
+  --bg1: #0C0C18;
+  --bg2: #111120;
+  --bg3: #181828;
+  --glass: rgba(255,255,255,0.035);
+  --glass2: rgba(255,255,255,0.065);
+  --glass3: rgba(255,255,255,0.10);
+  --border: rgba(255,255,255,0.07);
+  --border2: rgba(255,255,255,0.12);
+  --blue: #4621FF;
+  --blue-light: #6B4FFF;
+  --blue-dim: rgba(70,33,255,0.15);
+  --blue-glow: rgba(70,33,255,0.35);
+  --teal: #00C8A8;
+  --teal-dim: rgba(0,200,168,0.12);
+  --amber: #FFCB88;
+  --amber-dim: rgba(255,203,136,0.12);
+  --red: #F07178;
+  --red-dim: rgba(240,113,120,0.12);
+  --pink: #FF4791;
+  --text0: #F2F2FF;
+  --text1: rgba(242,242,255,0.68);
+  --text2: rgba(242,242,255,0.38);
+  --text3: rgba(242,242,255,0.20);
+  --font: 'Space Grotesk', sans-serif;
+  --mono: 'Space Mono', monospace;
+  --serif: 'DM Serif Display', serif;
+  --sidebar-w: 256px;
+  --header-h: 64px;
+}
+
+html { scroll-behavior: smooth; }
+body {
+  background: var(--bg0);
+  color: var(--text0);
+  font-family: var(--font);
+  line-height: 1.6;
+  overflow-x: hidden;
+}
+
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(70,33,255,0.4); border-radius: 2px; }
+
+/* ── NOISE OVERLAY ── */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: 1000;
+  opacity: 0.4;
+}
+
+/* ── SIDEBAR ── */
+.sidebar {
+  position: fixed;
+  top: 0; left: 0; bottom: 0;
+  width: var(--sidebar-w);
+  background: var(--bg1);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  z-index: 100;
+  overflow-y: auto;
+}
+
+.sidebar-logo {
+  padding: 24px 20px 20px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.sidebar-logo .wordmark {
+  font-family: var(--mono);
+  font-weight: 700;
+  font-size: 16px;
+  letter-spacing: 0.14em;
+  color: var(--blue-light);
+}
+.sidebar-logo .sub {
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--text2);
+  letter-spacing: 0.1em;
+  margin-top: 2px;
+}
+
+.sidebar-nav { padding: 16px 12px; flex: 1; }
+.sidebar-section-label {
+  font-family: var(--mono);
+  font-size: 8px;
+  color: var(--text3);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  padding: 0 8px;
+  margin: 16px 0 6px;
+}
+.sidebar-section-label:first-child { margin-top: 0; }
+
+.sidebar-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  color: var(--text1);
+  text-decoration: none;
+  transition: all 0.15s;
+  margin-bottom: 2px;
+  border: 1px solid transparent;
+}
+.sidebar-link:hover {
+  background: var(--glass2);
+  color: var(--text0);
+  border-color: var(--border);
+}
+.sidebar-link.active {
+  background: var(--blue-dim);
+  color: var(--blue-light);
+  border-color: rgba(70,33,255,0.25);
+  font-weight: 500;
+}
+.sidebar-dot {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.5;
+  flex-shrink: 0;
+}
+
+/* ── MAIN ── */
+.main {
+  margin-left: var(--sidebar-w);
+  min-height: 100vh;
+}
+
+/* ── TOP HEADER BAR ── */
+.doc-header {
+  position: sticky;
+  top: 0;
+  background: rgba(6,6,14,0.85);
+  backdrop-filter: blur(20px);
+  border-bottom: 1px solid var(--border);
+  padding: 0 48px;
+  height: var(--header-h);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  z-index: 50;
+}
+.breadcrumb {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text2);
+  letter-spacing: 0.06em;
+}
+.breadcrumb span { color: var(--blue-light); }
+.header-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--teal);
+  padding: 4px 10px;
+  border: 1px solid rgba(0,200,168,0.25);
+  border-radius: 99px;
+  background: var(--teal-dim);
+}
+.header-badge::before {
+  content: '';
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--teal);
+  box-shadow: 0 0 6px var(--teal);
+}
+
+/* ── HERO ── */
+.hero {
+  padding: 72px 48px 60px;
+  position: relative;
+  overflow: hidden;
+}
+.hero::before {
+  content: '';
+  position: absolute;
+  top: -100px; left: -80px;
+  width: 500px; height: 500px;
+  background: radial-gradient(circle, rgba(70,33,255,0.12) 0%, transparent 70%);
+  pointer-events: none;
+}
+.hero::after {
+  content: '';
+  position: absolute;
+  top: -60px; right: 100px;
+  width: 300px; height: 300px;
+  background: radial-gradient(circle, rgba(0,200,168,0.08) 0%, transparent 70%);
+  pointer-events: none;
+}
+
+.hero-eyebrow {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--blue-light);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.hero-eyebrow::before {
+  content: '';
+  width: 24px; height: 1px;
+  background: var(--blue-light);
+}
+
+.hero h1 {
+  font-family: var(--serif);
+  font-size: clamp(42px, 5vw, 68px);
+  line-height: 1.05;
+  letter-spacing: -0.01em;
+  margin-bottom: 8px;
+  background: linear-gradient(135deg, var(--text0) 40%, rgba(107,79,255,0.8));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.hero-sub {
+  font-size: 18px;
+  color: var(--text1);
+  font-weight: 300;
+  margin-bottom: 32px;
+  max-width: 560px;
+  line-height: 1.5;
+}
+
+.hero-meta {
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+.hero-meta-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.hero-meta-item .val {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--text0);
+  font-weight: 700;
+}
+.hero-meta-item .lbl {
+  font-size: 10px;
+  color: var(--text2);
+  font-family: var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* ── CONTENT SECTIONS ── */
+.content { padding: 0 48px 96px; }
+
+.section {
+  padding: 64px 0 0;
+}
+.section-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 20px;
+  margin-bottom: 32px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--border);
+}
+.section-num {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--blue-light);
+  letter-spacing: 0.1em;
+  padding: 4px 0;
+  min-width: 32px;
+  opacity: 0.7;
+}
+.section-title {
+  font-family: var(--serif);
+  font-size: 28px;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  color: var(--text0);
+  line-height: 1.2;
+}
+.section-title em {
+  font-style: italic;
+  color: var(--blue-light);
+}
+
+/* ── CARDS ── */
+.card {
+  background: var(--glass);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 20px 24px;
+}
+.card.glow-blue { border-color: rgba(70,33,255,0.25); box-shadow: 0 0 40px -10px rgba(70,33,255,0.2); }
+.card.glow-teal { border-color: rgba(0,200,168,0.25); box-shadow: 0 0 40px -10px rgba(0,200,168,0.15); }
+
+/* ── GRIDS ── */
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+.grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+
+/* ── ARCH DIAGRAM ── */
+.arch-diagram {
+  background: var(--bg1);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 32px;
+  position: relative;
+  overflow: hidden;
+}
+.arch-diagram::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: 
+    linear-gradient(135deg, rgba(70,33,255,0.06) 0%, transparent 50%),
+    linear-gradient(315deg, rgba(0,200,168,0.06) 0%, transparent 50%);
+  pointer-events: none;
+}
+
+.arch-layer {
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.arch-layer:last-child { margin-bottom: 0; }
+
+.arch-label {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text2);
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  min-width: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.arch-nodes {
+  flex: 1;
+  display: flex;
+  gap: 10px;
+}
+
+.arch-node {
+  flex: 1;
+  padding: 14px 16px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--glass2);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.arch-node.blue { border-color: rgba(70,33,255,0.3); background: rgba(70,33,255,0.1); }
+.arch-node.teal { border-color: rgba(0,200,168,0.3); background: rgba(0,200,168,0.08); }
+.arch-node.amber { border-color: rgba(255,203,136,0.3); background: rgba(255,203,136,0.08); }
+.arch-node.red { border-color: rgba(240,113,120,0.3); background: rgba(240,113,120,0.08); }
+.arch-node.pink { border-color: rgba(255,71,145,0.3); background: rgba(255,71,145,0.08); }
+
+.arch-node-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text0);
+}
+.arch-node-tech {
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--text2);
+  letter-spacing: 0.06em;
+}
+.arch-node-badge {
+  font-family: var(--mono);
+  font-size: 8px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  margin-top: 2px;
+}
+
+/* ── CONNECTOR ARROWS ── */
+.arch-connector {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 4px 0;
+  margin-left: 40px;
+}
+.arch-connector-line {
+  width: 1px;
+  height: 20px;
+  background: linear-gradient(180deg, rgba(70,33,255,0.4), rgba(0,200,168,0.4));
+  position: relative;
+}
+.arch-connector-label {
+  font-family: var(--mono);
+  font-size: 8px;
+  color: var(--text3);
+  letter-spacing: 0.1em;
+  margin-left: 8px;
+  text-transform: uppercase;
+}
+
+/* ── CODE BLOCKS ── */
+pre {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px 24px;
+  overflow-x: auto;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text1);
+}
+.code-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: 12px 12px 0 0;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text2);
+  letter-spacing: 0.08em;
+}
+.code-header + pre { border-radius: 0 0 12px 12px; }
+
+.kw { color: #C792EA; }
+.fn { color: #82AAFF; }
+.st { color: #C3E88D; }
+.cm { color: rgba(242,242,255,0.3); font-style: italic; }
+.num { color: var(--amber); }
+.dec { color: var(--teal); }
+.cls { color: #FFCB6B; }
+.at { color: var(--red); }
+
+/* ── ENDPOINT TABLE ── */
+.endpoint-table { width: 100%; border-collapse: collapse; }
+.endpoint-table th {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text2);
+  text-align: left;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.endpoint-table td {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  color: var(--text1);
+  vertical-align: top;
+}
+.endpoint-table tr:last-child td { border-bottom: none; }
+.endpoint-table tr:hover td { background: var(--glass); }
+
+.method-badge {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 4px;
+  letter-spacing: 0.06em;
+  display: inline-block;
+  white-space: nowrap;
+}
+.method-get { background: rgba(0,200,168,0.15); color: var(--teal); border: 1px solid rgba(0,200,168,0.3); }
+.method-post { background: rgba(70,33,255,0.15); color: var(--blue-light); border: 1px solid rgba(70,33,255,0.3); }
+.method-patch { background: rgba(255,203,136,0.15); color: var(--amber); border: 1px solid rgba(255,203,136,0.3); }
+.method-delete { background: rgba(240,113,120,0.15); color: var(--red); border: 1px solid rgba(240,113,120,0.3); }
+
+.route-path {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text0);
+}
+.route-param { color: var(--amber); }
+
+/* ── COLOR SWATCHES ── */
+.color-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; }
+.color-swatch { border-radius: 12px; overflow: hidden; border: 1px solid var(--border); }
+.swatch-block { height: 72px; }
+.swatch-info { padding: 10px 12px; background: var(--bg2); }
+.swatch-name { font-size: 11px; font-weight: 600; color: var(--text0); margin-bottom: 2px; }
+.swatch-hex { font-family: var(--mono); font-size: 10px; color: var(--text2); }
+.swatch-role { font-family: var(--mono); font-size: 8px; color: var(--text3); letter-spacing: 0.08em; text-transform: uppercase; margin-top: 2px; }
+
+/* ── METRIC CARDS ── */
+.metric-card {
+  padding: 16px 18px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: var(--glass);
+}
+.metric-label {
+  font-family: var(--mono);
+  font-size: 8px;
+  color: var(--text2);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+.metric-value {
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+.metric-sub { font-size: 10px; color: var(--text2); margin-top: 4px; }
+
+/* ── FLOW STEPS ── */
+.flow-steps { display: flex; flex-direction: column; gap: 0; }
+.flow-step {
+  display: flex;
+  gap: 20px;
+  position: relative;
+}
+.flow-step:not(:last-child) .flow-step-line {
+  position: absolute;
+  left: 15px;
+  top: 36px;
+  bottom: -16px;
+  width: 1px;
+  background: linear-gradient(180deg, var(--blue) 0%, var(--border) 100%);
+}
+.flow-step-num {
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  border: 1px solid rgba(70,33,255,0.5);
+  background: var(--blue-dim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--blue-light);
+  font-weight: 700;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 1;
+}
+.flow-step-content {
+  flex: 1;
+  padding-bottom: 28px;
+}
+.flow-step-title { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+.flow-step-desc { font-size: 12px; color: var(--text1); line-height: 1.55; }
+
+/* ── TAGS ── */
+.tag {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: 99px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.tag-blue { background: var(--blue-dim); color: var(--blue-light); border: 1px solid rgba(70,33,255,0.3); }
+.tag-teal { background: var(--teal-dim); color: var(--teal); border: 1px solid rgba(0,200,168,0.3); }
+.tag-amber { background: var(--amber-dim); color: var(--amber); border: 1px solid rgba(255,203,136,0.3); }
+.tag-red { background: var(--red-dim); color: var(--red); border: 1px solid rgba(240,113,120,0.3); }
+
+/* ── INLINE CODE ── */
+code {
+  font-family: var(--mono);
+  font-size: 11px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  padding: 1px 6px;
+  border-radius: 4px;
+  color: var(--blue-light);
+}
+
+/* ── FORMULA BLOCK ── */
+.formula {
+  background: var(--bg2);
+  border-left: 2px solid var(--blue);
+  border-radius: 0 10px 10px 0;
+  padding: 14px 18px;
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--teal);
+  margin: 12px 0;
+}
+.formula .formula-name { font-size: 10px; color: var(--text2); margin-bottom: 6px; letter-spacing: 0.08em; text-transform: uppercase; }
+
+/* ── NOTE BOXES ── */
+.note {
+  padding: 14px 16px;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.6;
+  margin: 16px 0;
+}
+.note-info { background: var(--blue-dim); border: 1px solid rgba(70,33,255,0.3); color: var(--text0); border-left: 3px solid var(--blue); }
+.note-warn { background: var(--amber-dim); border: 1px solid rgba(255,203,136,0.3); color: var(--text0); border-left: 3px solid var(--amber); }
+.note-danger { background: var(--red-dim); border: 1px solid rgba(240,113,120,0.3); color: var(--text0); border-left: 3px solid var(--red); }
+.note-success { background: var(--teal-dim); border: 1px solid rgba(0,200,168,0.3); color: var(--text0); border-left: 3px solid var(--teal); }
+
+/* ── COMPONENT ANATOMY ── */
+.component-showcase {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 120px;
+}
+.component-demo-card {
+  background: linear-gradient(135deg, rgba(70,33,255,0.18) 0%, rgba(0,200,168,0.10) 100%);
+  border: 1px solid rgba(70,33,255,0.3);
+  border-radius: 14px;
+  padding: 16px 20px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 280px;
+}
+.radial-mock {
+  width: 56px; height: 56px;
+  border-radius: 50%;
+  border: 3px solid rgba(255,255,255,0.08);
+  position: relative;
+  flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: conic-gradient(var(--blue) 0% 78%, rgba(255,255,255,0.06) 78%);
+}
+.radial-inner {
+  width: 42px; height: 42px;
+  border-radius: 50%;
+  background: var(--bg2);
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+/* ── SCHEMA TABLE ── */
+.schema-table { width: 100%; border-collapse: collapse; }
+.schema-table th {
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--text2);
+  text-align: left;
+  padding: 8px 14px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.schema-table td {
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text1);
+  vertical-align: top;
+}
+.schema-table tr:nth-child(even) td { background: rgba(255,255,255,0.01); }
+
+/* ── HR ── */
+hr { border: none; border-top: 1px solid var(--border); margin: 0; }
+
+/* ── FOOTER ── */
+.doc-footer {
+  border-top: 1px solid var(--border);
+  padding: 32px 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.footer-left { font-family: var(--mono); font-size: 10px; color: var(--text3); letter-spacing: 0.08em; }
+.footer-right { display: flex; gap: 20px; }
+.footer-link { font-family: var(--mono); font-size: 10px; color: var(--text2); text-decoration: none; letter-spacing: 0.06em; }
+.footer-link:hover { color: var(--blue-light); }
+
+/* ── STACK PILL ── */
+.stack-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  border: 1px solid var(--border);
+  background: var(--glass2);
+  color: var(--text0);
+  letter-spacing: 0.04em;
+}
+.stack-pill .icon { font-size: 14px; }
+.stack-pills { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+
+/* ── TIMELINE ── */
+.timeline { position: relative; padding-left: 32px; }
+.timeline::before {
+  content: '';
+  position: absolute;
+  left: 10px; top: 0; bottom: 0;
+  width: 1px;
+  background: linear-gradient(180deg, var(--blue) 0%, var(--teal) 60%, transparent 100%);
+}
+.timeline-item { position: relative; padding-bottom: 28px; }
+.timeline-item::before {
+  content: '';
+  position: absolute;
+  left: -26px; top: 4px;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--blue);
+  box-shadow: 0 0 10px var(--blue-glow);
+}
+.timeline-item-label {
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--blue-light);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+.timeline-item-title { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+.timeline-item-desc { font-size: 12px; color: var(--text1); line-height: 1.55; }
+
+/* ── SCROLLSPY ACTIVE ── */
+section:target .section-title { color: var(--blue-light); }
+
+/* ── RESPONSIVE ── */
+@media (max-width: 1024px) {
+  :root { --sidebar-w: 200px; }
+  .hero { padding: 48px 32px 40px; }
+  .content { padding: 0 32px 64px; }
+  .doc-header { padding: 0 32px; }
+}
+@media (max-width: 768px) {
+  .sidebar { display: none; }
+  .main { margin-left: 0; }
+  .hero, .content { padding-left: 20px; padding-right: 20px; }
+  .doc-header { padding: 0 20px; }
+  .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
+  .color-grid { grid-template-columns: repeat(3, 1fr); }
+  .arch-label { display: none; }
+}
+</style>
+</head>
+<body>
+
+<!-- SIDEBAR -->
+<nav class="sidebar">
+  <div class="sidebar-logo">
+    <div class="wordmark">APEX</div>
+    <div class="sub">TECHNICAL DOCUMENTATION · v2.1</div>
+  </div>
+  <div class="sidebar-nav">
+    <div class="sidebar-section-label">Overview</div>
+    <a href="#intro" class="sidebar-link active"><span class="sidebar-dot"></span>Introduction</a>
+    <a href="#architecture" class="sidebar-link"><span class="sidebar-dot"></span>System Architecture</a>
+    <a href="#stack" class="sidebar-link"><span class="sidebar-dot"></span>Technology Stack</a>
+
+    <div class="sidebar-section-label">Frontend</div>
+    <a href="#client" class="sidebar-link"><span class="sidebar-dot"></span>Client Application</a>
+    <a href="#design-system" class="sidebar-link"><span class="sidebar-dot"></span>Design System</a>
+    <a href="#components" class="sidebar-link"><span class="sidebar-dot"></span>Component Library</a>
+    <a href="#screens" class="sidebar-link"><span class="sidebar-dot"></span>Screen Reference</a>
+
+    <div class="sidebar-section-label">Backend</div>
+    <a href="#api" class="sidebar-link"><span class="sidebar-dot"></span>API Reference</a>
+    <a href="#data-models" class="sidebar-link"><span class="sidebar-dot"></span>Data Models</a>
+    <a href="#algorithms" class="sidebar-link"><span class="sidebar-dot"></span>Training Algorithms</a>
+
+    <div class="sidebar-section-label">AI Layer</div>
+    <a href="#ai-coach" class="sidebar-link"><span class="sidebar-dot"></span>AI Coach (APEX)</a>
+    <a href="#gemini" class="sidebar-link"><span class="sidebar-dot"></span>Gemini Integration</a>
+    <a href="#rag" class="sidebar-link"><span class="sidebar-dot"></span>RAG Pipeline</a>
+
+    <div class="sidebar-section-label">Infrastructure</div>
+    <a href="#integrations" class="sidebar-link"><span class="sidebar-dot"></span>External Integrations</a>
+    <a href="#deployment" class="sidebar-link"><span class="sidebar-dot"></span>Deployment</a>
+    <a href="#security" class="sidebar-link"><span class="sidebar-dot"></span>Security</a>
+  </div>
+</nav>
+
+<!-- MAIN CONTENT -->
+<div class="main">
+
+  <!-- TOP BAR -->
+  <div class="doc-header">
+    <div class="breadcrumb">APEX / <span>Documentation</span> / v2.1.0</div>
+    <div class="header-badge">LIVE · Apr 2026</div>
+  </div>
+
+  <!-- HERO -->
+  <div class="hero">
+    <div class="hero-eyebrow">SYSTEM DOCUMENTATION</div>
+    <h1>APEX<br><em>AI Coaching</em><br>Platform</h1>
+    <p class="hero-sub">A scientifically rigorous, AI-driven endurance coaching platform — synthesizing physiological telemetry, generative intelligence, and behavioral analytics into a single coaching interface.</p>
+    <div class="hero-meta">
+      <div class="hero-meta-item"><div class="val">Svelte 5</div><div class="lbl">Frontend</div></div>
+      <div class="hero-meta-item"><div class="val">FastAPI</div><div class="lbl">Backend</div></div>
+      <div class="hero-meta-item"><div class="val">Gemini 2.5</div><div class="lbl">AI Coach</div></div>
+      <div class="hero-meta-item"><div class="val">Cloud Run</div><div class="lbl">Infra</div></div>
+      <div class="hero-meta-item"><div class="val">Supabase</div><div class="lbl">Database</div></div>
+    </div>
+  </div>
+
+  <!-- MAIN CONTENT AREA -->
+  <div class="content">
+
+    <!-- ─── SECTION 1: INTRODUCTION ─────────────────────────────────────────── -->
+    <section id="intro" class="section">
+      <div class="section-header">
+        <div class="section-num">01</div>
+        <h2 class="section-title">Introduction &<br><em>Platform Goals</em></h2>
+      </div>
+
+      <p style="font-size:15px; color:var(--text1); line-height:1.75; max-width:680px; margin-bottom:24px;">
+        APEX is a multi-source, AI-driven health and fitness coaching platform that processes physiological data from Apple HealthKit, Garmin Connect, and WHOOP, and converts it into personalized coaching intelligence via Google Gemini 2.5 Pro.
+      </p>
+
+      <div class="grid-2" style="margin-bottom:24px;">
+        <div class="card glow-blue">
+          <div style="font-size:20px; margin-bottom:10px;">⚡</div>
+          <div style="font-size:14px; font-weight:600; margin-bottom:6px;">Scientific Rigor</div>
+          <p style="font-size:12px; color:var(--text1); line-height:1.6;">All coaching recommendations are grounded in Training Stress Score (TSS), Chronic Training Load (CTL), Acute Training Load (ATL), and Training Stress Balance (TSB) — the gold standard frameworks for endurance performance management.</p>
+        </div>
+        <div class="card glow-teal">
+          <div style="font-size:20px; margin-bottom:10px;">🧠</div>
+          <div style="font-size:14px; font-weight:600; margin-bottom:6px;">Contextual AI</div>
+          <p style="font-size:12px; color:var(--text1); line-height:1.6;">APEX uses a RAG-enabled pipeline injecting real-time physiological context into Gemini 2.5 Pro via structured function calling, producing responses that are always grounded in the athlete's actual current data state.</p>
+        </div>
+        <div class="card">
+          <div style="font-size:20px; margin-bottom:10px;">📱</div>
+          <div style="font-size:14px; font-weight:600; margin-bottom:6px;">Native Mobile</div>
+          <p style="font-size:12px; color:var(--text1); line-height:1.6;">Svelte 5 compiled to native via Capacitor, achieving sub-16ms frame times. Native HealthKit integration through Capacitor background runners ensures continuous, uninterrupted data fidelity.</p>
+        </div>
+        <div class="card">
+          <div style="font-size:20px; margin-bottom:10px;">🌍</div>
+          <div style="font-size:14px; font-weight:600; margin-bottom:6px;">Global Scale</div>
+          <p style="font-size:12px; color:var(--text1); line-height:1.6;">Docker-containerized FastAPI on Cloud Run auto-scales to zero between requests, with Supabase PostgreSQL providing relational integrity and pgvector for long-term AI memory retrieval.</p>
+        </div>
+      </div>
+
+      <div class="note note-info">
+        <strong>Audience.</strong> This document is written for engineers, product managers, and technical stakeholders involved in the development, deployment, or maintenance of the APEX platform. It assumes familiarity with REST APIs, containerization, and modern web development.
+      </div>
+    </section>
+
+    <!-- ─── SECTION 2: ARCHITECTURE ─────────────────────────────────────────── -->
+    <section id="architecture" class="section">
+      <div class="section-header">
+        <div class="section-num">02</div>
+        <h2 class="section-title">System<br><em>Architecture</em></h2>
+      </div>
+
+      <p style="font-size:14px; color:var(--text1); line-height:1.7; margin-bottom:28px; max-width:640px;">
+        APEX is composed of four decoupled layers: a native mobile client, a Python computation backend, an AI intelligence layer, and a persistent data layer. Each communicates via well-defined async interfaces.
+      </p>
+
+      <div class="arch-diagram" style="margin-bottom:24px;">
+
+        <!-- CLIENT LAYER -->
+        <div class="arch-layer">
+          <div class="arch-label">CLIENT</div>
+          <div class="arch-nodes">
+            <div class="arch-node blue">
+              <div class="arch-node-title">Svelte 5 + Capacitor</div>
+              <div class="arch-node-tech">iOS / Android Native Shell</div>
+              <div class="arch-node-badge tag-blue">MOBILE</div>
+            </div>
+            <div class="arch-node blue">
+              <div class="arch-node-title">LayerChart / D3 SVG</div>
+              <div class="arch-node-tech">Spectral Glassmorphism UI</div>
+              <div class="arch-node-badge tag-blue">VISUALISATION</div>
+            </div>
+            <div class="arch-node blue">
+              <div class="arch-node-title">HealthKit Plugin</div>
+              <div class="arch-node-tech">Capacitor Background Runner</div>
+              <div class="arch-node-badge tag-blue">NATIVE BRIDGE</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="arch-connector">
+          <div style="display:flex; align-items:center; gap:8px; margin-left:40px;">
+            <div class="arch-connector-line" style="height:16px;"></div>
+            <div class="arch-connector-label">HTTPS / WebSocket</div>
+          </div>
+        </div>
+
+        <!-- API LAYER -->
+        <div class="arch-layer">
+          <div class="arch-label">API</div>
+          <div class="arch-nodes">
+            <div class="arch-node teal">
+              <div class="arch-node-title">FastAPI Gateway</div>
+              <div class="arch-node-tech">Async Python 3.12</div>
+              <div class="arch-node-badge tag-teal">REST</div>
+            </div>
+            <div class="arch-node teal">
+              <div class="arch-node-title">OAuth 2.0 Service</div>
+              <div class="arch-node-tech">Garmin / WHOOP Auth</div>
+              <div class="arch-node-badge tag-teal">AUTH</div>
+            </div>
+            <div class="arch-node teal">
+              <div class="arch-node-title">Webhook Processor</div>
+              <div class="arch-node-tech">Event-driven ingestion</div>
+              <div class="arch-node-badge tag-teal">EVENTS</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="arch-connector">
+          <div style="display:flex; align-items:center; gap:8px; margin-left:40px;">
+            <div class="arch-connector-line" style="height:16px;"></div>
+            <div class="arch-connector-label">Internal gRPC</div>
+          </div>
+        </div>
+
+        <!-- COMPUTE + AI LAYER -->
+        <div class="arch-layer">
+          <div class="arch-label">COMPUTE / AI</div>
+          <div class="arch-nodes">
+            <div class="arch-node amber">
+              <div class="arch-node-title">Training Calculator</div>
+              <div class="arch-node-tech">NumPy vectorized ops</div>
+              <div class="arch-node-badge tag-amber">CTL/ATL/TSS</div>
+            </div>
+            <div class="arch-node amber">
+              <div class="arch-node-title">Gemini 2.5 Pro</div>
+              <div class="arch-node-tech">Function Calling · RAG</div>
+              <div class="arch-node-badge tag-amber">AI COACH</div>
+            </div>
+            <div class="arch-node amber">
+              <div class="arch-node-title">Context Injector</div>
+              <div class="arch-node-tech">Physiological state builder</div>
+              <div class="arch-node-badge tag-amber">PROMPT</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="arch-connector">
+          <div style="display:flex; align-items:center; gap:8px; margin-left:40px;">
+            <div class="arch-connector-line" style="height:16px;"></div>
+            <div class="arch-connector-label">SQL + pgvector</div>
+          </div>
+        </div>
+
+        <!-- DATA LAYER -->
+        <div class="arch-layer">
+          <div class="arch-label">DATA</div>
+          <div class="arch-nodes">
+            <div class="arch-node red">
+              <div class="arch-node-title">Supabase PostgreSQL</div>
+              <div class="arch-node-tech">Relational + row-level security</div>
+              <div class="arch-node-badge tag-red">PRIMARY DB</div>
+            </div>
+            <div class="arch-node red">
+              <div class="arch-node-title">pgvector</div>
+              <div class="arch-node-tech">Embeddings · long-term memory</div>
+              <div class="arch-node-badge tag-red">VECTOR</div>
+            </div>
+            <div class="arch-node red">
+              <div class="arch-node-title">Cloud Storage</div>
+              <div class="arch-node-tech">Raw telemetry blobs / GPX</div>
+              <div class="arch-node-badge tag-red">GCS</div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <div class="note note-warn">
+        <strong>Garmin API Notice.</strong> Garmin strictly gates its Health API for enterprise use. A formal commercial application and compliance review must be initiated at project inception to avoid deployment delays of 8–16 weeks.
+      </div>
+    </section>
+
+    <!-- ─── SECTION 3: TECH STACK ────────────────────────────────────────────── -->
+    <section id="stack" class="section">
+      <div class="section-header">
+        <div class="section-num">03</div>
+        <h2 class="section-title">Technology<br><em>Stack</em></h2>
+      </div>
+
+      <div class="grid-2" style="margin-bottom: 20px;">
+        <div class="card">
+          <div style="font-size:11px; font-family:var(--mono); color:var(--blue-light); letter-spacing:0.1em; text-transform:uppercase; margin-bottom:14px;">Frontend</div>
+          <div class="stack-pills">
+            <div class="stack-pill"><span class="icon">🟠</span> Svelte 5</div>
+            <div class="stack-pill"><span class="icon">📱</span> Capacitor 6</div>
+            <div class="stack-pill"><span class="icon">📊</span> LayerChart</div>
+            <div class="stack-pill"><span class="icon">🗺</span> D3.js v7</div>
+            <div class="stack-pill"><span class="icon">🍎</span> HealthKit</div>
+            <div class="stack-pill"><span class="icon">🎨</span> CSS Custom Props</div>
+          </div>
+        </div>
+        <div class="card">
+          <div style="font-size:11px; font-family:var(--mono); color:var(--teal); letter-spacing:0.1em; text-transform:uppercase; margin-bottom:14px;">Backend</div>
+          <div class="stack-pills">
+            <div class="stack-pill"><span class="icon">⚡</span> FastAPI 0.115</div>
+            <div class="stack-pill"><span class="icon">🐍</span> Python 3.12</div>
+            <div class="stack-pill"><span class="icon">📐</span> NumPy 2.x</div>
+            <div class="stack-pill"><span class="icon">🐼</span> Pandas 2.x</div>
+            <div class="stack-pill"><span class="icon">🔒</span> OAuth 2.0 PKCE</div>
+            <div class="stack-pill"><span class="icon">🪝</span> Webhooks</div>
+          </div>
+        </div>
+        <div class="card">
+          <div style="font-size:11px; font-family:var(--mono); color:var(--amber); letter-spacing:0.1em; text-transform:uppercase; margin-bottom:14px;">AI / ML</div>
+          <div class="stack-pills">
+            <div class="stack-pill"><span class="icon">💎</span> Gemini 2.5 Pro</div>
+            <div class="stack-pill"><span class="icon">🔧</span> Function Calling</div>
+            <div class="stack-pill"><span class="icon">🔍</span> RAG Pipeline</div>
+            <div class="stack-pill"><span class="icon">🧩</span> pgvector</div>
+            <div class="stack-pill"><span class="icon">📝</span> google-genai SDK</div>
+          </div>
+        </div>
+        <div class="card">
+          <div style="font-size:11px; font-family:var(--mono); color:var(--red); letter-spacing:0.1em; text-transform:uppercase; margin-bottom:14px;">Infrastructure</div>
+          <div class="stack-pills">
+            <div class="stack-pill"><span class="icon">☁️</span> Cloud Run</div>
+            <div class="stack-pill"><span class="icon">🐳</span> Docker</div>
+            <div class="stack-pill"><span class="icon">🗃</span> Supabase</div>
+            <div class="stack-pill"><span class="icon">🪣</span> Cloud Storage</div>
+            <div class="stack-pill"><span class="icon">🔐</span> Supabase Auth</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="note note-info">
+        <strong>Why Svelte 5 over React Native?</strong> Svelte's compiler-first approach eliminates the virtual DOM overhead entirely, producing smaller JS bundles and faster startup times. Capacitor's native bridge avoids React Native's JSI bridging latency, which is critical for smooth 60fps chart animations on physiological data layers.
+      </div>
+    </section>
+
+    <!-- ─── SECTION 4: CLIENT APPLICATION ───────────────────────────────────── -->
+    <section id="client" class="section">
+      <div class="section-header">
+        <div class="section-num">04</div>
+        <h2 class="section-title">Client<br><em>Application</em></h2>
+      </div>
+
+      <p style="font-size:14px; color:var(--text1); line-height:1.7; margin-bottom:24px; max-width:640px;">
+        The APEX mobile client is a Svelte 5 SPA compiled to a native iOS/Android shell via Capacitor 6. Background health data ingestion runs via Capacitor's native background runner plugin, calling into Apple HealthKit at 15-minute intervals.
+      </p>
+
+      <div class="code-header">
+        <span>capacitor.config.ts</span>
+        <span class="tag tag-teal">CONFIG</span>
+      </div>
+      <pre><span class="kw">import</span> { <span class="cls">CapacitorConfig</span> } <span class="kw">from</span> <span class="st">'@capacitor/cli'</span>;
+
+<span class="kw">const</span> config: <span class="cls">CapacitorConfig</span> = {
+  appId: <span class="st">'com.apex.coaching'</span>,
+  appName: <span class="st">'APEX Coach'</span>,
+  webDir: <span class="st">'dist'</span>,
+  plugins: {
+    <span class="cls">BackgroundRunner</span>: {
+      label: <span class="st">'com.apex.background'</span>,
+      src: <span class="st">'runners/healthkit-sync.js'</span>,
+      event: <span class="st">'healthkitSync'</span>,
+      repeat: <span class="kw">true</span>,
+      interval: <span class="num">15</span>,        <span class="cm">// minutes</span>
+      autoStart: <span class="kw">true</span>,
+    },
+    <span class="cls">CapacitorHealthkit</span>: {
+      backgroundDelivery: <span class="kw">true</span>,
+      observerQueries: [
+        <span class="st">'HKQuantityTypeIdentifierHeartRate'</span>,
+        <span class="st">'HKQuantityTypeIdentifierHeartRateVariabilitySDNN'</span>,
+        <span class="st">'HKCategoryTypeIdentifierSleepAnalysis'</span>,
+        <span class="st">'HKQuantityTypeIdentifierActiveEnergyBurned'</span>,
+        <span class="st">'HKWorkoutTypeIdentifier'</span>,
+      ]
+    }
+  }
+};
+
+<span class="kw">export default</span> config;</pre>
+
+      <div style="margin-top:20px;">
+        <div class="code-header">
+          <span>src/stores/training.svelte.ts — Svelte 5 Rune Store</span>
+          <span class="tag tag-blue">FRONTEND</span>
+        </div>
+        <pre><span class="cm">// Svelte 5 fine-grained reactivity via $state rune</span>
+<span class="kw">export</span> <span class="kw">const</span> trainingStore = <span class="fn">createTrainingStore</span>();
+
+<span class="kw">function</span> <span class="fn">createTrainingStore</span>() {
+  <span class="kw">let</span> ctl = <span class="fn">$state</span>(<span class="num">0</span>);
+  <span class="kw">let</span> atl = <span class="fn">$state</span>(<span class="num">0</span>);
+  <span class="kw">let</span> tsb = <span class="fn">$derived</span>(() => ctl - atl);          <span class="cm">// auto-computed</span>
+  <span class="kw">let</span> hrv = <span class="fn">$state</span>({ current: <span class="num">0</span>, baseline: <span class="num">0</span>, trend: <span class="num">0</span> });
+  <span class="kw">let</span> readiness = <span class="fn">$derived</span>(() => <span class="fn">computeReadiness</span>(tsb, hrv));
+
+  <span class="kw">return</span> {
+    <span class="kw">get</span> <span class="fn">ctl</span>() { <span class="kw">return</span> ctl },
+    <span class="kw">get</span> <span class="fn">atl</span>() { <span class="kw">return</span> atl },
+    <span class="kw">get</span> <span class="fn">tsb</span>() { <span class="kw">return</span> tsb },
+    <span class="kw">get</span> <span class="fn">readiness</span>() { <span class="kw">return</span> readiness },
+
+    <span class="kw">async</span> <span class="fn">sync</span>() {
+      <span class="kw">const</span> data = <span class="kw">await</span> <span class="fn">apexApi</span>.<span class="fn">getAthleteMetrics</span>();
+      ctl = data.ctl;
+      atl = data.atl;
+      hrv = data.hrv;
+    }
+  };
+}</pre>
+      </div>
+
+      <div style="margin-top:20px;">
+        <div class="code-header">
+          <span>src/lib/charts/HRVChart.svelte — LayerChart</span>
+          <span class="tag tag-blue">VISUALISATION</span>
+        </div>
+        <pre><span class="kw">&lt;script&gt;</span>
+  <span class="kw">import</span> { <span class="cls">Chart</span>, <span class="cls">Svg</span>, <span class="cls">LinearGradient</span>, <span class="cls">Area</span>, <span class="cls">Line</span>, <span class="cls">Axis</span> }
+    <span class="kw">from</span> <span class="st">'layerchart'</span>;
+  <span class="kw">import</span> { <span class="fn">scaleLinear</span>, <span class="fn">scaleTime</span> } <span class="kw">from</span> <span class="st">'d3-scale'</span>;
+  <span class="kw">import</span> { <span class="fn">curveMonotoneX</span> } <span class="kw">from</span> <span class="st">'d3-shape'</span>;
+
+  <span class="kw">let</span> { data } = <span class="fn">$props</span>();
+<span class="kw">&lt;/script&gt;</span>
+
+<span class="kw">&lt;Chart</span> <span class="at">x</span>=<span class="st">"date"</span> <span class="at">y</span>=<span class="st">"hrv"</span> {data}
+  <span class="at">xScale</span>={scaleTime()} <span class="at">yScale</span>={scaleLinear()}&gt;
+  <span class="kw">&lt;Svg&gt;</span>
+    <span class="kw">&lt;LinearGradient</span> <span class="at">id</span>=<span class="st">"hrv-fill"</span>
+      <span class="at">stops</span>={[
+        { offset: <span class="st">'0%'</span>, color: <span class="st">'#00C8A8'</span>, opacity: <span class="num">0.25</span> },
+        { offset: <span class="st">'100%'</span>, color: <span class="st">'#00C8A8'</span>, opacity: <span class="num">0</span> }
+      ]} /&gt;
+    <span class="kw">&lt;Area</span> <span class="at">curve</span>={curveMonotoneX} <span class="at">fill</span>=<span class="st">"url(#hrv-fill)"</span> /&gt;
+    <span class="kw">&lt;Line</span> <span class="at">curve</span>={curveMonotoneX}
+      <span class="at">stroke</span>=<span class="st">"#00C8A8"</span> <span class="at">strokeWidth</span>={<span class="num">2</span>} /&gt;
+    <span class="kw">&lt;Axis</span> <span class="at">placement</span>=<span class="st">"bottom"</span> /&gt;
+    <span class="kw">&lt;Axis</span> <span class="at">placement</span>=<span class="st">"left"</span> /&gt;
+  <span class="kw">&lt;/Svg&gt;</span>
+<span class="kw">&lt;/Chart&gt;</span></pre>
+      </div>
+    </section>
+
+    <!-- ─── SECTION 5: DESIGN SYSTEM ────────────────────────────────────────── -->
+    <section id="design-system" class="section">
+      <div class="section-header">
+        <div class="section-num">05</div>
+        <h2 class="section-title">Design<br><em>System</em></h2>
+      </div>
+
+      <p style="font-size:14px; color:var(--text1); line-height:1.7; margin-bottom:24px; max-width:640px;">
+        APEX uses the "Spectral" glassmorphism design language — a dark-first, translucent aesthetic driven by layered depth, continuous gradient meshes, and surgically applied accent colors.
+      </p>
+
+      <!-- Typography -->
+      <div class="card" style="margin-bottom:16px;">
+        <div style="font-size:11px; font-family:var(--mono); color:var(--text2); letter-spacing:0.12em; text-transform:uppercase; margin-bottom:20px;">Typography Scale</div>
+        <div style="display:flex; flex-direction:column; gap:16px;">
+          <div style="border-bottom: 1px solid var(--border); padding-bottom:16px;">
+            <div style="font-family:'DM Serif Display', serif; font-size:36px; letter-spacing:-0.01em; margin-bottom:4px;">Display Heading</div>
+            <div style="font-family:var(--mono); font-size:10px; color:var(--text2);">DM Serif Display · 36px · Section titles, hero text</div>
+          </div>
+          <div style="border-bottom: 1px solid var(--border); padding-bottom:16px;">
+            <div style="font-size:22px; font-weight:700; letter-spacing:-0.02em; margin-bottom:4px;">Screen Heading</div>
+            <div style="font-family:var(--mono); font-size:10px; color:var(--text2);">Space Grotesk · 22px · 700 · Screen titles</div>
+          </div>
+          <div style="border-bottom: 1px solid var(--border); padding-bottom:16px;">
+            <div style="font-size:15px; font-weight:600; margin-bottom:4px;">Card Title</div>
+            <div style="font-family:var(--mono); font-size:10px; color:var(--text2);">Space Grotesk · 15px · 600 · Card headings, labels</div>
+          </div>
+          <div style="border-bottom: 1px solid var(--border); padding-bottom:16px;">
+            <div style="font-size:13px; color:var(--text1); margin-bottom:4px;">Body text — physiological data is rendered at this size for readability during exercise conditions with reduced cognitive bandwidth.</div>
+            <div style="font-family:var(--mono); font-size:10px; color:var(--text2);">Space Grotesk · 13px · 400 · Body, descriptions</div>
+          </div>
+          <div>
+            <div style="font-family:var(--mono); font-size:11px; color:var(--amber); margin-bottom:4px;">CTL 68 · ATL 38 · TSB +28 · HRV 78ms</div>
+            <div style="font-family:var(--mono); font-size:10px; color:var(--text2);">Space Mono · 11px · Metrics, codes, data values</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Colors -->
+      <div style="margin-bottom:16px;">
+        <div style="font-size:11px; font-family:var(--mono); color:var(--text2); letter-spacing:0.12em; text-transform:uppercase; margin-bottom:14px;">Color Tokens — Dark Mode (Spectral)</div>
+        <div class="color-grid">
+          <div class="color-swatch">
+            <div class="swatch-block" style="background:#06060E;"></div>
+            <div class="swatch-info">
+              <div class="swatch-name">Background 0</div>
+              <div class="swatch-hex">#06060E</div>
+              <div class="swatch-role">Base layer</div>
+            </div>
+          </div>
+          <div class="color-swatch">
+            <div class="swatch-block" style="background:#0C0C18;"></div>
+            <div class="swatch-info">
+              <div class="swatch-name">Background 1</div>
+              <div class="swatch-hex">#0C0C18</div>
+              <div class="swatch-role">Sidebar / panel</div>
+            </div>
+          </div>
+          <div class="color-swatch">
+            <div class="swatch-block" style="background:#4621FF;"></div>
+            <div class="swatch-info">
+              <div class="swatch-name">Primary Blue</div>
+              <div class="swatch-hex">#4621FF</div>
+              <div class="swatch-role">Primary action</div>
+            </div>
+          </div>
+          <div class="color-swatch">
+            <div class="swatch-block" style="background:#00C8A8;"></div>
+            <div class="swatch-info">
+              <div class="swatch-name">Teal</div>
+              <div class="swatch-hex">#00C8A8</div>
+              <div class="swatch-role">Positive / HRV</div>
+            </div>
+          </div>
+          <div class="color-swatch">
+            <div class="swatch-block" style="background:#FFCB88;"></div>
+            <div class="swatch-info">
+              <div class="swatch-name">Amber</div>
+              <div class="swatch-hex">#FFCB88</div>
+              <div class="swatch-role">Sleep / warning</div>
+            </div>
+          </div>
+          <div class="color-swatch">
+            <div class="swatch-block" style="background:#F07178;"></div>
+            <div class="swatch-info">
+              <div class="swatch-name">Red</div>
+              <div class="swatch-hex">#F07178</div>
+              <div class="swatch-role">Fatigue / alert</div>
+            </div>
+          </div>
+          <div class="color-swatch">
+            <div class="swatch-block" style="background:#FF4791;"></div>
+            <div class="swatch-info">
+              <div class="swatch-name">Pink</div>
+              <div class="swatch-hex">#FF4791</div>
+              <div class="swatch-role">Zone 5 / max</div>
+            </div>
+          </div>
+          <div class="color-swatch">
+            <div class="swatch-block" style="background:rgba(255,255,255,0.065);"></div>
+            <div class="swatch-info">
+              <div class="swatch-name">Glass</div>
+              <div class="swatch-hex">rgba(255,255,255,0.065)</div>
+              <div class="swatch-role">Card surface</div>
+            </div>
+          </div>
+          <div class="color-swatch">
+            <div class="swatch-block" style="background:rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.12);"></div>
+            <div class="swatch-info">
+              <div class="swatch-name">Border</div>
+              <div class="swatch-hex">rgba(255,255,255,0.07)</div>
+              <div class="swatch-role">Dividers / cards</div>
+            </div>
+          </div>
+          <div class="color-swatch">
+            <div class="swatch-block" style="background:rgba(242,242,255,0.35);"></div>
+            <div class="swatch-info">
+              <div class="swatch-name">Text 2</div>
+              <div class="swatch-hex">rgba(242,242,255,0.35)</div>
+              <div class="swatch-role">Muted / meta</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Glassmorphism spec -->
+      <div class="card" style="margin-bottom:16px;">
+        <div style="font-size:11px; font-family:var(--mono); color:var(--text2); letter-spacing:0.12em; text-transform:uppercase; margin-bottom:14px;">Glassmorphism Rules</div>
+        <div class="grid-2">
+          <div>
+            <div style="font-size:13px; font-weight:600; margin-bottom:8px;">Surface Layer Formula</div>
+            <div class="formula">
+              <div class="formula-name">Card Background</div>
+              rgba(255,255,255, 0.035 → 0.10)
+            </div>
+            <div class="formula">
+              <div class="formula-name">Border</div>
+              rgba(255,255,255, 0.07 → 0.14)
+            </div>
+            <p style="font-size:12px; color:var(--text1); margin-top:10px; line-height:1.6;">Depth is achieved by shifting background opacity, never by changing hue. Higher elevation = higher opacity. Never apply blur — performance on 60Hz mobile panels prohibits it outside modal overlays.</p>
+          </div>
+          <div>
+            <div style="font-size:13px; font-weight:600; margin-bottom:8px;">Accent Glow Rules</div>
+            <p style="font-size:12px; color:var(--text1); line-height:1.6; margin-bottom:10px;">Accents are "surgical illumination" — applied sparingly to highlight the single most important element per screen. Overuse destroys hierarchy.</p>
+            <div class="formula">
+              <div class="formula-name">Active card glow</div>
+              box-shadow: 0 0 40px -10px &lt;accent&gt;33
+            </div>
+            <div class="formula">
+              <div class="formula-name">Focus ring</div>
+              outline: 2px solid &lt;accent&gt; + 2px offset
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── SECTION 6: COMPONENTS ───────────────────────────────────────────── -->
+    <section id="components" class="section">
+      <div class="section-header">
+        <div class="section-num">06</div>
+        <h2 class="section-title">Component<br><em>Library</em></h2>
+      </div>
+
+      <div class="grid-2" style="margin-bottom:16px;">
+
+        <!-- RadialProgress -->
+        <div class="card">
+          <div style="font-size:11px; font-family:var(--mono); color:var(--blue-light); letter-spacing:0.1em; text-transform:uppercase; margin-bottom:12px;">RadialProgress</div>
+          <div class="component-showcase" style="margin-bottom:12px;">
+            <div class="radial-mock">
+              <div class="radial-inner">78</div>
+            </div>
+          </div>
+          <p style="font-size:12px; color:var(--text1); margin-bottom:10px; line-height:1.55;">Canvas-rendered circular progress ring with DPR scaling. Used for Readiness Score and Distribution Score displays.</p>
+          <div class="code-header"><span>Props</span></div>
+          <pre style="font-size:11px; padding:12px 16px;">value: <span class="kw">number</span>    <span class="cm">// current value</span>
+max: <span class="kw">number</span>      <span class="cm">// maximum (default 100)</span>
+size: <span class="kw">number</span>     <span class="cm">// diameter px (default 56)</span>
+color: <span class="kw">string</span>    <span class="cm">// hex / CSS var</span>
+label?: <span class="kw">string</span>   <span class="cm">// center label text</span>
+sub?: <span class="kw">string</span>     <span class="cm">// center sublabel</span></pre>
+        </div>
+
+        <!-- MetricBadge -->
+        <div class="card">
+          <div style="font-size:11px; font-family:var(--mono); color:var(--teal); letter-spacing:0.1em; text-transform:uppercase; margin-bottom:12px;">MetricBadge</div>
+          <div class="component-showcase" style="margin-bottom:12px;">
+            <div style="display:flex; gap:20px;">
+              <div>
+                <div style="font-size:9px; font-family:var(--mono); color:var(--text2); letter-spacing:0.1em; text-transform:uppercase;">CTL</div>
+                <div style="font-size:26px; font-weight:700; color:var(--teal);">68</div>
+                <div style="font-size:10px; color:var(--text2);">Fitness</div>
+              </div>
+              <div>
+                <div style="font-size:9px; font-family:var(--mono); color:var(--text2); letter-spacing:0.1em; text-transform:uppercase;">TSB</div>
+                <div style="font-size:26px; font-weight:700; color:#6B4FFF;">+28</div>
+                <div style="font-size:10px; color:var(--text2);">Form</div>
+              </div>
+            </div>
+          </div>
+          <p style="font-size:12px; color:var(--text1); margin-bottom:10px; line-height:1.55;">Compact metric display. Monospace label above a large weighted value with optional subtext.</p>
+          <div class="code-header"><span>Props</span></div>
+          <pre style="font-size:11px; padding:12px 16px;">label: <span class="kw">string</span>     <span class="cm">// UPPERCASE mono label</span>
+value: <span class="kw">string</span>|<span class="kw">number</span>
+unit?: <span class="kw">string</span>     <span class="cm">// e.g. "ms", "bpm"</span>
+color?: <span class="kw">string</span>    <span class="cm">// accent (default teal)</span>
+sub?: <span class="kw">string</span>      <span class="cm">// secondary line</span></pre>
+        </div>
+
+        <!-- Tag -->
+        <div class="card">
+          <div style="font-size:11px; font-family:var(--mono); color:var(--amber); letter-spacing:0.1em; text-transform:uppercase; margin-bottom:12px;">Tag / Badge</div>
+          <div class="component-showcase" style="gap:8px; flex-wrap:wrap; margin-bottom:12px;">
+            <span class="tag tag-teal">OPTIMAL</span>
+            <span class="tag tag-blue">LIVE</span>
+            <span class="tag tag-amber">PLANNED</span>
+            <span class="tag tag-red">FATIGUE</span>
+          </div>
+          <p style="font-size:12px; color:var(--text1); line-height:1.55;">Status indicators with color-coded semantic meaning. Always monospace uppercase. Four semantic variants.</p>
+        </div>
+
+        <!-- LineChart -->
+        <div class="card">
+          <div style="font-size:11px; font-family:var(--mono); color:var(--red); letter-spacing:0.1em; text-transform:uppercase; margin-bottom:12px;">LineChart (Canvas)</div>
+          <div class="component-showcase" style="margin-bottom:12px;">
+            <svg width="200" height="60" viewBox="0 0 200 60">
+              <defs>
+                <linearGradient id="lc" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stop-color="#00C8A8" stop-opacity="0.3"/>
+                  <stop offset="100%" stop-color="#00C8A8" stop-opacity="0"/>
+                </linearGradient>
+              </defs>
+              <path d="M0,50 L28,38 L56,44 L84,22 L112,28 L140,14 L168,20 L196,8" fill="none" stroke="#00C8A8" stroke-width="2" stroke-linejoin="round"/>
+              <path d="M0,50 L28,38 L56,44 L84,22 L112,28 L140,14 L168,20 L196,8 L196,60 L0,60 Z" fill="url(#lc)"/>
+            </svg>
+          </div>
+          <p style="font-size:12px; color:var(--text1); line-height:1.55;">DPR-aware canvas chart with optional gradient fill, axis labels, and multi-line support. Uses <code>devicePixelRatio</code> scaling for crisp rendering on Retina displays.</p>
+        </div>
+
+      </div>
+
+      <div class="note note-success">
+        <strong>DPR Scaling Pattern.</strong> All canvas components call <code>canvas.width = offsetWidth * devicePixelRatio</code> and <code>ctx.scale(dpr, dpr)</code> before drawing. This is mandatory for crisp rendering on all modern mobile displays (3x on iPhone 15 Pro).
+      </div>
+    </section>
+
+    <!-- ─── SECTION 7: SCREENS ───────────────────────────────────────────────── -->
+    <section id="screens" class="section">
+      <div class="section-header">
+        <div class="section-num">07</div>
+        <h2 class="section-title">Screen<br><em>Reference</em></h2>
+      </div>
+
+      <div style="display:flex; flex-direction:column; gap:12px;">
+        <div class="card">
+          <div style="display:flex; align-items:center; gap:12px; margin-bottom:10px;">
+            <span style="font-size:22px;">🏠</span>
+            <div>
+              <div style="font-size:14px; font-weight:600;">Dashboard</div>
+              <div style="font-family:var(--mono); font-size:10px; color:var(--text2);">route: /dashboard</div>
+            </div>
+            <span class="tag tag-teal" style="margin-left:auto;">PRIMARY</span>
+          </div>
+          <p style="font-size:12px; color:var(--text1); line-height:1.6;">Daily overview screen. Displays Readiness Score (radial progress), CTL/ATL/TSB metric row, 7-day training load multi-line chart, HRV & sleep trend cards, and the last 3 workouts. HRV and sleep data are polled from the training store on mount.</p>
+        </div>
+
+        <div class="card">
+          <div style="display:flex; align-items:center; gap:12px; margin-bottom:10px;">
+            <span style="font-size:22px;">📈</span>
+            <div>
+              <div style="font-size:14px; font-weight:600;">Training Analysis</div>
+              <div style="font-family:var(--mono); font-size:10px; color:var(--text2);">route: /training</div>
+            </div>
+          </div>
+          <p style="font-size:12px; color:var(--text1); line-height:1.6;">Tabbed analysis view with four tabs: <strong>Load</strong> (CTL/ATL/TSB cards + 7-day chart), <strong>Pace</strong> (pace-per-km line chart + running economy), <strong>Zones</strong> (donut + bar breakdown), and <strong>History</strong> (workout list with TSS scoring).</p>
+        </div>
+
+        <div class="card">
+          <div style="display:flex; align-items:center; gap:12px; margin-bottom:10px;">
+            <span style="font-size:22px;">📅</span>
+            <div>
+              <div style="font-size:14px; font-weight:600;">Training Plan</div>
+              <div style="font-family:var(--mono); font-size:10px; color:var(--text2);">route: /plan</div>
+            </div>
+          </div>
+          <p style="font-size:12px; color:var(--text1); line-height:1.6;">Weekly calendar view with day-picker, selected-day detail card, next-week planned workout list, and upcoming race countdown. Workout status tags: <code>done</code>, <code>today</code>, <code>planned</code>.</p>
+        </div>
+
+        <div class="card">
+          <div style="display:flex; align-items:center; gap:12px; margin-bottom:10px;">
+            <span style="font-size:22px;">⊙</span>
+            <div>
+              <div style="font-size:14px; font-weight:600;">Training Zones</div>
+              <div style="font-family:var(--mono); font-size:10px; color:var(--text2);">route: /zones</div>
+            </div>
+          </div>
+          <p style="font-size:12px; color:var(--text1); line-height:1.6;">Heart rate and power zone editor. Toggles between Running (HR-based, bpm) and Cycling (FTP-based, watts) modes. Zones are tappable to reveal description + inline editors. Weekly distribution horizontal bar chart at bottom.</p>
+        </div>
+
+        <div class="card">
+          <div style="display:flex; align-items:center; gap:12px; margin-bottom:10px;">
+            <span style="font-size:22px;">⚡</span>
+            <div>
+              <div style="font-size:14px; font-weight:600;">APEX Coach (Chat)</div>
+              <div style="font-family:var(--mono); font-size:10px; color:var(--text2);">route: /chat</div>
+            </div>
+            <span class="tag tag-blue" style="margin-left:auto;">AI POWERED</span>
+          </div>
+          <p style="font-size:12px; color:var(--text1); line-height:1.6;">Full-height chat interface. Messages streamed from Gemini 2.5 Pro via SSE. Physiological context (CTL, ATL, TSB, HRV, sleep) is injected into every prompt. Suggestion chips for common queries. Typing indicator with animated pulse dots.</p>
+        </div>
+
+        <div class="card">
+          <div style="display:flex; align-items:center; gap:12px; margin-bottom:10px;">
+            <span style="font-size:22px;">🔗</span>
+            <div>
+              <div style="font-size:14px; font-weight:600;">Data Sources / Connect</div>
+              <div style="font-family:var(--mono); font-size:10px; color:var(--text2);">route: /connect</div>
+            </div>
+          </div>
+          <p style="font-size:12px; color:var(--text1); line-height:1.6;">Integration management. OAuth flows for Apple Health, Garmin Connect, and WHOOP. Live sync status, record counts, and computed metrics status (TSS, CTL, ATL, VO2max estimate). Connect/Unlink buttons with 1.8s simulated sync animation.</p>
+        </div>
+
+        <div class="card">
+          <div style="display:flex; align-items:center; gap:12px; margin-bottom:10px;">
+            <span style="font-size:22px;">👤</span>
+            <div>
+              <div style="font-size:14px; font-weight:600;">Profile</div>
+              <div style="font-family:var(--mono); font-size:10px; color:var(--text2);">route: /profile</div>
+            </div>
+          </div>
+          <p style="font-size:12px; color:var(--text1); line-height:1.6;">Athlete profile with all-time stats, 10-week CTL history chart, personal bests grid, season goals with progress bars, and editable athlete profile (DOB, weight, Max HR, FTP, threshold pace, VO2max).</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── SECTION 8: API REFERENCE ─────────────────────────────────────────── -->
+    <section id="api" class="section">
+      <div class="section-header">
+        <div class="section-num">08</div>
+        <h2 class="section-title">API<br><em>Reference</em></h2>
+      </div>
+
+      <p style="font-size:14px; color:var(--text1); line-height:1.7; margin-bottom:20px; max-width:640px;">
+        The APEX FastAPI backend exposes a versioned REST API under <code>/api/v1/</code>. All endpoints require a JWT bearer token issued by Supabase Auth. Responses are JSON. Error format: <code>{"detail": "message", "code": "ERR_CODE"}</code>.
+      </p>
+
+      <div style="background:var(--bg1); border:1px solid var(--border); border-radius:14px; overflow:hidden; margin-bottom:16px;">
+        <div style="padding:12px 16px; background:var(--bg2); border-bottom:1px solid var(--border); font-family:var(--mono); font-size:10px; color:var(--text2); letter-spacing:0.1em; text-transform:uppercase;">Athlete & Metrics</div>
+        <table class="endpoint-table">
+          <thead>
+            <tr>
+              <th>Method</th>
+              <th>Route</th>
+              <th>Description</th>
+              <th>Auth</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="method-badge method-get">GET</span></td>
+              <td class="route-path">/api/v1/athlete/me</td>
+              <td>Returns authenticated athlete profile, settings, and computed metrics (CTL/ATL/TSB/HRV)</td>
+              <td><span class="tag tag-blue">JWT</span></td>
+            </tr>
+            <tr>
+              <td><span class="method-badge method-patch">PATCH</span></td>
+              <td class="route-path">/api/v1/athlete/me</td>
+              <td>Update athlete profile fields (weight, Max HR, FTP, threshold pace)</td>
+              <td><span class="tag tag-blue">JWT</span></td>
+            </tr>
+            <tr>
+              <td><span class="method-badge method-get">GET</span></td>
+              <td class="route-path">/api/v1/athlete/readiness</td>
+              <td>Current readiness score (0–100) with contributing factors breakdown</td>
+              <td><span class="tag tag-blue">JWT</span></td>
+            </tr>
+            <tr>
+              <td><span class="method-badge method-get">GET</span></td>
+              <td class="route-path">/api/v1/metrics/training-load</td>
+              <td>CTL, ATL, TSB time series. Query params: <code>?days=42&granularity=day</code></td>
+              <td><span class="tag tag-blue">JWT</span></td>
+            </tr>
+            <tr>
+              <td><span class="method-badge method-get">GET</span></td>
+              <td class="route-path">/api/v1/metrics/hrv</td>
+              <td>HRV time series with baseline, trend, and daily morning readings</td>
+              <td><span class="tag tag-blue">JWT</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div style="background:var(--bg1); border:1px solid var(--border); border-radius:14px; overflow:hidden; margin-bottom:16px;">
+        <div style="padding:12px 16px; background:var(--bg2); border-bottom:1px solid var(--border); font-family:var(--mono); font-size:10px; color:var(--text2); letter-spacing:0.1em; text-transform:uppercase;">Workouts</div>
+        <table class="endpoint-table">
+          <thead><tr><th>Method</th><th>Route</th><th>Description</th><th>Auth</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><span class="method-badge method-get">GET</span></td>
+              <td class="route-path">/api/v1/workouts</td>
+              <td>Paginated workout list. Params: <code>?limit=20&offset=0&type=run</code></td>
+              <td><span class="tag tag-blue">JWT</span></td>
+            </tr>
+            <tr>
+              <td><span class="method-badge method-get">GET</span></td>
+              <td class="route-path">/api/v1/workouts/<span class="route-param">{id}</span></td>
+              <td>Full workout detail with lap splits, HR zones, power data, pace curve</td>
+              <td><span class="tag tag-blue">JWT</span></td>
+            </tr>
+            <tr>
+              <td><span class="method-badge method-post">POST</span></td>
+              <td class="route-path">/api/v1/workouts</td>
+              <td>Create manual workout. Body: <code>{type, duration_s, tss, hr_avg, notes}</code></td>
+              <td><span class="tag tag-blue">JWT</span></td>
+            </tr>
+            <tr>
+              <td><span class="method-badge method-get">GET</span></td>
+              <td class="route-path">/api/v1/workouts/<span class="route-param">{id}</span>/zones</td>
+              <td>Heart rate zone distribution for a specific workout</td>
+              <td><span class="tag tag-blue">JWT</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div style="background:var(--bg1); border:1px solid var(--border); border-radius:14px; overflow:hidden; margin-bottom:16px;">
+        <div style="padding:12px 16px; background:var(--bg2); border-bottom:1px solid var(--border); font-family:var(--mono); font-size:10px; color:var(--text2); letter-spacing:0.1em; text-transform:uppercase;">Training Plan</div>
+        <table class="endpoint-table">
+          <thead><tr><th>Method</th><th>Route</th><th>Description</th><th>Auth</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><span class="method-badge method-get">GET</span></td>
+              <td class="route-path">/api/v1/plan/week</td>
+              <td>Current week's planned sessions. Returns array of <code>PlanDay</code> objects</td>
+              <td><span class="tag tag-blue">JWT</span></td>
+            </tr>
+            <tr>
+              <td><span class="method-badge method-post">POST</span></td>
+              <td class="route-path">/api/v1/plan/generate</td>
+              <td>Trigger AI plan generation for specified week. Uses current CTL/TSB to size load</td>
+              <td><span class="tag tag-blue">JWT</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div style="background:var(--bg1); border:1px solid var(--border); border-radius:14px; overflow:hidden; margin-bottom:16px;">
+        <div style="padding:12px 16px; background:var(--bg2); border-bottom:1px solid var(--border); font-family:var(--mono); font-size:10px; color:var(--text2); letter-spacing:0.1em; text-transform:uppercase;">AI Coach Chat (SSE Streamed)</div>
+        <table class="endpoint-table">
+          <thead><tr><th>Method</th><th>Route</th><th>Description</th><th>Auth</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><span class="method-badge method-post">POST</span></td>
+              <td class="route-path">/api/v1/coach/chat</td>
+              <td>Send message to APEX coach. Returns <code>text/event-stream</code> SSE with token-by-token streaming from Gemini. Context injected server-side.</td>
+              <td><span class="tag tag-blue">JWT</span></td>
+            </tr>
+            <tr>
+              <td><span class="method-badge method-get">GET</span></td>
+              <td class="route-path">/api/v1/coach/history</td>
+              <td>Conversation history for current user. Used to rebuild chat state on app load.</td>
+              <td><span class="tag tag-blue">JWT</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div style="background:var(--bg1); border:1px solid var(--border); border-radius:14px; overflow:hidden;">
+        <div style="padding:12px 16px; background:var(--bg2); border-bottom:1px solid var(--border); font-family:var(--mono); font-size:10px; color:var(--text2); letter-spacing:0.1em; text-transform:uppercase;">Webhooks — Inbound</div>
+        <table class="endpoint-table">
+          <thead><tr><th>Method</th><th>Route</th><th>Provider</th><th>Auth</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><span class="method-badge method-post">POST</span></td>
+              <td class="route-path">/webhooks/garmin</td>
+              <td>Garmin activity push. Verifies HMAC-SHA256 signature before processing</td>
+              <td><span class="tag tag-amber">HMAC</span></td>
+            </tr>
+            <tr>
+              <td><span class="method-badge method-post">POST</span></td>
+              <td class="route-path">/webhooks/whoop</td>
+              <td>WHOOP recovery, sleep, and strain cycle events</td>
+              <td><span class="tag tag-amber">HMAC</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ─── SECTION 9: DATA MODELS ────────────────────────────────────────────── -->
+    <section id="data-models" class="section">
+      <div class="section-header">
+        <div class="section-num">09</div>
+        <h2 class="section-title">Data<br><em>Models</em></h2>
+      </div>
+
+      <div class="grid-2" style="margin-bottom:16px;">
+        <div>
+          <div class="code-header"><span>athletes — Supabase PostgreSQL</span></div>
+          <pre style="font-size:11px;"><span class="cm">-- Core athlete profile</span>
+<span class="kw">CREATE TABLE</span> <span class="cls">athletes</span> (
+  id          <span class="dec">uuid</span> <span class="kw">PRIMARY KEY</span>
+                <span class="kw">DEFAULT</span> gen_random_uuid(),
+  user_id     <span class="dec">uuid</span> <span class="kw">REFERENCES</span> auth.users,
+  name        <span class="dec">text</span> <span class="kw">NOT NULL</span>,
+  dob         <span class="dec">date</span>,
+  weight_kg   <span class="dec">numeric</span>(<span class="num">5,2</span>),
+  max_hr      <span class="dec">integer</span>,
+  ftp_watts   <span class="dec">integer</span>,
+  threshold_hr <span class="dec">integer</span>,
+  vo2max_est  <span class="dec">numeric</span>(<span class="num">4,1</span>),
+  units       <span class="dec">text</span> <span class="kw">DEFAULT</span> <span class="st">'metric'</span>,
+  created_at  <span class="dec">timestamptz</span> <span class="kw">DEFAULT</span> now()
+);</pre>
+        </div>
+
+        <div>
+          <div class="code-header"><span>workouts</span></div>
+          <pre style="font-size:11px;"><span class="kw">CREATE TABLE</span> <span class="cls">workouts</span> (
+  id          <span class="dec">uuid</span> <span class="kw">PRIMARY KEY</span>,
+  athlete_id  <span class="dec">uuid</span> <span class="kw">REFERENCES</span> athletes,
+  source      <span class="dec">text</span>,  <span class="cm">-- 'garmin'|'apple'|'whoop'</span>
+  source_id   <span class="dec">text</span>,  <span class="cm">-- external ID for dedup</span>
+  type        <span class="dec">text</span>,  <span class="cm">-- 'run'|'bike'|'strength'</span>
+  title       <span class="dec">text</span>,
+  started_at  <span class="dec">timestamptz</span> <span class="kw">NOT NULL</span>,
+  duration_s  <span class="dec">integer</span>,
+  distance_m  <span class="dec">numeric</span>,
+  tss         <span class="dec">numeric</span>(<span class="num">6,1</span>),
+  hr_avg      <span class="dec">integer</span>,
+  hr_max      <span class="dec">integer</span>,
+  power_avg   <span class="dec">integer</span>,
+  normalized_power <span class="dec">integer</span>,
+  raw_stream  <span class="dec">jsonb</span>,   <span class="cm">-- lap / stream data</span>
+  created_at  <span class="dec">timestamptz</span> <span class="kw">DEFAULT</span> now()
+);</pre>
+        </div>
+
+        <div>
+          <div class="code-header"><span>daily_metrics</span></div>
+          <pre style="font-size:11px;"><span class="kw">CREATE TABLE</span> <span class="cls">daily_metrics</span> (
+  id          <span class="dec">uuid</span> <span class="kw">PRIMARY KEY</span>,
+  athlete_id  <span class="dec">uuid</span> <span class="kw">REFERENCES</span> athletes,
+  date        <span class="dec">date</span> <span class="kw">NOT NULL</span>,
+  ctl         <span class="dec">numeric</span>(<span class="num">6,2</span>),  <span class="cm">-- Chronic Training Load</span>
+  atl         <span class="dec">numeric</span>(<span class="num">6,2</span>),  <span class="cm">-- Acute Training Load</span>
+  tsb         <span class="dec">numeric</span>(<span class="num">6,2</span>),  <span class="cm">-- Training Stress Balance</span>
+  hrv_ms      <span class="dec">numeric</span>(<span class="num">5,1</span>),  <span class="cm">-- morning HRV</span>
+  resting_hr  <span class="dec">integer</span>,
+  sleep_hrs   <span class="dec">numeric</span>(<span class="num">4,2</span>),
+  sleep_score <span class="dec">integer</span>,     <span class="cm">-- 0–100</span>
+  readiness   <span class="dec">integer</span>,     <span class="cm">-- computed 0–100</span>
+  <span class="kw">UNIQUE</span>(athlete_id, date)
+);</pre>
+        </div>
+
+        <div>
+          <div class="code-header"><span>coach_memory (pgvector)</span></div>
+          <pre style="font-size:11px;"><span class="kw">CREATE EXTENSION IF NOT EXISTS</span> vector;
+
+<span class="kw">CREATE TABLE</span> <span class="cls">coach_memory</span> (
+  id          <span class="dec">uuid</span> <span class="kw">PRIMARY KEY</span>,
+  athlete_id  <span class="dec">uuid</span> <span class="kw">REFERENCES</span> athletes,
+  content     <span class="dec">text</span>,         <span class="cm">-- coaching insight text</span>
+  embedding   <span class="dec">vector</span>(<span class="num">768</span>), <span class="cm">-- Gemini text-embedding</span>
+  source      <span class="dec">text</span>,         <span class="cm">-- 'chat'|'analysis'|'plan'</span>
+  created_at  <span class="dec">timestamptz</span>  <span class="kw">DEFAULT</span> now()
+);
+
+<span class="cm">-- HNSW index for fast similarity search</span>
+<span class="kw">CREATE INDEX</span> ON <span class="cls">coach_memory</span>
+  <span class="kw">USING</span> hnsw (embedding <span class="dec">vector_cosine_ops</span>)
+  WITH (m = <span class="num">16</span>, ef_construction = <span class="num">64</span>);</pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── SECTION 10: ALGORITHMS ────────────────────────────────────────────── -->
+    <section id="algorithms" class="section">
+      <div class="section-header">
+        <div class="section-num">10</div>
+        <h2 class="section-title">Training<br><em>Algorithms</em></h2>
+      </div>
+
+      <p style="font-size:14px; color:var(--text1); line-height:1.7; margin-bottom:24px; max-width:640px;">
+        All performance management calculations are executed server-side using vectorized NumPy operations for computational efficiency. The canonical Banister PMC (Performance Management Chart) model governs the core load calculations.
+      </p>
+
+      <!-- TSS -->
+      <div class="card" style="margin-bottom:16px;">
+        <div style="font-size:14px; font-weight:600; margin-bottom:4px;">Training Stress Score (TSS)</div>
+        <p style="font-size:12px; color:var(--text1); margin-bottom:12px; line-height:1.6;">Quantifies the physiological demand of a workout, normalized against the athlete's threshold. For cycling, NP/FTP; for running, GAP and rGradeAdjPace are used.</p>
+        <div class="formula">
+          <div class="formula-name">Cycling TSS</div>
+          TSS = (duration_sec × NP × IF) / (FTP × 3600) × 100
+        </div>
+        <div class="formula">
+          <div class="formula-name">Where IF (Intensity Factor)</div>
+          IF = NP / FTP
+        </div>
+        <div class="code-header"><span>calculator.py — NumPy Implementation</span></div>
+        <pre style="font-size:11px;"><span class="kw">import</span> numpy <span class="kw">as</span> np
+
+<span class="kw">def</span> <span class="fn">compute_normalized_power</span>(power_stream: np.ndarray) -> <span class="dec">float</span>:
+    <span class="cm">"""30-second rolling average → 4th power mean"""</span>
+    rolling = np.<span class="fn">convolve</span>(power_stream,
+                           np.<span class="fn">ones</span>(<span class="num">30</span>) / <span class="num">30</span>,
+                           mode=<span class="st">'valid'</span>)
+    <span class="kw">return</span> <span class="dec">float</span>(np.<span class="fn">mean</span>(rolling ** <span class="num">4</span>) ** <span class="num">0.25</span>)
+
+<span class="kw">def</span> <span class="fn">compute_tss</span>(duration_s: <span class="dec">int</span>, np_watts: <span class="dec">float</span>,
+                ftp: <span class="dec">int</span>) -> <span class="dec">float</span>:
+    intensity_factor = np_watts / ftp
+    <span class="kw">return</span> (duration_s * np_watts * intensity_factor) / (ftp * <span class="num">3600</span>) * <span class="num">100</span></pre>
+      </div>
+
+      <!-- CTL / ATL -->
+      <div class="card" style="margin-bottom:16px;">
+        <div style="font-size:14px; font-weight:600; margin-bottom:4px;">Chronic & Acute Training Load (CTL / ATL)</div>
+        <p style="font-size:12px; color:var(--text1); margin-bottom:12px; line-height:1.6;">Exponentially weighted moving averages of daily TSS over 42-day (CTL) and 7-day (ATL) time constants. Computed fresh each day via a vectorized array scan over the athlete's full workout history.</p>
+        <div class="formula">
+          <div class="formula-name">CTL (Fitness) — τ = 42 days</div>
+          CTL_n = CTL_{n-1} + (TSS_n - CTL_{n-1}) × (1 - e^(-1/42))
+        </div>
+        <div class="formula">
+          <div class="formula-name">ATL (Fatigue) — τ = 7 days</div>
+          ATL_n = ATL_{n-1} + (TSS_n - ATL_{n-1}) × (1 - e^(-1/7))
+        </div>
+        <div class="formula">
+          <div class="formula-name">TSB (Form)</div>
+          TSB_n = CTL_{n-1} - ATL_{n-1}
+        </div>
+        <div class="code-header"><span>Vectorized CTL/ATL computation</span></div>
+        <pre style="font-size:11px;"><span class="kw">def</span> <span class="fn">compute_pmc</span>(tss_series: np.ndarray,
+                 ctl_tau: <span class="dec">int</span> = <span class="num">42</span>,
+                 atl_tau: <span class="dec">int</span> = <span class="num">7</span>) -> <span class="dec">dict</span>:
+    n = <span class="fn">len</span>(tss_series)
+    ctl = np.<span class="fn">zeros</span>(n)
+    atl = np.<span class="fn">zeros</span>(n)
+
+    k_ctl = <span class="num">1</span> - np.<span class="fn">exp</span>(-<span class="num">1</span> / ctl_tau)
+    k_atl = <span class="num">1</span> - np.<span class="fn">exp</span>(-<span class="num">1</span> / atl_tau)
+
+    <span class="kw">for</span> i <span class="kw">in</span> <span class="fn">range</span>(<span class="num">1</span>, n):
+        ctl[i] = ctl[i-<span class="num">1</span>] + (tss_series[i] - ctl[i-<span class="num">1</span>]) * k_ctl
+        atl[i] = atl[i-<span class="num">1</span>] + (tss_series[i] - atl[i-<span class="num">1</span>]) * k_atl
+
+    tsb = np.<span class="fn">roll</span>(ctl, <span class="num">1</span>) - np.<span class="fn">roll</span>(atl, <span class="num">1</span>)
+    <span class="kw">return</span> {<span class="st">"ctl"</span>: ctl, <span class="st">"atl"</span>: atl, <span class="st">"tsb"</span>: tsb}</pre>
+      </div>
+
+      <!-- Readiness -->
+      <div class="card">
+        <div style="font-size:14px; font-weight:600; margin-bottom:4px;">Readiness Score</div>
+        <p style="font-size:12px; color:var(--text1); margin-bottom:12px; line-height:1.6;">A composite 0–100 score combining TSB, HRV deviation from baseline, resting HR, and sleep quality. Weights are configurable per athlete via profile settings.</p>
+        <div class="formula">
+          <div class="formula-name">Readiness — weighted composite</div>
+          R = 0.35·(TSB_norm) + 0.30·(HRV_norm) + 0.20·(sleep_norm) + 0.15·(rHR_norm)
+        </div>
+        <p style="font-size:12px; color:var(--text1); margin-top:10px; line-height:1.6;">Each component is normalized 0–100 against a rolling 28-day baseline window. TSB is clamped to the range [-40, +40] before normalization.</p>
+      </div>
+    </section>
+
+    <!-- ─── SECTION 11: AI COACH ──────────────────────────────────────────────── -->
+    <section id="ai-coach" class="section">
+      <div class="section-header">
+        <div class="section-num">11</div>
+        <h2 class="section-title">AI Coach<br><em>— APEX</em></h2>
+      </div>
+
+      <p style="font-size:14px; color:var(--text1); line-height:1.7; margin-bottom:24px; max-width:640px;">
+        APEX is an autonomous AI coaching agent powered by Google Gemini 2.5 Pro. It operates via a physiological context injection pipeline — every conversation turn is prefixed with a machine-generated state snapshot of the athlete's current training and recovery status.
+      </p>
+
+      <div class="card" style="margin-bottom:16px;">
+        <div style="font-size:13px; font-weight:600; margin-bottom:14px;">APEX Coaching Persona</div>
+        <div class="grid-2">
+          <div>
+            <div style="font-family:var(--mono); font-size:9px; color:var(--text2); letter-spacing:0.1em; text-transform:uppercase; margin-bottom:8px;">Core Character</div>
+            <ul style="list-style:none; display:flex; flex-direction:column; gap:6px;">
+              <li style="font-size:12px; color:var(--text1); display:flex; gap:8px;"><span style="color:var(--blue-light);">→</span> Data-driven, evidence-based</li>
+              <li style="font-size:12px; color:var(--text1); display:flex; gap:8px;"><span style="color:var(--blue-light);">→</span> Concise (2–3 sentence responses)</li>
+              <li style="font-size:12px; color:var(--text1); display:flex; gap:8px;"><span style="color:var(--blue-light);">→</span> References specific metrics by name</li>
+              <li style="font-size:12px; color:var(--text1); display:flex; gap:8px;"><span style="color:var(--blue-light);">→</span> Motivating but scientifically honest</li>
+            </ul>
+          </div>
+          <div>
+            <div style="font-family:var(--mono); font-size:9px; color:var(--text2); letter-spacing:0.1em; text-transform:uppercase; margin-bottom:8px;">Personality Modes</div>
+            <div style="display:flex; flex-wrap:wrap; gap:6px;">
+              <span class="tag tag-blue">Analytical</span>
+              <span class="tag tag-teal">Motivational</span>
+              <span class="tag tag-amber">Gentle</span>
+              <span class="tag tag-red">Tough Love</span>
+            </div>
+            <p style="font-size:11px; color:var(--text2); margin-top:8px;">Configurable per athlete in Profile settings. Injected as a system-level persona directive.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="flow-steps">
+        <div class="flow-step">
+          <div class="flow-step-line"></div>
+          <div class="flow-step-num">1</div>
+          <div class="flow-step-content">
+            <div class="flow-step-title">User sends message</div>
+            <div class="flow-step-desc">The Svelte chat UI POSTs <code>{message, conversation_id}</code> to <code>POST /api/v1/coach/chat</code>. Connection is immediately upgraded to SSE for streaming.</div>
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="flow-step-line"></div>
+          <div class="flow-step-num">2</div>
+          <div class="flow-step-content">
+            <div class="flow-step-title">Context injection</div>
+            <div class="flow-step-desc">FastAPI fetches the athlete's current <code>daily_metrics</code> row and last 3 workouts from Supabase. This is serialized into a structured state block prepended to the Gemini system instruction.</div>
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="flow-step-line"></div>
+          <div class="flow-step-num">3</div>
+          <div class="flow-step-content">
+            <div class="flow-step-title">RAG memory retrieval</div>
+            <div class="flow-step-desc">The user's message is embedded via Gemini text-embedding and queried against <code>coach_memory</code> using pgvector cosine similarity. Top-3 retrieved memories are appended to the context.</div>
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="flow-step-line"></div>
+          <div class="flow-step-num">4</div>
+          <div class="flow-step-content">
+            <div class="flow-step-title">Gemini 2.5 Pro inference</div>
+            <div class="flow-step-desc">The enriched prompt is submitted to Gemini 2.5 Pro via the google-genai SDK with <code>stream=True</code>. Tokens are forwarded directly to the SSE response as they arrive.</div>
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="flow-step-num">5</div>
+          <div class="flow-step-content">
+            <div class="flow-step-title">Memory persistence</div>
+            <div class="flow-step-desc">After response completion, the AI's reply is embedded and upserted into <code>coach_memory</code>, building the athlete's long-term coaching context over time.</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── SECTION 12: GEMINI ─────────────────────────────────────────────────── -->
+    <section id="gemini" class="section">
+      <div class="section-header">
+        <div class="section-num">12</div>
+        <h2 class="section-title">Gemini 2.5 Pro<br><em>Integration</em></h2>
+      </div>
+
+      <div class="code-header">
+        <span>coach/gemini_client.py</span>
+        <span class="tag tag-amber">PYTHON</span>
+      </div>
+      <pre><span class="kw">import</span> google.generativeai <span class="kw">as</span> genai
+<span class="kw">from</span> google.genai <span class="kw">import</span> <span class="cls">Client</span>
+
+client = <span class="cls">Client</span>()  <span class="cm"># uses GOOGLE_API_KEY env var</span>
+
+<span class="kw">def</span> <span class="fn">build_system_instruction</span>(athlete, metrics, memory) -> <span class="dec">str</span>:
+    <span class="kw">return</span> <span class="st">f"""You are APEX, an elite AI endurance coach.
+Personality: {athlete.coach_personality}
+
+## Athlete State — {metrics.date}
+- Name: {athlete.name} | Location: {athlete.location}
+- CTL: {metrics.ctl:.1f} | ATL: {metrics.atl:.1f} | TSB: {metrics.tsb:+.1f}
+- HRV: {metrics.hrv_ms:.0f}ms (baseline {metrics.hrv_baseline:.0f}, trend {metrics.hrv_trend:+.0f})
+- Sleep: {metrics.sleep_hrs:.1f}h | Score: {metrics.sleep_score}/100
+- Resting HR: {metrics.resting_hr}bpm
+- Readiness: {metrics.readiness}/100
+
+## Recent Activity (last 3 workouts)
+{metrics.recent_workouts_summary}
+
+## Long-term Memory
+{memory}
+
+## Coaching Rules
+- Be concise: 2–3 sentences unless asked for detail
+- Always reference specific data points by name and value
+- Flag overtraining risk when TSB &lt; -25
+- Recommend rest when HRV drops &gt;15% below baseline
+- Target TSB between -5 and +10 for key sessions"""</span>
+
+<span class="kw">async def</span> <span class="fn">stream_response</span>(system: <span class="dec">str</span>, history: <span class="dec">list</span>, message: <span class="dec">str</span>):
+    <span class="kw">async for</span> chunk <span class="kw">in</span> client.aio.models.<span class="fn">generate_content_stream</span>(
+        model=<span class="st">"gemini-2.5-pro"</span>,
+        contents=history + [message],
+        config=genai.<span class="cls">GenerateContentConfig</span>(
+            system_instruction=system,
+            temperature=<span class="num">0.7</span>,
+            max_output_tokens=<span class="num">512</span>,
+            safety_settings=[...]
+        )
+    ):
+        <span class="kw">yield</span> chunk.text</pre>
+
+      <!-- Function Calling -->
+      <div style="margin-top:20px;">
+        <div class="code-header">
+          <span>Function Calling Tools</span>
+          <span class="tag tag-amber">GEMINI</span>
+        </div>
+        <pre><span class="cm"># Gemini function calling tools — structured data retrieval</span>
+
+get_training_load = genai.<span class="cls">Tool</span>(
+    function_declarations=[
+        genai.<span class="cls">FunctionDeclaration</span>(
+            name=<span class="st">"get_training_load"</span>,
+            description=<span class="st">"Fetch CTL/ATL/TSB for a date range"</span>,
+            parameters=genai.<span class="cls">Schema</span>(
+                type=genai.<span class="cls">Type</span>.OBJECT,
+                properties={
+                    <span class="st">"days"</span>: genai.<span class="cls">Schema</span>(type=genai.<span class="cls">Type</span>.INTEGER,
+                                            description=<span class="st">"lookback window"</span>),
+                }
+            )
+        ),
+        genai.<span class="cls">FunctionDeclaration</span>(
+            name=<span class="st">"get_next_race"</span>,
+            description=<span class="st">"Get upcoming target race details"</span>,
+            parameters=genai.<span class="cls">Schema</span>(type=genai.<span class="cls">Type</span>.OBJECT, properties={})
+        ),
+        genai.<span class="cls">FunctionDeclaration</span>(
+            name=<span class="st">"get_zone_distribution"</span>,
+            description=<span class="st">"Get HR zone % breakdown for last N days"</span>,
+            parameters=genai.<span class="cls">Schema</span>(
+                type=genai.<span class="cls">Type</span>.OBJECT,
+                properties={
+                    <span class="st">"days"</span>: genai.<span class="cls">Schema</span>(type=genai.<span class="cls">Type</span>.INTEGER)
+                }
+            )
+        ),
+    ]
+)</pre>
+      </div>
+
+      <div class="note note-info" style="margin-top:16px;">
+        <strong>Model Choice: Gemini 2.5 Pro.</strong> Gemini 2.5 Pro is selected over alternatives for three reasons: (1) its 1M-token context window allows injecting long workout histories without truncation; (2) native function calling with structured JSON schemas; and (3) Google Cloud-native deployment aligns with Cloud Run infra, reducing egress costs.
+      </div>
+    </section>
+
+    <!-- ─── SECTION 13: RAG ───────────────────────────────────────────────────── -->
+    <section id="rag" class="section">
+      <div class="section-header">
+        <div class="section-num">13</div>
+        <h2 class="section-title">RAG<br><em>Pipeline</em></h2>
+      </div>
+
+      <div class="grid-2" style="margin-bottom:16px;">
+        <div class="card">
+          <div style="font-size:13px; font-weight:600; margin-bottom:10px;">Embedding Model</div>
+          <p style="font-size:12px; color:var(--text1); line-height:1.6; margin-bottom:10px;">All text is embedded using <code>models/text-embedding-004</code> (768 dimensions), Gemini's production embedding model. Embeddings are stored in pgvector's <code>vector(768)</code> column type.</p>
+          <div class="formula">
+            <div class="formula-name">Similarity query</div>
+            embedding &lt;=&gt; query_vec
+            ORDER BY LIMIT 3
+          </div>
+        </div>
+        <div class="card">
+          <div style="font-size:13px; font-weight:600; margin-bottom:10px;">What Gets Stored</div>
+          <ul style="list-style:none; display:flex; flex-direction:column; gap:8px; margin-top:4px;">
+            <li style="font-size:12px; color:var(--text1); display:flex; gap:8px;"><span style="color:var(--teal);">◆</span> Key coaching recommendations</li>
+            <li style="font-size:12px; color:var(--text1); display:flex; gap:8px;"><span style="color:var(--teal);">◆</span> Athlete injury/limitation disclosures</li>
+            <li style="font-size:12px; color:var(--text1); display:flex; gap:8px;"><span style="color:var(--teal);">◆</span> Goal declarations and race targets</li>
+            <li style="font-size:12px; color:var(--text1); display:flex; gap:8px;"><span style="color:var(--teal);">◆</span> Training preferences (early/late, indoor/outdoor)</li>
+            <li style="font-size:12px; color:var(--text1); display:flex; gap:8px;"><span style="color:var(--teal);">◆</span> Significant physiological response patterns</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="code-header"><span>rag/retriever.py</span></div>
+      <pre><span class="kw">async def</span> <span class="fn">retrieve_context</span>(
+    athlete_id: <span class="dec">str</span>, query: <span class="dec">str</span>, top_k: <span class="dec">int</span> = <span class="num">3</span>
+) -> <span class="dec">str</span>:
+    <span class="cm"># Embed the user's query</span>
+    result = <span class="kw">await</span> genai_client.aio.<span class="fn">embed_content</span>(
+        model=<span class="st">"models/text-embedding-004"</span>,
+        content=query,
+    )
+    q_embedding = result.embedding
+
+    <span class="cm"># pgvector cosine similarity search</span>
+    rows = <span class="kw">await</span> supabase_client.<span class="fn">rpc</span>(
+        <span class="st">"match_coach_memory"</span>,
+        {
+            <span class="st">"athlete_id"</span>: athlete_id,
+            <span class="st">"query_embedding"</span>: q_embedding,
+            <span class="st">"match_threshold"</span>: <span class="num">0.75</span>,
+            <span class="st">"match_count"</span>: top_k,
+        },
+    ).<span class="fn">execute</span>()
+
+    <span class="kw">if not</span> rows.data:
+        <span class="kw">return</span> <span class="st">"No relevant coaching history found."</span>
+
+    <span class="kw">return</span> <span class="st">"\n"</span>.<span class="fn">join</span>([r[<span class="st">"content"</span>] <span class="kw">for</span> r <span class="kw">in</span> rows.data])</pre>
+    </section>
+
+    <!-- ─── SECTION 14: INTEGRATIONS ──────────────────────────────────────────── -->
+    <section id="integrations" class="section">
+      <div class="section-header">
+        <div class="section-num">14</div>
+        <h2 class="section-title">External<br><em>Integrations</em></h2>
+      </div>
+
+      <div style="display:flex; flex-direction:column; gap:16px;">
+
+        <div class="card">
+          <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px;">
+            <span style="font-size:24px;">🍎</span>
+            <div>
+              <div style="font-size:14px; font-weight:600;">Apple HealthKit</div>
+              <span class="tag tag-teal" style="margin-top:4px; display:inline-flex;">NATIVE · NO OAUTH</span>
+            </div>
+          </div>
+          <p style="font-size:12px; color:var(--text1); line-height:1.6; margin-bottom:10px;">Accessed directly via Capacitor's HealthKit plugin on the iOS device. No server-side OAuth required. Background delivery enabled for HRQ, HRV, sleep, and workout types. Data is synced to the APEX backend via an authenticated <code>POST /api/v1/sync/healthkit</code> call from the background runner.</p>
+          <div style="display:flex; flex-wrap:wrap; gap:6px;">
+            <span class="tag tag-blue">HKQuantityTypeIdentifierHeartRate</span>
+            <span class="tag tag-blue">HKQuantityTypeIdentifierHRVSDNN</span>
+            <span class="tag tag-blue">HKCategoryTypeIdentifierSleepAnalysis</span>
+            <span class="tag tag-blue">HKWorkoutTypeIdentifier</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px;">
+            <span style="font-size:24px;">⌚</span>
+            <div>
+              <div style="font-size:14px; font-weight:600;">Garmin Connect</div>
+              <span class="tag tag-amber" style="margin-top:4px; display:inline-flex;">ENTERPRISE OAUTH 2.0</span>
+            </div>
+          </div>
+          <p style="font-size:12px; color:var(--text1); line-height:1.6; margin-bottom:10px;">Accessed via Garmin Health API with OAuth 2.0 PKCE. Garmin pushes activity, sleep, and stress data via webhook to <code>POST /webhooks/garmin</code>. HMAC-SHA256 verification required. Access to Garmin's Health API requires enterprise registration — initiate the application process during project inception.</p>
+          <div class="note note-danger" style="margin:0;">
+            <strong>⚠ Enterprise Approval Required.</strong> Garmin Health API is not a public API. Application review takes 8–16 weeks. Submit the commercial application and data governance documentation during project inception to prevent deployment delays.
+          </div>
+        </div>
+
+        <div class="card">
+          <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px;">
+            <span style="font-size:24px;">🔴</span>
+            <div>
+              <div style="font-size:14px; font-weight:600;">WHOOP</div>
+              <span class="tag tag-blue" style="margin-top:4px; display:inline-flex;">OAUTH 2.0 PUBLIC API</span>
+            </div>
+          </div>
+          <p style="font-size:12px; color:var(--text1); line-height:1.6;">WHOOP provides a public REST API with OAuth 2.0. APEX requests scopes: <code>read:recovery read:sleep read:workout read:cycle read:body_measurement</code>. Webhook subscriptions for real-time cycle updates. Recovery score, strain, and sleep stage data feed directly into the Readiness Score computation.</p>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ─── SECTION 15: DEPLOYMENT ────────────────────────────────────────────── -->
+    <section id="deployment" class="section">
+      <div class="section-header">
+        <div class="section-num">15</div>
+        <h2 class="section-title">Deployment<br><em>& Infrastructure</em></h2>
+      </div>
+
+      <div class="grid-2" style="margin-bottom:16px;">
+        <div class="card">
+          <div style="font-size:13px; font-weight:600; margin-bottom:12px;">Docker Container</div>
+          <div class="code-header"><span>Dockerfile</span></div>
+          <pre style="font-size:11px;"><span class="kw">FROM</span> python:<span class="num">3.12</span>-slim
+
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+<span class="cm"># Cloud Run requires PORT env var</span>
+<span class="kw">ENV</span> PORT=<span class="num">8080</span>
+<span class="kw">EXPOSE</span> <span class="num">8080</span>
+
+<span class="kw">CMD</span> [<span class="st">"uvicorn"</span>, <span class="st">"main:app"</span>,
+     <span class="st">"--host"</span>, <span class="st">"0.0.0.0"</span>,
+     <span class="st">"--port"</span>, <span class="st">"8080"</span>,
+     <span class="st">"--workers"</span>, <span class="st">"2"</span>]</pre>
+        </div>
+
+        <div class="card">
+          <div style="font-size:13px; font-weight:600; margin-bottom:12px;">Cloud Run Config</div>
+          <div class="code-header"><span>clouddeploy.yaml</span></div>
+          <pre style="font-size:11px;">service: apex-backend
+region: europe-west1
+memory: <span class="num">1Gi</span>
+cpu: <span class="num">2</span>
+minInstances: <span class="num">0</span>  <span class="cm"># scale to zero</span>
+maxInstances: <span class="num">50</span>
+concurrency: <span class="num">80</span>
+timeout: <span class="num">30</span>s
+
+env:
+  - name: <span class="cls">GOOGLE_API_KEY</span>
+    valueFrom: secretManager/apex-gemini-key
+  - name: <span class="cls">SUPABASE_URL</span>
+    valueFrom: secretManager/apex-supabase-url
+  - name: <span class="cls">SUPABASE_SERVICE_KEY</span>
+    valueFrom: secretManager/apex-supabase-key</pre>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:16px;">
+        <div style="font-size:13px; font-weight:600; margin-bottom:14px;">Infrastructure Map</div>
+        <div class="grid-3">
+          <div>
+            <div style="font-family:var(--mono); font-size:9px; color:var(--blue-light); letter-spacing:0.1em; text-transform:uppercase; margin-bottom:8px;">Compute</div>
+            <div class="metric-card">
+              <div class="metric-label">Service</div>
+              <div class="metric-value" style="font-size:16px;">Cloud Run</div>
+              <div class="metric-sub">Auto-scales 0→50 instances</div>
+            </div>
+          </div>
+          <div>
+            <div style="font-family:var(--mono); font-size:9px; color:var(--teal); letter-spacing:0.1em; text-transform:uppercase; margin-bottom:8px;">Database</div>
+            <div class="metric-card">
+              <div class="metric-label">Service</div>
+              <div class="metric-value" style="font-size:16px;">Supabase</div>
+              <div class="metric-sub">PostgreSQL + pgvector</div>
+            </div>
+          </div>
+          <div>
+            <div style="font-family:var(--mono); font-size:9px; color:var(--amber); letter-spacing:0.1em; text-transform:uppercase; margin-bottom:8px;">AI</div>
+            <div class="metric-card">
+              <div class="metric-label">Service</div>
+              <div class="metric-value" style="font-size:16px;">Gemini</div>
+              <div class="metric-sub">2.5 Pro + text-embedding-004</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div style="font-size:13px; font-weight:600; margin-bottom:14px;">Release Timeline</div>
+        <div class="timeline">
+          <div class="timeline-item">
+            <div class="timeline-item-label">Phase 0 · Week 1–2</div>
+            <div class="timeline-item-title">Foundation</div>
+            <div class="timeline-item-desc">Supabase schema, FastAPI scaffold, Svelte 5 project init, Capacitor setup. Initiate Garmin enterprise API application.</div>
+          </div>
+          <div class="timeline-item">
+            <div class="timeline-item-label">Phase 1 · Week 3–6</div>
+            <div class="timeline-item-title">Core Data Pipeline</div>
+            <div class="timeline-item-desc">Apple HealthKit native integration, WHOOP OAuth flow, TSS/CTL/ATL computation layer, PostgreSQL schema and daily_metrics backfill.</div>
+          </div>
+          <div class="timeline-item">
+            <div class="timeline-item-label">Phase 2 · Week 7–10</div>
+            <div class="timeline-item-title">UI & Visualisation</div>
+            <div class="timeline-item-desc">All 7 screens, LayerChart visualizations, Spectral design system, component library, dark-mode glassmorphism tokens.</div>
+          </div>
+          <div class="timeline-item">
+            <div class="timeline-item-label">Phase 3 · Week 11–13</div>
+            <div class="timeline-item-title">AI Coach Integration</div>
+            <div class="timeline-item-desc">Gemini 2.5 Pro integration, RAG pipeline with pgvector, function calling tools, SSE streaming, memory persistence.</div>
+          </div>
+          <div class="timeline-item">
+            <div class="timeline-item-label">Phase 4 · Week 14–16</div>
+            <div class="timeline-item-title">TestFlight & Launch</div>
+            <div class="timeline-item-desc">Beta via TestFlight, App Store submission, Garmin API integration (pending enterprise approval), performance profiling, security audit.</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── SECTION 16: SECURITY ──────────────────────────────────────────────── -->
+    <section id="security" class="section">
+      <div class="section-header">
+        <div class="section-num">16</div>
+        <h2 class="section-title">Security &<br><em>Compliance</em></h2>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div style="font-size:13px; font-weight:600; margin-bottom:12px;">Authentication</div>
+          <div class="flow-steps">
+            <div class="flow-step" style="padding-bottom:14px;">
+              <div class="flow-step-line"></div>
+              <div class="flow-step-num" style="width:24px;height:24px;font-size:9px;">1</div>
+              <div class="flow-step-content" style="padding-bottom:14px;">
+                <div class="flow-step-title" style="font-size:12px;">Supabase Auth (JWT)</div>
+                <div class="flow-step-desc" style="font-size:11px;">All API routes validate <code>Authorization: Bearer &lt;jwt&gt;</code>. Row-level security policies ensure athletes can only access their own data.</div>
+              </div>
+            </div>
+            <div class="flow-step" style="padding-bottom:14px;">
+              <div class="flow-step-line"></div>
+              <div class="flow-step-num" style="width:24px;height:24px;font-size:9px;">2</div>
+              <div class="flow-step-content" style="padding-bottom:14px;">
+                <div class="flow-step-title" style="font-size:12px;">OAuth 2.0 PKCE</div>
+                <div class="flow-step-desc" style="font-size:11px;">Garmin and WHOOP tokens stored encrypted in Supabase vault. Refresh token rotation enforced. Never stored client-side.</div>
+              </div>
+            </div>
+            <div class="flow-step">
+              <div class="flow-step-num" style="width:24px;height:24px;font-size:9px;">3</div>
+              <div class="flow-step-content">
+                <div class="flow-step-title" style="font-size:12px;">Webhook HMAC Verification</div>
+                <div class="flow-step-desc" style="font-size:11px;">All inbound webhooks from Garmin and WHOOP verify HMAC-SHA256 signatures before processing. Requests without valid signatures return 401.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div style="font-size:13px; font-weight:600; margin-bottom:12px;">Data Privacy</div>
+          <ul style="list-style:none; display:flex; flex-direction:column; gap:10px;">
+            <li style="font-size:12px; color:var(--text1); line-height:1.55; display:flex; gap:8px; padding-bottom:10px; border-bottom:1px solid var(--border);">
+              <span style="color:var(--teal); flex-shrink:0; margin-top:2px;">◆</span>
+              <span><strong>Data minimization.</strong> Only data required for coaching functionality is collected. Raw GPS streams are retained for 90 days then deleted.</span>
+            </li>
+            <li style="font-size:12px; color:var(--text1); line-height:1.55; display:flex; gap:8px; padding-bottom:10px; border-bottom:1px solid var(--border);">
+              <span style="color:var(--teal); flex-shrink:0; margin-top:2px;">◆</span>
+              <span><strong>Encryption at rest.</strong> All Supabase data encrypted with AES-256. Sensitive fields (tokens, HRV data) additionally encrypted at the application layer.</span>
+            </li>
+            <li style="font-size:12px; color:var(--text1); line-height:1.55; display:flex; gap:8px; padding-bottom:10px; border-bottom:1px solid var(--border);">
+              <span style="color:var(--teal); flex-shrink:0; margin-top:2px;">◆</span>
+              <span><strong>GDPR/CCPA.</strong> Full data export (<code>GET /api/v1/athlete/me/export</code>) and deletion (<code>DELETE /api/v1/athlete/me</code>) endpoints. Cascades to all related tables and vector memory.</span>
+            </li>
+            <li style="font-size:12px; color:var(--text1); line-height:1.55; display:flex; gap:8px;">
+              <span style="color:var(--teal); flex-shrink:0; margin-top:2px;">◆</span>
+              <span><strong>HealthKit compliance.</strong> HealthKit data is never used for advertising. Usage strings are declared in <code>Info.plist</code> per Apple guidelines. Required for App Store approval.</span>
+            </li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="note note-danger" style="margin-top:16px;">
+        <strong>Health Data Classification.</strong> HRV, heart rate, sleep, and HealthKit data are classified as sensitive health data under GDPR Article 9 and CCPA. A Data Processing Agreement (DPA) must be in place before storing this data in any third-party cloud service, including Supabase and Google Cloud.
+      </div>
+    </section>
+
+  </div>
+
+  <!-- FOOTER -->
+  <div class="doc-footer">
+    <div class="footer-left">© 2026 APEX COACHING PLATFORM · v2.1.0 · CONFIDENTIAL</div>
+    <div class="footer-right">
+      <a href="#intro" class="footer-link">TOP ↑</a>
+      <a href="#api" class="footer-link">API REF</a>
+      <a href="#architecture" class="footer-link">ARCHITECTURE</a>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// Sidebar active link highlighting
+const links = document.querySelectorAll('.sidebar-link');
+const sections = document.querySelectorAll('section[id]');
+
+const observer = new IntersectionObserver((entries) => {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) {
+      const id = entry.target.id;
+      links.forEach(l => {
+        l.classList.toggle('active', l.getAttribute('href') === '#' + id);
+      });
+    }
+  });
+}, { rootMargin: '-30% 0px -60% 0px' });
+
+sections.forEach(s => observer.observe(s));
+</script>
+
+</body>
+</html>
