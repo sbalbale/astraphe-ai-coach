@@ -1,44 +1,39 @@
 import google.generativeai as genai
 from app.config import settings
+import json
+from datetime import date
+from supabase import Client
 
-# Configure Gemini using centralized settings
 genai.configure(api_key=settings.GEMINI_API_KEY)
-model = genai.GenerativeModel(settings.GEMINI_MODEL)
+
+def get_embedding_model_name() -> str:
+    embedding_model = settings.GEMINI_EMBEDDING_MODEL
+    return embedding_model if embedding_model.startswith("models/") else f"models/{embedding_model}"
 
 def load_coach_instructions() -> str:
-    """
-    Reads the AI's persona and rules from the markdown file.
-    Uses the directory defined in config.py.
-    """
     prompt_file = settings.PROMPTS_DIR / settings.COACH_PROMPT_FILE
-    
     try:
         with open(prompt_file, "r", encoding="utf-8") as f:
             return f.read()
     except FileNotFoundError:
-        # Fallback to a basic instruction if the .md file is missing
         return "You are ASTRAPE, an elite, data-driven performance coach."
 
+async def retrieve_relevant_memories(athlete_id: str, query: str, db: Client, top_k: int = 5) -> list[dict]:
+    embedding_model = genai.embed_content(
+        model=get_embedding_model_name(),
+        content=query,
+        task_type="retrieval_query",
+    )
+    query_embedding = embedding_model["embedding"]
+    result = db.rpc("match_coach_memories", {
+        "athlete_id": athlete_id, "query_embedding": query_embedding, "match_threshold": 0.75, "match_count": top_k
+    }).execute()
+    return result.data
+
 def get_coach_response(athlete_id: str, message: str, current_tss: float = 0.0) -> str:
-    """
-    Sends the athlete's message to Gemini, augmented with physiological data
-    and dynamically loaded instructions.
-    """
-    # 1. Load the "Brain" of the coach
     system_instruction = load_coach_instructions()
-    
-    # 2. Assemble the dynamic context block
-    context_block = f"""
-    [SYSTEM CONTEXT - DO NOT SHOW TO USER]
-    Athlete ID: {athlete_id}
-    Most recent workout TSS: {current_tss}
-    [END CONTEXT]
-    """
-    
-    # 3. Combine rules, data, and the athlete's message
+    context_block = f"[SYSTEM CONTEXT - DO NOT SHOW TO USER]\nAthlete ID: {athlete_id}\nMost recent workout TSS: {current_tss}\n[END CONTEXT]"
     final_prompt = f"{system_instruction}\n\n{context_block}\n\nAthlete Message: {message}"
-    
-    # 4. Generate the response
+    model = genai.GenerativeModel(settings.GEMINI_MODEL)
     response = model.generate_content(final_prompt)
-    
     return response.text
