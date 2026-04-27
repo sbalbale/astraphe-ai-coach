@@ -6,19 +6,46 @@
   import RadialProgress from '$lib/components/RadialProgress.svelte';
   import LineChart from '$lib/components/charts/LineChart.svelte';
 
-  let night = $state(0);
+  import { athleteStore } from '$lib/stores/athleteStore.svelte';
+  import { format, parseISO } from 'date-fns';
 
-  const nights = [
-    { date: 'Last Night', label: 'Apr 25–26', score: 94, duration: 7.5, quality: 'Excellent', bedtime: '10:42 PM', wakeup: '6:12 AM', deep: 22, rem: 24, light: 46, awake: 8, hr: 52, hrv: 78 },
-    { date: 'Apr 24–25', label: 'Apr 24–25', score: 81, duration: 8.2, quality: 'Good', bedtime: '10:18 PM', wakeup: '6:30 AM', deep: 19, rem: 21, light: 52, awake: 8, hr: 54, hrv: 72 },
-    { date: 'Apr 23–24', label: 'Apr 23–24', score: 68, duration: 6.8, quality: 'Fair', bedtime: '11:45 PM', wakeup: '6:35 AM', deep: 14, rem: 18, light: 58, awake: 10, hr: 57, hrv: 64 },
-    { date: 'Apr 22–23', label: 'Apr 22–23', score: 88, duration: 7.8, quality: 'Good', bedtime: '10:55 PM', wakeup: '6:45 AM', deep: 21, rem: 23, light: 48, awake: 8, hr: 53, hrv: 70 },
-  ];
+  let nightIndex = $state(0);
 
-  let n = $derived(nights[night]);
-  const scoreHistory = [72, 85, 65, 91, 68, 81, 94];
-  const durationHistory = [6.8, 7.4, 5.9, 8.0, 6.8, 8.2, 7.5];
-  const weekDays = ['M','T','W','T','F','S','S'];
+  // Map biometrics to nights array
+  let nights = $derived.by(() => {
+    if (!athleteStore.biometrics?.series || athleteStore.biometrics.series.length === 0) {
+      return [{ 
+        date: 'No Data', label: '-', score: 0, duration: 0, quality: 'N/A', 
+        bedtime: '-', wakeup: '-', deep: 0, rem: 0, light: 0, awake: 0, hr: 0, hrv: 0 
+      }];
+    }
+    
+    // Sort by date descending and take latest 7
+    return [...athleteStore.biometrics.series]
+      .reverse()
+      .slice(0, 7)
+      .map(b => ({
+        date: b.date === format(new Date(), 'yyyy-MM-dd') ? 'Last Night' : format(parseISO(b.date), 'MMM d'),
+        label: format(parseISO(b.date), 'MMM d'),
+        score: b.sleep_score || 0,
+        duration: b.sleep_duration_min ? Math.round((b.sleep_duration_min / 60) * 10) / 10 : 0,
+        quality: (b.sleep_score || 0) >= 85 ? 'Excellent' : (b.sleep_score || 0) >= 70 ? 'Good' : 'Fair',
+        bedtime: b.sleep_bedtime ? format(parseISO(b.sleep_bedtime), 'h:mm a') : 'N/A',
+        wakeup: b.sleep_wakeup ? format(parseISO(b.sleep_wakeup), 'h:mm a') : 'N/A',
+        deep: b.sleep_deep_pct || 0,
+        rem: b.sleep_rem_pct || 0,
+        light: b.sleep_light_pct || 0,
+        awake: b.sleep_awake_pct || 0,
+        hr: b.resting_hr || 0,
+        hrv: b.hrv_rmssd || 0
+      }));
+  });
+
+  let n = $derived(nights[nightIndex] || nights[0]);
+  
+  let scoreHistory = $derived(nights.map(nt => nt.score).reverse());
+  let durationHistory = $derived(nights.map(nt => nt.duration).reverse());
+  let weekDays = $derived(nights.map(nt => nt.label.split(' ')[0]).reverse());
 
   const stageColors: Record<string, string> = { deep: '#4621FF', rem: '#00C8A8', light: '#FFCB88', awake: '#F07178' };
 
@@ -39,14 +66,14 @@
   <!-- Night selector -->
   <div class="flex gap-1.5 overflow-x-auto pb-0.5 shrink-0">
     {#each nights as nt, i}
-      <Pill active={night === i} onclick={() => night = i}>
+      <Pill active={nightIndex === i} onclick={() => nightIndex = i}>
         {nt.date}
       </Pill>
     {/each}
   </div>
 
   <!-- Score card -->
-  <Card style="background: {night === 0 ? 'linear-gradient(135deg, rgba(70,33,255,0.15), rgba(0,200,168,0.08))' : 'var(--glass)'}; border-color: {night === 0 ? 'rgba(70,33,255,0.25)' : 'var(--border)'}">
+  <Card style="background: {nightIndex === 0 ? 'linear-gradient(135deg, rgba(70,33,255,0.15), rgba(0,200,168,0.08))' : 'var(--glass)'}; border-color: {nightIndex === 0 ? 'rgba(70,33,255,0.25)' : 'var(--border)'}">
     <div class="flex items-center gap-4">
       <RadialProgress value={n.score} max={100} size={72} color={scoreColor} label={n.score.toString()} sub="SLEEP" />
       <div class="flex-1">

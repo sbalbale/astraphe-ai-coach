@@ -1,15 +1,21 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from app.models.workout import WorkoutPayload
 from app.services.algorithms import calculate_cycling_tss
+from app.services.processing import process_and_save_workout
 from app.dependencies import get_current_athlete, get_db
 
 router = APIRouter(prefix="/v1/workouts", tags=["Workouts"])
 
 @router.post("")
-async def ingest_workout(payload: WorkoutPayload, athlete_id: str = Depends(get_current_athlete), db = Depends(get_db)):
-    """Ingest a new workout"""
-    # Calculation & persistence logic goes here
-    return {"id": "uuid-placeholder", "tss": 38.2, "if_value": 0.71, "message": "Workout ingested."}
+async def ingest_workout(
+    payload: WorkoutPayload, 
+    background_tasks: BackgroundTasks, 
+    athlete_id: str = Depends(get_current_athlete), 
+    db = Depends(get_db)
+):
+    """Ingest a new workout and calculate analysis in the background."""
+    background_tasks.add_task(process_and_save_workout, payload, athlete_id, db)
+    return {"status": "success", "message": "Workout ingestion and analysis queued."}
 
 @router.post("/calculate-tss")
 async def process_workout(payload: WorkoutPayload):

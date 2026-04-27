@@ -1,12 +1,13 @@
 <script lang="ts">
   import { api } from '$lib/api';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
+  import { authStore } from '$lib/stores/authStore.svelte';
   import { tick } from 'svelte';
 
   type Message = { id: number; role: 'user' | 'ai'; text: string; streaming?: boolean };
   
   let messages = $state<Message[]>([
-    { id: 1, role: 'ai', text: "Hey Marcus! I've reviewed your week. You hit a new CTL high of 68 after Saturday's ride. Your TSB is now +28 — optimal window for a quality effort Tuesday. Ready to plan?" },
+    { id: 1, role: 'ai', text: `Hey ${authStore.user?.user_metadata?.full_name?.split(' ')[0] || 'there'}! I've reviewed your week. You hit a new CTL high of 68 after Saturday's ride. Your TSB is now +28 — optimal window for a quality effort Tuesday. Ready to plan?` },
   ]);
   
   let input = $state('');

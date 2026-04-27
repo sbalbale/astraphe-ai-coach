@@ -3,7 +3,7 @@
   import { authStore } from '$lib/stores/authStore.svelte';
   import { goto } from '$app/navigation';
 
-  let name = $state(authStore.user?.user_metadata?.full_name || 'Marcus');
+  let name = $state(authStore.user?.user_metadata?.full_name || '');
   let email = $state(authStore.user?.email || '');
   let dob = $state('1990-05-15');
   let gender = $state('Male');

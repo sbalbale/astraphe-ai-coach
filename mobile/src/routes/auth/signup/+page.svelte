@@ -13,7 +13,7 @@
     loading = true;
     errorMsg = '';
     
-    const { error } = await supabase.auth.signUp({
+    const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
@@ -26,11 +26,32 @@
     if (error) {
       errorMsg = error.message;
       loading = false;
-    } else {
-      // Typically auto-logs in or asks for email verification
+      return;
+    }
+
+    // If email confirmation is disabled (local dev), we get a session immediately
+    if (data.session) {
+      // Seed initial training data for this new user via the backend
+      try {
+        const token = data.session.access_token;
+        await fetch(`${import.meta.env.VITE_API_URL}/v1/athlete/onboard`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        });
+      } catch {
+        // Non-fatal — dashboard will handle empty state gracefully
+      }
       goto('/dashboard');
+    } else {
+      // Email confirmation required
+      errorMsg = 'Check your email to confirm your account, then sign in.';
+      loading = false;
     }
   }
+
 </script>
 
 <div class="min-h-full flex flex-col p-6 items-center justify-center relative">

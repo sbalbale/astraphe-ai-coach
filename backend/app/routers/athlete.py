@@ -6,29 +6,89 @@ from app.dependencies import get_current_athlete, get_db
 
 router = APIRouter(prefix="/v1/athlete", tags=["Athlete"])
 
+@router.post("/onboard")
+async def onboard_athlete(athlete_id: str = Depends(get_current_athlete), db = Depends(get_db)):
+    """Seeds initial sample data for a newly registered athlete."""
+    today = date.today()
+    
+    # Seed 7 days of TSS history
+    tss_entries = [
+        {"athlete_id": athlete_id, "date": (today - timedelta(days=6)).isoformat(), "daily_tss": 61, "ctl": 61, "atl": 55, "tsb": 6},
+        {"athlete_id": athlete_id, "date": (today - timedelta(days=5)).isoformat(), "daily_tss": 72, "ctl": 62, "atl": 65, "tsb": -3},
+        {"athlete_id": athlete_id, "date": (today - timedelta(days=4)).isoformat(), "daily_tss": 55, "ctl": 62, "atl": 58, "tsb": 4},
+        {"athlete_id": athlete_id, "date": (today - timedelta(days=3)).isoformat(), "daily_tss": 88, "ctl": 64, "atl": 72, "tsb": -8},
+        {"athlete_id": athlete_id, "date": (today - timedelta(days=2)).isoformat(), "daily_tss": 110, "ctl": 65, "atl": 88, "tsb": -23},
+        {"athlete_id": athlete_id, "date": (today - timedelta(days=1)).isoformat(), "daily_tss": 130, "ctl": 67, "atl": 95, "tsb": -28},
+        {"athlete_id": athlete_id, "date": today.isoformat(), "daily_tss": 0, "ctl": 68, "atl": 38, "tsb": 28},
+    ]
+    db.table("tss_history").upsert(tss_entries).execute()
+    
+    # Seed today's biometrics
+    db.table("biometrics").upsert([{
+        "athlete_id": athlete_id,
+        "date": today.isoformat(),
+        "hrv_rmssd": 78.0,
+        "resting_hr": 52,
+        "sleep_duration_min": 450,
+        "sleep_score": 94,
+        "recovery_score": 78,
+        "spo2_pct": 98.0
+    }]).execute()
+    
+    # Seed upcoming training plan
+    plan_entries = [
+        {"athlete_id": athlete_id, "planned_date": (today + timedelta(days=1)).isoformat(), "sport": "Run", "title": "Easy Recovery Run", "description": "Aerobic base. Keep HR in Z2.", "duration_min": 45, "target_tss": 38, "status": "planned"},
+        {"athlete_id": athlete_id, "planned_date": (today + timedelta(days=2)).isoformat(), "sport": "Bike", "title": "Threshold Intervals", "description": "5x8min @FTP. 3min recovery.", "duration_min": 90, "target_tss": 95, "status": "planned"},
+        {"athlete_id": athlete_id, "planned_date": (today + timedelta(days=3)).isoformat(), "sport": "Run", "title": "Rest Day", "description": "Full recovery. Optional walk.", "duration_min": 0, "target_tss": 0, "status": "planned"},
+        {"athlete_id": athlete_id, "planned_date": (today + timedelta(days=4)).isoformat(), "sport": "Run", "title": "Tempo Run", "description": "20min tempo in Z3-Z4.", "duration_min": 55, "target_tss": 68, "status": "planned"},
+        {"athlete_id": athlete_id, "planned_date": (today + timedelta(days=5)).isoformat(), "sport": "Bike", "title": "Long Endurance Ride", "description": "Z2 only. High cadence focus.", "duration_min": 180, "target_tss": 95, "status": "planned"},
+    ]
+    db.table("training_plans").upsert(plan_entries).execute()
+    
+    return {"status": "success", "message": "Athlete onboarded with sample data"}
+
+
+
 @router.get("/state", response_model=AthleteState)
 async def get_athlete_state(athlete_id: str = Depends(get_current_athlete), db = Depends(get_db)):
     """
     Returns the athlete's current physiological state including computed CTL, ATL, TSB, and readiness score.
     """
-    # In a real implementation, this queries the `tss_history` and `biometrics` tables via Supabase
-    # Placeholder returning the expected schema
+    # Fetch athlete
+    athlete_res = db.table("athletes").select("display_name").eq("id", athlete_id).execute()
+    if not athlete_res.data:
+        raise HTTPException(status_code=404, detail="Athlete not found")
+    display_name = athlete_res.data[0]["display_name"]
+    
+    # Fetch latest tss_history
+    tss_res = db.table("tss_history").select("*").eq("athlete_id", athlete_id).order("date", desc=True).limit(1).execute()
+    ctl, atl, tsb = 0.0, 0.0, 0.0
+    if tss_res.data:
+        tss = tss_res.data[0]
+        ctl = tss.get("ctl") or 0.0
+        atl = tss.get("atl") or 0.0
+        tsb = tss.get("tsb") or 0.0
+
+    # Fetch latest biometrics
+    bio_res = db.table("biometrics").select("*").eq("athlete_id", athlete_id).order("date", desc=True).limit(1).execute()
+    bio = bio_res.data[0] if bio_res.data else {}
+
     return {
         "athlete_id": athlete_id,
-        "display_name": "Marcus Jensen",
+        "display_name": display_name,
         "date": date.today(),
-        "ctl": 68.4,
-        "atl": 38.1,
-        "tsb": 28.2,
-        "hrv_rmssd": 78.0,
-        "hrv_delta_7d": 6.3,
-        "resting_hr": 52,
-        "sleep_hours": 7.5,
-        "sleep_score": 94,
-        "recovery_score": 78,
-        "readiness_score": 78,
-        "readiness_label": "Optimal",
-        "readiness_recommendation": "High HRV and positive TSB — strong window for a quality effort today."
+        "ctl": ctl,
+        "atl": atl,
+        "tsb": tsb,
+        "hrv_rmssd": bio.get("hrv_rmssd"),
+        "hrv_delta_7d": 0.0, # Placeholder
+        "resting_hr": bio.get("resting_hr"),
+        "sleep_hours": bio.get("sleep_duration_min", 0) / 60.0 if bio.get("sleep_duration_min") else None,
+        "sleep_score": bio.get("sleep_score"),
+        "recovery_score": bio.get("recovery_score"),
+        "readiness_score": bio.get("recovery_score", 0) or 0,
+        "readiness_label": "Optimal" if (bio.get("recovery_score", 0) or 0) > 70 else "Moderate",
+        "readiness_recommendation": "Data pulled from database."
     }
 
 @router.get("/metrics")
@@ -43,35 +103,26 @@ async def get_athlete_metrics(
     start_date = start_date or (date.today() - timedelta(days=42))
     end_date = end_date or date.today()
     
-    # Comprehensive mock data for the Training screen
+    # Query recent tss_history
+    tss_res = db.table("tss_history").select("date,ctl,atl,tsb").eq("athlete_id", athlete_id).gte("date", start_date.isoformat()).lte("date", end_date.isoformat()).order("date").execute()
+    
+    training_load_data = []
+    for row in tss_res.data:
+        d = date.fromisoformat(row["date"])
+        training_load_data.append({
+            "date": d.strftime("%a"),
+            "ctl": row["ctl"] or 0,
+            "atl": row["atl"] or 0,
+            "tsb": row["tsb"] or 0
+        })
+
     return {
         "athlete_id": athlete_id,
         "start_date": start_date,
         "end_date": end_date,
-        "trainingLoadData": [
-            {"date": "Mon", "ctl": 61, "atl": 55, "tsb": +6},
-            {"date": "Tue", "ctl": 62, "atl": 65, "tsb": -3},
-            {"date": "Wed", "ctl": 62, "atl": 58, "tsb": +4},
-            {"date": "Thu", "ctl": 64, "atl": 72, "tsb": -8},
-            {"date": "Fri", "ctl": 65, "atl": 88, "tsb": -23},
-            {"date": "Sat", "ctl": 67, "atl": 95, "tsb": -28},
-            {"date": "Sun", "ctl": 68, "atl": 38, "tsb": +28}
-        ],
-        "paceData": [
-            {"dist": 0, "pace": 5.42},
-            {"dist": 2, "pace": 5.40},
-            {"dist": 4, "pace": 5.38},
-            {"dist": 6, "pace": 5.41},
-            {"dist": 8, "pace": 5.35},
-            {"dist": 10, "pace": 5.32}
-        ],
-        "zoneData": [
-            {"zone": "Z1 Recovery", "pct": 18, "color": "#4621FF"},
-            {"zone": "Z2 Aerobic", "pct": 42, "color": "#00C8A8"},
-            {"zone": "Z3 Tempo", "pct": 22, "color": "#FFCB88"},
-            {"zone": "Z4 Threshold", "pct": 13, "color": "#F07178"},
-            {"zone": "Z5 VO2max", "pct": 5, "color": "#FF4791"}
-        ]
+        "trainingLoadData": training_load_data,
+        "paceData": [],
+        "zoneData": []
     }
 
 @router.patch("/profile")
@@ -88,7 +139,6 @@ async def update_athlete_profile(
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields provided for update")
 
-    # DB update logic here
-    # response = db.table("athletes").update(update_data).eq("id", athlete_id).execute()
+    response = db.table("athletes").update(update_data).eq("id", athlete_id).execute()
     
     return {"status": "success", "message": "Profile updated successfully", "updated_fields": update_data}
