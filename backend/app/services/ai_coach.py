@@ -37,3 +37,13 @@ def get_coach_response(athlete_id: str, message: str, current_tss: float = 0.0) 
     model = genai.GenerativeModel(settings.GEMINI_MODEL)
     response = model.generate_content(final_prompt)
     return response.text
+
+async def get_coach_response_stream(athlete_id: str, message: str, current_tss: float = 0.0):
+    system_instruction = load_coach_instructions()
+    context_block = f"[SYSTEM CONTEXT - DO NOT SHOW TO USER]\nAthlete ID: {athlete_id}\nMost recent workout TSS: {current_tss}\n[END CONTEXT]"
+    final_prompt = f"{system_instruction}\n\n{context_block}\n\nAthlete Message: {message}"
+    model = genai.GenerativeModel(settings.GEMINI_MODEL)
+    response = model.generate_content(final_prompt, stream=True)
+    for chunk in response:
+        if chunk.text:
+            yield chunk.text

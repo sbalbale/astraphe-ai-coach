@@ -1,8 +1,10 @@
 from fastapi import APIRouter, HTTPException, Depends
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional
-from app.services.ai_coach import get_coach_response
+from app.services.ai_coach import get_coach_response, get_coach_response_stream
 from app.dependencies import get_current_athlete
+import json
 
 class ChatMessage(BaseModel):
     conversation_id: Optional[str] = None
@@ -18,3 +20,15 @@ async def chat_with_coach(payload: ChatMessage, athlete_id: str = Depends(get_cu
         return {"status": "success", "reply": coach_reply}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/stream")
+async def stream_chat_with_coach(payload: ChatMessage, athlete_id: str = Depends(get_current_athlete)):
+    async def event_generator():
+        try:
+            async for chunk in get_coach_response_stream(athlete_id=athlete_id, message=payload.message, current_tss=payload.recent_tss):
+                yield f"data: {json.dumps({'text': chunk})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        yield "data: [DONE]\n\n"
+        
+    return StreamingResponse(event_generator(), media_type="text/event-stream")

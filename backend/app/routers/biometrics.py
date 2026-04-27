@@ -17,8 +17,10 @@ async def get_biometrics(
     start_date = start_date or (date.today() - timedelta(days=14))
     end_date = end_date or date.today()
     
-    # Placeholder for DB query fetching rows from the `biometrics` table
+    # Comprehensive mock data for Biometrics
     return {
+        "hrvData": [72, 75, 71, 74, 76, 72, 78],
+        "sleepData": [6.8, 7.4, 5.9, 8.0, 6.8, 8.2, 7.5],
         "series": [
             {
                 "date": date.today(),

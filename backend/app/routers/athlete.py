@@ -43,19 +43,34 @@ async def get_athlete_metrics(
     start_date = start_date or (date.today() - timedelta(days=42))
     end_date = end_date or date.today()
     
-    # Placeholder for database query
+    # Comprehensive mock data for the Training screen
     return {
         "athlete_id": athlete_id,
         "start_date": start_date,
         "end_date": end_date,
-        "series": [
-            {
-                "date": start_date,
-                "ctl": 58.2,
-                "atl": 62.4,
-                "tsb": -4.2,
-                "daily_tss": 85.0
-            }
+        "trainingLoadData": [
+            {"date": "Mon", "ctl": 61, "atl": 55, "tsb": +6},
+            {"date": "Tue", "ctl": 62, "atl": 65, "tsb": -3},
+            {"date": "Wed", "ctl": 62, "atl": 58, "tsb": +4},
+            {"date": "Thu", "ctl": 64, "atl": 72, "tsb": -8},
+            {"date": "Fri", "ctl": 65, "atl": 88, "tsb": -23},
+            {"date": "Sat", "ctl": 67, "atl": 95, "tsb": -28},
+            {"date": "Sun", "ctl": 68, "atl": 38, "tsb": +28}
+        ],
+        "paceData": [
+            {"dist": 0, "pace": 5.42},
+            {"dist": 2, "pace": 5.40},
+            {"dist": 4, "pace": 5.38},
+            {"dist": 6, "pace": 5.41},
+            {"dist": 8, "pace": 5.35},
+            {"dist": 10, "pace": 5.32}
+        ],
+        "zoneData": [
+            {"zone": "Z1 Recovery", "pct": 18, "color": "#4621FF"},
+            {"zone": "Z2 Aerobic", "pct": 42, "color": "#00C8A8"},
+            {"zone": "Z3 Tempo", "pct": 22, "color": "#FFCB88"},
+            {"zone": "Z4 Threshold", "pct": 13, "color": "#F07178"},
+            {"zone": "Z5 VO2max", "pct": 5, "color": "#FF4791"}
         ]
     }
 
