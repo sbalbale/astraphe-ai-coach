@@ -1,22 +1,33 @@
 from datetime import date, timedelta
 from app.models.workout import WorkoutPayload
 from app.models.biometrics import DailyBiometrics
-from app.services.algorithms import calculate_cycling_tss, calculate_training_load, calculate_recovery_score
+from app.services.algorithms import calculate_cycling_tss, calculate_training_load, calculate_recovery_score, normalize_rowing_watts
 
 def process_and_save_workout(payload: WorkoutPayload, athlete_id: str, db):
     # 1. Calculate TSS
     tss = 0.0
-    if payload.workout_type.lower() == "cycling" and payload.normalized_power:
+    sport = payload.workout_type.lower()
+    
+    if sport == "cycling" and payload.normalized_power:
         tss = calculate_cycling_tss(payload.duration_seconds, payload.normalized_power, payload.ftp_at_time)
+    elif sport == "rowing" and payload.avg_power:
+        # Use normalized rowing watts for TSS calculation
+        norm_watts = normalize_rowing_watts(payload.avg_power)
+        # Using cycling formula as a proxy for rowing TSS with normalized watts
+        tss = calculate_cycling_tss(payload.duration_seconds, int(norm_watts), payload.ftp_at_time)
     elif payload.tss:
         tss = payload.tss
+    
+    # Map sport to internal enums if needed
+    mapped_sport = sport if sport in ('run', 'bike', 'swim', 'strength', 'rowing') else 'other'
+    if sport == 'cycling': mapped_sport = 'bike'
 
     # 2. Save the workout
     db.table("workouts").upsert({
         "athlete_id": athlete_id,
         "source": payload.source,
         "external_id": payload.external_id,
-        "sport": payload.workout_type,
+        "sport": mapped_sport,
         "started_at": payload.start_time.isoformat(),
         "duration_secs": payload.duration_seconds,
         "tss": tss

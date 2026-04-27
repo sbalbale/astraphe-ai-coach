@@ -6,6 +6,16 @@ from app.dependencies import get_current_athlete, get_db
 
 router = APIRouter(prefix="/v1/workouts", tags=["Workouts"])
 
+@router.get("")
+async def get_workouts(
+    limit: int = 20,
+    athlete_id: str = Depends(get_current_athlete),
+    db = Depends(get_db)
+):
+    """Fetch past workouts for the training history tab."""
+    res = db.table("workouts").select("*").eq("athlete_id", athlete_id).order("started_at", desc=True).limit(limit).execute()
+    return res.data
+
 @router.post("")
 async def ingest_workout(
     payload: WorkoutPayload, 
