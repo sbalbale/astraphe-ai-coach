@@ -21,7 +21,8 @@ class Settings(BaseSettings):
     # --- Gemini AI Configuration ---
     # Required for the AI Coach RAG pipeline
     GEMINI_API_KEY: str
-    GEMINI_MODEL: str = "gemini-2.5-flash"
+    GEMINI_MODEL: str = "gemini-flash-lite-latest"
+    GEMINI_EMBEDDING_MODEL: str = "text-embedding-001"
 
     # --- Path Management ---
     # Automatically resolves paths for the Markdown instructions

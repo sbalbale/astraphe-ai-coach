@@ -1,8 +1,6 @@
 ﻿from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
-# Import your routers
-from app.routers import workouts, chat
+from app.routers import workouts, coach, athlete, biometrics, sync, plan
 
 app = FastAPI(
     title="ASTRAPE Backend API",
@@ -18,9 +16,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Register both routers
+app.include_router(athlete.router)
 app.include_router(workouts.router)
-app.include_router(chat.router) # <-- Added this line
+app.include_router(biometrics.router)
+app.include_router(coach.router)
+app.include_router(sync.router)
+app.include_router(plan.router)
 
 @app.get("/health")
 async def health_check():
