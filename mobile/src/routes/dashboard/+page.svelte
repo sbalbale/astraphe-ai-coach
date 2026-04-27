@@ -90,28 +90,30 @@
     </Card>
   </div>
 
-  <!-- Recent Workouts -->
-  {#if athleteStore.plan?.workouts}
+  <!-- Recent Activity -->
+  {#if athleteStore.workouts?.length > 0}
     <Card>
       <div class="flex justify-between items-center mb-3">
         <span class="text-[13px] font-semibold">Recent Activity</span>
         <Tag color="var(--blue)">SYNCED</Tag>
       </div>
       <div class="flex flex-col gap-2.5">
-        {#each athleteStore.plan.workouts.slice(0, 3) as w, i}
+        {#each athleteStore.workouts.slice(0, 3) as w, i}
+          {@const type = w.sport?.toLowerCase()}
           <div class="flex items-center gap-3 py-2.5 {i < 2 ? 'border-b border-border' : ''}">
             <div class="w-9 h-9 rounded-xl shrink-0 flex items-center justify-center text-[15px]
-              {w.type === 'Run' ? 'bg-blue-dim border border-[rgba(70,33,255,0.3)]' : 
-               w.type === 'Bike' ? 'bg-teal-dim border border-[rgba(0,200,168,0.3)]' : 
-               'bg-amber-dim border border-[rgba(255,203,136,0.3)]'}">
-              {w.type === 'Run' ? '🏃' : w.type === 'Bike' ? '🚴' : '💪'}
+              {type === 'run' ? 'bg-blue-dim border border-[rgba(70,33,255,0.3)]' : 
+               type === 'bike' || type === 'cycling' ? 'bg-teal-dim border border-[rgba(0,200,168,0.3)]' : 
+               type === 'rowing' ? 'bg-amber-dim border border-[rgba(255,203,136,0.3)]' :
+               'bg-glass border border-border'}">
+              {type === 'run' ? '🏃' : (type === 'bike' || type === 'cycling') ? '🚴' : type === 'rowing' ? '🚣' : '💪'}
             </div>
             <div class="flex-1">
-              <p class="text-[13px] font-medium">{w.title}</p>
-              <p class="text-[11px] text-text2">{w.date} · {w.duration}</p>
+              <p class="text-[13px] font-medium">{w.title || (w.sport?.toUpperCase() + ' Session')}</p>
+              <p class="text-[11px] text-text2">{format(new Date(w.started_at), 'MMM d')} · {Math.floor(w.duration_secs / 60)} min</p>
             </div>
             <div class="text-right">
-              <p class="text-[13px] font-semibold {w.load > 75 ? 'text-red' : w.load > 55 ? 'text-amber' : 'text-teal'}">{w.load}</p>
+              <p class="text-[13px] font-semibold {w.tss > 75 ? 'text-red' : w.tss > 55 ? 'text-amber' : 'text-teal'}">{Math.round(w.tss || 0)}</p>
               <p class="text-[9px] text-text2 font-mono">TSS</p>
             </div>
           </div>
