@@ -125,6 +125,17 @@ async def get_athlete_metrics(
         "zoneData": []
     }
 
+@router.get("/profile")
+async def get_athlete_profile(
+    athlete_id: str = Depends(get_current_athlete),
+    db = Depends(get_db)
+):
+    """Fetch current athlete physiological anchors."""
+    res = db.table("athletes").select("*").eq("id", athlete_id).single().execute()
+    if not res.data:
+        raise HTTPException(status_code=404, detail="Athlete not found")
+    return res.data
+
 @router.patch("/profile")
 async def update_athlete_profile(
     payload: AthleteProfileUpdate,
