@@ -1,9 +1,9 @@
-# API Reference
+﻿# API Reference
 
 ## Base URL
 
 ```
-Production:  https://api.apex-coach.app/v1
+Production:  https://api.astrape-coach.app/v1
 Development: http://localhost:8000/v1
 ```
 
@@ -262,7 +262,7 @@ Ingest a daily biometric summary (called by HealthKit/WHOOP sync).
 
 ### POST `/coach/message`
 
-Send a message to the APEX AI coach. Streams the response via Server-Sent Events.
+Send a message to the ASTRAPE AI coach. Streams the response via Server-Sent Events.
 
 **Request body:**
 ```json
@@ -357,7 +357,7 @@ OAuth callback handler. Exchanges the authorization code for access + refresh to
 
 **Query params:** `code`, `state`
 
-**Response:** `302 Redirect` to the mobile app deep link `apex://connected?provider=garmin`
+**Response:** `302 Redirect` to the mobile app deep link `astrape://connected?provider=garmin`
 
 ---
 
@@ -418,7 +418,7 @@ Returns the athlete's training plan for a date range.
       "target_tss": 85,
       "target_zones": {"Z1": 25, "Z2": 0, "Z3": 0, "Z4": 16, "Z5": 24},
       "status": "planned",
-      "generated_by": "apex_ai"
+      "generated_by": "astrape_ai"
     }
   ]
 }
@@ -468,3 +468,5 @@ X-RateLimit-Limit: 60
 X-RateLimit-Remaining: 47
 X-RateLimit-Reset: 1745678400
 ```
+
+

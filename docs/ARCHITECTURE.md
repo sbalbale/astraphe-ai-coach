@@ -1,8 +1,8 @@
-# Architecture
+﻿# Architecture
 
 ## Overview
 
-APEX is structured as a four-layer system: a native mobile client, a stateless computation API, a third-party telemetry ingestion layer, and a persistent data + vector store. Each layer has a single, clearly bounded responsibility.
+ASTRAPE is structured as a four-layer system: a native mobile client, a stateless computation API, a third-party telemetry ingestion layer, and a persistent data + vector store. Each layer has a single, clearly bounded responsibility.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -29,7 +29,7 @@ APEX is structured as a four-layer system: a native mobile client, a stateless c
 │  TELEMETRY  │   │    AI LAYER        │  │   DATA LAYER       │
 │  LAYER      │   │                    │  │                    │
 │             │   │  Google Gemini     │  │  Supabase          │
-│  Garmin     │   │  1.5 Pro           │  │  PostgreSQL        │
+│  Garmin     │   │  2.5 Pro           │  │  PostgreSQL        │
 │  Connect    │   │  ├── Function      │  │  ├── pgvector      │
 │  API        │   │  │   Calling       │  │  ├── Row-level     │
 │             │   │  ├── Structured    │  │  │   Security      │
@@ -127,8 +127,8 @@ Supabase provides the relational backbone and the vector search capability requi
       │
 5. Structured context object assembled
       │
-6. Gemini 1.5 Pro called with:
-   - System prompt (APEX persona + constraints)
+6. Gemini 2.5 Pro called with:
+   - System prompt (ASTRAPE persona + constraints)
    - Athlete context (structured JSON)
    - RAG memories
    - Conversation history (last 10 turns)
@@ -156,3 +156,5 @@ For the initial launch targeting individual athletes, a single Cloud Run service
 - Garmin and WHOOP OAuth tokens are stored encrypted at rest using Supabase Vault
 - Webhook endpoints validate HMAC signatures before processing any payload
 - The mobile client never receives or stores third-party OAuth tokens
+
+

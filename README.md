@@ -1,30 +1,30 @@
-# APEX — AI Coaching Platform
+﻿# ASTRAPE — AI Coaching Platform
 
 > **Precision endurance coaching, powered by real-time physiological telemetry and Gemini AI.**
 
-APEX is a multi-source, AI-driven health and fitness coaching platform that ingests data from Apple HealthKit, Garmin Connect, and WHOOP to deliver personalized, scientifically-grounded training recommendations through a conversational AI coach.
+ASTRAPE is a multi-source, AI-driven health and fitness coaching platform that ingests data from Apple HealthKit, Garmin Connect, and WHOOP to deliver personalized, scientifically-grounded training recommendations through a conversational AI coach.
 
 ![Svelte](https://img.shields.io/badge/Svelte-5-FF3E00?logo=svelte&logoColor=white)
 ![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.111-009688?logo=fastapi&logoColor=white)
-![Gemini](https://img.shields.io/badge/Gemini-1.5_Pro-4285F4?logo=google&logoColor=white)
+![Gemini](https://img.shields.io/badge/Gemini 2.5 Pro-4285F4?logo=google&logoColor=white)
 ![Supabase](https://img.shields.io/badge/Supabase-PostgreSQL-3ECF8E?logo=supabase&logoColor=white)
 ![Cloud Run](https://img.shields.io/badge/Google_Cloud-Run-4285F4?logo=googlecloud&logoColor=white)
 
 ---
 
-## What APEX Does
+## What ASTRAPE Does
 
-APEX operates as an always-on performance intelligence layer between an athlete's wearable ecosystem and their training decisions.
+ASTRAPE operates as an always-on performance intelligence layer between an athlete's wearable ecosystem and their training decisions.
 
 **1. Aggregates physiological truth.**
-Rather than trusting a single device, APEX ingests heart rate, HRV, sleep staging, GPS workouts, and power data from Apple HealthKit, Garmin Connect, and WHOOP — reconciling them into a single unified athlete state model updated in real time.
+Rather than trusting a single device, ASTRAPE ingests heart rate, HRV, sleep staging, GPS workouts, and power data from Apple HealthKit, Garmin Connect, and WHOOP — reconciling them into a single unified athlete state model updated in real time.
 
 **2. Computes the metrics that matter.**
 TSS, CTL, ATL, and TSB are computed server-side using NumPy-vectorized operations over rolling windows. Recovery and strain scores are derived from transparent, auditable weighted multi-factor models — not black-box device algorithms.
 
 **3. Speaks like a coach, thinks like a physiologist.**
-The APEX AI agent (Gemini 1.5 Pro) receives structured athletic context on every query — CTL, HRV trend, sleep debt, TSB position — and responds with concise, data-anchored recommendations. Every answer references at least one real number from the athlete's actual data.
+The ASTRAPE AI agent (Gemini 2.5 Pro) receives structured athletic context on every query — CTL, HRV trend, sleep debt, TSB position — and responds with concise, data-anchored recommendations. Every answer references at least one real number from the athlete's actual data.
 
 ---
 
@@ -38,13 +38,13 @@ The APEX AI agent (Gemini 1.5 Pro) receives structured athletic context on every
 └────────────────┬────────────────────────┘
                  │ HTTPS / SSE
 ┌────────────────▼────────────────────────┐
-│     APEX API (FastAPI · Cloud Run)      │
+│     ASTRAPE API (FastAPI · Cloud Run)      │
 │     Stateless · Dockerized · Auto-scale │
 └──────┬──────────────┬────────────┬──────┘
        │              │            │
   ┌────▼────┐  ┌──────▼──────┐  ┌─▼──────────────┐
   │ Gemini  │  │ Garmin API  │  │    Supabase     │
-  │ 1.5 Pro │  │ WHOOP API   │  │ PostgreSQL      │
+  │ 2.5 Pro │  │ WHOOP API   │  │ PostgreSQL      │
   │ RAG +   │  │ HealthKit   │  │ pgvector · RLS  │
   │ Fn Call │  │ (on-device) │  │ Realtime        │
   └─────────┘  └─────────────┘  └────────────────┘
@@ -55,7 +55,7 @@ The APEX AI agent (Gemini 1.5 Pro) receives structured athletic context on every
 ## Repository Structure
 
 ```
-apex-coach/
+astrape-coach/
 ├── LICENSE
 ├── README.md                          ← This file
 ├── .env.example
@@ -208,8 +208,8 @@ apex-coach/
 
 ```bash
 # 1. Clone
-git clone https://github.com/seanbalbale/apex-coach.git
-cd apex-coach
+git clone https://github.com/seanbalbale/astrape-coach.git
+cd astrape-coach
 cp .env.example .env  # Fill in Supabase, Gemini, Garmin, WHOOP keys
 
 # 2. Start local Supabase
@@ -237,3 +237,4 @@ Garmin gates their Connect API for enterprise use. A formal commercial applicati
 ## License
 
 Copyright © 2026 Sean Balbale. All Rights Reserved. See [LICENSE](../LICENSE) for details.
+

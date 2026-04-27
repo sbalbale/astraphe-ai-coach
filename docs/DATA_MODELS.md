@@ -1,4 +1,4 @@
-# Data Models
+﻿# Data Models
 
 ## Database: Supabase PostgreSQL
 
@@ -134,7 +134,7 @@ CREATE TABLE biometrics (
   spo2_pct             NUMERIC(4,1),
   
   -- Computed
-  recovery_score       SMALLINT,      -- 0–100 APEX composite score
+  recovery_score       SMALLINT,      -- 0–100 ASTRAPE composite score
   
   CONSTRAINT biometrics_athlete_date_unique UNIQUE (athlete_id, date)
 );
@@ -199,7 +199,7 @@ CREATE TABLE training_plans (
   
   completed_workout_id UUID REFERENCES workouts(id),
   
-  generated_by    TEXT DEFAULT 'apex_ai',  -- 'apex_ai' or 'manual'
+  generated_by    TEXT DEFAULT 'astrape_ai',  -- 'astrape_ai' or 'manual'
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -238,7 +238,7 @@ CREATE TABLE oauth_tokens (
 
 ### `coach_memories`
 
-Long-term memory store for the APEX AI agent. Each row is a semantically meaningful chunk of coaching history, stored alongside its vector embedding for similarity search.
+Long-term memory store for the ASTRAPE AI agent. Each row is a semantically meaningful chunk of coaching history, stored alongside its vector embedding for similarity search.
 
 ```sql
 CREATE EXTENSION IF NOT EXISTS vector;
@@ -370,3 +370,5 @@ Training zones are stored per-athlete, per-sport as a JSONB column on the `athle
   }
 }
 ```
+
+

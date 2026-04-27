@@ -1,9 +1,9 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>APEX — Documentation</title>
+<title>ASTRAPE — Documentation</title>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Space+Mono:ital,wght@0,400;0,700;1,400&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet">
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -788,7 +788,7 @@ section:target .section-title { color: var(--blue-light); }
 <!-- SIDEBAR -->
 <nav class="sidebar">
   <div class="sidebar-logo">
-    <div class="wordmark">APEX</div>
+    <div class="wordmark">ASTRAPE</div>
     <div class="sub">TECHNICAL DOCUMENTATION · v2.1</div>
   </div>
   <div class="sidebar-nav">
@@ -809,7 +809,7 @@ section:target .section-title { color: var(--blue-light); }
     <a href="#algorithms" class="sidebar-link"><span class="sidebar-dot"></span>Training Algorithms</a>
 
     <div class="sidebar-section-label">AI Layer</div>
-    <a href="#ai-coach" class="sidebar-link"><span class="sidebar-dot"></span>AI Coach (APEX)</a>
+    <a href="#ai-coach" class="sidebar-link"><span class="sidebar-dot"></span>AI Coach (ASTRAPE)</a>
     <a href="#gemini" class="sidebar-link"><span class="sidebar-dot"></span>Gemini Integration</a>
     <a href="#rag" class="sidebar-link"><span class="sidebar-dot"></span>RAG Pipeline</a>
 
@@ -825,14 +825,14 @@ section:target .section-title { color: var(--blue-light); }
 
   <!-- TOP BAR -->
   <div class="doc-header">
-    <div class="breadcrumb">APEX / <span>Documentation</span> / v2.1.0</div>
+    <div class="breadcrumb">ASTRAPE / <span>Documentation</span> / v2.1.0</div>
     <div class="header-badge">LIVE · Apr 2026</div>
   </div>
 
   <!-- HERO -->
   <div class="hero">
     <div class="hero-eyebrow">SYSTEM DOCUMENTATION</div>
-    <h1>APEX<br><em>AI Coaching</em><br>Platform</h1>
+    <h1>ASTRAPE<br><em>AI Coaching</em><br>Platform</h1>
     <p class="hero-sub">A scientifically rigorous, AI-driven endurance coaching platform — synthesizing physiological telemetry, generative intelligence, and behavioral analytics into a single coaching interface.</p>
     <div class="hero-meta">
       <div class="hero-meta-item"><div class="val">Svelte 5</div><div class="lbl">Frontend</div></div>
@@ -854,7 +854,7 @@ section:target .section-title { color: var(--blue-light); }
       </div>
 
       <p style="font-size:15px; color:var(--text1); line-height:1.75; max-width:680px; margin-bottom:24px;">
-        APEX is a multi-source, AI-driven health and fitness coaching platform that processes physiological data from Apple HealthKit, Garmin Connect, and WHOOP, and converts it into personalized coaching intelligence via Google Gemini 2.5 Pro.
+        ASTRAPE is a multi-source, AI-driven health and fitness coaching platform that processes physiological data from Apple HealthKit, Garmin Connect, and WHOOP, and converts it into personalized coaching intelligence via Google Gemini 2.5 Pro.
       </p>
 
       <div class="grid-2" style="margin-bottom:24px;">
@@ -866,7 +866,7 @@ section:target .section-title { color: var(--blue-light); }
         <div class="card glow-teal">
           <div style="font-size:20px; margin-bottom:10px;">🧠</div>
           <div style="font-size:14px; font-weight:600; margin-bottom:6px;">Contextual AI</div>
-          <p style="font-size:12px; color:var(--text1); line-height:1.6;">APEX uses a RAG-enabled pipeline injecting real-time physiological context into Gemini 2.5 Pro via structured function calling, producing responses that are always grounded in the athlete's actual current data state.</p>
+          <p style="font-size:12px; color:var(--text1); line-height:1.6;">ASTRAPE uses a RAG-enabled pipeline injecting real-time physiological context into Gemini 2.5 Pro via structured function calling, producing responses that are always grounded in the athlete's actual current data state.</p>
         </div>
         <div class="card">
           <div style="font-size:20px; margin-bottom:10px;">📱</div>
@@ -881,7 +881,7 @@ section:target .section-title { color: var(--blue-light); }
       </div>
 
       <div class="note note-info">
-        <strong>Audience.</strong> This document is written for engineers, product managers, and technical stakeholders involved in the development, deployment, or maintenance of the APEX platform. It assumes familiarity with REST APIs, containerization, and modern web development.
+        <strong>Audience.</strong> This document is written for engineers, product managers, and technical stakeholders involved in the development, deployment, or maintenance of the ASTRAPE platform. It assumes familiarity with REST APIs, containerization, and modern web development.
       </div>
     </section>
 
@@ -893,7 +893,7 @@ section:target .section-title { color: var(--blue-light); }
       </div>
 
       <p style="font-size:14px; color:var(--text1); line-height:1.7; margin-bottom:28px; max-width:640px;">
-        APEX is composed of four decoupled layers: a native mobile client, a Python computation backend, an AI intelligence layer, and a persistent data layer. Each communicates via well-defined async interfaces.
+        ASTRAPE is composed of four decoupled layers: a native mobile client, a Python computation backend, an AI intelligence layer, and a persistent data layer. Each communicates via well-defined async interfaces.
       </p>
 
       <div class="arch-diagram" style="margin-bottom:24px;">
@@ -1079,7 +1079,7 @@ section:target .section-title { color: var(--blue-light); }
       </div>
 
       <p style="font-size:14px; color:var(--text1); line-height:1.7; margin-bottom:24px; max-width:640px;">
-        The APEX mobile client is a Svelte 5 SPA compiled to a native iOS/Android shell via Capacitor 6. Background health data ingestion runs via Capacitor's native background runner plugin, calling into Apple HealthKit at 15-minute intervals.
+        The ASTRAPE mobile client is a Svelte 5 SPA compiled to a native iOS/Android shell via Capacitor 6. Background health data ingestion runs via Capacitor's native background runner plugin, calling into Apple HealthKit at 15-minute intervals.
       </p>
 
       <div class="code-header">
@@ -1089,12 +1089,12 @@ section:target .section-title { color: var(--blue-light); }
       <pre><span class="kw">import</span> { <span class="cls">CapacitorConfig</span> } <span class="kw">from</span> <span class="st">'@capacitor/cli'</span>;
 
 <span class="kw">const</span> config: <span class="cls">CapacitorConfig</span> = {
-  appId: <span class="st">'com.apex.coaching'</span>,
-  appName: <span class="st">'APEX Coach'</span>,
+  appId: <span class="st">'com.astrape.coaching'</span>,
+  appName: <span class="st">'ASTRAPE Coach'</span>,
   webDir: <span class="st">'dist'</span>,
   plugins: {
     <span class="cls">BackgroundRunner</span>: {
-      label: <span class="st">'com.apex.background'</span>,
+      label: <span class="st">'com.astrape.background'</span>,
       src: <span class="st">'runners/healthkit-sync.js'</span>,
       event: <span class="st">'healthkitSync'</span>,
       repeat: <span class="kw">true</span>,
@@ -1138,7 +1138,7 @@ section:target .section-title { color: var(--blue-light); }
     <span class="kw">get</span> <span class="fn">readiness</span>() { <span class="kw">return</span> readiness },
 
     <span class="kw">async</span> <span class="fn">sync</span>() {
-      <span class="kw">const</span> data = <span class="kw">await</span> <span class="fn">apexApi</span>.<span class="fn">getAthleteMetrics</span>();
+      <span class="kw">const</span> data = <span class="kw">await</span> <span class="fn">ASTRAPEApi</span>.<span class="fn">getAthleteMetrics</span>();
       ctl = data.ctl;
       atl = data.atl;
       hrv = data.hrv;
@@ -1187,7 +1187,7 @@ section:target .section-title { color: var(--blue-light); }
       </div>
 
       <p style="font-size:14px; color:var(--text1); line-height:1.7; margin-bottom:24px; max-width:640px;">
-        APEX uses the "Spectral" glassmorphism design language — a dark-first, translucent aesthetic driven by layered depth, continuous gradient meshes, and surgically applied accent colors.
+        ASTRAPE uses the "Spectral" glassmorphism design language — a dark-first, translucent aesthetic driven by layered depth, continuous gradient meshes, and surgically applied accent colors.
       </p>
 
       <!-- Typography -->
@@ -1483,7 +1483,7 @@ sub?: <span class="kw">string</span>      <span class="cm">// secondary line</sp
           <div style="display:flex; align-items:center; gap:12px; margin-bottom:10px;">
             <span style="font-size:22px;">⚡</span>
             <div>
-              <div style="font-size:14px; font-weight:600;">APEX Coach (Chat)</div>
+              <div style="font-size:14px; font-weight:600;">ASTRAPE Coach (Chat)</div>
               <div style="font-family:var(--mono); font-size:10px; color:var(--text2);">route: /chat</div>
             </div>
             <span class="tag tag-blue" style="margin-left:auto;">AI POWERED</span>
@@ -1523,7 +1523,7 @@ sub?: <span class="kw">string</span>      <span class="cm">// secondary line</sp
       </div>
 
       <p style="font-size:14px; color:var(--text1); line-height:1.7; margin-bottom:20px; max-width:640px;">
-        The APEX FastAPI backend exposes a versioned REST API under <code>/api/v1/</code>. All endpoints require a JWT bearer token issued by Supabase Auth. Responses are JSON. Error format: <code>{"detail": "message", "code": "ERR_CODE"}</code>.
+        The ASTRAPE FastAPI backend exposes a versioned REST API under <code>/api/v1/</code>. All endpoints require a JWT bearer token issued by Supabase Auth. Responses are JSON. Error format: <code>{"detail": "message", "code": "ERR_CODE"}</code>.
       </p>
 
       <div style="background:var(--bg1); border:1px solid var(--border); border-radius:14px; overflow:hidden; margin-bottom:16px;">
@@ -1634,7 +1634,7 @@ sub?: <span class="kw">string</span>      <span class="cm">// secondary line</sp
             <tr>
               <td><span class="method-badge method-post">POST</span></td>
               <td class="route-path">/api/v1/coach/chat</td>
-              <td>Send message to APEX coach. Returns <code>text/event-stream</code> SSE with token-by-token streaming from Gemini. Context injected server-side.</td>
+              <td>Send message to ASTRAPE coach. Returns <code>text/event-stream</code> SSE with token-by-token streaming from Gemini. Context injected server-side.</td>
               <td><span class="tag tag-blue">JWT</span></td>
             </tr>
             <tr>
@@ -1847,15 +1847,15 @@ sub?: <span class="kw">string</span>      <span class="cm">// secondary line</sp
     <section id="ai-coach" class="section">
       <div class="section-header">
         <div class="section-num">11</div>
-        <h2 class="section-title">AI Coach<br><em>— APEX</em></h2>
+        <h2 class="section-title">AI Coach<br><em>— ASTRAPE</em></h2>
       </div>
 
       <p style="font-size:14px; color:var(--text1); line-height:1.7; margin-bottom:24px; max-width:640px;">
-        APEX is an autonomous AI coaching agent powered by Google Gemini 2.5 Pro. It operates via a physiological context injection pipeline — every conversation turn is prefixed with a machine-generated state snapshot of the athlete's current training and recovery status.
+        ASTRAPE is an autonomous AI coaching agent powered by Google Gemini 2.5 Pro. It operates via a physiological context injection pipeline — every conversation turn is prefixed with a machine-generated state snapshot of the athlete's current training and recovery status.
       </p>
 
       <div class="card" style="margin-bottom:16px;">
-        <div style="font-size:13px; font-weight:600; margin-bottom:14px;">APEX Coaching Persona</div>
+        <div style="font-size:13px; font-weight:600; margin-bottom:14px;">ASTRAPE Coaching Persona</div>
         <div class="grid-2">
           <div>
             <div style="font-family:var(--mono); font-size:9px; color:var(--text2); letter-spacing:0.1em; text-transform:uppercase; margin-bottom:8px;">Core Character</div>
@@ -1939,7 +1939,7 @@ sub?: <span class="kw">string</span>      <span class="cm">// secondary line</sp
 client = <span class="cls">Client</span>()  <span class="cm"># uses GOOGLE_API_KEY env var</span>
 
 <span class="kw">def</span> <span class="fn">build_system_instruction</span>(athlete, metrics, memory) -> <span class="dec">str</span>:
-    <span class="kw">return</span> <span class="st">f"""You are APEX, an elite AI endurance coach.
+    <span class="kw">return</span> <span class="st">f"""You are ASTRAPE, an elite AI endurance coach.
 Personality: {athlete.coach_personality}
 
 ## Athlete State — {metrics.date}
@@ -2095,7 +2095,7 @@ get_training_load = genai.<span class="cls">Tool</span>(
               <span class="tag tag-teal" style="margin-top:4px; display:inline-flex;">NATIVE · NO OAUTH</span>
             </div>
           </div>
-          <p style="font-size:12px; color:var(--text1); line-height:1.6; margin-bottom:10px;">Accessed directly via Capacitor's HealthKit plugin on the iOS device. No server-side OAuth required. Background delivery enabled for HRQ, HRV, sleep, and workout types. Data is synced to the APEX backend via an authenticated <code>POST /api/v1/sync/healthkit</code> call from the background runner.</p>
+          <p style="font-size:12px; color:var(--text1); line-height:1.6; margin-bottom:10px;">Accessed directly via Capacitor's HealthKit plugin on the iOS device. No server-side OAuth required. Background delivery enabled for HRQ, HRV, sleep, and workout types. Data is synced to the ASTRAPE backend via an authenticated <code>POST /api/v1/sync/healthkit</code> call from the background runner.</p>
           <div style="display:flex; flex-wrap:wrap; gap:6px;">
             <span class="tag tag-blue">HKQuantityTypeIdentifierHeartRate</span>
             <span class="tag tag-blue">HKQuantityTypeIdentifierHRVSDNN</span>
@@ -2126,7 +2126,7 @@ get_training_load = genai.<span class="cls">Tool</span>(
               <span class="tag tag-blue" style="margin-top:4px; display:inline-flex;">OAUTH 2.0 PUBLIC API</span>
             </div>
           </div>
-          <p style="font-size:12px; color:var(--text1); line-height:1.6;">WHOOP provides a public REST API with OAuth 2.0. APEX requests scopes: <code>read:recovery read:sleep read:workout read:cycle read:body_measurement</code>. Webhook subscriptions for real-time cycle updates. Recovery score, strain, and sleep stage data feed directly into the Readiness Score computation.</p>
+          <p style="font-size:12px; color:var(--text1); line-height:1.6;">WHOOP provides a public REST API with OAuth 2.0. ASTRAPE requests scopes: <code>read:recovery read:sleep read:workout read:cycle read:body_measurement</code>. Webhook subscriptions for real-time cycle updates. Recovery score, strain, and sleep stage data feed directly into the Readiness Score computation.</p>
         </div>
 
       </div>
@@ -2164,7 +2164,7 @@ COPY . .
         <div class="card">
           <div style="font-size:13px; font-weight:600; margin-bottom:12px;">Cloud Run Config</div>
           <div class="code-header"><span>clouddeploy.yaml</span></div>
-          <pre style="font-size:11px;">service: apex-backend
+          <pre style="font-size:11px;">service: astrape-backend
 region: europe-west1
 memory: <span class="num">1Gi</span>
 cpu: <span class="num">2</span>
@@ -2175,11 +2175,11 @@ timeout: <span class="num">30</span>s
 
 env:
   - name: <span class="cls">GOOGLE_API_KEY</span>
-    valueFrom: secretManager/apex-gemini-key
+    valueFrom: secretManager/astrape-gemini-key
   - name: <span class="cls">SUPABASE_URL</span>
-    valueFrom: secretManager/apex-supabase-url
+    valueFrom: secretManager/astrape-supabase-url
   - name: <span class="cls">SUPABASE_SERVICE_KEY</span>
-    valueFrom: secretManager/apex-supabase-key</pre>
+    valueFrom: secretManager/astrape-supabase-key</pre>
         </div>
       </div>
 
@@ -2314,7 +2314,7 @@ env:
 
   <!-- FOOTER -->
   <div class="doc-footer">
-    <div class="footer-left">© 2026 APEX COACHING PLATFORM · v2.1.0 · CONFIDENTIAL</div>
+    <div class="footer-left">© 2026 ASTRAPE COACHING PLATFORM · v2.1.0 · CONFIDENTIAL</div>
     <div class="footer-right">
       <a href="#intro" class="footer-link">TOP ↑</a>
       <a href="#api" class="footer-link">API REF</a>
@@ -2345,3 +2345,5 @@ sections.forEach(s => observer.observe(s));
 
 </body>
 </html>
+
+

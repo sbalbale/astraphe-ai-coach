@@ -1,6 +1,6 @@
-# Algorithms
+﻿# Algorithms
 
-APEX's metric computation layer is implemented in Python using NumPy vectorized operations. All formulas are based on established sports science literature, primarily the training load model developed by Bannister (1975) and commercialized by TrainingPeaks.
+ASTRAPE's metric computation layer is implemented in Python using NumPy vectorized operations. All formulas are based on established sports science literature, primarily the training load model developed by Bannister (1975) and commercialized by TrainingPeaks.
 
 ---
 
@@ -49,7 +49,7 @@ def normalized_power(power_series: np.ndarray) -> float:
 
 ### Running TSS (Pace + HR Hybrid)
 
-For running, power meters are less common. APEX uses a HR-based approach when power is unavailable:
+For running, power meters are less common. ASTRAPE uses a HR-based approach when power is unavailable:
 
 ```
 TSS = duration_hours × (avg_hr / threshold_hr)² × 100
@@ -169,7 +169,7 @@ Note: TSB uses *yesterday's* CTL and ATL, not today's. This represents the form 
 
 ## Recovery Score
 
-The APEX Recovery Score (0–100) is a weighted composite of multiple physiological signals. Unlike WHOOP's proprietary recovery model, APEX's formula is transparent and auditable.
+The ASTRAPE Recovery Score (0–100) is a weighted composite of multiple physiological signals. Unlike WHOOP's proprietary recovery model, ASTRAPE's formula is transparent and auditable.
 
 ```python
 def compute_recovery_score(
@@ -184,7 +184,7 @@ def compute_recovery_score(
     spo2_pct: float,
 ) -> int:
     """
-    Compute the APEX Recovery Score (0–100).
+    Compute the ASTRAPE Recovery Score (0–100).
     
     Higher scores indicate greater readiness for high-intensity training.
     """
@@ -238,7 +238,7 @@ def compute_recovery_score(
 
 ## Strain Score
 
-The APEX Strain Score (0–21) measures cardiovascular load for a given period. The scale matches WHOOP's strain scale for familiarity.
+The ASTRAPE Strain Score (0–21) measures cardiovascular load for a given period. The scale matches WHOOP's strain scale for familiarity.
 
 ```python
 ZONE_STRAIN_COEFFICIENTS = {
@@ -271,7 +271,7 @@ def compute_strain_score(zone_minutes: dict[int, float]) -> float:
 
 ## HRV Trend Analysis
 
-APEX computes a 7-day HRV trend to distinguish signal from noise in daily readings.
+ASTRAPE computes a 7-day HRV trend to distinguish signal from noise in daily readings.
 
 ```python
 def hrv_trend(hrv_series: np.ndarray) -> dict:
@@ -304,3 +304,5 @@ def hrv_trend(hrv_series: np.ndarray) -> dict:
         "current_baseline": round(mean_7d, 1),
     }
 ```
+
+

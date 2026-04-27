@@ -1,14 +1,14 @@
-# Mobile
+﻿# Mobile
 
 ## Svelte 5 + Capacitor Architecture
 
-The APEX mobile app is a Svelte 5 single-page application compiled to a static web bundle and wrapped by Capacitor into a native iOS and Android binary. The WebView executes the compiled JavaScript; Capacitor provides native plugin bridges as typed TypeScript APIs.
+The ASTRAPE mobile app is a Svelte 5 single-page application compiled to a static web bundle and wrapped by Capacitor into a native iOS and Android binary. The WebView executes the compiled JavaScript; Capacitor provides native plugin bridges as typed TypeScript APIs.
 
 ---
 
 ## Svelte 5 State Management
 
-APEX uses Svelte 5's rune system for all reactive state. There is no external state management library (no Pinia, no Zustand) — runes provide fine-grained reactivity with zero boilerplate.
+ASTRAPE uses Svelte 5's rune system for all reactive state. There is no external state management library (no Pinia, no Zustand) — runes provide fine-grained reactivity with zero boilerplate.
 
 ### Athlete State Store
 
@@ -231,7 +231,7 @@ addEventListener('healthkitSync', async (resolve, reject, args) => {
             aggregation: 'daily_avg',
         });
         
-        // POST batch to APEX API
+        // POST batch to ASTRAPE API
         const payload = { workouts, hrv, restingHR, sleep, spo2 };
         
         await CapacitorHttp.post({
@@ -268,7 +268,7 @@ export async function registerHealthKitSync() {
     const { access_token } = await getSession();
     
     await BackgroundRunner.dispatchEvent({
-        label: 'app.apex-coach.healthkit-sync',
+        label: 'app.astrape-coach.healthkit-sync',
         event: 'healthkitSync',
         details: {
             accessToken: access_token,
@@ -338,7 +338,7 @@ export function subscribeToAthleteUpdates(athleteId: string) {
 
 ## Offline Behavior
 
-APEX degrades gracefully without a network connection. The priority is to always show data rather than a blank screen.
+ASTRAPE degrades gracefully without a network connection. The priority is to always show data rather than a blank screen.
 
 | Feature | Offline behavior |
 |---|---|
@@ -390,8 +390,8 @@ export function cache<T>(key: string, ttl: number) {
 import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-    appId: 'app.apex-coach.ios',
-    appName: 'APEX',
+    appId: 'app.astrape-coach.ios',
+    appName: 'ASTRAPE',
     webDir: 'build',
     server: {
         // In development only: point to local dev server
@@ -401,7 +401,7 @@ const config: CapacitorConfig = {
     },
     plugins: {
         BackgroundRunner: {
-            label: 'app.apex-coach.healthkit-sync',
+            label: 'app.astrape-coach.healthkit-sync',
             src: 'runner.js',
             event: 'healthkitSync',
             repeat: true,
@@ -409,7 +409,7 @@ const config: CapacitorConfig = {
             autoStart: true,
         },
         SplashScreen: {
-            launchShowDuration: 0,  // APEX handles its own splash
+            launchShowDuration: 0,  // ASTRAPE handles its own splash
         },
         StatusBar: {
             style: 'dark',          // White icons on dark background
@@ -420,3 +420,5 @@ const config: CapacitorConfig = {
 
 export default config;
 ```
+
+

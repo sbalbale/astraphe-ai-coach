@@ -1,18 +1,18 @@
-# AI Coach System
+﻿# AI Coach System
 
 ## Overview
 
-The APEX AI Coach is a Gemini 1.5 Pro agent that combines structured physiological context, function calling for live data retrieval, and a RAG memory pipeline to deliver coaching responses that are simultaneously data-driven and conversationally natural.
+The ASTRAPE AI Coach is a Gemini 2.5 Pro agent that combines structured physiological context, function calling for live data retrieval, and a RAG memory pipeline to deliver coaching responses that are simultaneously data-driven and conversationally natural.
 
 ---
 
 ## System Prompt
 
-The system prompt defines the APEX persona, constraints, and output style. It is injected once per conversation session.
+The system prompt defines the ASTRAPE persona, constraints, and output style. It is injected once per conversation session.
 
 ```python
-APEX_SYSTEM_PROMPT = """
-You are APEX, an AI endurance sports coach embedded in the athlete's training platform.
+ASTRAPE_SYSTEM_PROMPT = """
+You are ASTRAPE, an AI endurance sports coach embedded in the athlete's training platform.
 
 ## Identity
 You are a world-class coaching intelligence with deep expertise in:
@@ -124,7 +124,7 @@ async def build_athlete_context(athlete_id: str, db: Client) -> dict:
 Gemini can autonomously invoke these tools to fetch fresher or more specific data mid-conversation.
 
 ```python
-APEX_TOOLS = [
+ASTRAPE_TOOLS = [
     {
         "name": "get_athlete_state",
         "description": "Get the athlete's current load metrics (CTL, ATL, TSB) and readiness score. Use when the athlete asks about their current fitness, fatigue, or form.",
@@ -215,7 +215,7 @@ APEX_TOOLS = [
 
 ## RAG Memory Pipeline
 
-Before calling Gemini, APEX performs a similarity search over the athlete's `coach_memories` table to retrieve relevant prior coaching context.
+Before calling Gemini, ASTRAPE performs a similarity search over the athlete's `coach_memories` table to retrieve relevant prior coaching context.
 
 ```python
 import google.generativeai as genai
@@ -296,7 +296,7 @@ async def coach_response(
     db: Client,
 ) -> AsyncIterator[str]:
     """
-    Complete APEX coaching inference pipeline.
+    Complete ASTRAPE coaching inference pipeline.
     Streams response tokens back to the client.
     """
     # 1. Build structured context
@@ -340,9 +340,9 @@ RELEVANT COACHING HISTORY:
     
     # 4. Call Gemini with streaming
     model = genai.GenerativeModel(
-        model_name="gemini-1.5-pro",
-        system_instruction=APEX_SYSTEM_PROMPT,
-        tools=APEX_TOOLS,
+        model_name="gemini-2.5-pro",
+        system_instruction=ASTRAPE_SYSTEM_PROMPT,
+        tools=ASTRAPE_TOOLS,
     )
     
     chat = model.start_chat(history=messages[:-1])
@@ -401,7 +401,7 @@ Call out excuses. The numbers don't lie — hold the athlete to them.
 
 ## Token Budget Management
 
-Gemini 1.5 Pro's 1M context window eliminates most truncation concerns, but APEX still implements a tiered context strategy to minimize latency and cost:
+Gemini 2.5 Pro's 1M context window eliminates most truncation concerns, but ASTRAPE still implements a tiered context strategy to minimize latency and cost:
 
 | Context Tier | Included When | Approximate Tokens |
 |---|---|---|
@@ -416,4 +416,6 @@ Gemini 1.5 Pro's 1M context window eliminates most truncation concerns, but APEX
 
 **Total per-query token estimate (typical): ~1,700 tokens input, ~200–400 tokens output.**
 
-At Gemini 1.5 Pro pricing, this is approximately $0.003–0.006 per coaching message — commercially viable at any reasonable user volume.
+At Gemini 2.5 Pro pricing, this is approximately $0.003–0.006 per coaching message — commercially viable at any reasonable user volume.
+
+

@@ -1,4 +1,4 @@
-# Setup Guide
+﻿# Setup Guide
 
 ## Prerequisites
 
@@ -15,8 +15,8 @@
 ## 1. Clone and Configure
 
 ```bash
-git clone https://github.com/seanbalbale/apex-coach.git
-cd apex-coach
+git clone https://github.com/seanbalbale/astrape-coach.git
+cd astrape-coach
 cp .env.example .env
 ```
 
@@ -44,7 +44,7 @@ WHOOP_WEBHOOK_SECRET=your_whoop_webhook_hmac_secret
 # App configuration
 APP_ENV=development
 APP_BASE_URL=http://localhost:8000
-MOBILE_DEEP_LINK_SCHEME=apex
+MOBILE_DEEP_LINK_SCHEME=astrape
 ```
 
 ---
@@ -205,9 +205,9 @@ HealthKit requires Info.plist permission strings and a background entitlement.
 **In `ios/App/App/Info.plist`:**
 ```xml
 <key>NSHealthShareUsageDescription</key>
-<string>APEX reads your Apple Health data to analyze training load, recovery, and readiness.</string>
+<string>ASTRAPE reads your Apple Health data to analyze training load, recovery, and readiness.</string>
 <key>NSHealthUpdateUsageDescription</key>
-<string>APEX can write workout summaries to Apple Health.</string>
+<string>ASTRAPE can write workout summaries to Apple Health.</string>
 ```
 
 **In `ios/App/App/App.entitlements`:**
@@ -222,7 +222,7 @@ HealthKit requires Info.plist permission strings and a background entitlement.
 ```json
 {
   "HEALTHKIT_SYNC": {
-    "identifier": "app.apex-coach.healthkit-sync",
+    "identifier": "app.astrape-coach.healthkit-sync",
     "interval": 3600,
     "runner": "runner.js",
     "event": "healthkitSync",
@@ -320,3 +320,5 @@ curl -X POST http://localhost:8000/v1/coach/message \
   --no-buffer \
   -d '{"message": "How is my fitness trending?"}'
 ```
+
+

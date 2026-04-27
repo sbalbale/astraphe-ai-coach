@@ -1,4 +1,4 @@
-# Deployment
+﻿# Deployment
 
 ## Infrastructure Overview
 
@@ -7,7 +7,7 @@
 │                  Google Cloud Platform              │
 │                                                     │
 │  Cloud Run          Cloud Build       Artifact      │
-│  (apex-api)    ←    (CI/CD)     ←    Registry       │
+│  (astrape-api)    ←    (CI/CD)     ←    Registry       │
 │                                                     │
 │  Cloud Tasks        Secret Manager   Cloud Logging  │
 │  (TSS recompute)    (API keys)       (structured)   │
@@ -30,8 +30,8 @@ gcloud auth login
 gcloud auth application-default login
 
 # Create project
-gcloud projects create apex-coach-prod --name="APEX Coach"
-gcloud config set project apex-coach-prod
+gcloud projects create astrape-coach-prod --name="ASTRAPE Coach"
+gcloud config set project astrape-coach-prod
 
 # Enable required APIs
 gcloud services enable \
@@ -43,10 +43,10 @@ gcloud services enable \
   logging.googleapis.com
 
 # Create Artifact Registry repository
-gcloud artifacts repositories create apex-images \
+gcloud artifacts repositories create astrape-images \
   --repository-format=docker \
   --location=us-central1 \
-  --description="APEX API container images"
+  --description="ASTRAPE API container images"
 ```
 
 ---
@@ -78,7 +78,7 @@ echo -n "your_secret" | \
   gcloud secrets versions add whoop-client-secret --data-file=-
 
 # Grant Cloud Run service account access
-PROJECT_NUMBER=$(gcloud projects describe apex-coach-prod --format='value(projectNumber)')
+PROJECT_NUMBER=$(gcloud projects describe astrape-coach-prod --format='value(projectNumber)')
 SA="serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
 
 for secret in supabase-url supabase-service-role-key gemini-api-key \
@@ -164,9 +164,9 @@ steps:
     args:
       - build
       - -t
-      - us-central1-docker.pkg.dev/$PROJECT_ID/apex-images/apex-api:$COMMIT_SHA
+      - us-central1-docker.pkg.dev/$PROJECT_ID/astrape-images/astrape-api:$COMMIT_SHA
       - -t
-      - us-central1-docker.pkg.dev/$PROJECT_ID/apex-images/apex-api:latest
+      - us-central1-docker.pkg.dev/$PROJECT_ID/astrape-images/astrape-api:latest
       - -f
       - backend/Dockerfile
       - backend/
@@ -178,7 +178,7 @@ steps:
     args:
       - push
       - --all-tags
-      - us-central1-docker.pkg.dev/$PROJECT_ID/apex-images/apex-api
+      - us-central1-docker.pkg.dev/$PROJECT_ID/astrape-images/astrape-api
     waitFor: [build]
 
   # Step 4: Deploy to Cloud Run
@@ -188,8 +188,8 @@ steps:
     args:
       - run
       - deploy
-      - apex-api
-      - --image=us-central1-docker.pkg.dev/$PROJECT_ID/apex-images/apex-api:$COMMIT_SHA
+      - astrape-api
+      - --image=us-central1-docker.pkg.dev/$PROJECT_ID/astrape-images/astrape-api:$COMMIT_SHA
       - --region=us-central1
       - --platform=managed
       - --no-allow-unauthenticated
@@ -220,17 +220,17 @@ timeout: 1200s
 ```bash
 # Build and push manually for first deploy
 cd backend
-docker build -t us-central1-docker.pkg.dev/apex-coach-prod/apex-images/apex-api:v1.0.0 .
+docker build -t us-central1-docker.pkg.dev/astrape-coach-prod/astrape-images/astrape-api:v1.0.0 .
 
 # Authenticate Docker with Artifact Registry
 gcloud auth configure-docker us-central1-docker.pkg.dev
 
 # Push
-docker push us-central1-docker.pkg.dev/apex-coach-prod/apex-images/apex-api:v1.0.0
+docker push us-central1-docker.pkg.dev/astrape-coach-prod/astrape-images/astrape-api:v1.0.0
 
 # Deploy
-gcloud run deploy apex-api \
-  --image=us-central1-docker.pkg.dev/apex-coach-prod/apex-images/apex-api:v1.0.0 \
+gcloud run deploy astrape-api \
+  --image=us-central1-docker.pkg.dev/astrape-coach-prod/astrape-images/astrape-api:v1.0.0 \
   --region=us-central1 \
   --platform=managed \
   --no-allow-unauthenticated \
@@ -239,7 +239,7 @@ gcloud run deploy apex-api \
   --set-secrets=SUPABASE_URL=supabase-url:latest,SUPABASE_SERVICE_ROLE_KEY=supabase-service-role-key:latest,GEMINI_API_KEY=gemini-api-key:latest
 
 # Get the service URL
-gcloud run services describe apex-api \
+gcloud run services describe astrape-api \
   --region=us-central1 \
   --format='value(status.url)'
 ```
@@ -261,7 +261,7 @@ supabase db execute "SELECT extname, extversion FROM pg_extension WHERE extname 
 
 **Required Supabase configuration in the dashboard:**
 
-1. **Auth → URL Configuration:** Set Site URL to `https://apex-coach.app` and add redirect URLs for the mobile deep link `apex://auth/callback`
+1. **Auth → URL Configuration:** Set Site URL to `https://astrape-coach.app` and add redirect URLs for the mobile deep link `astrape://auth/callback`
 2. **Database → Extensions:** Verify `vector` extension is enabled
 3. **API → JWT Settings:** Note the JWT secret for backend verification
 4. **Realtime → Replication:** Enable replication for `tss_history` and `biometrics` tables
@@ -284,7 +284,7 @@ npx cap open ios
 ```
 
 In Xcode:
-1. Set Bundle ID: `app.apex-coach.ios`
+1. Set Bundle ID: `app.astrape-coach.ios`
 2. Configure signing with your Apple Developer certificate
 3. Set the production API URL in `capacitor.config.ts`
 4. Archive → Distribute → TestFlight or App Store
@@ -354,7 +354,7 @@ At 500 daily active athletes (realistic Year 1 target):
 | Artifact Registry | ~5 images stored | ~$1 |
 | Cloud Build | ~60 builds/month | ~$3 |
 | Supabase (Pro) | 8GB database, 50GB storage | $25 |
-| Gemini 1.5 Pro | ~30k messages/month × ~2k tokens | ~$18 |
+| Gemini 2.5 Pro | ~30k messages/month × ~2k tokens | ~$18 |
 | **Total** | | **~$59/month** |
 
 At 10,000 DAU:
@@ -363,5 +363,7 @@ At 10,000 DAU:
 |---|---|
 | Cloud Run | ~$180 |
 | Supabase (Team) | $599 |
-| Gemini 1.5 Pro | ~$360 |
+| Gemini 2.5 Pro | ~$360 |
 | **Total** | **~$1,150/month** |
+
+

@@ -1,8 +1,8 @@
-# Design System
+﻿# Design System
 
 ## Spectral Glassmorphism
 
-APEX's visual language is called "Spectral." It is a dark-mode-native, high-contrast design system built around three principles:
+ASTRAPE's visual language is called "Spectral." It is a dark-mode-native, high-contrast design system built around three principles:
 
 1. **Depth through translucency.** Cards and panels are not opaque — they are frosted glass layers that reveal depth in the background without losing legibility.
 2. **Color as signal.** Every color in the palette has a single, consistent semantic meaning. Blue = action/fitness, Teal = positive/recovery, Amber = caution/load, Red = stress/intensity.
@@ -221,7 +221,7 @@ The `MultiLineChart` combines a bar series (ATL, rendered with 25% blue opacity)
 
 ## Motion
 
-APEX uses minimal motion. Animations serve one purpose: confirming state changes.
+ASTRAPE uses minimal motion. Animations serve one purpose: confirming state changes.
 
 | Transition | Duration | Easing |
 |---|---|---|
@@ -263,3 +263,5 @@ The current Spectral system is dark-mode native. A light-mode export is specifie
 ```
 
 Light mode maintains the same semantic color roles but inverts the surface hierarchy. Implementation is deferred to post-MVP.
+
+
