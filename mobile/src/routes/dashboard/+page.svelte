@@ -6,14 +6,16 @@
   import MultiLineChart from '$lib/components/charts/MultiLineChart.svelte';
   import LineChart from '$lib/components/charts/LineChart.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
+  import { authStore } from '$lib/stores/authStore.svelte';
+  import { format } from 'date-fns';
 </script>
 
 <div class="flex flex-col gap-3">
   <!-- Header (Visible on Desktop, as Mobile has layout header) -->
   <div class="hidden md:flex justify-between items-start">
     <div>
-      <p class="text-xs text-text2 font-mono uppercase tracking-[0.1em]">Sunday, Apr 26</p>
-      <h1 class="text-[22px] font-bold tracking-[-0.02em]">Good morning, Marcus</h1>
+      <p class="text-xs text-text2 font-mono uppercase tracking-[0.1em]">{format(new Date(), 'EEEE, MMM d')}</p>
+      <h1 class="text-[22px] font-bold tracking-[-0.02em]">Good morning, {authStore.user?.user_metadata?.full_name || 'Athlete'}</h1>
     </div>
     <div class="flex items-center gap-2">
       <div class="w-2 h-2 rounded-full bg-teal shadow-[0_0_8px_var(--teal)]"></div>

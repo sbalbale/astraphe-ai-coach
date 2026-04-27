@@ -13,6 +13,11 @@ async def get_current_athlete(credentials: HTTPAuthorizationCredentials = Securi
     token = credentials.credentials
     try:
         user = db.auth.get_user(token)
-        return user.user.id
-    except Exception:
-        raise HTTPException(status_code=401, detail="Invalid or missing token")
+        user_id = user.user.id
+        # fetch athletes.id
+        athlete_res = db.table("athletes").select("id").eq("user_id", user_id).execute()
+        if not athlete_res.data:
+            raise HTTPException(status_code=404, detail="Athlete profile not found")
+        return athlete_res.data[0]["id"]
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"Invalid or missing token: {str(e)}")

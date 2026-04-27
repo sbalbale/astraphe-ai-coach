@@ -4,12 +4,32 @@
   import RadialProgress from '$lib/components/RadialProgress.svelte';
   import MultiLineChart from '$lib/components/charts/MultiLineChart.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
+  
+  // Derive strain components from real data
+  let strainData = $derived.by(() => {
+    const latestBio = athleteStore.biometrics?.series?.length > 0 
+      ? athleteStore.biometrics.series[athleteStore.biometrics.series.length - 1] 
+      : null;
+    
+    const latestTss = athleteStore.metrics?.trainingLoadData?.length > 0
+      ? athleteStore.metrics.trainingLoadData[athleteStore.metrics.trainingLoadData.length - 1].daily_tss
+      : 0;
 
-  const strainData = [
-    { label: 'Cardiovascular', value: 85, color: '#F07178', desc: 'Heart rate response vs expected based on power/pace.' },
-    { label: 'Muscular', value: 42, color: '#FFCB88', desc: 'Estimated lower body tissue damage from recent volume.' },
-    { label: 'Nervous System', value: 68, color: '#4621FF', desc: 'Derived from HRV and high-intensity interval frequency.' }
-  ];
+    // Cardiovascular: Based on daily TSS relative to a "hard" day (e.g. 150 TSS)
+    const cardo = Math.min(Math.round((latestTss / 150) * 100), 100);
+    
+    // Muscular: Estimated as a portion of TSS load
+    const muscular = Math.min(Math.round((latestTss / 200) * 100), 100);
+    
+    // Nervous System: Inverse of recovery score (lower recovery = higher nervous strain)
+    const nervous = latestBio ? 100 - (latestBio.recovery_score || 50) : 50;
+
+    return [
+      { label: 'Cardiovascular', value: cardo || 45, color: '#F07178', desc: 'Heart rate response vs expected based on power/pace.' },
+      { label: 'Muscular', value: muscular || 30, color: '#FFCB88', desc: 'Estimated lower body tissue damage from recent volume.' },
+      { label: 'Nervous System', value: nervous || 50, color: '#4621FF', desc: 'Derived from HRV and high-intensity interval frequency.' }
+    ];
+  });
 </script>
 
 <div class="flex flex-col gap-3">

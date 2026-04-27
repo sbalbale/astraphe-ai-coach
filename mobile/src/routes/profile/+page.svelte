@@ -4,12 +4,39 @@
   import { authStore } from '$lib/stores/authStore.svelte';
   import { goto } from '$app/navigation';
 
+  import { HealthIntegration } from '$lib/integrations/health';
+
   const menu = [
     { label: 'Personal Information', href: '/profile/personal-info' },
     { label: 'Training Settings', href: '/profile/training-settings' },
     { label: 'Notifications', href: '/profile/notifications' },
     { label: 'Privacy', href: '/profile/privacy' }
   ];
+
+  let connected = $state({ apple: false, garmin: false, whoop: false });
+  let syncing = $state('');
+
+  async function toggleIntegration(id: string) {
+    if (syncing) return;
+    syncing = id;
+
+    if (id === 'apple') {
+      const granted = await HealthIntegration.requestPermissions();
+      if (granted) {
+        await HealthIntegration.syncRecentData();
+        connected[id] = true;
+      } else {
+        connected[id] = false;
+        alert('HealthKit permissions denied.');
+      }
+    } else {
+      // Simulate typical network delay for others
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      connected[id] = !connected[id];
+    }
+    
+    syncing = '';
+  }
 
   async function handleSignOut() {
     await authStore.signOut();
@@ -33,27 +60,66 @@
   </Card>
 
   <Card>
-    <p class="text-[13px] font-semibold mb-3">Connected Devices</p>
-    <div class="flex flex-col gap-3">
+    <p class="text-[13px] font-semibold mb-3">Connected Apps</p>
+    <div class="flex flex-col gap-4">
+      <!-- Apple Health -->
       <div class="flex items-center justify-between">
         <div class="flex items-center gap-3">
-          <div class="w-8 h-8 rounded-full bg-[#FC5200]/20 text-[#FC5200] flex items-center justify-center font-bold text-xs">S</div>
+          <div class="w-9 h-9 rounded-xl bg-[#F07178]/10 text-[#F07178] flex items-center justify-center text-xl border border-[#F07178]/20">🍎</div>
           <div>
-            <p class="text-[13px] font-medium">Strava</p>
-            <p class="text-[10px] text-text2">Activities</p>
+            <p class="text-[13px] font-medium">Apple Health</p>
+            <p class="text-[10px] text-text2">Sleep & Workouts</p>
           </div>
         </div>
-        <span class="text-[10px] text-teal font-mono">SYNCED 2M AGO</span>
+        <button 
+          class="px-3 py-1 rounded-full text-[11px] font-medium cursor-pointer transition-all duration-200"
+          style={connected.apple 
+            ? 'background: var(--color-red-dim); color: var(--color-red); border: 1px solid rgba(240,113,120,0.3)' 
+            : 'background: rgba(240,113,120,0.15); color: #F07178; border: 1px solid rgba(240,113,120,0.3)'}
+          onclick={() => toggleIntegration('apple')}
+        >
+          {syncing === 'apple' ? '...' : connected.apple ? 'Unlink' : 'Connect'}
+        </button>
       </div>
+
+      <!-- Garmin -->
       <div class="flex items-center justify-between">
         <div class="flex items-center gap-3">
-          <div class="w-8 h-8 rounded-full bg-[#00A9E0]/20 text-[#00A9E0] flex items-center justify-center font-bold text-xs">G</div>
+          <div class="w-9 h-9 rounded-xl bg-[#00C8A8]/10 text-[#00C8A8] flex items-center justify-center text-xl border border-[#00C8A8]/20">⌚</div>
           <div>
             <p class="text-[13px] font-medium">Garmin Connect</p>
-            <p class="text-[10px] text-text2">Health & Sleep</p>
+            <p class="text-[10px] text-text2">Performance Data</p>
           </div>
         </div>
-        <span class="text-[10px] text-teal font-mono">SYNCED 1H AGO</span>
+        <button 
+          class="px-3 py-1 rounded-full text-[11px] font-medium cursor-pointer transition-all duration-200"
+          style={connected.garmin 
+            ? 'background: var(--color-red-dim); color: var(--color-red); border: 1px solid rgba(240,113,120,0.3)' 
+            : 'background: rgba(0,200,168,0.15); color: #00C8A8; border: 1px solid rgba(0,200,168,0.3)'}
+          onclick={() => toggleIntegration('garmin')}
+        >
+          {syncing === 'garmin' ? '...' : connected.garmin ? 'Unlink' : 'Connect'}
+        </button>
+      </div>
+
+      <!-- WHOOP -->
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <div class="w-9 h-9 rounded-xl bg-[#FFCB88]/10 text-[#FFCB88] flex items-center justify-center text-xl border border-[#FFCB88]/20">🔴</div>
+          <div>
+            <p class="text-[13px] font-medium">WHOOP</p>
+            <p class="text-[10px] text-text2">Recovery & HRV</p>
+          </div>
+        </div>
+        <button 
+          class="px-3 py-1 rounded-full text-[11px] font-medium cursor-pointer transition-all duration-200"
+          style={connected.whoop 
+            ? 'background: var(--color-red-dim); color: var(--color-red); border: 1px solid rgba(240,113,120,0.3)' 
+            : 'background: rgba(255,203,136,0.15); color: #FFCB88; border: 1px solid rgba(255,203,136,0.3)'}
+          onclick={() => toggleIntegration('whoop')}
+        >
+          {syncing === 'whoop' ? '...' : connected.whoop ? 'Unlink' : 'Connect'}
+        </button>
       </div>
     </div>
   </Card>
