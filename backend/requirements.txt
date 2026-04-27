@@ -1,21 +1,20 @@
 ﻿# --- Core Web Server ---
-fastapi==0.110.0
-uvicorn[standard]==0.27.1
-pydantic==2.6.4
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.1
+pydantic>=2.6.4
 pydantic-settings>=2.2.1
 
 # --- Database & Environment ---
-supabase==2.4.0
+supabase>=2.5.0
+websockets>=14.0,<16.0  # Resolves Supabase realtime & asyncio conflicts
 python-dotenv==1.0.1
 
 # --- AI & Intelligence ---
-google-generativeai==0.4.1
+google-generativeai>=0.4.1
 
 # --- Math & Data Processing ---
-numpy==1.26.4
-pandas==2.2.1
+numpy>=1.26.4
+pandas>=2.2.1
 
 # --- Testing Suite ---
 pytest>=8.1.1
-# Pinned to 0.25.2 to resolve the Supabase conflict
-httpx==0.25.2
