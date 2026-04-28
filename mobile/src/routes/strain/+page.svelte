@@ -4,39 +4,35 @@
   import Tag from '$lib/components/Tag.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import Pill from '$lib/components/Pill.svelte';
-  import FormDateInput from '$lib/components/FormDateInput.svelte';
+  import DatePicker from '$lib/components/DatePicker.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { addDays, format, subDays } from 'date-fns';
 
   const isConnected = $derived(Object.values(athleteStore.syncStatus?.integrations || {}).some((i: any) => i.connected));
   
   // Rolling 7-day window (cannot go into the future).
-  let selectedEndDay = $state(new Date());
+  // Source of truth for the picker is a YYYY-MM-DD string.
+  let endPickerValue = $state('');
   let dayIndex = $state(0); // most recent on the left
   const isoDate = (value: unknown) => (typeof value === 'string' ? value.slice(0, 10) : '');
 
   const today = $derived(new Date());
   const todayStr = $derived(format(today, 'yyyy-MM-dd'));
 
+  $effect(() => {
+    if (!endPickerValue) endPickerValue = todayStr;
+  });
+
   const clampedEndDay = $derived.by(() => {
-    const d = selectedEndDay instanceof Date ? selectedEndDay : new Date(selectedEndDay);
-    if (Number.isNaN(d.getTime())) return new Date();
+    const d = endPickerValue ? new Date(endPickerValue) : new Date();
+    if (Number.isNaN(d.getTime())) return today;
     return d > today ? today : d;
   });
 
   const windowStart = $derived(subDays(clampedEndDay, 6));
   const windowEnd = $derived(clampedEndDay);
   const rangeLabel = $derived(`${format(windowStart, 'MMM d')} – ${format(windowEnd, 'MMM d, yyyy')}`);
-  let endPickerValue = $state('');
   const canGoForward = $derived(format(windowEnd, 'yyyy-MM-dd') !== todayStr);
-
-  $effect(() => {
-    endPickerValue = format(windowEnd, 'yyyy-MM-dd');
-  });
-
-  $effect(() => {
-    if (endPickerValue) selectedEndDay = new Date(endPickerValue);
-  });
 
   const days = $derived.by(() => {
     return Array.from({ length: 7 }, (_, i) => {
@@ -118,25 +114,24 @@
           type="button"
           class="h-8 w-8 rounded-md border border-border bg-glass text-text0"
           aria-label="Previous 7 days"
-          onclick={() => (selectedEndDay = subDays(windowEnd, 7))}
+          onclick={() => (endPickerValue = format(subDays(windowEnd, 7), 'yyyy-MM-dd'))}
         >
           ←
         </button>
         <div class="w-[150px]">
-          <FormDateInput
+          <DatePicker
             id="strain-end"
-            type="date"
             bind:value={endPickerValue}
             max={todayStr}
             ariaLabel="Select end day"
-            inputClass="h-8 px-2 pr-9 rounded-md border border-border bg-glass text-[12px] text-text0"
+            buttonClass="h-8 px-2 pr-2 rounded-md border border-border bg-glass text-[12px] text-text0"
           />
         </div>
         <button
           type="button"
           class="h-8 px-2.5 rounded-md border border-border bg-glass text-text0 text-[12px]"
           aria-label="Jump to today"
-          onclick={() => (selectedEndDay = new Date())}
+          onclick={() => (endPickerValue = todayStr)}
         >
           Today
         </button>
@@ -148,7 +143,7 @@
           style={!canGoForward ? 'opacity: 0.4; cursor: not-allowed;' : ''}
           onclick={() => {
             if (!canGoForward) return;
-            selectedEndDay = addDays(windowEnd, 7);
+            endPickerValue = format(addDays(windowEnd, 7), 'yyyy-MM-dd');
           }}
         >
           →

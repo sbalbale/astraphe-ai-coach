@@ -143,66 +143,59 @@ def calculate_astrape_sleep_score(duration_min: float, rem_pct: float, deep_pct:
 # RECOVERY & READINESS
 # ==========================================
 
-def calculate_astrape_recovery_score(hrv: float, baseline_hrv: float, sleep_score: int, resting_hr: int, baseline_rhr: int) -> int:
+def calculate_astrape_recovery_score(
+    hrv_rmssd: float, hrv_baseline_30d: float, 
+    resting_hr: int, resting_hr_baseline_30d: float, 
+    sleep_score: int
+) -> int:
     """
-    Standard 3-variable Recovery Score based heavily on Autonomic state.
+    Pure Recovery Score (0-100) focusing strictly on autonomic nervous system repair and sleep.
     """
-    if not hrv or not resting_hr: 
+    if not hrv_rmssd or not resting_hr: 
         return 0
         
-    # HRV ratio vs baseline (45% weight)
-    hrv_ratio = hrv / (baseline_hrv or 50.0)
-    hrv_score = min(100, max(0, hrv_ratio * 75))
+    # 1. HRV component (50% Weight)
+    hrv_delta_pct = (hrv_rmssd - hrv_baseline_30d) / max(hrv_baseline_30d, 1)
+    hrv_score = np.clip(50 + (hrv_delta_pct * 100), 0, 100)
     
-    # RHR deviation vs baseline (25% weight)
-    rhr_diff = (baseline_rhr or 60) - resting_hr
-    rhr_score = min(100, max(0, 50 + (rhr_diff * 5)))
+    # 2. RHR component (20% Weight)
+    rhr_delta = resting_hr - resting_hr_baseline_30d
+    rhr_score = np.clip(100 - (rhr_delta * 5), 0, 100)
     
-    # Sleep contribution (30% weight)
-    raw_composite = (hrv_score * 0.45) + (rhr_score * 0.25) + (sleep_score * 0.30)
-    return int(np.clip(round(raw_composite), 0, 100))
+    # 3. Sleep component (30% Weight)
+    raw_recovery = (hrv_score * 0.50) + (rhr_score * 0.20) + (sleep_score * 0.30)
+    
+    return int(round(np.clip(raw_recovery, 0, 100)))
 
-def calculate_composite_readiness_score(
-    hrv_rmssd: float, hrv_baseline_30d: float,
-    resting_hr: int, resting_hr_baseline_30d: float,
-    sleep_score: int,
+
+def calculate_astrape_readiness_score(
+    recovery_score: int, 
     prior_day_atl: float, prior_day_atl_max_30d: float,
     skin_temp_deviation: float, spo2_pct: float
 ) -> int:
     """
-    Advanced 5-variable Readiness Score integrating physiological repair, 
-    training fatigue (ATL), and vital signs/illness detection.
+    Overall Readiness Score (0-100) assessing actual capacity to train. 
+    Factors in biological recovery, acute training fatigue (ATL), and illness indicators.
     """
-    scores = {}
+    # Base capacity is dictated by physiological recovery (70% weight)
+    base_readiness = recovery_score * 0.70
     
-    # 1. HRV component (35% Weight)
-    hrv_delta_pct = (hrv_rmssd - hrv_baseline_30d) / max(hrv_baseline_30d, 1)
-    scores['hrv'] = np.clip(50 + (hrv_delta_pct * 100), 0, 100)
-    
-    # 2. Resting HR component (20% Weight)
-    rhr_delta = resting_hr - resting_hr_baseline_30d
-    scores['rhr'] = np.clip(100 - (rhr_delta * 5), 0, 100)
-    
-    # 3. Sleep component (30% Weight)
-    scores['sleep'] = float(sleep_score)
-    
-    # 4. Prior load component (10% Weight)
+    # Acute Fatigue component (30% weight)
+    # The closer ATL is to the recent 30-day max, the lower the form score
     load_ratio = prior_day_atl / max(prior_day_atl_max_30d, 1)
-    scores['load'] = np.clip(100 - (load_ratio * 60), 0, 100)
+    load_score = np.clip(100 - (load_ratio * 80), 0, 100) 
     
-    # 5. Vitals / Illness component (5% Weight)
+    raw_readiness = base_readiness + (load_score * 0.30)
+    
+    # Vitals / Illness Penalty (Absolute point deductions)
     illness_penalty = 0
     if skin_temp_deviation > 0.5:
         illness_penalty += min((skin_temp_deviation - 0.5) * 40, 50)
     if spo2_pct < 95:
         illness_penalty += (95 - spo2_pct) * 10
-    scores['vitals'] = max(0, 100 - illness_penalty)
-    
-    # Weighted composite
-    weights = {'hrv': 0.35, 'rhr': 0.20, 'sleep': 0.30, 'load': 0.10, 'vitals': 0.05}
-    composite = sum(scores[k] * weights[k] for k in scores)
-    
-    return int(round(np.clip(composite, 0, 100)))
+        
+    final_readiness = max(0, raw_readiness - illness_penalty)
+    return int(round(final_readiness))
 
 # ==========================================
 # TREND ANALYSIS

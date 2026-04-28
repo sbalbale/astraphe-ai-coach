@@ -6,13 +6,85 @@
   import MultiLineChart from '$lib/components/charts/MultiLineChart.svelte';
   import LineChart from '$lib/components/charts/LineChart.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
+  import { onMount } from 'svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { authStore } from '$lib/stores/authStore.svelte';
   import { goto } from '$app/navigation';
   import { format } from 'date-fns';
 
+  onMount(() => {
+    athleteStore.fetchAll(true); // Force fresh fetch on mount to ensure all new fields are loaded
+  });
+
   const hasData = $derived(athleteStore.workouts?.length > 0 || athleteStore.readiness > 0);
   const isConnected = $derived(Object.values(athleteStore.syncStatus?.integrations || {}).some((i: any) => i.connected));
+
+  const todayStr = $derived(format(new Date(), 'yyyy-MM-dd'));
+  const isoDate = (v: unknown) => (typeof v === 'string' ? v.slice(0, 10) : '');
+
+  const todayBio = $derived(athleteStore.biometrics?.series?.find((s: any) => s.date === todayStr));
+  const todayLoad = $derived(athleteStore.metrics?.trainingLoadData?.find((m: any) => isoDate(m?.date) === todayStr));
+
+  const todayReadiness = $derived(todayBio?.astrape_recovery_score ?? todayBio?.recovery_score ?? null);
+  const todayHrv = $derived(todayBio?.hrv_rmssd ?? null);
+  const todaySleepMin = $derived(todayBio?.sleep_duration_min ?? null);
+  const todaySleepScore = $derived(todayBio?.astrape_sleep_score ?? todayBio?.sleep_score ?? null);
+
+  const latestBio = $derived(athleteStore.biometrics?.series?.[athleteStore.biometrics.series.length - 1]);
+  const latestHrv = $derived(todayHrv ?? latestBio?.hrv_rmssd ?? null);
+  const latestSleepMin = $derived(todaySleepMin ?? latestBio?.sleep_duration_min ?? null);
+  const latestSleepScore = $derived(todaySleepScore ?? latestBio?.astrape_sleep_score ?? latestBio?.sleep_score ?? null);
+
+  const todayCtl = $derived(todayLoad?.ctl ?? null);
+  const todayAtl = $derived(todayLoad?.atl ?? null);
+  const todayTsb = $derived(todayLoad?.tsb ?? null);
+
+  const sleepHM = (mins: number | null) => {
+    if (mins === null || mins === undefined) return 'Data not found';
+    const m = Math.max(0, Math.round(mins));
+    const h = Math.floor(m / 60);
+    const r = m % 60;
+    return `${h}h ${r}m`;
+  };
+
+  const hrvColor = (val: number) => {
+    const base = Number(athleteStore.profile?.hrv_baseline) || 0;
+    if (!base) return '#00C8A8';
+    if (val >= base * 1.05) return '#00C8A8';
+    if (val >= base * 0.95) return '#FFCB88';
+    return '#F07178';
+  };
+
+  const sleepColor = (score: number | null) => {
+    if (score === null || score === undefined) return 'var(--text2)';
+    if (score >= 67) return '#00C8A8'; // Green
+    if (score >= 34) return '#FFCB88'; // Yellow/Amber
+    return '#F07178'; // Red
+  };
+  const formatSleepHours = (hrsRaw: any) => {
+    const hrs = typeof hrsRaw === 'number' ? hrsRaw : Number(hrsRaw);
+    if (!Number.isFinite(hrs)) return 'Data not found';
+    const mins = Math.round(hrs * 60);
+    return sleepHM(mins);
+  };
+
+  const avg = (vals: number[]) => {
+    const clean = vals.filter((v) => Number.isFinite(v));
+    if (clean.length === 0) return null;
+    return clean.reduce((a, b) => a + b, 0) / clean.length;
+  };
+
+  const avgHrv7d = $derived.by(() => {
+    const src = (athleteStore.biometrics?.hrvData || []).slice(-7);
+    const a = avg(src.map((v: unknown) => Number(v)).filter((v: number) => v > 0));
+    return a === null ? null : Math.round(a);
+  });
+
+  const avgSleep7dMin = $derived.by(() => {
+    const src = (athleteStore.biometrics?.sleepData || []).slice(-7); // hours (float)
+    const a = avg(src.map((v: unknown) => Number(v)).filter((v: number) => v > 0));
+    return a === null ? null : Math.round(a * 60);
+  });
 </script>
 
 <div class="flex flex-col gap-3">
@@ -46,20 +118,29 @@
     <!-- Readiness Card -->
     <Card style="background: linear-gradient(135deg, rgba(70,33,255,0.18) 0%, rgba(0,200,168,0.10) 100%); border-color: rgba(70,33,255,0.3);">
       <div class="flex items-center gap-4">
-        <RadialProgress value={athleteStore.readiness} max={100} size={64} color="#4621FF" label={athleteStore.readiness.toString()} sub="RDY" />
+        <RadialProgress
+          value={todayReadiness ?? 0}
+          max={100}
+          size={64}
+          color="#4621FF"
+          label={(todayReadiness ?? null) === null ? 'N/A' : String(todayReadiness)}
+          sub="RDY"
+        />
         <div class="flex-1">
           <div class="flex items-center gap-2 mb-1">
             <span class="font-semibold text-[15px]">Readiness Score</span>
-            {#if athleteStore.readiness > 70}
+            {#if todayReadiness === null}
+              <Tag color="var(--text2)">NO DATA</Tag>
+            {:else if todayReadiness > 70}
               <Tag color="var(--teal)">OPTIMAL</Tag>
-            {:else if athleteStore.readiness > 40}
+            {:else if todayReadiness > 40}
               <Tag color="var(--amber)">MODERATE</Tag>
             {:else}
               <Tag color="var(--red)">RECOVERY</Tag>
             {/if}
           </div>
           <p class="text-xs text-text1 leading-relaxed">
-            HRV {athleteStore.hrv}ms · Sleep {athleteStore.sleep}h
+            HRV {todayHrv === null ? 'Data not found' : `${Math.round(todayHrv)}ms`} · Sleep {todaySleepMin === null ? 'Data not found' : sleepHM(todaySleepMin)}
           </p>
           <p class="text-[11px] text-text2 mt-1">Data synced from your connected services.</p>
         </div>
@@ -69,13 +150,19 @@
     <!-- Metric Row -->
     <div class="grid grid-cols-3 gap-2.5">
       <Card style="padding: 12px 14px;">
-        <MetricBadge label="CTL" value={Math.round(athleteStore.ctl)} unit="" color="var(--teal)" sub="Fitness" />
+        <MetricBadge label="CTL" value={todayCtl === null ? 'Data not found' : Math.round(todayCtl)} unit="" color="var(--teal)" sub="Fitness" />
       </Card>
       <Card style="padding: 12px 14px;">
-        <MetricBadge label="ATL" value={Math.round(athleteStore.atl)} unit="" color="var(--amber)" sub="Fatigue" />
+        <MetricBadge label="ATL" value={todayAtl === null ? 'Data not found' : Math.round(todayAtl)} unit="" color="var(--amber)" sub="Fatigue" />
       </Card>
       <Card style="padding: 12px 14px;">
-        <MetricBadge label="TSB" value={athleteStore.tsb > 0 ? `+${Math.round(athleteStore.tsb)}` : Math.round(athleteStore.tsb)} unit="" color="#4621FF" sub="Form" />
+        <MetricBadge
+          label="TSB"
+          value={todayTsb === null ? 'Data not found' : (todayTsb > 0 ? `+${Math.round(todayTsb)}` : Math.round(todayTsb))}
+          unit=""
+          color="#4621FF"
+          sub="Form"
+        />
       </Card>
     </div>
 
@@ -100,20 +187,71 @@
     <!-- HRV + Sleep -->
     <div class="grid grid-cols-2 gap-2.5">
       <Card>
-        <span class="text-[9px] text-text2 block mb-2 font-mono uppercase tracking-[0.08em]">HRV Trend</span>
-        <span class="text-[20px] font-bold text-teal">{athleteStore.hrv} <span class="text-[11px] text-text2 font-normal">ms</span></span>
+        <div class="flex justify-between items-start mb-2">
+          <span class="text-[9px] text-text2 font-mono uppercase tracking-[0.08em]">HRV Trend</span>
+          {#if todayHrv === null && latestHrv !== null}
+            <span class="text-[8px] bg-white/5 px-1 rounded text-text2 border border-white/5 uppercase">Latest</span>
+          {/if}
+        </div>
+        <div class="flex items-baseline gap-1.5">
+          <span class="text-[20px] font-bold" style="color: {latestHrv === null ? 'var(--text2)' : hrvColor(Number(latestHrv))}">
+            {latestHrv === null ? 'Data not found' : Math.round(latestHrv)}
+            <span class="text-[11px] text-text2 font-normal">ms</span>
+          </span>
+        </div>
+        <p class="text-[10px] text-text2 mt-1">
+          7d avg <span class="text-text1 font-medium">{avgHrv7d === null ? '--' : `${avgHrv7d}ms`}</span>
+        </p>
         {#if athleteStore.biometrics?.hrvData?.length > 1}
-          <LineChart data={athleteStore.biometrics.hrvData} color="#00C8A8" height={48} />
+          <div class="mt-2">
+            <LineChart
+              data={athleteStore.biometrics.hrvData}
+              color={latestHrv === null ? '#00C8A8' : hrvColor(Number(latestHrv))}
+              height={48}
+              formatValue={(v) => `${Math.round(Number(v))}`}
+              getValueColor={(v) => hrvColor(v)}
+              unit="ms"
+            />
+          </div>
         {:else}
           <div class="h-[48px] flex items-center justify-center text-[10px] text-text2 italic">Pending data...</div>
         {/if}
       </Card>
       
       <Card>
-        <span class="text-[9px] text-text2 block mb-2 font-mono uppercase tracking-[0.08em]">Sleep</span>
-        <span class="text-[20px] font-bold text-amber">{athleteStore.sleep} <span class="text-[11px] text-text2 font-normal">hrs</span></span>
-        {#if athleteStore.biometrics?.sleepData?.length > 1}
-          <LineChart data={athleteStore.biometrics.sleepData} color="#FFCB88" height={48} />
+        <div class="flex justify-between items-start mb-2">
+          <span class="text-[9px] text-text2 font-mono uppercase tracking-[0.08em]">Sleep</span>
+          {#if todaySleepMin === null && latestSleepMin !== null}
+            <span class="text-[8px] bg-white/5 px-1 rounded text-text2 border border-white/5 uppercase">Latest</span>
+          {/if}
+        </div>
+        <div class="flex items-baseline gap-1.5">
+          <span class="text-[20px] font-bold" style="color: {sleepColor(latestSleepScore)}">
+            {latestSleepMin === null ? 'Data not found' : sleepHM(latestSleepMin)}
+          </span>
+        </div>
+        <p class="text-[10px] text-text2 mt-1">
+          7d avg <span class="text-text1 font-medium">{avgSleep7dMin === null ? '--' : sleepHM(avgSleep7dMin)}</span>
+        </p>
+        {#if (athleteStore.biometrics?.sleepScores?.length || 0) > 1}
+          <div class="mt-2">
+            <LineChart
+              data={athleteStore.biometrics.sleepScores}
+              color={sleepColor(latestSleepScore)}
+              height={48}
+              formatValue={(v) => `${v}%`}
+              getValueColor={(v) => sleepColor(v)}
+            />
+          </div>
+        {:else if (athleteStore.biometrics?.sleepData?.length || 0) > 1}
+          <div class="mt-2">
+            <LineChart
+              data={athleteStore.biometrics.sleepData}
+              color={latestSleepMin === null ? '#FFCB88' : sleepColor(latestSleepScore)}
+              height={48}
+              formatValue={formatSleepHours}
+            />
+          </div>
         {:else}
           <div class="h-[48px] flex items-center justify-center text-[10px] text-text2 italic">Pending data...</div>
         {/if}

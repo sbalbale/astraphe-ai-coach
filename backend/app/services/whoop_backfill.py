@@ -123,7 +123,8 @@ async def backfill_last_28_days(athlete_id: str, access_token: str, db: Any) -> 
         z4 = zone.get("zone_four_milli")
         z5 = zone.get("zone_five_milli")
 
-        # Map WHOOP zone1-5 (ignoring zone0) into pct of total recorded time.
+        # Map WHOOP zones into pct of total recorded time.
+        hr0 = int(round(((z0 or 0) / total_zone_ms) * 100)) if total_zone_ms else None
         hr1 = int(round(((z1 or 0) / total_zone_ms) * 100)) if total_zone_ms else None
         hr2 = int(round(((z2 or 0) / total_zone_ms) * 100)) if total_zone_ms else None
         hr3 = int(round(((z3 or 0) / total_zone_ms) * 100)) if total_zone_ms else None
@@ -131,18 +132,24 @@ async def backfill_last_28_days(athlete_id: str, access_token: str, db: Any) -> 
         hr5 = int(round(((z5 or 0) / total_zone_ms) * 100)) if total_zone_ms else None
 
         external_id = str(w.get("v1_id") or w.get("id"))
+        # Persist a display name while normalizing sport to our internal enum.
+        display_name = (w.get("sport_name") or "Workout")  # e.g. "Weightlifting"
         sport_name = (w.get("sport_name") or "other").lower()
+        if sport_name in ("weightlifting", "weight lifting", "strength training", "strength_training", "gym", "strength"):
+            sport_name = "strength"
 
         payload = WorkoutPayload(
             source="whoop",
             external_id=external_id,
             sport=sport_name,
+            title=display_name,
             started_at=start_dt,
             ended_at=end_dt,
             duration_seconds=duration_seconds,
             distance_m=score.get("distance_meter"),
             avg_hr=score.get("average_heart_rate"),
             max_hr=score.get("max_heart_rate"),
+            hr_zone_0_pct=hr0,
             hr_zone_1_pct=hr1,
             hr_zone_2_pct=hr2,
             hr_zone_3_pct=hr3,

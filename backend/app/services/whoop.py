@@ -34,40 +34,105 @@ async def exchange_oauth_code(code: str, redirect_url: str) -> dict:
             raise HTTPException(status_code=400, detail="Failed to exchange WHOOP code")
         return response.json()
 
+async def refresh_oauth_token(refresh_token: str) -> dict:
+    """
+    Refresh WHOOP OAuth tokens using the refresh_token grant.
+    WHOOP may rotate refresh tokens; callers should persist returned values.
+    """
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(
+            settings.WHOOP_OAUTH_TOKEN_URL,
+            data={
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+                "client_id": settings.WHOOP_CLIENT_ID,
+                "client_secret": settings.WHOOP_CLIENT_SECRET,
+            },
+        )
+        if response.status_code != 200:
+            raise HTTPException(
+                status_code=response.status_code,
+                detail=f"WHOOP refresh failed: {response.status_code} {response.text}",
+            )
+        try:
+            return response.json()
+        except Exception:
+            body = response.text
+            snippet = body[:300] if body else "<empty body>"
+            raise HTTPException(status_code=502, detail=f"WHOOP refresh returned non-JSON: {snippet}")
+
 async def fetch_recovery_data(access_token: str, cycle_id: int) -> dict:
     """Fetches recovery metrics for a specific cycle."""
     headers = {"Authorization": f"Bearer {access_token}"}
-    async with httpx.AsyncClient() as client:
-        response = await client.get(f"{settings.WHOOP_API_BASE}/cycle/{cycle_id}/recovery", headers=headers)
-        return response.json()
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        # v2 docs: GET /v2/cycle/{cycleId}/recovery
+        response = await client.get(f"{_v2_base()}/cycle/{cycle_id}/recovery", headers=headers)
+        return _json_or_error(response, "fetch_recovery_data(v2)")
 
-async def fetch_sleep_data(access_token: str, sleep_id: int) -> dict:
-    """Fetches sleep performance data."""
+async def fetch_sleep_data(access_token: str, sleep_id: Any) -> dict:
+    """Fetches sleep performance data (v2 uses UUID ids)."""
     headers = {"Authorization": f"Bearer {access_token}"}
-    async with httpx.AsyncClient() as client:
-        response = await client.get(f"{settings.WHOOP_API_BASE}/activity/sleep/{sleep_id}", headers=headers)
-        return response.json()
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        # v2 docs: GET /v2/activity/sleep/{sleepId}
+        sid = str(sleep_id)
+        response = await client.get(f"{_v2_base()}/activity/sleep/{sid}", headers=headers)
+        return _json_or_error(response, "fetch_sleep_data(v2)")
 
-async def fetch_workout_data(access_token: str, workout_id: int) -> dict:
-    """Fetches detailed workout metrics."""
-    headers = {"Authorization": f"Bearer {access_token}"}
-    async with httpx.AsyncClient() as client:
-        response = await client.get(f"{settings.WHOOP_API_BASE}/activity/workout/{workout_id}", headers=headers)
+def _json_or_error(response: httpx.Response, label: str) -> dict:
+    """
+    WHOOP sometimes responds with non-JSON bodies on error.
+    Make failures obvious so webhook ingestion doesn't silently "200 OK" without saving.
+    """
+    if response.status_code < 200 or response.status_code >= 300:
+        raise HTTPException(
+            status_code=response.status_code,
+            detail=f"WHOOP {label} failed: {response.status_code} {response.text}",
+        )
+    try:
         return response.json()
+    except Exception:
+        body = response.text
+        snippet = body[:300] if body else "<empty body>"
+        raise HTTPException(
+            status_code=502,
+            detail=f"WHOOP {label} returned non-JSON: {snippet}",
+        )
+
+
+async def fetch_workout_data(access_token: str, workout_id: Any) -> dict:
+    """
+    Fetches detailed workout metrics.
+
+    WHOOP webhooks may deliver UUID-like workout IDs (v2). Try v2 first in that case,
+    otherwise fall back to v1 base.
+    """
+    headers = {"Authorization": f"Bearer {access_token}"}
+    wid = str(workout_id)
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        # If it's not a pure integer, it's likely a v2 record id.
+        if not wid.isdigit():
+            res = await client.get(f"{_v2_base()}/activity/workout/{wid}", headers=headers)
+            return _json_or_error(res, "fetch_workout_data(v2)")
+
+        res = await client.get(f"{settings.WHOOP_API_BASE}/activity/workout/{wid}", headers=headers)
+        return _json_or_error(res, "fetch_workout_data(v1)")
 
 async def fetch_profile(access_token: str) -> dict:
     """Fetches basic user profile info."""
     headers = {"Authorization": f"Bearer {access_token}"}
-    async with httpx.AsyncClient() as client:
-        response = await client.get(f"{settings.WHOOP_API_BASE}/user/profile/basic", headers=headers)
-        return response.json()
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        # v2 docs: GET /v2/user/profile/basic
+        response = await client.get(f"{_v2_base()}/user/profile/basic", headers=headers)
+        return _json_or_error(response, "fetch_profile(v2)")
 
 async def fetch_body_measurement(access_token: str) -> dict:
     """Fetches user body measurements like weight and max HR."""
     headers = {"Authorization": f"Bearer {access_token}"}
-    async with httpx.AsyncClient() as client:
-        response = await client.get(f"{settings.WHOOP_API_BASE}/user/measurement/body", headers=headers)
-        return response.json()
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        # v2 docs: GET /v2/user/measurement/body
+        response = await client.get(f"{_v2_base()}/user/measurement/body", headers=headers)
+        return _json_or_error(response, "fetch_body_measurement(v2)")
 
 
 def _v2_base() -> str:
