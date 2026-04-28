@@ -1,15 +1,38 @@
 <script lang="ts">
   import Card from '$lib/components/Card.svelte';
+  import { athleteStore } from '$lib/stores/athleteStore.svelte';
+  import { api } from '$lib/api';
   import { goto } from '$app/navigation';
 
-  let maxHR = $state(185);
-  let ftp = $state(280);
-  let pace = $state('5:00');
-  let sport = $state('Triathlon');
+  let maxHR = $state(athleteStore.profile?.max_hr || 185);
+  let thresholdHR = $state(athleteStore.profile?.threshold_hr || 161);
+  let ftp = $state(athleteStore.profile?.ftp_watts || 280);
+  let pace = $state(athleteStore.profile?.threshold_pace || '5:00');
+  let sport = $state(athleteStore.profile?.primary_sport || 'Triathlon');
   let units = $state('Metric');
+  let saving = $state(false);
 
   function goBack() {
     goto('/profile');
+  }
+
+  async function handleSave() {
+    saving = true;
+    const success = await api.patch('/v1/athlete/profile', {
+      max_hr: maxHR,
+      threshold_hr: thresholdHR,
+      ftp_watts: ftp,
+      threshold_pace: pace,
+      primary_sport: sport
+    });
+
+    if (success) {
+      await athleteStore.fetchAll(); // Refresh store to update zones etc.
+      goBack();
+    } else {
+      alert('Failed to save training settings.');
+    }
+    saving = false;
   }
 </script>
 
@@ -24,7 +47,7 @@
     </div>
   </div>
 
-  <form class="flex flex-col gap-3 mt-2">
+  <form onsubmit={(e) => { e.preventDefault(); handleSave(); }} class="flex flex-col gap-3 mt-2">
     <Card>
       <p class="text-[13px] font-semibold mb-3">Primary Focus</p>
       <div class="flex flex-col gap-4">
@@ -34,6 +57,7 @@
             <option>Triathlon</option>
             <option>Running</option>
             <option>Cycling</option>
+            <option>Rowing</option>
           </select>
         </div>
         <div>
@@ -55,19 +79,25 @@
             <input id="maxhr" type="number" bind:value={maxHR} class="w-full p-2 bg-glass2 border border-border rounded-lg text-sm text-text0 font-mono outline-none focus:border-red" />
           </div>
           <div class="flex-1">
+            <label for="thr" class="block text-[11px] text-text2 mb-1">Threshold HR</label>
+            <input id="thr" type="number" bind:value={thresholdHR} class="w-full p-2 bg-glass2 border border-border rounded-lg text-sm text-text0 font-mono outline-none focus:border-blue" />
+          </div>
+        </div>
+        <div class="flex items-center justify-between gap-3">
+          <div class="flex-1">
             <label for="ftp" class="block text-[11px] text-text2 mb-1">Cycling FTP (W)</label>
             <input id="ftp" type="number" bind:value={ftp} class="w-full p-2 bg-glass2 border border-border rounded-lg text-sm text-text0 font-mono outline-none focus:border-[#4621FF]" />
           </div>
-        </div>
-        <div>
-          <label for="pace" class="block text-[11px] text-text2 mb-1">Threshold Pace (/km)</label>
-          <input id="pace" type="text" bind:value={pace} class="w-full p-2.5 bg-glass2 border border-border rounded-lg text-sm text-text0 font-mono outline-none focus:border-teal" />
+          <div class="flex-1">
+            <label for="pace" class="block text-[11px] text-text2 mb-1">Threshold Pace (/km)</label>
+            <input id="pace" type="text" bind:value={pace} class="w-full p-2.5 bg-glass2 border border-border rounded-lg text-sm text-text0 font-mono outline-none focus:border-teal" />
+          </div>
         </div>
       </div>
     </Card>
 
-    <button type="button" onclick={goBack} class="w-full py-3.5 bg-blue text-white font-semibold rounded-xl hover:bg-[#3d1ae6] transition-colors mt-2">
-      Save Configuration
+    <button type="submit" disabled={saving} class="w-full py-3.5 bg-blue text-white font-semibold rounded-xl hover:bg-[#3d1ae6] transition-colors mt-2 disabled:opacity-50">
+      {saving ? 'Saving...' : 'Save Configuration'}
     </button>
   </form>
 </div>

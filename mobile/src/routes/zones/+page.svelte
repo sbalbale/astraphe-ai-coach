@@ -8,15 +8,22 @@
 
   // Fallbacks if profile not loaded
   const maxHR = $derived(athleteStore.profile?.max_hr || 185);
+  const restingHR = $derived(athleteStore.profile?.resting_hr || 50);
+  const hrReserve = $derived(maxHR - restingHR);
   const thresholdHR = $derived(athleteStore.profile?.threshold_hr || 161);
   const ftp = $derived(athleteStore.profile?.ftp_watts || 280);
 
+  // HRR Method: Target HR = ((Max HR - Resting HR) * %Intensity) + Resting HR
+  function hrr(pct: number) {
+    return Math.round((hrReserve * pct) + restingHR);
+  }
+
   const runZones = $derived([
-    { zone: 1, name: 'Recovery', lo: Math.round(maxHR * 0.6), hi: Math.round(maxHR * 0.7), color: '#4621FF', desc: 'Conversational pace. Full sentences easy.' },
-    { zone: 2, name: 'Aerobic', lo: Math.round(maxHR * 0.7), hi: Math.round(maxHR * 0.8), color: '#00C8A8', desc: 'Nose breathing. Could talk in short sentences.' },
-    { zone: 3, name: 'Tempo', lo: Math.round(maxHR * 0.8), hi: Math.round(maxHR * 0.87), color: '#FFCB88', desc: 'Comfortably hard. Only short phrases possible.' },
-    { zone: 4, name: 'Threshold', lo: Math.round(maxHR * 0.87), hi: Math.round(maxHR * 0.93), color: '#F07178', desc: 'Hard effort. Only a few words per breath.' },
-    { zone: 5, name: 'VO2max', lo: Math.round(maxHR * 0.93), hi: maxHR, color: '#FF4791', desc: 'Max effort. Unsustainable beyond ~8 min.' },
+    { zone: 1, name: 'Recovery', lo: hrr(0.50), hi: hrr(0.60), color: '#4621FF', desc: 'Conversational pace. Full sentences easy.' },
+    { zone: 2, name: 'Aerobic', lo: hrr(0.60) + 1, hi: hrr(0.70), color: '#00C8A8', desc: 'Nose breathing. Could talk in short sentences.' },
+    { zone: 3, name: 'Tempo', lo: hrr(0.70) + 1, hi: hrr(0.80), color: '#FFCB88', desc: 'Comfortably hard. Only short phrases possible.' },
+    { zone: 4, name: 'Threshold', lo: hrr(0.80) + 1, hi: hrr(0.90), color: '#F07178', desc: 'Hard effort. Only a few words per breath.' },
+    { zone: 5, name: 'VO2max', lo: hrr(0.90) + 1, hi: maxHR, color: '#FF4791', desc: 'Max effort. Unsustainable beyond ~8 min.' },
   ]);
   
   const bikeZones = $derived([
@@ -73,18 +80,19 @@
       <p class="text-[10px] text-text2 mt-0.5">ASTRAPE Computed</p>
     </Card>
     <Card style="background: linear-gradient(135deg, rgba(70,33,255,0.12), transparent);">
-      <p class="text-[9px] text-text2 font-mono uppercase tracking-[0.08em] mb-1">{sport === 'run' ? 'Threshold HR' : 'W/kg'}</p>
+      <p class="text-[9px] text-text2 font-mono uppercase tracking-[0.08em] mb-1">{sport === 'run' ? 'HR Reserve' : 'W/kg'}</p>
       <p class="text-[26px] font-bold text-[#4621FF] tracking-[-0.02em] leading-tight">
-        {sport === 'run' ? thresholdHR : (ftp / (athleteStore.profile?.weight_kg || 75)).toFixed(1)}
+        {sport === 'run' ? hrReserve : (ftp / (athleteStore.profile?.weight_kg || 75)).toFixed(1)}
         <span class="text-[13px] font-normal text-text2 ml-1">{sport === 'run' ? 'bpm' : 'w/kg'}</span>
       </p>
-      <p class="text-[10px] text-text2 mt-0.5">{athleteStore.profile?.weight_kg || 75}kg body weight</p>
+      <p class="text-[10px] text-text2 mt-0.5">RHR: {restingHR}bpm</p>
     </Card>
   </div>
 
   <!-- Zone Bars -->
   <Card>
-    <p class="text-[13px] font-semibold mb-3.5">Zone Definitions</p>
+    <p class="text-[13px] font-semibold mb-1">Zone Definitions (%HRR)</p>
+    <p class="text-[10px] text-text2 mb-3.5 italic">Formula: ((Max - Rest) * Intensity) + Rest</p>
     <div class="flex flex-col gap-2.5">
       {#each zones as z, i}
         <button 
@@ -103,13 +111,11 @@
               </div>
               <div class="h-1.25 bg-glass2 rounded overflow-hidden">
                 <div class="h-full rounded" 
-                     style="width: {((z.hi - z.lo) / (sport === 'run' ? maxHR : ftp * 1.2)) * 100}%; margin-left: {(z.lo / (sport === 'run' ? maxHR : ftp * 1.2)) * 100}%; background: {z.color};"></div>
+                     style="width: {((z.hi - (sport === 'run' ? restingHR : 0)) / (sport === 'run' ? hrReserve * 1.1 : ftp * 1.2)) * 100}%; margin-left: {((z.lo - (sport === 'run' ? restingHR : 0)) / (sport === 'run' ? hrReserve * 1.1 : ftp * 1.2)) * 100}%; background: {z.color};"></div>
               </div>
             </div>
           </div>
           {#if editZone === i}
-            <!-- svelte-ignore a11y_click_events_have_key_events -->
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div class="ml-[38px] p-2 px-2.5 bg-glass rounded-lg border-l-2 mt-1 w-[calc(100%-38px)]" style="border-color: {z.color}" onclick={(e) => e.stopPropagation()}>
               <p class="text-[11px] text-text1 leading-relaxed mb-2">{z.desc}</p>
               <div class="flex gap-2">
