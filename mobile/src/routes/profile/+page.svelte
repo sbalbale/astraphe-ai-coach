@@ -15,10 +15,10 @@
 
   let syncing = $state('');
 
-  const integrations = $derived(athleteStore.syncStatus?.integrations || {
-    apple: { connected: false },
-    garmin: { connected: false },
-    whoop: { connected: false }
+  const integrations = $derived({
+    apple: athleteStore.syncStatus?.integrations?.healthkit || { connected: false },
+    garmin: athleteStore.syncStatus?.integrations?.garmin || { connected: false },
+    whoop: athleteStore.syncStatus?.integrations?.whoop || { connected: false }
   });
 
   async function toggleIntegration(id: string) {

@@ -5,13 +5,39 @@
   import EmptyState from '$lib/components/EmptyState.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { format } from 'date-fns';
+  import { calculateRecoveryScore } from '$lib/utils/biometrics';
 
   const isConnected = $derived(Object.values(athleteStore.syncStatus?.integrations || {}).some((i: any) => i.connected));
-  const latestBio = $derived(athleteStore.biometrics?.series?.[athleteStore.biometrics.series.length - 1]);
-  const hasData = $derived(!!latestBio);
 
-  const history = $derived(athleteStore.biometrics?.series?.slice(-7).map((s: any) => s.recovery_score || 0) || []);
-  const days = $derived(athleteStore.biometrics?.series?.slice(-7).map((s: any) => format(new Date(s.date), 'EE').charAt(0)) || []);
+  const trend = $derived.by(() => {
+    const dates = Array.from({ length: 7 }, (_, i) => {
+      const d = new Date();
+      d.setDate(d.getDate() - (6 - i)); // 7 days ending today
+      return format(d, 'yyyy-MM-dd');
+    });
+
+    return dates.map(displayDateStr => {
+      // Find biometrics for the PREVIOUS day (Day N-1 data is Day N recovery)
+      const d = new Date(displayDateStr + 'T12:00:00');
+      d.setDate(d.getDate() - 1);
+      const dataDateStr = format(d, 'yyyy-MM-dd');
+
+      const b = athleteStore.biometrics?.series?.find((s: any) => s.date === dataDateStr);
+      
+      return {
+        date: displayDateStr,
+        day: format(new Date(displayDateStr + 'T12:00:00'), 'EE').charAt(0),
+        score: b?.astrape_recovery_score || b?.recovery_score || 0,
+        missing: !b || !b.recovery_score,
+        data: b
+      };
+    });
+  });
+
+  const latestBio = $derived(trend[trend.length - 1]?.data);
+  const hasData = $derived(!!latestBio || athleteStore.readiness > 0);
+  const history = $derived(trend.map(t => t.score));
+  const days = $derived(trend.map(t => t.day));
 
   const factors = $derived(latestBio ? [
     { label: 'HRV', value: latestBio.hrv_rmssd, unit: 'ms', score: Math.min(100, (latestBio.hrv_rmssd / 80) * 100), color: '#00C8A8', desc: 'Heart rate variability is a key indicator of autonomic balance.' },
@@ -20,7 +46,7 @@
     { label: 'Blood Oxygen', value: latestBio.spo2_pct, unit: '%', score: latestBio.spo2_pct, color: '#4621FF', desc: 'SpO2 levels during sleep.' },
   ].filter(f => f.value) : []);
 
-  let score = $derived(athleteStore.readiness);
+  let score = $derived(latestBio?.recovery_score || athleteStore.readiness);
   let color = $derived(score >= 75 ? '#00C8A8' : score >= 50 ? '#FFCB88' : '#F07178');
   let label = $derived(score >= 75 ? 'Recovered' : score >= 50 ? 'Moderate' : 'Fatigued');
 </script>
@@ -124,5 +150,33 @@
          'Systemic fatigue detected. Recommend reducing intensity or taking an extra rest day.'}
       </p>
     </Card>
+
+    <!-- Calculation Methodology -->
+    <div class="px-1 mt-4 mb-6">
+      <p class="text-[11px] text-text2 font-mono uppercase tracking-[0.05em] mb-3">Calculation Methodology</p>
+      <div class="flex flex-col gap-4">
+        <div class="flex gap-3">
+          <div class="w-1 h-auto bg-teal rounded-full"></div>
+          <div>
+            <p class="text-xs font-semibold mb-0.5">HRV Balance (45%)</p>
+            <p class="text-[10px] text-text2 leading-relaxed">We compare your current RMSSD against your 30-day rolling baseline. A higher HRV indicates a dominant parasympathetic nervous system (Rest & Digest).</p>
+          </div>
+        </div>
+        <div class="flex gap-3">
+          <div class="w-1 h-auto bg-blue rounded-full"></div>
+          <div>
+            <p class="text-xs font-semibold mb-0.5">Cardiac Efficiency (25%)</p>
+            <p class="text-[10px] text-text2 leading-relaxed">Derived from your resting heart rate. Deviations below your baseline improve your score, while elevations indicate cardiovascular strain.</p>
+          </div>
+        </div>
+        <div class="flex gap-3">
+          <div class="w-1 h-auto bg-amber rounded-full"></div>
+          <div>
+            <p class="text-xs font-semibold mb-0.5">Sleep Integrity (30%)</p>
+            <p class="text-[10px] text-text2 leading-relaxed">A composite of sleep duration and quality (REM + Deep). Consistent sleep cycles are the primary engine of physiological repair.</p>
+          </div>
+        </div>
+      </div>
+    </div>
   {/if}
 </div>

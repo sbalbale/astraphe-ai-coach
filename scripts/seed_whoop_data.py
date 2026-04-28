@@ -62,16 +62,36 @@ def load_env() -> dict:
     return {"url": url, "key": key}
 
 
-def parse_ts(value: str) -> datetime | None:
-    if not value or value.strip() == "":
+def parse_ts(ts_str: str, tz_str: str = None) -> datetime | None:
+    if not ts_str or ts_str.strip() == "":
         return None
-    value = value.strip()
-    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+    
+    # Try parsing format with seconds
+    dt = None
+    try:
+        dt = datetime.strptime(ts_str.strip(), "%Y-%m-%d %H:%M:%S")
+    except ValueError:
         try:
-            return datetime.strptime(value, fmt)
+            dt = datetime.strptime(ts_str.strip(), "%Y-%m-%d")
         except ValueError:
-            continue
-    return None
+            return None
+
+    # Handle timezone if provided (e.g. "UTC-04:00")
+    if tz_str and "UTC" in tz_str:
+        try:
+            offset_str = tz_str.replace("UTC", "").strip()
+            if offset_str:
+                sign = 1 if offset_str[0] == '+' else -1
+                parts = offset_str[1:].split(':')
+                h = int(parts[0])
+                m = int(parts[1]) if len(parts) > 1 else 0
+                tz = timezone(timedelta(hours=sign*h, minutes=sign*m))
+                return dt.replace(tzinfo=tz)
+        except Exception:
+            pass
+            
+    # Fallback to local system time
+    return dt.astimezone()
 
 
 def to_float(value: str) -> float | None:
@@ -93,16 +113,62 @@ def strain_to_tss(strain: float | None) -> float:
     return round(STRAIN_TO_TSS_COEFF * (strain ** 2), 2)
 
 
+def hr_zones_to_tss(duration_min: float, zones: dict[int, int]) -> float:
+    """
+    Standard hrTSS calculation based on time in zones.
+    Weights: Z1=0.45, Z2=0.65, Z3=0.85, Z4=1.05, Z5=1.25
+    """
+    weights = {1: 0.45, 2: 0.65, 3: 0.85, 4: 1.05, 5: 1.25}
+    weighted_hours = 0
+    for z, pct in zones.items():
+        if pct:
+            weighted_hours += (duration_min / 60) * (pct / 100) * weights.get(z, 0)
+    return round(weighted_hours * 100, 2)
+
+
+def calculate_astrape_sleep_need(baseline_min, previous_strain, current_debt_min):
+    # Astrape Need = Baseline + (Strain * 1.8) + Current Debt
+    # We cap the strain impact to 2 hours (120 mins)
+    strain_impact = min(120, (previous_strain or 0) * 1.8)
+    return int(round(baseline_min + strain_impact + (current_debt_min or 0)))
+
+def calculate_astrape_sleep_score(duration_min, sleep_need_min, rem_pct, deep_pct):
+    if not duration_min or not sleep_need_min: return 0
+    
+    # Fulfillment score (70%)
+    fulfillment_score = min(100, (duration_min / sleep_need_min) * 100)
+    
+    # Quality: REM + Deep % (goal: 45%)
+    qual_pct = (rem_pct or 0) + (deep_pct or 0)
+    qual_score = min(100, (qual_pct / 45) * 100)
+    
+    return int(round(fulfillment_score * 0.7 + qual_score * 0.3))
+
+
+def calculate_astrape_recovery_score(hrv, rhr, sleep_score, hrv_baseline=55, rhr_baseline=52):
+    if hrv is None or rhr is None or sleep_score is None: return None
+    # HRV score (45%)
+    hrv_ratio = hrv / (hrv_baseline or 50)
+    hrv_score = min(100, max(0, hrv_ratio * 75))
+    # RHR score (25%)
+    rhr_diff = (rhr_baseline or 60) - rhr
+    rhr_score = min(100, max(0, 50 + (rhr_diff * 5)))
+    # Sleep contrib (30%)
+    return int(round(hrv_score * 0.45 + rhr_score * 0.25 + sleep_score * 0.3))
+
+
 def map_activity(name: str) -> str:
     n = (name or "").lower()
     if any(k in n for k in ("run", "jog", "track", "5k", "10k", "marathon")):
         return "run"
-    if any(k in n for k in ("cycl", "bike", "bik", "row", "rowing", "spin")):
+    if any(k in n for k in ("cycl", "bike", "bik", "spin")):
         return "bike"
+    if any(k in n for k in ("row", "rowing")):
+        return "rowing"
     if any(k in n for k in ("swim",)):
         return "swim"
     if any(k in n for k in ("strength", "lift", "weight", "gym", "crossfit")):
-        return "strength"
+        return "gym"
     return "other"
 
 
@@ -140,41 +206,75 @@ def ingest_biometrics(db: Client, athlete_id: str):
                 "wakeup":    row.get("Wake onset",  "").strip() or None,
             }
 
-    # Deduplicate by date: keep the one with a non-null recovery score
-    date_map = {}
+    # Deduplicate by date and calculate rolling debt
+    all_phys = []
     with open(PHYS_CSV, newline="", encoding="utf-8") as f:
         for row in csv.DictReader(f):
-            cycle_start = (row.get("Cycle start time") or "").strip()
-            ts_start = parse_ts(cycle_start)
-            if not ts_start: continue
-            
-            record_date = ts_start.date().isoformat()
-            recovery = to_int(row.get("Recovery score %", ""))
-            
-            # If we already have a record for this date and it has recovery, skip if this one is empty
-            if record_date in date_map and recovery is None:
-                continue
+            all_phys.append(row)
+    
+    # Sort chronologically to calculate rolling debt
+    all_phys.sort(key=lambda r: (r.get("Cycle start time") or "").strip())
 
-            detail = sleep_detail.get(cycle_start, {})
-            record = {
-                "athlete_id":         athlete_id,
-                "date":               record_date,
-                "hrv_rmssd":          to_float(row.get("Heart rate variability (ms)", "")),
-                "hrv_source":         "whoop",
-                "resting_hr":         to_int(row.get("Resting heart rate (bpm)", "")),
-                "sleep_duration_min": to_int(row.get("Asleep duration (min)", "")),
-                "sleep_score":        to_int(row.get("Sleep performance %", "")),
-                "sleep_deep_pct":     detail.get("deep_pct"),
-                "sleep_rem_pct":      detail.get("rem_pct"),
-                "sleep_light_pct":    detail.get("light_pct"),
-                "sleep_awake_pct":    detail.get("awake_pct"),
-                "sleep_bedtime":      detail.get("bedtime") or row.get("Sleep onset", "").strip() or None,
-                "sleep_wakeup":       detail.get("wakeup")  or row.get("Wake onset",  "").strip() or None,
-                "skin_temp_deviation":to_float(row.get("Skin temp (celsius)", "")),
-                "spo2_pct":           to_float(row.get("Blood oxygen %", "")),
-                "recovery_score":     recovery,
-            }
-            date_map[record_date] = record
+    date_map = {}
+    current_rolling_debt = 0 # In minutes
+
+    for i, row in enumerate(all_phys):
+        cycle_start = (row.get("Cycle start time") or "").strip()
+        tz_str = (row.get("Cycle timezone") or "").strip()
+        ts_start = parse_ts(cycle_start, tz_str)
+        if not ts_start: continue
+        
+        record_date = ts_start.date().isoformat()
+        recovery = to_int(row.get("Recovery score %", ""))
+        
+        # Use previous day's strain for current sleep need
+        prev_strain = to_float(all_phys[i-1].get("Day Strain", 0)) if i > 0 else 0
+        
+        s_need = calculate_astrape_sleep_need(480, prev_strain, current_rolling_debt)
+        s_actual = to_int(row.get("Asleep duration (min)", 0)) or 0
+        
+        # Update rolling debt for NEXT day (cap at 120m to prevent runaway)
+        current_rolling_debt = min(120, max(0, s_need - s_actual))
+
+        detail = sleep_detail.get(cycle_start, {})
+        s_score = calculate_astrape_sleep_score(
+            s_actual,
+            s_need,
+            detail.get("rem_pct"),
+            detail.get("deep_pct")
+        )
+        
+        r_score = calculate_astrape_recovery_score(
+            to_float(row.get("Heart rate variability (ms)", "")),
+            to_int(row.get("Resting heart rate (bpm)", "")),
+            s_score
+        )
+
+        record = {
+            "athlete_id":         athlete_id,
+            "date":               record_date,
+            "hrv_rmssd":          to_float(row.get("Heart rate variability (ms)", "")),
+            "hrv_source":         "whoop",
+            "resting_hr":         to_int(row.get("Resting heart rate (bpm)", "")),
+            "day_strain":         to_float(row.get("Day Strain", 0)),
+            "sleep_duration_min": s_actual,
+            "sleep_score":        to_int(row.get("Sleep performance %", "")),
+            "sleep_debt_min":     current_rolling_debt, # This is the debt for the NEXT day
+            "sleep_need_min":     s_need,
+            "astrape_sleep_score": s_score,
+            "astrape_recovery_score": r_score,
+            "sleep_deep_pct":     detail.get("deep_pct"),
+            "sleep_rem_pct":      detail.get("rem_pct"),
+            "sleep_light_pct":    detail.get("light_pct"),
+            "sleep_awake_pct":    detail.get("awake_pct"),
+            "sleep_bedtime":      parse_ts(detail.get("bedtime") or row.get("Sleep onset", "").strip(), tz_str).isoformat() if (detail.get("bedtime") or row.get("Sleep onset")) else None,
+            "sleep_wakeup":       parse_ts(detail.get("wakeup")  or row.get("Wake onset",  "").strip(), tz_str).isoformat() if (detail.get("wakeup") or row.get("Wake onset")) else None,
+            "skin_temp_deviation":to_float(row.get("Skin temp (celsius)", "")),
+            "spo2_pct":           to_float(row.get("Blood oxygen %", "")),
+            "recovery_score":     recovery,
+        }
+        # If we have multiple entries for same date, latest one (sorted) wins
+        date_map[record_date] = record
 
     records = list(date_map.values())
     if not records:
@@ -204,8 +304,9 @@ def ingest_workouts(db: Client, athlete_id: str) -> dict[date, float]:
         for row in csv.DictReader(f):
             w_start_raw = (row.get("Workout start time") or "").strip()
             w_end_raw   = (row.get("Workout end time")   or "").strip()
-            ts_start = parse_ts(w_start_raw)
-            ts_end   = parse_ts(w_end_raw)
+            tz_str      = (row.get("Cycle timezone")     or "").strip()
+            ts_start = parse_ts(w_start_raw, tz_str)
+            ts_end   = parse_ts(w_end_raw, tz_str)
             if not ts_start or not ts_end: continue
 
             ext_id = f"whoop_{w_start_raw.replace(' ', 'T').replace(':', '-')}"
@@ -214,9 +315,25 @@ def ingest_workouts(db: Client, athlete_id: str) -> dict[date, float]:
 
             activity = (row.get("Activity name") or "Activity").strip()
             strain   = to_float(row.get("Activity Strain", ""))
-            tss_val  = strain_to_tss(strain)
             
-            records.append({
+            # Parse zones for TSS calculation
+            zones = {
+                1: to_int(row.get("HR Zone 1 %", "")),
+                2: to_int(row.get("HR Zone 2 %", "")),
+                3: to_int(row.get("HR Zone 3 %", "")),
+                4: to_int(row.get("HR Zone 4 %", "")),
+                5: to_int(row.get("HR Zone 5 %", "")),
+            }
+            
+            duration_min = (ts_end - ts_start).total_seconds() / 60
+            
+            # Use zone-based TSS if available, fallback to strain-based
+            if any(v is not None for v in zones.values()):
+                tss_val = hr_zones_to_tss(duration_min, zones)
+            else:
+                tss_val = strain_to_tss(strain)
+            
+            record = {
                 "athlete_id":  athlete_id,
                 "source":      "whoop",
                 "external_id": ext_id,
@@ -227,7 +344,14 @@ def ingest_workouts(db: Client, athlete_id: str) -> dict[date, float]:
                 "avg_hr":      to_int(row.get("Average HR (bpm)", "")),
                 "max_hr":      to_int(row.get("Max HR (bpm)", "")),
                 "tss":         tss_val if tss_val > 0 else None,
-            })
+                "astrape_strain_score": int(min(100, round((tss_val / 150) * 100))) if tss_val > 0 else 0,
+                "hr_zone_1_pct": zones[1],
+                "hr_zone_2_pct": zones[2],
+                "hr_zone_3_pct": zones[3],
+                "hr_zone_4_pct": zones[4],
+                "hr_zone_5_pct": zones[5],
+            }
+            records.append(record)
             daily_tss[ts_start.date()] += tss_val
 
     if not records:

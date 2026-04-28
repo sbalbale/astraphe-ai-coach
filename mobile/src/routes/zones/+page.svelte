@@ -4,44 +4,82 @@
   import EmptyState from '$lib/components/EmptyState.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
 
-  let sport = $state('run');
+  let sport = $state('all');
   let editZone: number | null = $state(null);
 
   const hasProfile = $derived(!!athleteStore.profile);
   
   // Fallbacks if profile not loaded
-  const maxHR = $derived(athleteStore.profile?.max_hr || 0);
-  const thresholdHR = $derived(athleteStore.profile?.threshold_hr || 0);
-  const ftp = $derived(athleteStore.profile?.ftp_watts || 0);
+  const maxHR = $derived(athleteStore.profile?.max_hr || 190);
+  const restingHR = $derived(athleteStore.profile?.resting_hr || 50);
+  const hrr = $derived(maxHR - restingHR);
 
-  const runZones = $derived([
-    { zone: 1, name: 'Recovery', lo: Math.round(maxHR * 0.6), hi: Math.round(maxHR * 0.7), color: '#4621FF', desc: 'Conversational pace. Full sentences easy.' },
-    { zone: 2, name: 'Aerobic', lo: Math.round(maxHR * 0.7), hi: Math.round(maxHR * 0.8), color: '#00C8A8', desc: 'Nose breathing. Could talk in short sentences.' },
-    { zone: 3, name: 'Tempo', lo: Math.round(maxHR * 0.8), hi: Math.round(maxHR * 0.87), color: '#FFCB88', desc: 'Comfortably hard. Only short phrases possible.' },
-    { zone: 4, name: 'Threshold', lo: Math.round(maxHR * 0.87), hi: Math.round(maxHR * 0.93), color: '#F07178', desc: 'Hard effort. Only a few words per breath.' },
-    { zone: 5, name: 'VO2max', lo: Math.round(maxHR * 0.93), hi: maxHR, color: '#FF4791', desc: 'Max effort. Unsustainable beyond ~8 min.' },
+  const hrZones = $derived([
+    { zone: 1, name: 'Recovery', lo: Math.round(restingHR + hrr * 0.5), hi: Math.round(restingHR + hrr * 0.6), color: '#4621FF', desc: 'Active recovery. Minimal stress.' },
+    { zone: 2, name: 'Aerobic', lo: Math.round(restingHR + hrr * 0.6) + 1, hi: Math.round(restingHR + hrr * 0.7), color: '#00C8A8', desc: 'Endurance. Optimized for fat metabolism.' },
+    { zone: 3, name: 'Tempo', lo: Math.round(restingHR + hrr * 0.7) + 1, hi: Math.round(restingHR + hrr * 0.8), color: '#FFCB88', desc: 'Moderate. Improving aerobic capacity.' },
+    { zone: 4, name: 'Threshold', lo: Math.round(restingHR + hrr * 0.8) + 1, hi: Math.round(restingHR + hrr * 0.9), color: '#F07178', desc: 'Hard. Lactate threshold development.' },
+    { zone: 5, name: 'VO2max', lo: Math.round(restingHR + hrr * 0.9) + 1, hi: maxHR, color: '#FF4791', desc: 'Max effort. Building peak power.' },
   ]);
   
-  const bikeZones = $derived([
-    { zone: 1, name: 'Active Recovery', lo: 0, hi: Math.round(ftp * 0.55), color: '#4621FF', desc: '<55% FTP. Very easy spinning.' },
-    { zone: 2, name: 'Endurance', lo: Math.round(ftp * 0.55) + 1, hi: Math.round(ftp * 0.75), color: '#00C8A8', desc: '56–75% FTP. All-day sustainable.' },
-    { zone: 3, name: 'Tempo', lo: Math.round(ftp * 0.75) + 1, hi: Math.round(ftp * 0.90), color: '#FFCB88', desc: '76–90% FTP. Moderate to hard.' },
-    { zone: 4, name: 'Lactate', lo: Math.round(ftp * 0.90) + 1, hi: Math.round(ftp * 1.05), color: '#F07178', desc: '91–105% FTP. Very hard.' },
-    { zone: 5, name: 'VO2max', lo: Math.round(ftp * 1.05) + 1, hi: Math.round(ftp * 1.20), color: '#FF4791', desc: '106–120% FTP. Severe.' },
-  ]);
+  let zones = $derived(hrZones);
 
-  const rowZones = $derived([
-    { zone: 1, name: 'Steady State', lo: 0, hi: Math.round(ftp * 0.55), color: '#4621FF', desc: 'UT2. Low intensity endurance.' },
-    { zone: 2, name: 'Endurance', lo: Math.round(ftp * 0.55) + 1, hi: Math.round(ftp * 0.70), color: '#00C8A8', desc: 'UT1. Building aerobic capacity.' },
-    { zone: 3, name: 'AT (Anaerobic)', lo: Math.round(ftp * 0.70) + 1, hi: Math.round(ftp * 0.85), color: '#FFCB88', desc: 'Threshold work. Hard but controlled.' },
-    { zone: 4, name: 'Transport', lo: Math.round(ftp * 0.85) + 1, hi: Math.round(ftp * 0.95), color: '#F07178', desc: 'High intensity. 2k pace intervals.' },
-    { zone: 5, name: 'Anaerobic', lo: Math.round(ftp * 0.95) + 1, hi: Math.round(ftp * 1.10), color: '#FF4791', desc: 'Sprint / Max effort.' },
-  ]);
   
-  let zones = $derived(sport === 'run' ? runZones : sport === 'bike' ? bikeZones : rowZones);
+  // Filter activities
+  const sportOptions = [
+    { id: 'all', label: '🌍 Overview' },
+    { id: 'run', label: '🏃 Run' },
+    { id: 'bike', label: '🚴 Bike' },
+    { id: 'swim', label: '🏊 Swim' },
+    { id: 'gym', label: '💪 Gym' },
+    { id: 'rowing', label: '🚣 Row' },
+    { id: 'other', label: '🏁 Other' }
+  ];
 
-  // For distribution, we'll show empty if no workouts
-  const hasWorkouts = $derived(athleteStore.workouts?.length > 0);
+  const filteredWorkouts = $derived(
+    sport === 'all' 
+      ? athleteStore.workouts 
+      : athleteStore.workouts.filter(w => w.sport?.toLowerCase() === sport)
+  );
+
+  const hasWorkouts = $derived(filteredWorkouts.length > 0);
+
+  // Memoize distribution calculation
+  const distribution = $derived.by(() => {
+    if (!hasWorkouts) return [0, 0, 0, 0, 0];
+    
+    let totals = [0, 0, 0, 0, 0];
+    let validCount = 0;
+    
+    // Use a single pass over workouts
+    for (let i = 0; i < filteredWorkouts.length; i++) {
+      const w = filteredWorkouts[i];
+      if (w.hr_zone_1_pct !== null) {
+        totals[0] += (w.hr_zone_1_pct || 0);
+        totals[1] += (w.hr_zone_2_pct || 0);
+        totals[2] += (w.hr_zone_3_pct || 0);
+        totals[3] += (w.hr_zone_4_pct || 0);
+        totals[4] += (w.hr_zone_5_pct || 0);
+        validCount++;
+      }
+    }
+    
+    if (validCount === 0) return [0, 0, 0, 0, 0];
+    
+    const count = validCount;
+    
+    // Normalize to sum to exactly 100%
+    let rounded = totals.map(t => Math.round(t / count));
+    let sum = rounded.reduce((a, b) => a + b, 0);
+    
+    if (sum !== 100 && sum > 0) {
+      // Adjust the largest zone to make it exactly 100%
+      let maxIdx = rounded.indexOf(Math.max(...rounded));
+      rounded[maxIdx] += (100 - sum);
+    }
+    
+    return rounded;
+  });
 </script>
 
 <div class="flex flex-col gap-3">
@@ -50,7 +88,12 @@
     <h1 class="text-[22px] font-bold tracking-[-0.02em]">Training Zones</h1>
   </div>
 
-  {#if !hasProfile}
+  {#if athleteStore.loading && !athleteStore.initialLoadDone}
+    <div class="flex-1 flex flex-col items-center justify-center py-20 opacity-40">
+      <div class="w-6 h-6 border-2 border-blue border-t-transparent rounded-full animate-spin mb-4"></div>
+      <p class="text-[10px] font-mono tracking-widest uppercase">Syncing Biometrics...</p>
+    </div>
+  {:else if !hasProfile}
     <EmptyState 
       title="No Profile Data" 
       message="Complete your athlete profile to compute personalized training zones."
@@ -59,10 +102,10 @@
     />
   {:else}
     <!-- Sport toggle -->
-    <div class="flex gap-1.5">
-      {#each ['run', 'bike', 'rowing'] as s}
-        <Pill active={sport === s} onclick={() => sport = s}>
-          {s === 'run' ? '🏃 Running' : s === 'bike' ? '🚴 Cycling' : '🚣 Rowing'}
+    <div class="flex gap-1.5 overflow-x-auto pb-1 no-scrollbar shrink-0">
+      {#each sportOptions as s}
+        <Pill active={sport === s.id} onclick={() => sport = s.id}>
+          {s.label}
         </Pill>
       {/each}
     </div>
@@ -70,20 +113,20 @@
     <!-- Anchor values -->
     <div class="grid grid-cols-2 gap-2.5">
       <Card style="background: linear-gradient(135deg, rgba(240,113,120,0.12), transparent);">
-        <p class="text-[9px] text-text2 font-mono uppercase tracking-[0.08em] mb-1">{sport === 'run' ? 'Max HR' : 'FTP'}</p>
+        <p class="text-[9px] text-text2 font-mono uppercase tracking-[0.08em] mb-1">Max Heart Rate</p>
         <p class="text-[26px] font-bold text-red tracking-[-0.02em] leading-tight">
-          {sport === 'run' ? maxHR : ftp}
-          <span class="text-[13px] font-normal text-text2 ml-1">{sport === 'run' ? 'bpm' : 'W'}</span>
+          {maxHR}
+          <span class="text-[13px] font-normal text-text2 ml-1">bpm</span>
         </p>
         <p class="text-[10px] text-text2 mt-0.5">Profile Baseline</p>
       </Card>
       <Card style="background: linear-gradient(135deg, rgba(70,33,255,0.12), transparent);">
-        <p class="text-[9px] text-text2 font-mono uppercase tracking-[0.08em] mb-1">{sport === 'run' ? 'Threshold HR' : 'W/kg'}</p>
+        <p class="text-[9px] text-text2 font-mono uppercase tracking-[0.08em] mb-1">Resting Heart Rate</p>
         <p class="text-[26px] font-bold text-[#4621FF] tracking-[-0.02em] leading-tight">
-          {sport === 'run' ? thresholdHR : (ftp / (athleteStore.profile?.weight_kg || 75)).toFixed(1)}
-          <span class="text-[13px] font-normal text-text2 ml-1">{sport === 'run' ? 'bpm' : 'w/kg'}</span>
+          {restingHR}
+          <span class="text-[13px] font-normal text-text2 ml-1">bpm</span>
         </p>
-        <p class="text-[10px] text-text2 mt-0.5">{athleteStore.profile?.weight_kg || 75}kg body weight</p>
+        <p class="text-[10px] text-text2 mt-0.5">HRR: {hrr} bpm</p>
       </Card>
     </div>
 
@@ -104,11 +147,11 @@
               <div class="flex-1">
                 <div class="flex justify-between items-center mb-1">
                   <span class="text-[12px] font-semibold">{z.name}</span>
-                  <span class="text-[11px] font-mono" style="color: {z.color}">{z.lo}–{z.hi}{sport === 'run' ? ' bpm' : 'W'}</span>
+                  <span class="text-[11px] font-mono" style="color: {z.color}">{z.lo}–{z.hi} bpm</span>
                 </div>
                 <div class="h-1.25 bg-glass2 rounded overflow-hidden">
                   <div class="h-full rounded" 
-                       style="width: {((z.hi - z.lo) / (sport === 'run' ? maxHR : ftp * 1.2)) * 100}%; margin-left: {(z.lo / (sport === 'run' ? maxHR : ftp * 1.2)) * 100}%; background: {z.color};"></div>
+                       style="width: {((z.hi - z.lo) / maxHR) * 100}%; margin-left: {(z.lo / maxHR) * 100}%; background: {z.color};"></div>
                 </div>
               </div>
             </div>
@@ -124,14 +167,37 @@
 
     <!-- Weekly distribution -->
     <Card>
-      <p class="text-[13px] font-semibold mb-3">Time in Zones</p>
+      <p class="text-[13px] font-semibold mb-3">Time in Zones ({sport === 'all' ? 'All Activities' : sport.toUpperCase()})</p>
       {#if !hasWorkouts}
         <div class="flex flex-col items-center justify-center py-6 opacity-60">
-          <p class="text-xs text-text2">No training distribution data yet.</p>
+          <p class="text-xs text-text2">No training distribution data for this selection.</p>
         </div>
       {:else}
-        <div class="p-3 bg-glass2 rounded-xl border border-border">
-          <p class="text-xs text-text2 text-center italic">Zone distribution analysis requires high-resolution heart rate data from recent activities.</p>
+        <div class="flex flex-col gap-3">
+          <div class="h-6 w-full flex rounded-lg overflow-hidden border border-border/50">
+            {#each distribution as pct, i}
+              {@const colors = ['#4621FF', '#00C8A8', '#FFCB88', '#F07178', '#FF4791']}
+              <div class="h-full transition-all duration-500" style="width: {pct}%; background: {colors[i]};" title="Z{i+1}: {pct}%"></div>
+            {/each}
+          </div>
+          
+          <div class="grid grid-cols-2 gap-x-4 gap-y-2">
+            {#each distribution as pct, i}
+              {@const colors = ['#4621FF', '#00C8A8', '#FFCB88', '#F07178', '#FF4791']}
+              {@const labels = ['Z1 Recovery', 'Z2 Aerobic', 'Z3 Tempo', 'Z4 Threshold', 'Z5 Anaerobic']}
+              <div class="flex items-center justify-between">
+                <div class="flex items-center gap-1.5">
+                  <div class="w-2 h-2 rounded-full" style="background: {colors[i]}"></div>
+                  <span class="text-[10px] text-text1">{labels[i]}</span>
+                </div>
+                <span class="text-[10px] font-mono font-bold" style="color: {colors[i]}">{pct}%</span>
+              </div>
+            {/each}
+          </div>
+          
+          <p class="text-[10px] text-text2 italic mt-1 text-center">
+            Average distribution across {filteredWorkouts.length} {sport === 'all' ? 'activities' : sport} sessions.
+          </p>
         </div>
       {/if}
     </Card>

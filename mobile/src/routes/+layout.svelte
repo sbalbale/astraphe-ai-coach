@@ -7,7 +7,7 @@
   import { authStore } from '$lib/stores/authStore.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
 
-  let { children } = $props();
+  const props = $props();
   
   let innerWidth = $state(0);
   let wide = $derived(innerWidth >= 768);
@@ -42,7 +42,7 @@
   </div>
 {:else if isAuthRoute}
   <div class="h-full bg-bg0 text-text0 font-sans overflow-y-auto">
-    {@render children()}
+    {@render props.children()}
   </div>
 {:else}
   <div class="flex h-full overflow-hidden bg-bg0 text-text0 font-sans">
@@ -64,7 +64,7 @@
       <!-- Subtabs for Body screens -->
       {#if ['/recovery', '/sleep', '/strain'].includes($page.url.pathname)}
         <div class="flex gap-1.5 px-4 pt-2.5 shrink-0">
-          {#each [{id: '/recovery', label: 'Recovery'}, {id: '/sleep', label: 'Sleep'}, {id: '/strain', label: 'Strain'}] as t}
+          {#each [{id: '/recovery', label: 'Recovery'}, {id: '/sleep', label: 'Sleep'}, {id: '/strain', label: 'Strain'}] as t (t.id)}
             <a href={t.id} class="px-3.5 py-1.5 rounded-full text-xs font-medium font-sans transition-all duration-200 border no-underline
               {$page.url.pathname === t.id ? 'bg-blue text-white border-blue' : 'bg-glass text-text1 border-border'}">
               {t.label}
@@ -75,7 +75,7 @@
     {/if}
     
     <div class="flex-1 overflow-y-auto flex flex-col relative {wide ? 'p-6 px-7' : $page.url.pathname === '/chat' ? 'p-3 px-4 pb-4' : 'p-3 px-4'}">
-      {@render children()}
+      {@render props.children()}
     </div>
     
       {#if !wide}
