@@ -11,6 +11,7 @@ from datetime import datetime
 from app.models.workout import WorkoutPayload
 from app.models.biometrics import DailyBiometrics
 from app.services.processing import process_and_save_workout, process_and_save_biometrics
+from fastapi import status
 
 router = APIRouter(prefix=f"{settings.API_PREFIX}/sync", tags=["Sync & Webhooks"])
 
@@ -39,6 +40,7 @@ async def garmin_webhook(request: Request, background_tasks: BackgroundTasks, db
                     source="garmin",
                     external_id=str(activity.get("activityId")),
                     workout_type=map_garmin_sport(activity.get("activityType")),
+                    title=(str(activity.get("activityType") or "")).replace("_", " ").title() or None,
                     start_time=datetime.utcfromtimestamp(activity.get("startTimeInSeconds")),
                     duration_seconds=activity.get("durationInSeconds"),
                     tss=activity.get("trainingStressScore") # Garmin sometimes provides this
@@ -74,21 +76,69 @@ async def whoop_webhook(request: Request, background_tasks: BackgroundTasks, db=
     body = await request.body()
     # if not whoop.verify_webhook_signature(body, signature):
     #     raise HTTPException(status_code=401, detail="Invalid WHOOP signature")
+
+    if settings.WHOOP_WEBHOOK_LOG_RAW:
+        try:
+            raw = body.decode("utf-8", errors="replace")
+            # Avoid flooding logs — WHOOP payloads can be large.
+            print(f"[whoop.webhook.raw] {raw[:4000]}")
+        except Exception as e:
+            print(f"[whoop.webhook.raw] <failed to decode body>: {repr(e)}")
         
     payload = await request.json()
     event_type = payload.get("type")
     user_id = payload.get("user_id")
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    event_id = data.get("id") or payload.get("id")
+
+    # Lightweight debug line to confirm delivery + shape
+    try:
+        print(f"[whoop.webhook] type={event_type} user_id={user_id} event_id={event_id} keys={list(payload.keys())}")
+    except Exception:
+        pass
     
-    token_record = db.table("oauth_tokens").select("*").eq("provider", "whoop").eq("external_user_id", user_id).execute()
+    token_record = (
+        db.table("oauth_tokens")
+        .select("*")
+        .eq("provider", "whoop")
+        .eq("external_user_id", str(user_id) if user_id is not None else "")
+        .execute()
+    )
     if not token_record.data:
         return Response(status_code=200) 
         
-    access_token = token_record.data[0]["access_token"]
-    athlete_id = token_record.data[0]["athlete_id"]
+    token_row = token_record.data[0]
+    access_token = token_row.get("access_token")
+    refresh_token = token_row.get("refresh_token")
+    athlete_id = token_row.get("athlete_id")
+
+    async def _refresh_and_persist_token() -> str | None:
+        if not refresh_token:
+            return None
+        token_data = await whoop.refresh_oauth_token(refresh_token)
+        new_access = token_data.get("access_token")
+        new_refresh = token_data.get("refresh_token") or refresh_token
+        if new_access:
+            db.table("oauth_tokens").update(
+                {"access_token": new_access, "refresh_token": new_refresh}
+            ).eq("provider", "whoop").eq("external_user_id", str(user_id)).execute()
+        return new_access
 
     try:
         if event_type == "recovery.updated":
-            recovery_data = await whoop.fetch_recovery_data(access_token, payload["data"]["id"])
+            if not event_id:
+                return Response(status_code=200)
+            try:
+                recovery_data = await whoop.fetch_recovery_data(access_token, event_id)
+            except HTTPException as e:
+                if e.status_code == status.HTTP_401_UNAUTHORIZED:
+                    new_access = await _refresh_and_persist_token()
+                    if new_access:
+                        recovery_data = await whoop.fetch_recovery_data(new_access, event_id)
+                    else:
+                        raise
+                else:
+                    raise
             bio_payload = DailyBiometrics(
                 date=recovery_data["created_at"][:10],
                 source="whoop",
@@ -99,7 +149,19 @@ async def whoop_webhook(request: Request, background_tasks: BackgroundTasks, db=
             background_tasks.add_task(process_and_save_biometrics, bio_payload, athlete_id, db)
             
         elif event_type == "sleep.updated":
-            sleep_data = await whoop.fetch_sleep_data(access_token, payload["data"]["id"])
+            if not event_id:
+                return Response(status_code=200)
+            try:
+                sleep_data = await whoop.fetch_sleep_data(access_token, event_id)
+            except HTTPException as e:
+                if e.status_code == status.HTTP_401_UNAUTHORIZED:
+                    new_access = await _refresh_and_persist_token()
+                    if new_access:
+                        sleep_data = await whoop.fetch_sleep_data(new_access, event_id)
+                    else:
+                        raise
+                else:
+                    raise
             bio_payload = DailyBiometrics(
                 date=sleep_data["start"][:10],
                 source="whoop",
@@ -109,13 +171,57 @@ async def whoop_webhook(request: Request, background_tasks: BackgroundTasks, db=
             background_tasks.add_task(process_and_save_biometrics, bio_payload, athlete_id, db)
             
         elif event_type == "workout.updated":
-            workout_data = await whoop.fetch_workout_data(access_token, payload["data"]["id"])
+            if not event_id:
+                return Response(status_code=200)
+            try:
+                workout_data = await whoop.fetch_workout_data(access_token, event_id)
+            except HTTPException as e:
+                if e.status_code == status.HTTP_401_UNAUTHORIZED:
+                    new_access = await _refresh_and_persist_token()
+                    if new_access:
+                        workout_data = await whoop.fetch_workout_data(new_access, event_id)
+                    else:
+                        raise
+                else:
+                    raise
+            # WorkoutPayload uses aliases: sport -> workout_type, started_at -> start_time
+            start = workout_data.get("start") or workout_data.get("started_at")
+            end = workout_data.get("end") or workout_data.get("ended_at")
+            duration_seconds = None
+            try:
+                if start and end:
+                    duration_seconds = int(
+                        (datetime.fromisoformat(end.replace("Z", "+00:00")) - datetime.fromisoformat(start.replace("Z", "+00:00"))).total_seconds()
+                    )
+            except Exception:
+                duration_seconds = None
+
+            score = workout_data.get("score") if isinstance(workout_data.get("score"), dict) else {}
+            zone = score.get("zone_durations") if isinstance(score.get("zone_durations"), dict) else {}
+            total_zone_ms = sum(v for v in zone.values() if isinstance(v, (int, float)))
+            def _pct(ms):
+                if not total_zone_ms or not isinstance(ms, (int, float)):
+                    return None
+                return int(round((ms / total_zone_ms) * 100))
+
             workout_payload = WorkoutPayload(
                 source="whoop",
-                external_id=str(workout_data["id"]),
-                workout_type=map_whoop_sport(workout_data["sport_id"]),
-                start_time=workout_data["start"],
-                duration_seconds=int((datetime.fromisoformat(workout_data["end"].replace('Z','')) - datetime.fromisoformat(workout_data["start"].replace('Z',''))).total_seconds())
+                external_id=str(workout_data.get("id") or event_id),
+                # Prefer sport_name when present; fall back to id mapping.
+                sport=map_whoop_sport(workout_data.get("sport_name") or workout_data.get("sport_id") or workout_data.get("sport") or workout_data.get("sportId")),
+                title=(workout_data.get("sport_name") or workout_data.get("sportName") or None),
+                started_at=start,
+                ended_at=end,
+                duration_seconds=duration_seconds,
+                distance_m=score.get("distance_meter") or score.get("distance_m") or workout_data.get("distance_m"),
+                avg_hr=score.get("average_heart_rate") or score.get("avg_hr") or workout_data.get("avg_hr"),
+                max_hr=score.get("max_heart_rate") or workout_data.get("max_hr"),
+                hr_zone_0_pct=_pct(zone.get("zone_zero_milli")),
+                hr_zone_1_pct=_pct(zone.get("zone_one_milli")),
+                hr_zone_2_pct=_pct(zone.get("zone_two_milli")),
+                hr_zone_3_pct=_pct(zone.get("zone_three_milli")),
+                hr_zone_4_pct=_pct(zone.get("zone_four_milli")),
+                hr_zone_5_pct=_pct(zone.get("zone_five_milli")),
             )
             background_tasks.add_task(process_and_save_workout, workout_payload, athlete_id, db)
             
@@ -250,7 +356,35 @@ def map_garmin_sport(garmin_type: str) -> str:
     mapping = {"RUNNING": "run", "CYCLING": "bike", "SWIMMING": "swim", "STRENGTH_TRAINING": "strength"}
     return mapping.get(garmin_type, "other")
 
-def map_whoop_sport(sport_id: int) -> str:
+def map_whoop_sport(sport: object) -> str:
     """Maps WHOOP sports to internal enums."""
-    mapping = {1: "run", 8: "bike", 66: "strength", 70: "swim"} 
-    return mapping.get(sport_id, "other")
+    # If we get the sport_name string, map it first.
+    if isinstance(sport, str):
+        s = sport.strip().lower()
+        if s in ("weightlifting", "weight lifting", "strength training", "strength_training", "gym", "strength"):
+            return "strength"
+        if s in ("running", "run"):
+            return "run"
+        if s in ("cycling", "bike", "biking"):
+            return "bike"
+        if s in ("swimming", "swim"):
+            return "swim"
+        if s in ("rowing", "row"):
+            return "rowing"
+        # If it's a numeric string, fall through to id mapping.
+        if s.isdigit():
+            sport = int(s)
+        else:
+            return "other"
+
+    # Sport id mapping
+    if isinstance(sport, int):
+        mapping = {
+            1: "run",
+            8: "bike",
+            66: "strength",   # WHOOP strength/weightlifting
+            70: "swim",
+        }
+        return mapping.get(sport, "other")
+
+    return "other"

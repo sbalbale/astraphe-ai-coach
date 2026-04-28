@@ -1,6 +1,6 @@
 <script lang="ts">
   import Card from '$lib/components/Card.svelte';
-  import FormDateInput from '$lib/components/FormDateInput.svelte';
+  import DatePicker from '$lib/components/DatePicker.svelte';
   import { authStore } from '$lib/stores/authStore.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { goto } from '$app/navigation';
@@ -71,7 +71,13 @@
         </div>
         <div>
           <label for="dob" class="block text-[11px] text-text2 mb-1">Date of Birth</label>
-          <FormDateInput id="dob" type="date" bind:value={dob} ariaLabel="Date of Birth" />
+          <DatePicker
+            id="dob"
+            bind:value={dob}
+            ariaLabel="Date of Birth"
+            buttonClass="w-full p-2.5 pr-2 bg-glass2 border border-border rounded-lg text-sm text-text0 outline-none focus:border-blue"
+            placeholder="YYYY-MM-DD"
+          />
         </div>
       </div>
     </Card>

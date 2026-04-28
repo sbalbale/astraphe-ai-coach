@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     WHOOP_API_BASE: str = "https://api.prod.whoop.com/developer/v1"
     WHOOP_OAUTH_AUTH_URL: str = "https://api.prod.whoop.com/oauth/oauth2/auth"
     WHOOP_OAUTH_TOKEN_URL: str = "https://api.prod.whoop.com/oauth/oauth2/token"
+    WHOOP_WEBHOOK_LOG_RAW: bool = False
 
     # --- Garmin API ---
     GARMIN_CONSUMER_KEY: Optional[str] = None

@@ -8,7 +8,7 @@
   import LineChart from '$lib/components/charts/LineChart.svelte';
   import DonutChart from '$lib/components/charts/DonutChart.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
-  import FormDateInput from '$lib/components/FormDateInput.svelte';
+  import DatePicker from '$lib/components/DatePicker.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { page } from '$app/stores';
   import { addDays, endOfWeek, format, startOfWeek } from 'date-fns';
@@ -30,32 +30,29 @@
   const zoneColors = ['#4621FF', '#00C8A8', '#FFCB88', '#F07178', '#FF4791'];
 
   // Week selector (History tab)
-  let selectedWeekStart = $state<Date>(startOfWeek(new Date(), { weekStartsOn: 1 })); // Monday
+  // Source of truth is the picked day (YYYY-MM-DD). We derive the Monday week start from it.
   let weekPickerValue = $state('');
   let appliedWorkoutIdFromUrl = $state(false);
 
-  function setWeekFromDate(dateLike: string | Date) {
-    const d = typeof dateLike === 'string' ? new Date(dateLike) : dateLike;
-    if (!d || isNaN(d.getTime())) return;
-    const next = startOfWeek(d, { weekStartsOn: 1 });
-    if (next.getTime() === selectedWeekStart.getTime()) return;
-    selectedWeekStart = next;
-    // Keep the picker normalized to the week start (Monday).
-    const formatted = format(next, 'yyyy-MM-dd');
-    if (weekPickerValue !== formatted) weekPickerValue = formatted;
-  }
-
-  const selectedWeekEnd = $derived(endOfWeek(selectedWeekStart, { weekStartsOn: 1 }));
-  function jumpToCurrentWeek() {
-    setWeekFromDate(new Date());
+  function parseDateInputLocal(value: string): Date {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value || '');
+    if (!m) return new Date(value);
+    const y = Number(m[1]);
+    const mo = Number(m[2]);
+    const d = Number(m[3]);
+    // Use local time to avoid timezone shifting when parsing YYYY-MM-DD
+    return new Date(y, mo - 1, d, 12, 0, 0, 0);
   }
 
   $effect(() => {
-    // When user changes the picker, snap to that week.
-    const formatted = format(selectedWeekStart, 'yyyy-MM-dd');
-    if (!weekPickerValue || weekPickerValue === formatted) return;
-    setWeekFromDate(weekPickerValue);
+    if (!weekPickerValue) weekPickerValue = format(new Date(), 'yyyy-MM-dd');
   });
+
+  const selectedWeekStart = $derived.by(() => startOfWeek(parseDateInputLocal(weekPickerValue), { weekStartsOn: 1 }));
+  const selectedWeekEnd = $derived(endOfWeek(selectedWeekStart, { weekStartsOn: 1 }));
+  function jumpToCurrentWeek() {
+    weekPickerValue = format(new Date(), 'yyyy-MM-dd');
+  }
 
   const workoutIdFromUrl = $derived($page.url.searchParams.get('workout_id'));
   $effect(() => {
@@ -67,7 +64,7 @@
     if (!match) return;
 
     metric = 'history';
-    setWeekFromDate(match.started_at);
+    weekPickerValue = format(new Date(match.started_at), 'yyyy-MM-dd');
     selectedWorkout = match;
     appliedWorkoutIdFromUrl = true;
   });
@@ -87,8 +84,14 @@
     if (t === 'bike' || t === 'cycling') return '🚴';
     if (t === 'rowing') return '🚣';
     if (t === 'swim') return '🏊';
-    if (t === 'strength') return '💪';
+    if (t === 'strength' || t === 'strength_training' || t === 'gym') return '💪';
     return '🏋️';
+  }
+
+  function getWorkoutLabel(type: string) {
+    const t = type?.toLowerCase();
+    if (t === 'strength_training' || t === 'strength' || t === 'gym') return 'Strength';
+    return t ? t.charAt(0).toUpperCase() + t.slice(1) : 'Workout';
   }
 
   function getWorkoutColor(type: string) {
@@ -129,7 +132,16 @@
   }
 
   function getHrZonePcts(w: any): Array<number | null> {
+    const z1 = w?.hr_zone_1_pct ?? null;
+    const z2 = w?.hr_zone_2_pct ?? null;
+    const z3 = w?.hr_zone_3_pct ?? null;
+    const z4 = w?.hr_zone_4_pct ?? null;
+    const z5 = w?.hr_zone_5_pct ?? null;
+    const z0 =
+      w?.hr_zone_0_pct ?? (z1 == null ? null : Math.max(0, 100 - Number(z1 || 0) - Number(z2 || 0) - Number(z3 || 0) - Number(z4 || 0) - Number(z5 || 0)));
+
     return [
+      z0,
       w?.hr_zone_1_pct ?? null,
       w?.hr_zone_2_pct ?? null,
       w?.hr_zone_3_pct ?? null,
@@ -139,7 +151,7 @@
   }
 
   function getHrZonePctsTopDown(w: any): Array<number | null> {
-    // Display order: Z5 (top) -> Z1 (bottom)
+    // Display order: Z5 (top) -> Z0 (bottom)
     return getHrZonePcts(w).slice().reverse();
   }
 
@@ -249,7 +261,7 @@
               {getWorkoutIcon(selectedWorkout.sport)}
             </div>
             <div class="flex-1">
-              <h2 class="text-lg font-bold leading-tight">{selectedWorkout.title || (selectedWorkout.sport.toUpperCase() + ' Session')}</h2>
+              <h2 class="text-lg font-bold leading-tight">{selectedWorkout.title || (getWorkoutLabel(selectedWorkout.sport) + ' Session')}</h2>
               <p class="text-xs text-text2">{format(new Date(selectedWorkout.started_at), 'EEEE, MMM d · h:mm a')}</p>
             </div>
             <div class="text-right">
@@ -332,19 +344,18 @@
               <div class="flex items-center gap-2 shrink-0">
                 <button
                   class="px-2 py-1 rounded-lg border border-border bg-glass2 text-[11px] text-text1 cursor-pointer"
-                  onclick={() => setWeekFromDate(addDays(selectedWeekStart, -7))}
+                  onclick={() => (weekPickerValue = format(addDays(selectedWeekStart, -7), 'yyyy-MM-dd'))}
                   aria-label="Previous week"
                 >
                   ←
                 </button>
 
-                <div class="w-[140px]">
-                  <FormDateInput
+                <div class="w-[160px]">
+                  <DatePicker
                     id="training-history-week"
-                    type="date"
                     bind:value={weekPickerValue}
                     ariaLabel="Select week"
-                    inputClass="px-2 py-1 pr-9 rounded-lg border border-border bg-glass2 text-[11px] text-text1"
+                    buttonClass="px-2 py-1 pr-2 rounded-lg border border-border bg-glass2 text-[11px] text-text1"
                   />
                 </div>
 
@@ -358,7 +369,7 @@
 
                 <button
                   class="px-2 py-1 rounded-lg border border-border bg-glass2 text-[11px] text-text1 cursor-pointer"
-                  onclick={() => setWeekFromDate(addDays(selectedWeekStart, 7))}
+                  onclick={() => (weekPickerValue = format(addDays(selectedWeekStart, 7), 'yyyy-MM-dd'))}
                   aria-label="Next week"
                 >
                   →
@@ -381,7 +392,7 @@
                     {getWorkoutIcon(w.sport)}
                   </div>
                   <div class="flex-1">
-                    <p class="text-[13px] font-semibold">{w.title || (w.sport.charAt(0).toUpperCase() + w.sport.slice(1) + ' Session')}</p>
+                    <p class="text-[13px] font-semibold">{w.title || (getWorkoutLabel(w.sport) + ' Session')}</p>
                     <p class="text-[11px] text-text2">{format(new Date(w.started_at), 'MMM d')} · {Math.floor(getDurationSecs(w) / 60)} min</p>
                   </div>
                   <div class="text-right">

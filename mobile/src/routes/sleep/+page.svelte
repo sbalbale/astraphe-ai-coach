@@ -5,7 +5,8 @@
   import Pill from "$lib/components/Pill.svelte";
   import RadialProgress from "$lib/components/RadialProgress.svelte";
   import EmptyState from "$lib/components/EmptyState.svelte";
-  import FormDateInput from "$lib/components/FormDateInput.svelte";
+  import DatePicker from "$lib/components/DatePicker.svelte";
+  import LineChart from "$lib/components/charts/LineChart.svelte";
   import { athleteStore } from "$lib/stores/athleteStore.svelte";
   import { addDays, format, parseISO, subDays } from "date-fns";
   import { calculateSleepScore } from "$lib/utils/biometrics";
@@ -18,36 +19,27 @@
   const hasData = $derived(athleteStore.biometrics?.series?.length > 0);
 
   // Rolling 7-day window (cannot go into the future).
-  let selectedEndDay = $state(new Date());
+  // Source of truth for the picker is a YYYY-MM-DD string.
+  let endPickerValue = $state("");
   let nightIndex = $state(0); // most recent on the left
 
   const today = $derived(new Date());
   const todayStr = $derived(format(today, "yyyy-MM-dd"));
 
+  $effect(() => {
+    if (!endPickerValue) endPickerValue = todayStr;
+  });
+
   const clampedEndDay = $derived.by(() => {
-    const d = selectedEndDay instanceof Date ? selectedEndDay : new Date(selectedEndDay);
-    if (Number.isNaN(d.getTime())) return new Date();
+    const d = endPickerValue ? parseISO(endPickerValue) : new Date();
+    if (Number.isNaN(d.getTime())) return today;
     return d > today ? today : d;
   });
 
   const windowStart = $derived(subDays(clampedEndDay, 6));
   const windowEnd = $derived(clampedEndDay);
   const rangeLabel = $derived(`${format(windowStart, "MMM d")} – ${format(windowEnd, "MMM d, yyyy")}`);
-  let endPickerValue = $state("");
   const canGoForward = $derived(format(windowEnd, "yyyy-MM-dd") !== todayStr);
-
-  $effect(() => {
-    const next = format(windowEnd, "yyyy-MM-dd");
-    if (endPickerValue !== next) endPickerValue = next;
-  });
-
-  $effect(() => {
-    if (!endPickerValue) return;
-    const current = selectedEndDay instanceof Date ? selectedEndDay : new Date(selectedEndDay);
-    const currentStr = Number.isNaN(current.getTime()) ? "" : format(current, "yyyy-MM-dd");
-    if (currentStr === endPickerValue) return;
-    selectedEndDay = parseISO(endPickerValue);
-  });
 
   // Map biometrics to nights array (filling in missing dates for the last 7 days)
   let nights = $derived.by(() => {
@@ -87,11 +79,11 @@
         duration: b.sleep_duration_min ? `${h}h ${m}m` : "0h 0m",
         durationRaw: b.sleep_duration_min || 0,
         quality:
-          (b.sleep_score || 0) >= 85
-            ? "Excellent"
-            : (b.sleep_score || 0) >= 70
-              ? "Good"
-              : "Fair",
+          (b.astrape_sleep_score || b.sleep_score || 0) >= 67
+            ? "Optimal"
+            : (b.astrape_sleep_score || b.sleep_score || 0) >= 34
+              ? "Moderate"
+              : "Poor",
         bedtime: b.sleep_bedtime
           ? new Date(b.sleep_bedtime).toLocaleTimeString([], {
               hour: "numeric",
@@ -132,16 +124,16 @@
   };
   let scoreColor = $derived(
     n
-      ? n.score >= 85
+      ? n.score >= 67
         ? "#00C8A8"
-        : n.score >= 70
+        : n.score >= 34
           ? "#FFCB88"
           : "#F07178"
-      : "#text2",
+      : "var(--text2)",
   );
 
   const getSleepColor = (score: number) =>
-    score >= 85 ? "#00C8A8" : score >= 70 ? "#FFCB88" : "#F07178";
+    score >= 67 ? "#00C8A8" : score >= 34 ? "#FFCB88" : "#F07178";
 </script>
 
 <div class="flex flex-col gap-3">
@@ -172,25 +164,24 @@
           type="button"
           class="h-8 w-8 rounded-md border border-border bg-glass text-text0"
           aria-label="Previous 7 days"
-          onclick={() => (selectedEndDay = subDays(windowEnd, 7))}
+          onclick={() => (endPickerValue = format(subDays(windowEnd, 7), "yyyy-MM-dd"))}
         >
           ←
         </button>
         <div class="w-[150px]">
-          <FormDateInput
+          <DatePicker
             id="sleep-end"
-            type="date"
             bind:value={endPickerValue}
             max={todayStr}
             ariaLabel="Select end day"
-            inputClass="h-8 px-2 pr-9 rounded-md border border-border bg-glass text-[12px] text-text0"
+            buttonClass="h-8 px-2 pr-2 rounded-md border border-border bg-glass text-[12px] text-text0"
           />
         </div>
         <button
           type="button"
           class="h-8 px-2.5 rounded-md border border-border bg-glass text-text0 text-[12px]"
           aria-label="Jump to today"
-          onclick={() => (selectedEndDay = new Date())}
+          onclick={() => (endPickerValue = todayStr)}
         >
           Today
         </button>
@@ -202,7 +193,7 @@
           style={!canGoForward ? "opacity: 0.4; cursor: not-allowed;" : ""}
           onclick={() => {
             if (!canGoForward) return;
-            selectedEndDay = addDays(windowEnd, 7);
+            endPickerValue = format(addDays(windowEnd, 7), "yyyy-MM-dd");
           }}
         >
           →
@@ -255,11 +246,11 @@
             <div class="flex items-center gap-2 mb-1">
               <span class="text-[18px] font-bold">{n.quality}</span>
               <Tag color={scoreColor}
-                >{n.score >= 85
+                >{n.score >= 67
                   ? "OPTIMAL"
-                  : n.score >= 70
-                    ? "GOOD"
-                    : "FAIR"}</Tag
+                  : n.score >= 34
+                    ? "MODERATE"
+                    : "POOR"}</Tag
               >
             </div>
             <p class="text-xs text-text1">{n.bedtime} → {n.wakeup}</p>
@@ -287,28 +278,35 @@
         </Card>
       </div>
 
-      <!-- 7-Day Trend -->
+      <!-- 28-Day Trend -->
       <Card>
-        <p class="text-[13px] font-semibold mb-3">7-Day Trend</p>
-        <div class="flex gap-2 items-end h-[50px] mb-1 px-1">
-          {#each nights as nt, i (nt.rawDate)}
-            {@const c = getSleepColor(nt.score || 0)}
-            {@const barColor = nt.missing ? "rgba(255,255,255,0.14)" : c}
-            {@const barColorMuted = nt.missing ? "rgba(255,255,255,0.08)" : c + "44"}
-            <button
-              type="button"
-              class="flex-1 flex flex-col items-center gap-1 cursor-pointer"
-              aria-label={`Select ${nt.date} sleep: ${nt.score}`}
-              onclick={() => (nightIndex = i)}
-            >
-              <div
-                class="w-full rounded-t-sm transition-all duration-300"
-                style="background: {i === nightIndex ? barColor : barColorMuted}; height: {nt.missing ? 6 : Math.max(4, ((nt.score || 0) / 100) * 50)}px;"
-              ></div>
-              <span class="text-[9px] font-mono {i === nightIndex ? 'text-text0' : 'text-text2'}">{format(parseISO(nt.rawDate), "EE").charAt(0)}</span>
-            </button>
-          {/each}
+        <div class="flex justify-between items-center mb-3">
+          <p class="text-[13px] font-semibold">28-Day Sleep Trend</p>
+          <span class="text-[10px] text-text2 font-mono">{n.score}% current</span>
         </div>
+        {#if (athleteStore.biometrics?.sleepScores?.length || 0) > 1}
+          <div class="h-[60px]">
+            <LineChart
+              data={athleteStore.biometrics.sleepScores}
+              color={getSleepColor(n.score)}
+              height={60}
+              formatValue={(v) => `${v}%`}
+              getValueColor={getSleepColor}
+            />
+          </div>
+        {:else if (athleteStore.biometrics?.sleepData?.length || 0) > 1}
+           <!-- Fallback to duration if scores missing -->
+           <div class="h-[60px]">
+            <LineChart
+              data={athleteStore.biometrics.sleepData}
+              color={getSleepColor(n.score)}
+              height={60}
+              formatValue={(v) => `${v.toFixed(1)}h`}
+            />
+          </div>
+        {:else}
+          <div class="h-[60px] flex items-center justify-center text-[10px] text-text2 italic">Pending trend data...</div>
+        {/if}
       </Card>
 
       <!-- Stage breakdown -->

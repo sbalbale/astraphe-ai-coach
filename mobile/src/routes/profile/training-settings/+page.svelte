@@ -1,6 +1,6 @@
 <script lang="ts">
   import Card from '$lib/components/Card.svelte';
-  import FormSelect from '$lib/components/FormSelect.svelte';
+  import SelectMenu from '$lib/components/SelectMenu.svelte';
   import { goto } from '$app/navigation';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { onMount } from 'svelte';
@@ -76,7 +76,13 @@
       <div class="flex flex-col gap-4">
         <div>
           <label for="sport" class="block text-[11px] text-text2 mb-1">Main Sport</label>
-          <FormSelect id="sport" bind:value={sport} options={sportOptions} ariaLabel="Main Sport" />
+          <SelectMenu
+            id="sport"
+            bind:value={sport}
+            options={sportOptions}
+            ariaLabel="Main Sport"
+            buttonClass="w-full p-2.5 pr-2 bg-glass2 border border-border rounded-lg text-sm text-text0 outline-none focus:border-blue"
+          />
         </div>
         <div>
           <label for="units" class="block text-[11px] text-text2 mb-1">Measurement Units</label>

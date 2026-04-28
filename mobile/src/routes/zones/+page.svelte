@@ -2,17 +2,19 @@
   import Card from '$lib/components/Card.svelte';
   import Pill from '$lib/components/Pill.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
-  import FormDateInput from '$lib/components/FormDateInput.svelte';
+  import DatePicker from '$lib/components/DatePicker.svelte';
+  import MonthPicker from '$lib/components/MonthPicker.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import {
     addDays,
     addMonths,
+    endOfDay,
     endOfMonth,
-    endOfWeek,
     format,
     isWithinInterval,
+    startOfDay,
     startOfMonth,
-    startOfWeek
+    subDays
   } from 'date-fns';
 
   let sport = $state('all');
@@ -25,6 +27,15 @@
   const toDateInputValue = (d: Date) =>
     `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
   const toMonthInputValue = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`;
+  const parseDateInputLocal = (value: string) => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value || '');
+    if (!m) return new Date(value);
+    const y = Number(m[1]);
+    const mo = Number(m[2]);
+    const d = Number(m[3]);
+    // Use local time to avoid timezone shifting when parsing YYYY-MM-DD
+    return new Date(y, mo - 1, d, 12, 0, 0, 0);
+  };
 
   // Default to "today" in local time for inputs.
   let selectedDay = $state(toDateInputValue(new Date()));
@@ -59,6 +70,7 @@
   const hrr = $derived(maxHR - restingHR);
 
   const hrZones = $derived([
+    { zone: 0, name: 'Resting', lo: 0, hi: Math.max(0, Math.round(restingHR + hrr * 0.5) - 1), color: '#9AA4B2', desc: 'Very easy. Below Zone 1.' },
     { zone: 1, name: 'Recovery', lo: Math.round(restingHR + hrr * 0.5), hi: Math.round(restingHR + hrr * 0.6), color: '#4621FF', desc: 'Active recovery. Minimal stress.' },
     { zone: 2, name: 'Aerobic', lo: Math.round(restingHR + hrr * 0.6) + 1, hi: Math.round(restingHR + hrr * 0.7), color: '#00C8A8', desc: 'Endurance. Optimized for fat metabolism.' },
     { zone: 3, name: 'Tempo', lo: Math.round(restingHR + hrr * 0.7) + 1, hi: Math.round(restingHR + hrr * 0.8), color: '#FFCB88', desc: 'Moderate. Improving aerobic capacity.' },
@@ -75,7 +87,7 @@
     { id: 'run', label: '🏃 Run' },
     { id: 'bike', label: '🚴 Bike' },
     { id: 'swim', label: '🏊 Swim' },
-    { id: 'gym', label: '💪 Gym' },
+    { id: 'strength', label: '💪 Strength' },
     { id: 'rowing', label: '🚣 Row' },
     { id: 'other', label: '🏁 Other' }
   ];
@@ -83,13 +95,19 @@
   const sportFilteredWorkouts = $derived(
     sport === 'all' 
       ? athleteStore.workouts 
-      : athleteStore.workouts.filter(w => w.sport?.toLowerCase() === sport)
+      : athleteStore.workouts.filter(w => {
+          const s = w.sport?.toLowerCase();
+          // Backward compatibility for older rows.
+          if (sport === 'strength') return s === 'strength' || s === 'strength_training' || s === 'gym';
+          return s === sport;
+        })
   );
 
   const windowStart = $derived.by(() => {
     if (windowMode === 'week') {
-      const d = new Date(selectedDay);
-      return startOfWeek(d, { weekStartsOn: 1 });
+      // Rolling 7-day window ending on the selected day (inclusive)
+      const anchor = parseDateInputLocal(selectedDay);
+      return startOfDay(subDays(anchor, 6));
     }
     const monthDate = new Date(`${selectedMonth}-01T00:00:00`);
     return startOfMonth(monthDate);
@@ -97,8 +115,8 @@
 
   const windowEnd = $derived.by(() => {
     if (windowMode === 'week') {
-      const d = new Date(selectedDay);
-      return endOfWeek(d, { weekStartsOn: 1 });
+      const anchor = parseDateInputLocal(selectedDay);
+      return endOfDay(anchor);
     }
     const monthDate = new Date(`${selectedMonth}-01T00:00:00`);
     return endOfMonth(monthDate);
@@ -127,26 +145,34 @@
 
   // Memoize distribution calculation
   const distribution = $derived.by(() => {
-    if (!hasWorkouts) return { pcts: [0, 0, 0, 0, 0] as number[], validCount: 0, totalCount: 0 };
+    if (!hasWorkouts) return { pcts: [0, 0, 0, 0, 0, 0] as number[], validCount: 0, totalCount: 0 };
     
-    let totals = [0, 0, 0, 0, 0];
+    let totals = [0, 0, 0, 0, 0, 0];
     let validCount = 0;
     
     // Use a single pass over workouts
     for (let i = 0; i < timeAndSportFilteredWorkouts.length; i++) {
       const w = timeAndSportFilteredWorkouts[i];
       if (w.hr_zone_1_pct !== null) {
-        totals[0] += (w.hr_zone_1_pct || 0);
-        totals[1] += (w.hr_zone_2_pct || 0);
-        totals[2] += (w.hr_zone_3_pct || 0);
-        totals[3] += (w.hr_zone_4_pct || 0);
-        totals[4] += (w.hr_zone_5_pct || 0);
+        const z1 = Number(w.hr_zone_1_pct || 0);
+        const z2 = Number(w.hr_zone_2_pct || 0);
+        const z3 = Number(w.hr_zone_3_pct || 0);
+        const z4 = Number(w.hr_zone_4_pct || 0);
+        const z5 = Number(w.hr_zone_5_pct || 0);
+        const z0 = Math.max(0, 100 - (z1 + z2 + z3 + z4 + z5));
+
+        totals[0] += z0;
+        totals[1] += z1;
+        totals[2] += z2;
+        totals[3] += z3;
+        totals[4] += z4;
+        totals[5] += z5;
         validCount++;
       }
     }
     
     if (validCount === 0) {
-      return { pcts: [0, 0, 0, 0, 0] as number[], validCount: 0, totalCount: timeAndSportFilteredWorkouts.length };
+      return { pcts: [0, 0, 0, 0, 0, 0] as number[], validCount: 0, totalCount: timeAndSportFilteredWorkouts.length };
     }
     
     const count = validCount;
@@ -278,30 +304,28 @@
                 else selectedMonth = toMonthInputValue(addMonths(new Date(`${selectedMonth}-01T00:00:00`), -1));
               }}
               type="button"
-              aria-label={windowMode === 'week' ? 'Previous week' : 'Previous month'}
-              title={windowMode === 'week' ? 'Previous week' : 'Previous month'}
+              aria-label={windowMode === 'week' ? 'Previous 7 days' : 'Previous month'}
+              title={windowMode === 'week' ? 'Previous 7 days' : 'Previous month'}
             >
               ‹
             </button>
 
             {#if windowMode === 'week'}
               <div class="w-[130px]">
-                <FormDateInput
+                <DatePicker
                   id="zones-week"
-                  type="date"
                   bind:value={dayPickerValue}
-                  ariaLabel="Select week"
-                  inputClass="h-7 px-2 pr-9 rounded-lg bg-glass2 border border-border/50 text-[10px] font-mono text-text1 focus:outline-none focus:ring-1 focus:ring-blue/40"
+                  ariaLabel="Select end date"
+                  buttonClass="h-7 px-2 pr-2 rounded-lg bg-glass2 border border-border/50 text-[10px] font-mono text-text1"
                 />
               </div>
             {:else}
               <div class="w-[130px]">
-                <FormDateInput
+                <MonthPicker
                   id="zones-month"
-                  type="month"
                   bind:value={monthPickerValue}
                   ariaLabel="Select month"
-                  inputClass="h-7 px-2 pr-9 rounded-lg bg-glass2 border border-border/50 text-[10px] font-mono text-text1 focus:outline-none focus:ring-1 focus:ring-blue/40"
+                  buttonClass="h-7 px-2 pr-2 rounded-lg bg-glass2 border border-border/50 text-[10px] font-mono text-text1"
                 />
               </div>
             {/if}
@@ -323,8 +347,8 @@
                 else selectedMonth = toMonthInputValue(addMonths(new Date(`${selectedMonth}-01T00:00:00`), 1));
               }}
               type="button"
-              aria-label={windowMode === 'week' ? 'Next week' : 'Next month'}
-              title={windowMode === 'week' ? 'Next week' : 'Next month'}
+              aria-label={windowMode === 'week' ? 'Next 7 days' : 'Next month'}
+              title={windowMode === 'week' ? 'Next 7 days' : 'Next month'}
             >
               ›
             </button>
@@ -343,15 +367,15 @@
         <div class="flex flex-col gap-3">
           <div class="h-6 w-full flex rounded-lg overflow-hidden border border-border/50">
             {#each distribution.pcts as pct, i (i)}
-              {@const colors = ['#4621FF', '#00C8A8', '#FFCB88', '#F07178', '#FF4791']}
+              {@const colors = ['#9AA4B2', '#4621FF', '#00C8A8', '#FFCB88', '#F07178', '#FF4791']}
               <div class="h-full transition-all duration-500" style="width: {pct}%; background: {colors[i]};" title="Z{i+1}: {pct}%"></div>
             {/each}
           </div>
           
           <div class="grid grid-cols-2 gap-x-4 gap-y-2">
             {#each distribution.pcts as pct, i (i)}
-              {@const colors = ['#4621FF', '#00C8A8', '#FFCB88', '#F07178', '#FF4791']}
-              {@const labels = ['Z1 Recovery', 'Z2 Aerobic', 'Z3 Tempo', 'Z4 Threshold', 'Z5 Anaerobic']}
+              {@const colors = ['#9AA4B2', '#4621FF', '#00C8A8', '#FFCB88', '#F07178', '#FF4791']}
+              {@const labels = ['Z0 Resting', 'Z1 Recovery', 'Z2 Aerobic', 'Z3 Tempo', 'Z4 Threshold', 'Z5 VO2max']}
               <div class="flex items-center justify-between">
                 <div class="flex items-center gap-1.5">
                   <div class="w-2 h-2 rounded-full" style="background: {colors[i]}"></div>
