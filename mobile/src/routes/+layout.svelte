@@ -5,6 +5,7 @@
   import Sidebar from '$lib/components/Sidebar.svelte';
   import BottomNav from '$lib/components/BottomNav.svelte';
   import { authStore } from '$lib/stores/authStore.svelte';
+  import { athleteStore } from '$lib/stores/athleteStore.svelte';
 
   let { children } = $props();
   
@@ -19,6 +20,10 @@
         goto('/auth/signin', { replaceState: true });
       } else if (authStore.user && isAuthRoute) {
         goto('/dashboard', { replaceState: true });
+      }
+
+      if (authStore.user) {
+        athleteStore.fetchAll();
       }
     }
   });

@@ -6,8 +6,10 @@
 
   type Message = { id: number; role: 'user' | 'ai'; text: string; streaming?: boolean };
   
+  const initialText = $derived(`Hey ${authStore.user?.user_metadata?.full_name?.split(' ')[0] || 'there'}! I'm your ASTRAPE Coach. ${athleteStore.ctl > 0 ? `I've analyzed your current fitness (CTL: ${Math.round(athleteStore.ctl)}).` : "Link your data so I can start analyzing your training."} How can I help you today?`);
+  
   let messages = $state<Message[]>([
-    { id: 1, role: 'ai', text: `Hey ${authStore.user?.user_metadata?.full_name?.split(' ')[0] || 'there'}! I've reviewed your week. You hit a new CTL high of 68 after Saturday's ride. Your TSB is now +28 — optimal window for a quality effort Tuesday. Ready to plan?` },
+    { id: 1, role: 'ai', text: initialText },
   ]);
   
   let input = $state('');

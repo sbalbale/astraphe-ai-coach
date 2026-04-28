@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 from typing import Optional
 from datetime import date, timedelta
-from app.dependencies import get_current_athlete, get_db
+from app.dependencies import get_current_athlete, get_user_db
 
 router = APIRouter(prefix="/v1/plan", tags=["Training Plan"])
 
@@ -10,7 +10,7 @@ async def get_training_plan(
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
     athlete_id: str = Depends(get_current_athlete),
-    db = Depends(get_db)
+    db = Depends(get_user_db)
 ):
     """Returns the athlete's training plan for a date range."""
     start_date = start_date or date.today()

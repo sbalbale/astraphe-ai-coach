@@ -3,7 +3,7 @@ from typing import Optional
 from datetime import date, timedelta
 from app.models.biometrics import DailyBiometrics
 from app.services.processing import process_and_save_biometrics
-from app.dependencies import get_current_athlete, get_db
+from app.dependencies import get_current_athlete, get_user_db
 
 router = APIRouter(prefix="/v1/biometrics", tags=["Biometrics"])
 
@@ -12,7 +12,7 @@ async def get_biometrics(
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
     athlete_id: str = Depends(get_current_athlete),
-    db = Depends(get_db)
+    db = Depends(get_user_db)
 ):
     """Returns daily biometric readings over a date range."""
     start_date = start_date or (date.today() - timedelta(days=14))
@@ -42,7 +42,7 @@ async def ingest_daily_biometrics(
     payload: DailyBiometrics,
     background_tasks: BackgroundTasks,
     athlete_id: str = Depends(get_current_athlete),
-    db = Depends(get_db)
+    db = Depends(get_user_db)
 ):
     """Ingest a daily biometric summary and calculate recovery score in the background."""
     background_tasks.add_task(process_and_save_biometrics, payload, athlete_id, db)

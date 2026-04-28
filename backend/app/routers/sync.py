@@ -2,7 +2,7 @@ import urllib.parse
 import secrets
 from fastapi import APIRouter, Request, Response, HTTPException, Depends, BackgroundTasks
 from fastapi.responses import RedirectResponse
-from app.dependencies import get_current_athlete, get_db
+from app.dependencies import get_current_athlete, get_user_db, get_admin_db
 from app.services import whoop
 from app.config import settings
 from datetime import datetime
@@ -18,7 +18,7 @@ def get_clean_redirect_url():
     return f"{base}{settings.API_PREFIX}/sync/oauth/whoop/callback"
 
 @router.post("/garmin/webhook")
-async def garmin_webhook(request: Request, background_tasks: BackgroundTasks, db=Depends(get_db)):
+async def garmin_webhook(request: Request, background_tasks: BackgroundTasks, db=Depends(get_admin_db)):
     """Webhook receiver for Garmin Connect push notifications."""
     signature = request.headers.get("X-Garmin-Signature")
     if not signature:
@@ -62,7 +62,7 @@ async def garmin_webhook(request: Request, background_tasks: BackgroundTasks, db
     return Response(status_code=200)
 
 @router.post("/whoop/webhook")
-async def whoop_webhook(request: Request, background_tasks: BackgroundTasks, db=Depends(get_db)):
+async def whoop_webhook(request: Request, background_tasks: BackgroundTasks, db=Depends(get_admin_db)):
     """Webhook receiver for WHOOP data push events."""
     signature = request.headers.get("X-WHOOP-Signature")
     if not signature:
@@ -141,7 +141,7 @@ async def whoop_oauth_authorize(athlete_id: str = None):
     return RedirectResponse(url=f"{settings.WHOOP_OAUTH_AUTH_URL}?{query_string}")
 
 @router.get("/oauth/whoop/callback")
-async def whoop_oauth_callback(code: str, state: str = None, db = Depends(get_db)):
+async def whoop_oauth_callback(code: str, state: str = None, db = Depends(get_admin_db)):
     """Step 2: WHOOP redirects back here with a code."""
     redirect_url = get_clean_redirect_url()
     
@@ -175,7 +175,7 @@ async def whoop_oauth_callback(code: str, state: str = None, db = Depends(get_db
         return {"status": "error", "message": str(e)}
 
 @router.get("/status")
-async def get_sync_status(athlete_id: str = Depends(get_current_athlete), db=Depends(get_db)):
+async def get_sync_status(athlete_id: str = Depends(get_current_athlete), db=Depends(get_user_db)):
     """Returns connection status for all integrations."""
     # This should check oauth_tokens table for existence
     tokens = db.table("oauth_tokens").select("provider").eq("athlete_id", athlete_id).execute()
@@ -193,7 +193,7 @@ async def get_sync_status(athlete_id: str = Depends(get_current_athlete), db=Dep
 async def unlink_integration(
     provider: str,
     athlete_id: str = Depends(get_current_athlete),
-    db = Depends(get_db)
+    db = Depends(get_user_db)
 ):
     """Unlinks a third-party integration by removing its OAuth tokens."""
     db.table("oauth_tokens").delete().eq("athlete_id", athlete_id).eq("provider", provider).execute()
