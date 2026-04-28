@@ -31,7 +31,7 @@
   });
 
   const clampedEndDay = $derived.by(() => {
-    const d = endPickerValue ? parseISO(endPickerValue) : new Date();
+    const d = endPickerValue ? new Date(endPickerValue + 'T00:00:00') : new Date();
     if (Number.isNaN(d.getTime())) return today;
     return d > today ? today : d;
   });
@@ -43,25 +43,24 @@
 
   // Map biometrics to nights array (filling in missing dates for the last 7 days)
   let nights = $derived.by(() => {
-    // Most recent day on the left (index 0)
-    const dates = Array.from({ length: 7 }, (_, i) => format(subDays(windowEnd, i), "yyyy-MM-dd"));
+    return Array.from({ length: 7 }, (_, i) => {
+      const d = subDays(windowEnd, i);
+      const displayDateStr = format(d, "yyyy-MM-dd");
 
-    return dates.map((displayDateStr) => {
       // In this UI, the selector day represents the **wake day** (the morning you wake up).
       // Biometrics sleep rows are stored under that same date, so we match 1:1.
-      // Important: do NOT fall back to other dates here; that can "clone" the latest
-      // available record across multiple selector days when today's record doesn't exist yet.
       const b = athleteStore.biometrics?.series?.find(
         (s: any) => s.date === displayDateStr,
       );
 
       const isToday = displayDateStr === todayStr;
-      const dateLabel = isToday ? "Today" : format(parseISO(displayDateStr), "MMM d");
+      const dateLabel = isToday ? "Today" : format(d, "MMM d");
+      const shortLabel = format(d, "MMM d");
 
       if (!b || (!b.sleep_score && !b.sleep_duration_min)) {
         return {
           date: dateLabel,
-          label: format(parseISO(displayDateStr), "MMM d"),
+          label: shortLabel,
           rawDate: displayDateStr,
           missing: true,
           score: 0,
@@ -73,7 +72,7 @@
 
       return {
         date: dateLabel,
-        label: format(parseISO(displayDateStr), "MMM d"),
+        label: shortLabel,
         rawDate: displayDateStr,
         score: b.astrape_sleep_score || b.sleep_score || 0,
         duration: b.sleep_duration_min ? `${h}h ${m}m` : "0h 0m",
@@ -106,6 +105,12 @@
         hrv: b.hrv_rmssd || 0,
         debt: b.sleep_debt_min || 0,
         need: b.sleep_need_min || 480,
+        periods: (b.periods || []).map((p: any) => ({
+          ...p,
+          label: p.is_nap ? "Nap" : "Main Sleep",
+          timeRange: `${new Date(p.started_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: (athleteStore.profile as any)?.time_format !== '24h' })} – ${new Date(p.ended_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: (athleteStore.profile as any)?.time_format !== '24h' })}`,
+          duration: `${Math.floor(p.duration_min / 60)}h ${p.duration_min % 60}m`
+        })),
         missing: false,
       };
     });
@@ -183,7 +188,10 @@
           type="button"
           class="h-8 px-2.5 rounded-md border border-border bg-glass text-text0 text-[12px]"
           aria-label="Jump to today"
-          onclick={() => (endPickerValue = todayStr)}
+          onclick={() => {
+            endPickerValue = todayStr;
+            nightIndex = 0;
+          }}
         >
           Today
         </button>
@@ -357,6 +365,32 @@
           {/each}
         </div>
       </Card>
+      
+      <!-- Individual Sleep Sessions (Naps) -->
+      {#if n.periods && n.periods.length > 0}
+        <Card>
+          <p class="text-[13px] font-semibold mb-3">Sleep Sessions</p>
+          <div class="flex flex-col gap-2">
+            {#each n.periods as period}
+              <div class="flex items-center justify-between p-2.5 rounded-lg bg-glass border border-border/50">
+                <div class="flex flex-col gap-0.5">
+                  <div class="flex items-center gap-1.5">
+                    <span class="text-[12px] font-bold">{period.label}</span>
+                    {#if period.score}
+                      <Tag color={getSleepColor(period.score)}>{period.score}%</Tag>
+                    {/if}
+                  </div>
+                  <span class="text-[10px] text-text2 font-mono uppercase tracking-wider">{period.timeRange}</span>
+                </div>
+                <div class="text-right">
+                  <span class="text-[13px] font-bold block">{period.duration}</span>
+                  <span class="text-[9px] text-text2 uppercase tracking-widest font-medium">Asleep</span>
+                </div>
+              </div>
+            {/each}
+          </div>
+        </Card>
+      {/if}
 
       <!-- Contextual Insight -->
       <Card

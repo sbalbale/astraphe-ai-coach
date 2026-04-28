@@ -24,7 +24,7 @@
   });
 
   const clampedEndDay = $derived.by(() => {
-    const d = endPickerValue ? new Date(endPickerValue) : new Date();
+    const d = endPickerValue ? new Date(endPickerValue + 'T00:00:00') : new Date();
     if (Number.isNaN(d.getTime())) return today;
     return d > today ? today : d;
   });
@@ -131,7 +131,10 @@
           type="button"
           class="h-8 px-2.5 rounded-md border border-border bg-glass text-text0 text-[12px]"
           aria-label="Jump to today"
-          onclick={() => (endPickerValue = todayStr)}
+          onclick={() => {
+            endPickerValue = todayStr;
+            dayIndex = 0;
+          }}
         >
           Today
         </button>

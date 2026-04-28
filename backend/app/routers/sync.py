@@ -162,11 +162,32 @@ async def whoop_webhook(request: Request, background_tasks: BackgroundTasks, db=
                         raise
                 else:
                     raise
+            score = sleep_data.get("score") or {}
+            stage = score.get("stage_summary") or {}
+            
+            light = stage.get("total_light_sleep_time_milli")
+            deep = stage.get("total_slow_wave_sleep_time_milli")
+            rem = stage.get("total_rem_sleep_time_milli")
+            awake = stage.get("total_awake_time_milli")
+            total_sleep_ms = sum(v for v in (light, deep, rem) if isinstance(v, (int, float)))
+
+            def _pct(ms):
+                if not total_sleep_ms or not isinstance(ms, (int, float)):
+                    return None
+                return round((ms / total_sleep_ms) * 100.0, 1)
+
             bio_payload = DailyBiometrics(
                 date=sleep_data["start"][:10],
                 source="whoop",
-                sleep_score=sleep_data["score"]["sleep_performance_percentage"],
-                sleep_duration_min=sleep_data["score"]["asleep_duration_ms"] / 60000
+                sleep_score=score.get("sleep_performance_percentage"),
+                sleep_duration_min=int(total_sleep_ms / 60000) if total_sleep_ms else 0,
+                sleep_deep_pct=_pct(deep),
+                sleep_rem_pct=_pct(rem),
+                sleep_light_pct=_pct(light),
+                sleep_awake_pct=round((awake / (total_sleep_ms + awake)) * 100, 1) if (total_sleep_ms and awake) else 0.0,
+                sleep_bedtime=sleep_data.get("start"),
+                sleep_wakeup=sleep_data.get("end"),
+                is_nap=sleep_data.get("nap", False)
             )
             background_tasks.add_task(process_and_save_biometrics, bio_payload, athlete_id, db)
             

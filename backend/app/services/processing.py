@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
 from app.models.workout import WorkoutPayload
 from app.models.biometrics import DailyBiometrics
 
@@ -14,6 +14,56 @@ from app.services.algorithms import (
     calculate_astrape_recovery_score,
     calculate_astrape_readiness_score
 )
+
+def recalculate_tss_history(athlete_id: str, db):
+    """
+    Fetches all workouts for an athlete, aggregates TSS by date,
+    and recalculates the entire PMC (CTL/ATL/TSB) history.
+    """
+    # 1. Fetch all workouts with TSS
+    res = db.table("workouts").select("started_at, tss").eq("athlete_id", athlete_id).order("started_at").execute()
+    if not res or not res.data:
+        return
+
+    # 2. Aggregate TSS by date
+    daily_tss = {}
+    for w in res.data:
+        # Robustly parse date from ISO string (YYYY-MM-DD)
+        d = date.fromisoformat(w["started_at"][:10])
+        daily_tss[d] = daily_tss.get(d, 0.0) + (w["tss"] or 0.0)
+
+    if not daily_tss:
+        return
+
+    # 3. Recalculate PMC
+    all_dates = sorted(daily_tss.keys())
+    start_date, end_date = all_dates[0], all_dates[-1]
+    
+    ctl, atl = 0.0, 0.0
+    ctl_decay = 0.9764 # exp(-1/42)
+    atl_decay = 0.8668 # exp(-1/7)
+    
+    records = []
+    current = start_date
+    while current <= end_date:
+        tss = daily_tss.get(current, 0.0)
+        ctl = ctl * ctl_decay + tss * (1 - ctl_decay)
+        atl = atl * atl_decay + tss * (1 - atl_decay)
+        
+        records.append({
+            "athlete_id": athlete_id,
+            "date": current.isoformat(),
+            "daily_tss": round(tss, 2),
+            "ctl": round(ctl, 2),
+            "atl": round(atl, 2),
+            "tsb": round(ctl - atl, 2)
+        })
+        current += timedelta(days=1)
+
+    # 4. Save to tss_history table
+    if records:
+        # PostgREST upsert handles batches well
+        db.table("tss_history").upsert(records, on_conflict="athlete_id,date").execute()
 
 def process_and_save_workout(payload: WorkoutPayload, athlete_id: str, db):
     # 1. Evaluate Data Sources
@@ -83,6 +133,7 @@ def process_and_save_workout(payload: WorkoutPayload, athlete_id: str, db):
         "title": getattr(payload, "title", None),
         "started_at": payload.start_time.isoformat(),
         "ended_at": ended_at.isoformat() if ended_at else None,
+        "duration_seconds": duration_seconds,
         "distance_m": payload.distance_m,
         "avg_hr": payload.average_hr,
         "max_hr": payload.max_hr,
@@ -96,112 +147,184 @@ def process_and_save_workout(payload: WorkoutPayload, athlete_id: str, db):
         "hr_zone_3_pct": payload.hr_zone_3_pct,
         "hr_zone_4_pct": payload.hr_zone_4_pct,
         "hr_zone_5_pct": payload.hr_zone_5_pct
-    }).execute()
+    }, on_conflict="source,external_id").execute()
 
-    # 5. Recalculate Training Load (CTL, ATL, TSB)
-    start_date = (date.today() - timedelta(days=90)).isoformat()
-    history_res = db.table("tss_history").select("date, daily_tss") \
-        .eq("athlete_id", athlete_id) \
-        .gte("date", start_date).order("date").execute()
-    
-    daily_map = {row["date"]: row["daily_tss"] for row in history_res.data}
-    today_str = date.today().isoformat()
-    daily_map[today_str] = daily_map.get(today_str, 0.0) + tss
-    
-    sorted_dates = sorted(daily_map.keys())
-    tss_values = [daily_map[d] for d in sorted_dates]
-    
-    load_metrics = calculate_training_load(tss_values)
-    # Supabase upsert needs explicit conflict target when the unique constraint
-    # isn't the primary key.
-    db.table("tss_history").upsert({
-        "athlete_id": athlete_id,
-        "date": today_str,
-        "daily_tss": daily_map[today_str],
-        "ctl": load_metrics["ctl"],
-        "atl": load_metrics["atl"],
-        "tsb": load_metrics["tsb"]
-    }, on_conflict="athlete_id,date").execute()
+    # 5. Trigger Full Load Recalculation (PMC)
+    recalculate_tss_history(athlete_id, db)
 
 
 def process_and_save_biometrics(payload: DailyBiometrics, athlete_id: str, db):
-    # 1. Fetch Previous Day's Biometrics
+    # 1. Handle Sleep Periods (if sleep data is present)
+    has_sleep_data = payload.sleep_duration_min is not None or payload.sleep_bedtime is not None
+    
+    if has_sleep_data:
+        # Save this specific session to sleep_periods table
+        # We use a helper to extract the session-specific fields
+        session_data = {
+            "athlete_id": athlete_id,
+            "date": payload.date.isoformat(),
+            "started_at": payload.sleep_bedtime.isoformat() if payload.sleep_bedtime else None,
+            "ended_at": payload.sleep_wakeup.isoformat() if payload.sleep_wakeup else None,
+            "duration_min": payload.sleep_duration_min or 0,
+            "score": payload.sleep_score,
+            "deep_pct": payload.sleep_deep_pct,
+            "rem_pct": payload.sleep_rem_pct,
+            "light_pct": payload.sleep_light_pct,
+            "awake_pct": payload.sleep_awake_pct,
+            "is_nap": payload.is_nap or False,
+            "source": payload.source,
+            "external_id": getattr(payload, "external_id", None) or f"{payload.source}_{payload.sleep_bedtime.timestamp() if payload.sleep_bedtime else payload.date.isoformat()}"
+        }
+        db.table("sleep_periods").upsert(session_data, on_conflict="source,external_id").execute()
+
+    # 2. Fetch All Sleep Periods for the biological day to aggregate
+    all_periods_res = db.table("sleep_periods").select("*").eq("athlete_id", athlete_id).eq("date", payload.date.isoformat()).execute()
+    all_periods = []
+    if all_periods_res and all_periods_res.data:
+        all_periods = all_periods_res.data
+    
+    total_sleep_min = 0
+    weighted_deep = 0.0
+    weighted_rem = 0.0
+    weighted_light = 0.0
+    weighted_awake = 0.0
+    
+    main_sleep = None
+    max_duration = -1
+    
+    for p in all_periods:
+        dur = p.get("duration_min") or 0
+        total_sleep_min += dur
+        weighted_deep += (p.get("deep_pct") or 0) * dur
+        weighted_rem += (p.get("rem_pct") or 0) * dur
+        weighted_light += (p.get("light_pct") or 0) * dur
+        weighted_awake += (p.get("awake_pct") or 0) * dur
+        
+        if dur > max_duration:
+            max_duration = dur
+            main_sleep = p
+
+    # Final aggregated architecture (weighted by duration)
+    agg_deep = round(weighted_deep / total_sleep_min, 1) if total_sleep_min > 0 else None
+    agg_rem = round(weighted_rem / total_sleep_min, 1) if total_sleep_min > 0 else None
+    agg_light = round(weighted_light / total_sleep_min, 1) if total_sleep_min > 0 else None
+    agg_awake = round(weighted_awake / total_sleep_min, 1) if total_sleep_min > 0 else None
+
+    # 3. Fetch Previous Day's Biometrics (for sleep debt/strain)
     prev_date = payload.date - timedelta(days=1)
-    prev_res = db.table("biometrics").select("sleep_debt_min, day_strain").eq("athlete_id", athlete_id).eq("date", prev_date.isoformat()).maybe_single().execute()
+    prev_res = db.table("biometrics").select("sleep_debt_min, astrape_strain_score").eq("athlete_id", athlete_id).eq("date", prev_date.isoformat()).maybe_single().execute()
     
     prev_debt = 0.0
     prev_strain = 0.0
-    if prev_res.data:
+    if prev_res and prev_res.data:
         prev_debt = prev_res.data.get("sleep_debt_min") or 0.0
-        prev_strain = prev_res.data.get("day_strain") or 0.0
+        # Priority: Astrape Custom Strain Score
+        prev_strain = prev_res.data.get("astrape_strain_score") or 0.0
         
-    # 2. Fetch Athlete Baselines
+    # 4. Fetch Athlete Baselines
     athlete_res = db.table("athletes").select("hrv_baseline, rhr_baseline").eq("id", athlete_id).single().execute()
-    baseline_hrv = athlete_res.data.get("hrv_baseline") or 65.0
-    baseline_rhr = athlete_res.data.get("rhr_baseline") or 50.0
+    baseline_hrv = 65.0
+    baseline_rhr = 50.0
+    if athlete_res and athlete_res.data:
+        baseline_hrv = athlete_res.data.get("hrv_baseline") or 65.0
+        baseline_rhr = athlete_res.data.get("rhr_baseline") or 50.0
     
-    # 3. Fetch ATL Data for Readiness Modeling
-    # We need the prior day's ATL and the 30-day max ATL to compute muscular fatigue
+    # 5. Fetch ATL Data for Readiness Modeling
     start_date_30d = (payload.date - timedelta(days=30)).isoformat()
     atl_res = db.table("tss_history").select("atl").eq("athlete_id", athlete_id).gte("date", start_date_30d).order("date").execute()
     
     prior_day_atl = 0.0
-    prior_day_atl_max_30d = 1.0 # Default 1 to prevent division by zero
+    prior_day_atl_max_30d = 1.0 
     
-    if atl_res.data:
+    if atl_res and atl_res.data:
         atls = [row["atl"] for row in atl_res.data if row["atl"] is not None]
         if atls:
             prior_day_atl_max_30d = max(atls) or 1.0
             prior_day_atl = atls[-1]
             
-    # 4. Process Sleep Architecture
+    # 6. Process Sleep Architecture (Aggregated)
     astrape_need = calculate_astrape_sleep_need(480, prev_strain, prev_debt)
     
     astrape_sleep = calculate_astrape_sleep_score(
-        duration_min=payload.sleep_duration_min or 0.0,
+        duration_min=total_sleep_min,
         sleep_need_min=astrape_need,
-        rem_pct=payload.sleep_rem_pct or 0.0,
-        deep_pct=payload.sleep_deep_pct or 0.0
+        rem_pct=agg_rem,
+        deep_pct=agg_deep
     )
 
-    current_actual = payload.sleep_duration_min or 0.0
-    next_night_debt = min(120, max(0, astrape_need - current_actual))
+    next_night_debt = min(120, max(0, astrape_need - total_sleep_min))
 
-    # 5. Process Recovery (Autonomic Repair)
+    # 7. Merge with existing Biometrics row (HRV/RHR/Strain)
+    existing_res = db.table("biometrics").select("*").eq("athlete_id", athlete_id).eq("date", payload.date.isoformat()).maybe_single().execute()
+    existing = {}
+    if existing_res and existing_res.data:
+        existing = existing_res.data
+
+    # 7.5 Calculate Daily Astrape Strain from Workouts
+    # Fetch all workouts for this day to aggregate raw strain
+    day_workouts_res = db.table("workouts").select("hr_zone_1_pct, hr_zone_2_pct, hr_zone_3_pct, hr_zone_4_pct, hr_zone_5_pct, duration_seconds").eq("athlete_id", athlete_id).filter("started_at", "gte", payload.date.isoformat()).filter("started_at", "lt", (payload.date + timedelta(days=1)).isoformat()).execute()
+    
+    total_zone_minutes = {1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0, 5: 0.0}
+    if day_workouts_res and day_workouts_res.data:
+        for w in day_workouts_res.data:
+            dur_sec = w.get("duration_seconds") or 0
+            for z in range(1, 6):
+                pct = w.get(f"hr_zone_{z}_pct") or 0
+                total_zone_minutes[z] += (pct / 100.0) * (dur_sec / 60.0)
+    
+    astrape_day_raw_strain = calculate_raw_strain_score(total_zone_minutes)
+    astrape_day_strain = calculate_astrape_strain_score(astrape_day_raw_strain)
+
+    final_hrv = payload.hrv_rmssd if payload.hrv_rmssd is not None else existing.get("hrv_rmssd")
+    final_rhr = payload.resting_hr if payload.resting_hr is not None else existing.get("resting_hr")
+    # We still keep WHOOP strain in day_strain for comparison, but Astrape will use its own
+    final_strain = payload.day_strain if payload.day_strain is not None else existing.get("day_strain")
+    final_temp = payload.skin_temp_deviation if payload.skin_temp_deviation is not None else existing.get("skin_temp_deviation")
+    final_spo2 = payload.spo2_pct if payload.spo2_pct is not None else existing.get("spo2_pct")
+    final_recovery = payload.recovery_score if payload.recovery_score is not None else existing.get("recovery_score")
+    final_source = payload.source if payload.hrv_rmssd is not None else existing.get("hrv_source", payload.source)
+
+    # 8. Process Recovery (Autonomic Repair)
     astrape_recovery = calculate_astrape_recovery_score(
-        hrv_rmssd=payload.hrv_rmssd or 0.0,
+        hrv_rmssd=final_hrv or 0.0,
         hrv_baseline_30d=baseline_hrv,
-        resting_hr=payload.resting_hr or 0,
+        resting_hr=final_rhr or 0,
         resting_hr_baseline_30d=baseline_rhr,
         sleep_score=astrape_sleep
     )
     
-    # 6. Process Readiness (Capacity to Train)
+    # 9. Process Readiness (Capacity to Train)
     astrape_readiness = calculate_astrape_readiness_score(
         recovery_score=astrape_recovery,
         prior_day_atl=prior_day_atl,
         prior_day_atl_max_30d=prior_day_atl_max_30d,
-        skin_temp_deviation=payload.skin_temp_deviation or 0.0,
-        spo2_pct=payload.spo2_pct or 100.0
+        skin_temp_deviation=final_temp or 0.0,
+        spo2_pct=final_spo2 or 100.0
     )
     
-    # 7. Save to Supabase
+    # 10. Save aggregated record to biometrics
     db.table("biometrics").upsert({
         "athlete_id": athlete_id,
         "date": payload.date.isoformat(),
-        "hrv_rmssd": payload.hrv_rmssd,
-        "resting_hr": payload.resting_hr,
-        "sleep_duration_min": payload.sleep_duration_min,
-        "sleep_score": payload.sleep_score,
+        "hrv_rmssd": final_hrv,
+        "resting_hr": final_rhr,
+        "sleep_duration_min": total_sleep_min,
+        "sleep_score": main_sleep.get("score") if main_sleep else payload.sleep_score,
+        "recovery_score": final_recovery,
         "sleep_need_min": astrape_need,
         "sleep_debt_min": next_night_debt,
         "astrape_sleep_score": astrape_sleep,
         "astrape_recovery_score": astrape_recovery,
         "astrape_readiness_score": astrape_readiness,
-        "hrv_source": payload.source,
-        "sleep_deep_pct": payload.sleep_deep_pct,
-        "sleep_rem_pct": payload.sleep_rem_pct,
-        "skin_temp_deviation": payload.skin_temp_deviation,
-        "spo2_pct": payload.spo2_pct,
-        "day_strain": payload.day_strain
-    }).execute()
+        "astrape_strain_score": astrape_day_strain,
+        "hrv_source": final_source,
+        "sleep_deep_pct": agg_deep,
+        "sleep_rem_pct": agg_rem,
+        "sleep_light_pct": agg_light,
+        "sleep_awake_pct": agg_awake,
+        "sleep_bedtime": main_sleep.get("started_at") if main_sleep else None,
+        "sleep_wakeup": main_sleep.get("ended_at") if main_sleep else None,
+        "skin_temp_deviation": final_temp,
+        "spo2_pct": final_spo2,
+        "day_strain": final_strain
+    }, on_conflict="athlete_id,date").execute()

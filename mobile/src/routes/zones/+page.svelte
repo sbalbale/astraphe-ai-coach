@@ -300,8 +300,8 @@
             <button
               class="w-7 h-7 rounded-lg bg-glass2 border border-border/50 hover:bg-glass transition-colors flex items-center justify-center text-text1"
               onclick={() => {
-                if (windowMode === 'week') selectedDay = toDateInputValue(addDays(new Date(selectedDay), -7));
-                else selectedMonth = toMonthInputValue(addMonths(new Date(`${selectedMonth}-01T00:00:00`), -1));
+                if (windowMode === 'week') selectedDay = toDateInputValue(addDays(parseDateInputLocal(selectedDay), -7));
+                else selectedMonth = toMonthInputValue(addMonths(parseDateInputLocal(`${selectedMonth}-01`), -1));
               }}
               type="button"
               aria-label={windowMode === 'week' ? 'Previous 7 days' : 'Previous month'}
@@ -343,8 +343,8 @@
             <button
               class="w-7 h-7 rounded-lg bg-glass2 border border-border/50 hover:bg-glass transition-colors flex items-center justify-center text-text1"
               onclick={() => {
-                if (windowMode === 'week') selectedDay = toDateInputValue(addDays(new Date(selectedDay), 7));
-                else selectedMonth = toMonthInputValue(addMonths(new Date(`${selectedMonth}-01T00:00:00`), 1));
+                if (windowMode === 'week') selectedDay = toDateInputValue(addDays(parseDateInputLocal(selectedDay), 7));
+                else selectedMonth = toMonthInputValue(addMonths(parseDateInputLocal(`${selectedMonth}-01`), 1));
               }}
               type="button"
               aria-label={windowMode === 'week' ? 'Next 7 days' : 'Next month'}
