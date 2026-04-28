@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 from datetime import date
-from typing import Optional
+from typing import Optional, Dict, Any
 
 class AthleteState(BaseModel):
     athlete_id: str
@@ -20,8 +20,14 @@ class AthleteState(BaseModel):
     readiness_recommendation: str
 
 class AthleteProfileUpdate(BaseModel):
-    weight_kg: Optional[float]
-    ftp_watts: Optional[int]
-    max_hr: Optional[int]
-    threshold_hr: Optional[int]
-    threshold_pace: Optional[float]
+    display_name: Optional[str] = None
+    weight_kg: Optional[float] = None
+    height_cm: Optional[float] = None
+    gender: Optional[str] = None
+    date_of_birth: Optional[date] = None
+    ftp_watts: Optional[int] = None
+    max_hr: Optional[int] = None
+    threshold_hr: Optional[int] = None
+    threshold_pace: Optional[str] = None # Using string for pace like '5:00'
+    primary_sport: Optional[str] = None
+    settings: Optional[Dict[str, Any]] = None
