@@ -15,3 +15,10 @@ class WorkoutPayload(BaseModel):
     max_hr: Optional[int] = None
     avg_pace_sec_km: Optional[int] = None
     ftp_at_time: int = Field(default=250)
+    
+    # HR Zones
+    hr_zone_1_pct: Optional[int] = None
+    hr_zone_2_pct: Optional[int] = None
+    hr_zone_3_pct: Optional[int] = None
+    hr_zone_4_pct: Optional[int] = None
+    hr_zone_5_pct: Optional[int] = None
