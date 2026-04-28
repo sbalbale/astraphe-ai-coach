@@ -70,7 +70,7 @@
   const hrr = $derived(maxHR - restingHR);
 
   const hrZones = $derived([
-    { zone: 0, name: 'Resting', lo: 0, hi: Math.max(0, Math.round(restingHR + hrr * 0.5) - 1), color: '#9AA4B2', desc: 'Very easy. Below Zone 1.' },
+    { zone: 0, name: 'Resting', lo: 0, hi: Math.max(0, Math.round(restingHR + hrr * 0.5) - 1), color: '#AAB3BF', desc: 'Very easy. Below Zone 1.' },
     { zone: 1, name: 'Recovery', lo: Math.round(restingHR + hrr * 0.5), hi: Math.round(restingHR + hrr * 0.6), color: '#4621FF', desc: 'Active recovery. Minimal stress.' },
     { zone: 2, name: 'Aerobic', lo: Math.round(restingHR + hrr * 0.6) + 1, hi: Math.round(restingHR + hrr * 0.7), color: '#00C8A8', desc: 'Endurance. Optimized for fat metabolism.' },
     { zone: 3, name: 'Tempo', lo: Math.round(restingHR + hrr * 0.7) + 1, hi: Math.round(restingHR + hrr * 0.8), color: '#FFCB88', desc: 'Moderate. Improving aerobic capacity.' },
@@ -367,14 +367,14 @@
         <div class="flex flex-col gap-3">
           <div class="h-6 w-full flex rounded-lg overflow-hidden border border-border/50">
             {#each distribution.pcts as pct, i (i)}
-              {@const colors = ['#9AA4B2', '#4621FF', '#00C8A8', '#FFCB88', '#F07178', '#FF4791']}
+              {@const colors = ['#AAB3BF', '#4621FF', '#00C8A8', '#FFCB88', '#F07178', '#FF4791']}
               <div class="h-full transition-all duration-500" style="width: {pct}%; background: {colors[i]};" title="Z{i+1}: {pct}%"></div>
             {/each}
           </div>
           
           <div class="grid grid-cols-2 gap-x-4 gap-y-2">
             {#each distribution.pcts as pct, i (i)}
-              {@const colors = ['#9AA4B2', '#4621FF', '#00C8A8', '#FFCB88', '#F07178', '#FF4791']}
+              {@const colors = ['#AAB3BF', '#4621FF', '#00C8A8', '#FFCB88', '#F07178', '#FF4791']}
               {@const labels = ['Z0 Resting', 'Z1 Recovery', 'Z2 Aerobic', 'Z3 Tempo', 'Z4 Threshold', 'Z5 VO2max']}
               <div class="flex items-center justify-between">
                 <div class="flex items-center gap-1.5">

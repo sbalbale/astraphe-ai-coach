@@ -27,7 +27,7 @@
 
   let selectedWorkout = $state<any>(null);
 
-  const zoneColors = ['#4621FF', '#00C8A8', '#FFCB88', '#F07178', '#FF4791'];
+  const zoneColors = ['#AAB3BF', '#4621FF', '#00C8A8', '#FFCB88', '#F07178', '#FF4791'];
 
   // Week selector (History tab)
   // Source of truth is the picked day (YYYY-MM-DD). We derive the Monday week start from it.
@@ -262,7 +262,7 @@
             </div>
             <div class="flex-1">
               <h2 class="text-lg font-bold leading-tight">{selectedWorkout.title || (getWorkoutLabel(selectedWorkout.sport) + ' Session')}</h2>
-              <p class="text-xs text-text2">{format(new Date(selectedWorkout.started_at), 'EEEE, MMM d · h:mm a')}</p>
+              <p class="text-xs text-text2">{format(new Date(selectedWorkout.started_at), (athleteStore.profile as any)?.time_format === '24h' ? 'EEEE, MMM d · HH:mm' : 'EEEE, MMM d · h:mm a')}</p>
             </div>
             <div class="text-right">
               <p class="text-2xl font-bold" style="color: {getWorkoutColor(selectedWorkout.sport)}">{Math.round(selectedWorkout.tss || 0)}</p>
@@ -292,7 +292,7 @@
               <div class="flex flex-col gap-2">
                 {#each getHrZonePctsTopDown(selectedWorkout) as pct, topIdx (topIdx)}
                   {@const zone = 5 - topIdx}
-                  {@const color = zoneColors[zone - 1]}
+                  {@const color = zoneColors[zone]}
                   <div class="flex items-center gap-3">
                     <div class="w-9 shrink-0 flex items-center gap-2">
                       <span class="w-2 h-2 rounded-full shrink-0" style="background: {color};"></span>

@@ -88,12 +88,14 @@
           ? new Date(b.sleep_bedtime).toLocaleTimeString([], {
               hour: "numeric",
               minute: "2-digit",
+              hour12: (athleteStore.profile as any)?.time_format !== '24h',
             })
           : "N/A",
         wakeup: b.sleep_wakeup
           ? new Date(b.sleep_wakeup).toLocaleTimeString([], {
               hour: "numeric",
               minute: "2-digit",
+              hour12: (athleteStore.profile as any)?.time_format !== '24h',
             })
           : "N/A",
         deep: b.sleep_deep_pct || 0,
