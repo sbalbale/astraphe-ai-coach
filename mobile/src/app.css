@@ -3,6 +3,23 @@
 @tailwind utilities;
 
 @layer base {
+  :root {
+    --bg0: #08080F;
+    --bg1: #0F0F1A;
+    --bg2: #141424;
+    --bg3: #1C1C30;
+    --blue: #4621FF;
+    --teal: #00C8A8;
+    --amber: #FFCB88;
+    --red: #F07178;
+    --text0: #F0F0FF;
+    --text1: rgba(240,240,255,0.65);
+    --text2: rgba(240,240,255,0.35);
+    --border: rgba(255,255,255,0.07);
+    --glass: rgba(255,255,255,0.04);
+    --glass2: rgba(255,255,255,0.08);
+  }
+
   html, body {
     @apply h-full bg-bg0 text-text0 font-sans overflow-hidden antialiased;
   }

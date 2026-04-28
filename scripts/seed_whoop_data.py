@@ -22,7 +22,7 @@ import csv
 import os
 import sys
 import math
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from pathlib import Path
 from collections import defaultdict
 from dotenv import load_dotenv
@@ -212,28 +212,43 @@ def ingest_biometrics(db: Client, athlete_id: str):
         for row in csv.DictReader(f):
             all_phys.append(row)
     
-    # Sort chronologically to calculate rolling debt
+    # Sort chronologically
     all_phys.sort(key=lambda r: (r.get("Cycle start time") or "").strip())
 
-    date_map = {}
-    current_rolling_debt = 0 # In minutes
+    # Map data to correct App Day
+    # Recovery/Sleep -> Wake Day
+    # Day Strain -> Start Day
+    daily_data = defaultdict(dict)
+    current_rolling_debt = 0 
 
-    for i, row in enumerate(all_phys):
+    for row in all_phys:
         cycle_start = (row.get("Cycle start time") or "").strip()
+        wake_onset = (row.get("Wake onset") or "").strip()
         tz_str = (row.get("Cycle timezone") or "").strip()
+        
         ts_start = parse_ts(cycle_start, tz_str)
         if not ts_start: continue
         
-        record_date = ts_start.date().isoformat()
-        recovery = to_int(row.get("Recovery score %", ""))
+        ts_wake = parse_ts(wake_onset, tz_str) if wake_onset else ts_start
+        start_date = ts_start.date().isoformat()
+        wake_date = ts_wake.date().isoformat()
         
-        # Use previous day's strain for current sleep need
-        prev_strain = to_float(all_phys[i-1].get("Day Strain", 0)) if i > 0 else 0
+        # 1. Strain belongs to the START date
+        daily_data[start_date]["day_strain"] = to_float(row.get("Day Strain", 0))
         
-        s_need = calculate_astrape_sleep_need(480, prev_strain, current_rolling_debt)
+        # 2. Track wake/start for second pass
+        row["_wake_date"] = wake_date
+        row["_start_date"] = start_date
+
+    # Second pass: Calculate Astrape scores
+    for row in all_phys:
+        wake_date = row["_wake_date"]
+        start_date = row["_start_date"]
+        cycle_start = (row.get("Cycle start time") or "").strip()
+        
+        day_strain = daily_data[start_date].get("day_strain", 0)
+        s_need = calculate_astrape_sleep_need(480, day_strain, current_rolling_debt)
         s_actual = to_int(row.get("Asleep duration (min)", 0)) or 0
-        
-        # Update rolling debt for NEXT day (cap at 120m to prevent runaway)
         current_rolling_debt = min(120, max(0, s_need - s_actual))
 
         detail = sleep_detail.get(cycle_start, {})
@@ -250,16 +265,18 @@ def ingest_biometrics(db: Client, athlete_id: str):
             s_score
         )
 
-        record = {
+        # Update the wake_date record with physiological results
+        d = daily_data[wake_date]
+        d.update({
             "athlete_id":         athlete_id,
-            "date":               record_date,
+            "date":               wake_date,
             "hrv_rmssd":          to_float(row.get("Heart rate variability (ms)", "")),
             "hrv_source":         "whoop",
             "resting_hr":         to_int(row.get("Resting heart rate (bpm)", "")),
-            "day_strain":         to_float(row.get("Day Strain", 0)),
+            "recovery_score":     to_int(row.get("Recovery score %", "")),
             "sleep_duration_min": s_actual,
             "sleep_score":        to_int(row.get("Sleep performance %", "")),
-            "sleep_debt_min":     current_rolling_debt, # This is the debt for the NEXT day
+            "sleep_debt_min":     current_rolling_debt,
             "sleep_need_min":     s_need,
             "astrape_sleep_score": s_score,
             "astrape_recovery_score": r_score,
@@ -267,16 +284,13 @@ def ingest_biometrics(db: Client, athlete_id: str):
             "sleep_rem_pct":      detail.get("rem_pct"),
             "sleep_light_pct":    detail.get("light_pct"),
             "sleep_awake_pct":    detail.get("awake_pct"),
-            "sleep_bedtime":      parse_ts(detail.get("bedtime") or row.get("Sleep onset", "").strip(), tz_str).isoformat() if (detail.get("bedtime") or row.get("Sleep onset")) else None,
-            "sleep_wakeup":       parse_ts(detail.get("wakeup")  or row.get("Wake onset",  "").strip(), tz_str).isoformat() if (detail.get("wakeup") or row.get("Wake onset")) else None,
-            "skin_temp_deviation":to_float(row.get("Skin temp (celsius)", "")),
+            "sleep_bedtime":      detail.get("bedtime"),
+            "sleep_wakeup":       detail.get("wakeup"),
+            "skin_temp_deviation": to_float(row.get("Skin temp (celsius)", "")),
             "spo2_pct":           to_float(row.get("Blood oxygen %", "")),
-            "recovery_score":     recovery,
-        }
-        # If we have multiple entries for same date, latest one (sorted) wins
-        date_map[record_date] = record
+        })
 
-    records = list(date_map.values())
+    records = [v for k, v in daily_data.items() if v.get("athlete_id")]
     if not records:
         print("[!] No biometric records found.")
         return

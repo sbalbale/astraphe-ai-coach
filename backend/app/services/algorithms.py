@@ -68,3 +68,8 @@ def calculate_astrape_recovery_score(hrv: float, baseline_hrv: float, sleep_scor
     rhr_score = min(100, max(0, 50 + (rhr_diff * 5)))
     # Sleep contrib (30%)
     return int(np.clip(round(hrv_score * 0.45 + rhr_score * 0.25 + sleep_score * 0.3), 0, 100))
+
+def calculate_astrape_strain_score(raw_strain: float) -> int:
+    """Normalizes WHOOP strain (0-21) to Astrape score (0-100)."""
+    if not raw_strain: return 0
+    return int(np.clip(round((raw_strain / 21.0) * 100), 0, 100))

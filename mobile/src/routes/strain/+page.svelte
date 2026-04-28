@@ -1,115 +1,166 @@
 <script lang="ts">
   import Card from '$lib/components/Card.svelte';
-  import MetricBadge from '$lib/components/MetricBadge.svelte';
   import RadialProgress from '$lib/components/RadialProgress.svelte';
-  import MultiLineChart from '$lib/components/charts/MultiLineChart.svelte';
+  import Tag from '$lib/components/Tag.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
+  import Pill from '$lib/components/Pill.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
-  
+  import { format, subDays } from 'date-fns';
+
   const isConnected = $derived(Object.values(athleteStore.syncStatus?.integrations || {}).some((i: any) => i.connected));
-  const hasData = $derived(athleteStore.atl > 0 || athleteStore.workouts?.length > 0);
+  
+  let dayIndex = $state(0); // Default to today (index 0)
 
-  // Derive strain components from real data
-  let strainData = $derived.by(() => {
-    if (!hasData) return [];
+  const days = $derived.by(() => {
+    // Today on the left (index 0)
+    return Array.from({ length: 7 }, (_, i) => {
+      const d = subDays(new Date(), i);
+      const dateStr = format(d, 'yyyy-MM-dd');
+      
+      const b = athleteStore.biometrics?.series?.find((s: any) => s.date === dateStr);
+      const history = athleteStore.metrics?.trainingLoadData?.find((m: any) => m.date === dateStr);
 
-    const latestBio = athleteStore.biometrics?.series?.length > 0 
-      ? athleteStore.biometrics.series[athleteStore.biometrics.series.length - 1] 
-      : null;
-    
-    const latestTss = athleteStore.workouts?.length > 0
-      ? athleteStore.workouts[0].tss
-      : 0;
-
-    // Cardiovascular: Based on daily TSS relative to a "hard" day (e.g. 150 TSS)
-    const cardo = Math.min(Math.round((latestTss / 150) * 100), 100);
-    
-    // Muscular: Estimated as a portion of TSS load
-    const muscular = Math.min(Math.round((latestTss / 200) * 100), 100);
-    
-    // Nervous System: Inverse of recovery score (lower recovery = higher nervous strain)
-    const nervous = latestBio ? 100 - (latestBio.recovery_score || 50) : 0;
-
-    return [
-      { label: 'Cardiovascular', value: cardo, color: '#F07178', desc: 'Heart rate response vs expected based on power/pace.' },
-      { label: 'Muscular', value: muscular, color: '#FFCB88', desc: 'Estimated lower body tissue damage from recent volume.' },
-      { label: 'Nervous System', value: nervous, color: '#4621FF', desc: 'Derived from HRV and high-intensity interval frequency.' }
-    ].filter(s => s.value > 0);
+      return {
+        date: dateStr,
+        label: i === 0 ? 'Today' : format(d, 'MMM d'),
+        day: format(d, 'EE').charAt(0),
+        score: b?.day_strain ? Math.round((b.day_strain / 21) * 100) : 0,
+        ctl: history?.ctl || athleteStore.ctl || 0,
+        atl: history?.atl || athleteStore.atl || 0,
+        tsb: history?.tsb || athleteStore.tsb || 0,
+        missing: !b && !history,
+        data: b
+      };
+    });
   });
+
+  const d = $derived(days[dayIndex]);
+  const hasData = $derived(days.some(day => !day.missing) || athleteStore.atl > 0);
+  
+  const score = $derived(d.score || 0);
+  const scoreColor = $derived(score >= 80 ? '#F07178' : score >= 40 ? '#FFCB88' : '#00C8A8');
+  const quality = $derived(score >= 80 ? 'High' : score >= 40 ? 'Moderate' : 'Light');
 </script>
 
 <div class="flex flex-col gap-3">
   <div>
-    <p class="text-xs text-text2 font-mono uppercase tracking-[0.1em]">Physical Tolerance</p>
-    <h1 class="text-[22px] font-bold tracking-[-0.02em]">Strain</h1>
+    <p class="text-[10px] text-text2 font-mono uppercase tracking-[0.1em]">Physical Load</p>
+    <h1 class="text-[22px] font-bold tracking-tight">Strain</h1>
   </div>
 
   {#if !isConnected}
     <EmptyState 
       title="No Strain Data" 
-      message="Connect your activity tracker to analyze the physiological cost of your training."
-      icon="🔥"
+      message="Connect WHOOP or your training watch to analyze your physiological load."
     />
   {:else if !hasData}
     <EmptyState 
       title="Waiting for Activity" 
-      message="Log a workout or sync your watch to see your strain breakdown."
-      icon="⏳"
+      message="We're waiting for your training data to compute your daily strain."
+      icon="🔥"
     />
   {:else}
-    <!-- Overview -->
-    <Card style="background: linear-gradient(135deg, rgba(255,203,136,0.12), transparent); border-color: rgba(255,203,136,0.3);">
-      <div class="flex items-center gap-4">
-        <RadialProgress value={athleteStore.atl} max={120} size={64} color="var(--amber)" label={Math.round(athleteStore.atl).toString()} sub="ATL" />
-        <div class="flex-1">
-          <p class="text-[15px] font-semibold mb-1">Acute Load (Fatigue)</p>
-          <p class="text-xs text-text1 leading-relaxed">Your 7-day average stress is {Math.round(athleteStore.atl)}. This is {athleteStore.atl > 60 ? 'high' : athleteStore.atl > 30 ? 'moderate' : 'low'} compared to your historical baseline.</p>
-        </div>
-      </div>
-    </Card>
+    <!-- Date selector -->
+    <div class="flex gap-1.5 overflow-x-auto pb-0.5 shrink-0">
+      {#each days as day, i}
+        <Pill active={dayIndex === i} onclick={() => (dayIndex = i)}>
+          {day.label}
+        </Pill>
+      {/each}
+    </div>
 
-    <!-- Component Breakdown -->
-    {#if strainData.length > 0}
-      <Card>
-        <p class="text-[13px] font-semibold mb-3">Strain Components</p>
-        <div class="flex flex-col gap-3">
-          {#each strainData as s}
-            <div>
-              <div class="flex justify-between items-center mb-1.5">
-                <span class="text-xs font-semibold">{s.label}</span>
-                <span class="text-[12px] font-bold font-mono" style="color: {s.color}">{s.value}<span class="text-[9px] font-normal text-text2">/100</span></span>
-              </div>
-              <div class="h-1.5 bg-glass2 rounded-sm overflow-hidden mb-1.5">
-                <div class="h-full rounded-sm" style="width: {s.value}%; background: {s.color}"></div>
-              </div>
-              <p class="text-[10px] text-text2 leading-relaxed">{s.desc}</p>
+    {#if d.missing}
+      <Card style="border-style: dashed; opacity: 0.8;">
+        <div class="flex flex-col items-center justify-center py-6 text-center">
+          <span class="text-[32px] mb-2">🤷‍♂️</span>
+          <p class="text-[14px] font-bold mb-1">No strain data for {d.date}</p>
+          <p class="text-[11px] text-text2 max-w-[200px]">
+            We couldn't find any activity or biometric records for this day.
+          </p>
+        </div>
+      </Card>
+    {:else}
+      <!-- Hero Card (Sleep Page Style) -->
+      <Card style="background: var(--glass); border-color: var(--border);">
+        <div class="flex items-center gap-5 py-1">
+          <RadialProgress 
+            value={score} 
+            max={100} 
+            size={72} 
+            color={scoreColor} 
+            label={score.toString()} 
+            sub="STRAIN" 
+          />
+          <div class="flex-1">
+            <div class="flex items-center gap-2 mb-1">
+              <span class="text-[18px] font-bold text-text0">{quality}</span>
+              <Tag color={scoreColor}>{score >= 80 ? 'HIGH' : score >= 40 ? 'PRODUCTIVE' : 'BASE'}</Tag>
             </div>
-          {/each}
+            <p class="text-xs text-text1 leading-relaxed">
+              {score >= 80 ? 'Your training volume is significantly higher than your baseline.' : 
+               score >= 40 ? 'Productive stress detected. You are building fitness efficiently.' : 
+               'Light recovery day. Focus on maintaining aerobic foundation.'}
+            </p>
+          </div>
         </div>
       </Card>
-    {/if}
 
-    <!-- Load Context -->
-    {#if athleteStore.metrics?.trainingLoadData?.length > 0}
-      <Card>
-        <p class="text-[13px] font-semibold mb-2">Fatigue Accumulation</p>
-        <p class="text-[11px] text-text2 mb-3">ATL vs CTL over the last 7 days.</p>
-        <MultiLineChart data={athleteStore.metrics.trainingLoadData} height={120} />
+      <!-- Metrics Grid -->
+      <div class="grid grid-cols-3 gap-2">
+        <Card style="padding: 12px; height: 100%;">
+          <div class="flex flex-col">
+            <span class="text-[10px] text-text2 font-mono uppercase mb-1">Fatigue</span>
+            <div class="flex items-baseline gap-1">
+              <span class="text-[18px] font-bold text-text0">{Math.round(d.atl)}</span>
+            </div>
+            <span class="text-[9px] text-text2 mt-1">ATL</span>
+          </div>
+        </Card>
+        <Card style="padding: 12px; height: 100%;">
+          <div class="flex flex-col">
+            <span class="text-[10px] text-text2 font-mono uppercase mb-1">Fitness</span>
+            <div class="flex items-baseline gap-1">
+              <span class="text-[18px] font-bold text-text0">{Math.round(d.ctl)}</span>
+            </div>
+            <span class="text-[9px] text-text2 mt-1">CTL</span>
+          </div>
+        </Card>
+        <Card style="padding: 12px; height: 100%;">
+          <div class="flex flex-col">
+            <span class="text-[10px] text-text2 font-mono uppercase mb-1">Form</span>
+            <div class="flex items-baseline gap-1">
+              <span class="text-[18px] font-bold text-text0">{Math.round(d.tsb)}</span>
+            </div>
+            <span class="text-[9px] text-text2 mt-1">TSB</span>
+          </div>
+        </Card>
+      </div>
+
+      <!-- Analysis Card -->
+      <Card style="background: var(--glass2); border-color: transparent;">
+        <p class="text-[13px] font-semibold mb-1">Strain Analysis</p>
+        <p class="text-[12px] text-text2 leading-relaxed italic">
+          {d.tsb < -20 ? 'Your training form is highly negative. Prioritize active recovery sessions.' : 
+           d.tsb > 10 ? 'Your body is fresh and primed for a high-intensity block. CTL is stable.' : 
+           'Your training volume is well-balanced with your current fitness level.'}
+        </p>
       </Card>
     {/if}
 
-    <!-- Coach Note -->
-    <Card style="background: linear-gradient(135deg, rgba(0,200,168,0.12), transparent);">
-      <p class="text-[13px] font-semibold mb-1.5">Coach's Note</p>
-      <p class="text-xs text-text1 leading-relaxed">
-        {#if athleteStore.atl > athleteStore.ctl * 1.3}
-          Your acute load is significantly higher than your fitness. Risk of overtraining is elevated.
-        {:else if athleteStore.tsb < -20}
-          Negative form detected. Prioritize recovery sessions this week.
-        {:else}
-          Your training volume is well-balanced with your current fitness level.
-        {/if}
-      </p>
+    <!-- Timeline -->
+    <Card>
+      <p class="text-[13px] font-semibold mb-3">7-Day Trend</p>
+      <div class="flex gap-2 items-end h-[50px] mb-1 px-1">
+        {#each [...days].reverse() as day, i}
+          {@const actualIdx = 6 - i}
+          {@const c = day.score >= 80 ? '#F07178' : day.score >= 40 ? '#FFCB88' : '#00C8A8'}
+          <div class="flex-1 flex flex-col items-center gap-1 cursor-pointer" onclick={() => dayIndex = actualIdx}>
+            <div class="w-full rounded-t-sm transition-all duration-300" 
+                 style="background: {actualIdx === dayIndex ? c : c + '44'}; height: {Math.max(4, (day.score / 100) * 50)}px;"></div>
+            <span class="text-[9px] font-mono {actualIdx === dayIndex ? 'text-text0' : 'text-text2'}">{day.day}</span>
+          </div>
+        {/each}
+      </div>
     </Card>
   {/if}
 </div>
