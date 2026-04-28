@@ -1,16 +1,33 @@
 <script lang="ts">
   import Card from '$lib/components/Card.svelte';
   import { goto } from '$app/navigation';
+  import { onMount } from 'svelte';
 
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { authStore } from '$lib/stores/authStore.svelte';
 
-  let settings = $state(athleteStore.profile?.privacy_settings || {
+  const defaultSettings = {
     share_data: true,
     marketing: false
-  });
+  };
+
+  let settings = $state({ ...defaultSettings });
+  let initialized = $state(false);
   
   let saving = $state(false);
+
+  onMount(async () => {
+    try {
+      await athleteStore.fetchAll();
+    } catch {
+      // ignore
+    }
+
+    if (initialized) return;
+    const fromProfile = athleteStore.profile?.privacy_settings;
+    settings = { ...defaultSettings, ...(fromProfile ?? {}) };
+    initialized = true;
+  });
 
   function goBack() {
     goto('/profile');

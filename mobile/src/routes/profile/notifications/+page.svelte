@@ -1,15 +1,33 @@
 <script lang="ts">
   import Card from '$lib/components/Card.svelte';
   import { goto } from '$app/navigation';
+  import { onMount } from 'svelte';
+  import { athleteStore } from '$lib/stores/athleteStore.svelte';
 
-  let settings = $state(athleteStore.profile?.notification_settings || {
+  const defaultSettings = {
     readiness: true,
     coach: true,
     workouts: false,
     insights: true
-  });
+  };
+
+  let settings = $state({ ...defaultSettings });
+  let initialized = $state(false);
   
   let saving = $state(false);
+
+  onMount(async () => {
+    try {
+      await athleteStore.fetchAll();
+    } catch {
+      // ignore; UI can still function with defaults
+    }
+
+    if (initialized) return;
+    const fromProfile = athleteStore.profile?.notification_settings;
+    settings = { ...defaultSettings, ...(fromProfile ?? {}) };
+    initialized = true;
+  });
 
   function goBack() {
     goto('/profile');

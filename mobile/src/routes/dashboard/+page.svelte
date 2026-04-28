@@ -8,6 +8,7 @@
   import EmptyState from '$lib/components/EmptyState.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { authStore } from '$lib/stores/authStore.svelte';
+  import { goto } from '$app/navigation';
   import { format } from 'date-fns';
 
   const hasData = $derived(athleteStore.workouts?.length > 0 || athleteStore.readiness > 0);
@@ -129,23 +130,30 @@
         <div class="flex flex-col gap-2.5">
           {#each athleteStore.workouts.slice(0, 3) as w, i}
             {@const type = w.sport?.toLowerCase()}
-            <div class="flex items-center gap-3 py-2.5 {i < 2 ? 'border-b border-border' : ''}">
-              <div class="w-9 h-9 rounded-xl shrink-0 flex items-center justify-center text-[15px]
-                {type === 'run' ? 'bg-blue-dim border border-[rgba(70,33,255,0.3)]' : 
-                 type === 'bike' || type === 'cycling' ? 'bg-teal-dim border border-[rgba(0,200,168,0.3)]' : 
-                 type === 'rowing' ? 'bg-amber-dim border border-[rgba(255,203,136,0.3)]' :
-                 'bg-glass border border-border'}">
-                {type === 'run' ? '🏃' : (type === 'bike' || type === 'cycling') ? '🚴' : type === 'rowing' ? '🚣' : '💪'}
+            <button
+              type="button"
+              class="text-left bg-transparent border-none p-0 cursor-pointer w-full"
+              onclick={() => goto(`/training?workout_id=${encodeURIComponent(String(w.id))}`)}
+              aria-label="View workout details"
+            >
+              <div class="flex items-center gap-3 py-2.5 {i < 2 ? 'border-b border-border' : ''}">
+                <div class="w-9 h-9 rounded-xl shrink-0 flex items-center justify-center text-[15px]
+                  {type === 'run' ? 'bg-blue-dim border border-[rgba(70,33,255,0.3)]' : 
+                   type === 'bike' || type === 'cycling' ? 'bg-teal-dim border border-[rgba(0,200,168,0.3)]' : 
+                   type === 'rowing' ? 'bg-amber-dim border border-[rgba(255,203,136,0.3)]' :
+                   'bg-glass border border-border'}">
+                  {type === 'run' ? '🏃' : (type === 'bike' || type === 'cycling') ? '🚴' : type === 'rowing' ? '🚣' : '💪'}
+                </div>
+                <div class="flex-1">
+                  <p class="text-[13px] font-medium">{w.title || (w.sport?.toUpperCase() + ' Session')}</p>
+                  <p class="text-[11px] text-text2">{format(new Date(w.started_at), 'MMM d')} · {Math.floor(w.duration_secs / 60)} min</p>
+                </div>
+                <div class="text-right">
+                  <p class="text-[13px] font-semibold {w.tss > 75 ? 'text-red' : w.tss > 55 ? 'text-amber' : 'text-teal'}">{Math.round(w.tss || 0)}</p>
+                  <p class="text-[9px] text-text2 font-mono">TSS</p>
+                </div>
               </div>
-              <div class="flex-1">
-                <p class="text-[13px] font-medium">{w.title || (w.sport?.toUpperCase() + ' Session')}</p>
-                <p class="text-[11px] text-text2">{format(new Date(w.started_at), 'MMM d')} · {Math.floor(w.duration_secs / 60)} min</p>
-              </div>
-              <div class="text-right">
-                <p class="text-[13px] font-semibold {w.tss > 75 ? 'text-red' : w.tss > 55 ? 'text-amber' : 'text-teal'}">{Math.round(w.tss || 0)}</p>
-                <p class="text-[9px] text-text2 font-mono">TSS</p>
-              </div>
-            </div>
+            </button>
           {/each}
         </div>
       </Card>

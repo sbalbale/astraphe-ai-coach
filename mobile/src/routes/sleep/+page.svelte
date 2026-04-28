@@ -5,8 +5,9 @@
   import Pill from "$lib/components/Pill.svelte";
   import RadialProgress from "$lib/components/RadialProgress.svelte";
   import EmptyState from "$lib/components/EmptyState.svelte";
+  import FormDateInput from "$lib/components/FormDateInput.svelte";
   import { athleteStore } from "$lib/stores/athleteStore.svelte";
-  import { format, parseISO } from "date-fns";
+  import { addDays, format, parseISO, subDays } from "date-fns";
   import { calculateSleepScore } from "$lib/utils/biometrics";
 
   const isConnected = $derived(
@@ -16,54 +17,60 @@
   );
   const hasData = $derived(athleteStore.biometrics?.series?.length > 0);
 
-  let nightIndex = $state(0);
-  let initialSelectDone = $state(false);
+  // Rolling 7-day window (cannot go into the future).
+  let selectedEndDay = $state(new Date());
+  let nightIndex = $state(0); // most recent on the left
+
+  const today = $derived(new Date());
+  const todayStr = $derived(format(today, "yyyy-MM-dd"));
+
+  const clampedEndDay = $derived.by(() => {
+    const d = selectedEndDay instanceof Date ? selectedEndDay : new Date(selectedEndDay);
+    if (Number.isNaN(d.getTime())) return new Date();
+    return d > today ? today : d;
+  });
+
+  const windowStart = $derived(subDays(clampedEndDay, 6));
+  const windowEnd = $derived(clampedEndDay);
+  const rangeLabel = $derived(`${format(windowStart, "MMM d")} – ${format(windowEnd, "MMM d, yyyy")}`);
+  let endPickerValue = $state("");
+  const canGoForward = $derived(format(windowEnd, "yyyy-MM-dd") !== todayStr);
 
   $effect(() => {
-    // Default to the first night that actually has data, but only on initial load
-    if (
-      hasData &&
-      !athleteStore.loading &&
-      !initialSelectDone &&
-      nights.length > 0
-    ) {
-      const firstData = nights.findIndex((nt) => !nt.missing);
-      if (firstData !== -1) {
-        nightIndex = firstData;
-        initialSelectDone = true;
-      }
-    }
+    const next = format(windowEnd, "yyyy-MM-dd");
+    if (endPickerValue !== next) endPickerValue = next;
+  });
+
+  $effect(() => {
+    if (!endPickerValue) return;
+    const current = selectedEndDay instanceof Date ? selectedEndDay : new Date(selectedEndDay);
+    const currentStr = Number.isNaN(current.getTime()) ? "" : format(current, "yyyy-MM-dd");
+    if (currentStr === endPickerValue) return;
+    selectedEndDay = parseISO(endPickerValue);
   });
 
   // Map biometrics to nights array (filling in missing dates for the last 7 days)
   let nights = $derived.by(() => {
-    // Generate last 7 dates ending with Today
-    const dates = Array.from({ length: 7 }, (_, i) => {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
-      return format(d, "yyyy-MM-dd");
-    });
+    // Most recent day on the left (index 0)
+    const dates = Array.from({ length: 7 }, (_, i) => format(subDays(windowEnd, i), "yyyy-MM-dd"));
 
     return dates.map((displayDateStr) => {
-      // displayDateStr is the day you wake up (e.g. April 27)
-      // dataDateStr is the day the sleep started in the DB (e.g. April 26)
-      const d = new Date(displayDateStr + "T12:00:00"); // Use noon to avoid TZ issues during subtraction
-      d.setDate(d.getDate() - 1);
-      const dataDateStr = format(d, "yyyy-MM-dd");
-
+      // In this UI, the selector day represents the **wake day** (the morning you wake up).
+      // Biometrics sleep rows are stored under that same date, so we match 1:1.
+      // Important: do NOT fall back to other dates here; that can "clone" the latest
+      // available record across multiple selector days when today's record doesn't exist yet.
       const b = athleteStore.biometrics?.series?.find(
-        (s: any) => s.date === dataDateStr,
+        (s: any) => s.date === displayDateStr,
       );
 
-      const isToday = displayDateStr === format(new Date(), "yyyy-MM-dd");
-      const dateLabel = isToday
-        ? "Today"
-        : format(parseISO(displayDateStr), "MMM d");
+      const isToday = displayDateStr === todayStr;
+      const dateLabel = isToday ? "Today" : format(parseISO(displayDateStr), "MMM d");
 
       if (!b || (!b.sleep_score && !b.sleep_duration_min)) {
         return {
           date: dateLabel,
           label: format(parseISO(displayDateStr), "MMM d"),
+          rawDate: displayDateStr,
           missing: true,
           score: 0,
         };
@@ -75,6 +82,7 @@
       return {
         date: dateLabel,
         label: format(parseISO(displayDateStr), "MMM d"),
+        rawDate: displayDateStr,
         score: b.astrape_sleep_score || b.sleep_score || 0,
         duration: b.sleep_duration_min ? `${h}h ${m}m` : "0h 0m",
         durationRaw: b.sleep_duration_min || 0,
@@ -109,6 +117,11 @@
     });
   });
 
+  $effect(() => {
+    // Default to most recent day in the window and clamp.
+    nightIndex = Math.max(0, Math.min(6, nightIndex ?? 0));
+  });
+
   let n = $derived(nights[nightIndex] || nights[0]);
 
   const stageColors: Record<string, string> = {
@@ -126,6 +139,9 @@
           : "#F07178"
       : "#text2",
   );
+
+  const getSleepColor = (score: number) =>
+    score >= 85 ? "#00C8A8" : score >= 70 ? "#FFCB88" : "#F07178";
 </script>
 
 <div class="flex flex-col gap-3">
@@ -149,9 +165,57 @@
       icon="⏳"
     />
   {:else}
+    <!-- 7-day window selector -->
+    <div class="flex items-center justify-between gap-2">
+      <div class="flex items-center gap-1.5 shrink-0">
+        <button
+          type="button"
+          class="h-8 w-8 rounded-md border border-border bg-glass text-text0"
+          aria-label="Previous 7 days"
+          onclick={() => (selectedEndDay = subDays(windowEnd, 7))}
+        >
+          ←
+        </button>
+        <div class="w-[150px]">
+          <FormDateInput
+            id="sleep-end"
+            type="date"
+            bind:value={endPickerValue}
+            max={todayStr}
+            ariaLabel="Select end day"
+            inputClass="h-8 px-2 pr-9 rounded-md border border-border bg-glass text-[12px] text-text0"
+          />
+        </div>
+        <button
+          type="button"
+          class="h-8 px-2.5 rounded-md border border-border bg-glass text-text0 text-[12px]"
+          aria-label="Jump to today"
+          onclick={() => (selectedEndDay = new Date())}
+        >
+          Today
+        </button>
+        <button
+          type="button"
+          class="h-8 w-8 rounded-md border border-border bg-glass text-text0"
+          aria-label="Next 7 days"
+          disabled={!canGoForward}
+          style={!canGoForward ? "opacity: 0.4; cursor: not-allowed;" : ""}
+          onclick={() => {
+            if (!canGoForward) return;
+            selectedEndDay = addDays(windowEnd, 7);
+          }}
+        >
+          →
+        </button>
+      </div>
+      <div class="text-[11px] text-text2 font-mono text-right">
+        {rangeLabel}
+      </div>
+    </div>
+
     <!-- Night selector -->
     <div class="flex gap-1.5 overflow-x-auto pb-0.5 shrink-0">
-      {#each nights as nt, i}
+      {#each nights as nt, i (nt.rawDate)}
         <Pill active={nightIndex === i} onclick={() => (nightIndex = i)}>
           {nt.date}
         </Pill>
@@ -223,19 +287,43 @@
         </Card>
       </div>
 
+      <!-- 7-Day Trend -->
+      <Card>
+        <p class="text-[13px] font-semibold mb-3">7-Day Trend</p>
+        <div class="flex gap-2 items-end h-[50px] mb-1 px-1">
+          {#each nights as nt, i (nt.rawDate)}
+            {@const c = getSleepColor(nt.score || 0)}
+            {@const barColor = nt.missing ? "rgba(255,255,255,0.14)" : c}
+            {@const barColorMuted = nt.missing ? "rgba(255,255,255,0.08)" : c + "44"}
+            <button
+              type="button"
+              class="flex-1 flex flex-col items-center gap-1 cursor-pointer"
+              aria-label={`Select ${nt.date} sleep: ${nt.score}`}
+              onclick={() => (nightIndex = i)}
+            >
+              <div
+                class="w-full rounded-t-sm transition-all duration-300"
+                style="background: {i === nightIndex ? barColor : barColorMuted}; height: {nt.missing ? 6 : Math.max(4, ((nt.score || 0) / 100) * 50)}px;"
+              ></div>
+              <span class="text-[9px] font-mono {i === nightIndex ? 'text-text0' : 'text-text2'}">{format(parseISO(nt.rawDate), "EE").charAt(0)}</span>
+            </button>
+          {/each}
+        </div>
+      </Card>
+
       <!-- Stage breakdown -->
       <Card>
         <p class="text-[13px] font-semibold mb-3">Sleep Stages</p>
         <!-- Stacked bar -->
         <div class="flex h-5 rounded-md overflow-hidden gap-0.5 mb-3.5">
-          {#each [["deep", n.deep], ["rem", n.rem], ["light", n.light], ["awake", n.awake]] as [k, v]}
+          {#each [["deep", n.deep], ["rem", n.rem], ["light", n.light], ["awake", n.awake]] as [k, v] (k)}
             <div
               style="flex: {v}; background: {stageColors[k as string]}"
             ></div>
           {/each}
         </div>
         <div class="flex flex-col gap-2">
-          {#each [{ key: "deep", label: "Deep Sleep", pct: n.deep, mins: Math.round((n.durationRaw * n.deep) / 100), ideal: "15–25%", desc: "Physical restoration, immune function, memory consolidation" }, { key: "rem", label: "REM Sleep", pct: n.rem, mins: Math.round((n.durationRaw * n.rem) / 100), ideal: "20–25%", desc: "Cognitive restoration, emotional processing, learning" }, { key: "light", label: "Light Sleep", pct: n.light, mins: Math.round((n.durationRaw * n.light) / 100), ideal: "45–55%", desc: "Transition stage, memory consolidation support" }, { key: "awake", label: "Awake", pct: n.awake, mins: Math.round((n.durationRaw * n.awake) / 100), ideal: "< 10%", desc: "Brief wakings during night; normal up to 10%" }] as s}
+          {#each [{ key: "deep", label: "Deep Sleep", pct: n.deep, mins: Math.round((n.durationRaw * n.deep) / 100), ideal: "15–25%", desc: "Physical restoration, immune function, memory consolidation" }, { key: "rem", label: "REM Sleep", pct: n.rem, mins: Math.round((n.durationRaw * n.rem) / 100), ideal: "20–25%", desc: "Cognitive restoration, emotional processing, learning" }, { key: "light", label: "Light Sleep", pct: n.light, mins: Math.round((n.durationRaw * n.light) / 100), ideal: "45–55%", desc: "Transition stage, memory consolidation support" }, { key: "awake", label: "Awake", pct: n.awake, mins: Math.round((n.durationRaw * n.awake) / 100), ideal: "< 10%", desc: "Brief wakings during night; normal up to 10%" }] as s (s.key)}
             <div
               class="flex gap-2.5 py-2 {s.key !== 'awake'
                 ? 'border-b border-border'

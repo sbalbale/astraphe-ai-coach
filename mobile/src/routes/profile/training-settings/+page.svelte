@@ -1,14 +1,44 @@
 <script lang="ts">
   import Card from '$lib/components/Card.svelte';
+  import FormSelect from '$lib/components/FormSelect.svelte';
   import { goto } from '$app/navigation';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
+  import { onMount } from 'svelte';
 
-  let maxHR = $state(athleteStore.profile?.max_hr || 185);
-  let ftp = $state(athleteStore.profile?.ftp_watts || 280);
-  let pace = $state(athleteStore.profile?.threshold_pace || '5:00');
-  let sport = $state(athleteStore.profile?.sport_focus?.[0] || 'Running');
-  let units = $state('Metric');
+  type Units = 'metric' | 'imperial';
+  const normalizeUnits = (value: unknown): Units =>
+    typeof value === 'string' && value.toLowerCase().includes('imperial') ? 'imperial' : 'metric';
+
+  let maxHR = $state(185);
+  let ftp = $state(280);
+  let pace = $state('5:00');
+  let sport = $state('Running');
+  let units = $state<Units>('metric');
+  let initialized = $state(false);
   let saving = $state(false);
+
+  const sportOptions = [
+    { value: 'Triathlon', label: 'Triathlon' },
+    { value: 'Running', label: 'Running' },
+    { value: 'Cycling', label: 'Cycling' },
+    { value: 'Rowing', label: 'Rowing' }
+  ];
+
+  onMount(async () => {
+    try {
+      await athleteStore.fetchAll();
+    } catch {
+      // ignore
+    }
+
+    if (initialized) return;
+    maxHR = athleteStore.profile?.max_hr ?? 185;
+    ftp = athleteStore.profile?.ftp_watts ?? 280;
+    pace = athleteStore.profile?.threshold_pace || '5:00';
+    sport = athleteStore.profile?.sport_focus?.[0] || 'Running';
+    units = normalizeUnits((athleteStore.profile as any)?.measurement_units);
+    initialized = true;
+  });
 
   function goBack() {
     goto('/profile');
@@ -21,7 +51,8 @@
       max_hr: maxHR,
       ftp_watts: ftp,
       threshold_pace: pace,
-      sport_focus: [sport.toLowerCase()]
+      sport_focus: [sport.toLowerCase()],
+      measurement_units: units
     });
     saving = false;
     if (success) goBack();
@@ -45,18 +76,13 @@
       <div class="flex flex-col gap-4">
         <div>
           <label for="sport" class="block text-[11px] text-text2 mb-1">Main Sport</label>
-          <select id="sport" bind:value={sport} class="w-full p-2.5 bg-glass2 border border-border rounded-lg text-sm text-text0 outline-none focus:border-blue appearance-none">
-            <option value="Triathlon">Triathlon</option>
-            <option value="Running">Running</option>
-            <option value="Cycling">Cycling</option>
-            <option value="Rowing">Rowing</option>
-          </select>
+          <FormSelect id="sport" bind:value={sport} options={sportOptions} ariaLabel="Main Sport" />
         </div>
         <div>
           <label for="units" class="block text-[11px] text-text2 mb-1">Measurement Units</label>
           <div class="flex p-1 bg-glass2 rounded-lg border border-border">
-            <button type="button" class="flex-1 py-1.5 text-xs rounded-md transition-colors {units === 'Metric' ? 'bg-blue text-white' : 'text-text2 hover:text-text0'}" onclick={() => units = 'Metric'}>Metric</button>
-            <button type="button" class="flex-1 py-1.5 text-xs rounded-md transition-colors {units === 'Imperial' ? 'bg-blue text-white' : 'text-text2 hover:text-text0'}" onclick={() => units = 'Imperial'}>Imperial</button>
+            <button type="button" class="flex-1 py-1.5 text-xs rounded-md transition-colors {units === 'metric' ? 'bg-blue text-white' : 'text-text2 hover:text-text0'}" onclick={() => units = 'metric'}>Metric</button>
+            <button type="button" class="flex-1 py-1.5 text-xs rounded-md transition-colors {units === 'imperial' ? 'bg-blue text-white' : 'text-text2 hover:text-text0'}" onclick={() => units = 'imperial'}>Imperial</button>
           </div>
         </div>
       </div>

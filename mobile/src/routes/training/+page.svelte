@@ -8,15 +8,78 @@
   import LineChart from '$lib/components/charts/LineChart.svelte';
   import DonutChart from '$lib/components/charts/DonutChart.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
+  import FormDateInput from '$lib/components/FormDateInput.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
-  import { format } from 'date-fns';
+  import { page } from '$app/stores';
+  import { addDays, endOfWeek, format, startOfWeek } from 'date-fns';
 
   let metric = $state('load');
   const tabs = ['load', 'history']; // Simplified tabs for now as pace/zones need complex processing
-  const isConnected = $derived(Object.values(athleteStore.syncStatus?.integrations || {}).some((i: any) => i.connected));
+  // Avoid UI flicker: `syncStatus` can be briefly null/undefined even when workouts are loaded.
+  // Only show "No Training Data" once we know initial load is done and we truly have no workouts.
   const hasWorkouts = $derived(athleteStore.workouts?.length > 0);
+  const isConnected = $derived(
+    athleteStore.syncStatus
+      ? Object.values(athleteStore.syncStatus?.integrations || {}).some((i: any) => i.connected)
+      : true
+  );
+  const showNoTrainingData = $derived(athleteStore.initialLoadDone && !athleteStore.loading && !isConnected && !hasWorkouts);
 
   let selectedWorkout = $state<any>(null);
+
+  const zoneColors = ['#4621FF', '#00C8A8', '#FFCB88', '#F07178', '#FF4791'];
+
+  // Week selector (History tab)
+  let selectedWeekStart = $state<Date>(startOfWeek(new Date(), { weekStartsOn: 1 })); // Monday
+  let weekPickerValue = $state('');
+  let appliedWorkoutIdFromUrl = $state(false);
+
+  function setWeekFromDate(dateLike: string | Date) {
+    const d = typeof dateLike === 'string' ? new Date(dateLike) : dateLike;
+    if (!d || isNaN(d.getTime())) return;
+    const next = startOfWeek(d, { weekStartsOn: 1 });
+    if (next.getTime() === selectedWeekStart.getTime()) return;
+    selectedWeekStart = next;
+    // Keep the picker normalized to the week start (Monday).
+    const formatted = format(next, 'yyyy-MM-dd');
+    if (weekPickerValue !== formatted) weekPickerValue = formatted;
+  }
+
+  const selectedWeekEnd = $derived(endOfWeek(selectedWeekStart, { weekStartsOn: 1 }));
+  function jumpToCurrentWeek() {
+    setWeekFromDate(new Date());
+  }
+
+  $effect(() => {
+    // When user changes the picker, snap to that week.
+    const formatted = format(selectedWeekStart, 'yyyy-MM-dd');
+    if (!weekPickerValue || weekPickerValue === formatted) return;
+    setWeekFromDate(weekPickerValue);
+  });
+
+  const workoutIdFromUrl = $derived($page.url.searchParams.get('workout_id'));
+  $effect(() => {
+    if (appliedWorkoutIdFromUrl) return;
+    if (!workoutIdFromUrl) return;
+    if (!hasWorkouts) return;
+
+    const match = (athleteStore.workouts || []).find((w) => String(w?.id) === String(workoutIdFromUrl));
+    if (!match) return;
+
+    metric = 'history';
+    setWeekFromDate(match.started_at);
+    selectedWorkout = match;
+    appliedWorkoutIdFromUrl = true;
+  });
+
+  const weekWorkouts = $derived.by(() => {
+    const start = selectedWeekStart.getTime();
+    const end = selectedWeekEnd.getTime();
+    return (athleteStore.workouts || []).filter((w) => {
+      const t = w?.started_at ? new Date(w.started_at).getTime() : NaN;
+      return Number.isFinite(t) && t >= start && t <= end;
+    });
+  });
 
   function getWorkoutIcon(type: string) {
     const t = type?.toLowerCase();
@@ -45,6 +108,56 @@
   }
 
   const weeklyTss = $derived(athleteStore.workouts?.slice(0, 7).reduce((acc, w) => acc + (w.tss || 0), 0) || 0);
+
+  function getDurationSecs(w: any): number {
+    const direct = w?.duration_secs ?? w?.duration_seconds;
+    if (Number.isFinite(direct)) return Math.max(0, Math.floor(Number(direct)));
+
+    const start = w?.started_at ? new Date(w.started_at) : null;
+    const end = w?.ended_at ? new Date(w.ended_at) : null;
+    if (!start || !end) return 0;
+    const ms = end.getTime() - start.getTime();
+    if (!Number.isFinite(ms)) return 0;
+    return Math.max(0, Math.floor(ms / 1000));
+  }
+
+  function formatMMSS(totalSeconds: number): string {
+    const s = Math.max(0, Math.floor(totalSeconds || 0));
+    const m = Math.floor(s / 60);
+    const ss = String(s % 60).padStart(2, '0');
+    return `${m}:${ss}`;
+  }
+
+  function getHrZonePcts(w: any): Array<number | null> {
+    return [
+      w?.hr_zone_1_pct ?? null,
+      w?.hr_zone_2_pct ?? null,
+      w?.hr_zone_3_pct ?? null,
+      w?.hr_zone_4_pct ?? null,
+      w?.hr_zone_5_pct ?? null
+    ].map((v) => (v == null ? null : Number(v)));
+  }
+
+  function getHrZonePctsTopDown(w: any): Array<number | null> {
+    // Display order: Z5 (top) -> Z1 (bottom)
+    return getHrZonePcts(w).slice().reverse();
+  }
+
+  function hasAnyHrZone(w: any): boolean {
+    return getHrZonePcts(w).some((v) => v != null);
+  }
+
+  async function deleteSelectedWorkout() {
+    if (!selectedWorkout?.id) return;
+    if (!confirm('Delete this workout?')) return;
+    try {
+      await athleteStore.deleteWorkout(selectedWorkout.id);
+      selectedWorkout = null;
+    } catch (e) {
+      console.error(e);
+      alert('Failed to delete workout');
+    }
+  }
 </script>
 
 <div class="flex flex-col gap-3">
@@ -53,7 +166,7 @@
     <h1 class="text-[22px] font-bold tracking-[-0.02em]">Training Analysis</h1>
   </div>
 
-  {#if !isConnected}
+  {#if showNoTrainingData}
     <EmptyState 
       title="No Training Data" 
       message="Connect your training apps to analyze your performance trends and history."
@@ -67,7 +180,7 @@
   {:else}
     <!-- Metric Tabs -->
     <div class="flex gap-1.5 overflow-x-auto pb-0.5 shrink-0">
-      {#each tabs as tab}
+      {#each tabs as tab (tab)}
         <Pill active={metric === tab} onclick={() => { metric = tab; selectedWorkout = null; }}>
           {tab.charAt(0).toUpperCase() + tab.slice(1)}
         </Pill>
@@ -114,9 +227,21 @@
     {#if metric === 'history'}
       {#if selectedWorkout}
         <!-- Detailed Workout View -->
-        <button class="mb-2 text-xs text-blue flex items-center gap-1 bg-transparent border-none p-0 cursor-pointer" onclick={() => selectedWorkout = null}>
-          ← Back to list
-        </button>
+        <div class="mb-2 flex items-center justify-between gap-2">
+          <button
+            class="text-xs text-blue flex items-center gap-1 bg-transparent border-none p-0 cursor-pointer"
+            onclick={() => (selectedWorkout = null)}
+          >
+            ← Back to list
+          </button>
+
+          <button
+            class="text-xs text-red bg-transparent border-none p-0 cursor-pointer"
+            onclick={deleteSelectedWorkout}
+          >
+            Delete
+          </button>
+        </div>
         
         <Card>
           <div class="flex items-center gap-4 mb-4">
@@ -136,7 +261,7 @@
           <div class="grid grid-cols-3 gap-2 mb-5">
             <div class="bg-glass2 p-2.5 rounded-xl border border-border">
               <p class="text-[9px] text-text2 font-mono uppercase mb-1">Duration</p>
-              <p class="text-sm font-bold">{Math.floor(selectedWorkout.duration_secs / 60)}m</p>
+              <p class="text-sm font-bold">{Math.floor(getDurationSecs(selectedWorkout) / 60)}m</p>
             </div>
             <div class="bg-glass2 p-2.5 rounded-xl border border-border">
               <p class="text-[9px] text-text2 font-mono uppercase mb-1">Distance</p>
@@ -148,6 +273,43 @@
             </div>
           </div>
 
+          <div class="mb-5 bg-glass2 p-3 rounded-xl border border-border">
+            <p class="text-[11px] font-semibold mb-2">Heart-rate zones</p>
+
+            {#if hasAnyHrZone(selectedWorkout)}
+              <div class="flex flex-col gap-2">
+                {#each getHrZonePctsTopDown(selectedWorkout) as pct, topIdx (topIdx)}
+                  {@const zone = 5 - topIdx}
+                  {@const color = zoneColors[zone - 1]}
+                  <div class="flex items-center gap-3">
+                    <div class="w-9 shrink-0 flex items-center gap-2">
+                      <span class="w-2 h-2 rounded-full shrink-0" style="background: {color};"></span>
+                      <p class="text-[11px] text-text1 font-mono uppercase">Z{zone}</p>
+                    </div>
+
+                    <div class="flex-1">
+                      <div class="h-2.5 rounded-full bg-glass border border-border overflow-hidden">
+                        <div
+                          class="h-full rounded-full"
+                          style="width: {pct == null ? 0 : Math.max(0, Math.min(100, pct))}%; background: {color};"
+                        ></div>
+                      </div>
+                    </div>
+
+                    <div class="w-[92px] shrink-0 text-right">
+                      <p class="text-[11px] text-text2 font-mono">{pct == null ? '--' : `${Math.round(pct)}%`}</p>
+                      <p class="text-[11px] text-text1 font-semibold tabular-nums">
+                        {pct == null ? '--' : formatMMSS((getDurationSecs(selectedWorkout) * pct) / 100)}
+                      </p>
+                    </div>
+                  </div>
+                {/each}
+              </div>
+            {:else}
+              <p class="text-[11px] text-text2">No zone data for this workout</p>
+            {/if}
+          </div>
+
           <div class="p-3 bg-blue-dim rounded-xl border-l-2 border-blue">
             <p class="text-[11px] font-semibold text-blue mb-1">Analysis</p>
             <p class="text-[11px] text-text1 leading-relaxed">
@@ -157,7 +319,61 @@
         </Card>
       {:else}
         <div class="flex flex-col gap-2.5">
-          {#each athleteStore.workouts as w}
+          <!-- Week selector -->
+          <Card style="padding: 12px 14px;">
+            <div class="flex items-center justify-between gap-3">
+              <div class="min-w-0">
+                <p class="text-[10px] text-text2 font-mono uppercase tracking-[0.08em]">Week</p>
+                <p class="text-[13px] font-semibold truncate">
+                  {format(selectedWeekStart, 'MMM d')} – {format(selectedWeekEnd, 'MMM d')}
+                </p>
+              </div>
+
+              <div class="flex items-center gap-2 shrink-0">
+                <button
+                  class="px-2 py-1 rounded-lg border border-border bg-glass2 text-[11px] text-text1 cursor-pointer"
+                  onclick={() => setWeekFromDate(addDays(selectedWeekStart, -7))}
+                  aria-label="Previous week"
+                >
+                  ←
+                </button>
+
+                <div class="w-[140px]">
+                  <FormDateInput
+                    id="training-history-week"
+                    type="date"
+                    bind:value={weekPickerValue}
+                    ariaLabel="Select week"
+                    inputClass="px-2 py-1 pr-9 rounded-lg border border-border bg-glass2 text-[11px] text-text1"
+                  />
+                </div>
+
+                <button
+                  class="px-2 py-1 rounded-lg border border-border bg-glass2 text-[11px] text-text1 cursor-pointer"
+                  onclick={jumpToCurrentWeek}
+                  aria-label="Jump to current week"
+                >
+                  Today
+                </button>
+
+                <button
+                  class="px-2 py-1 rounded-lg border border-border bg-glass2 text-[11px] text-text1 cursor-pointer"
+                  onclick={() => setWeekFromDate(addDays(selectedWeekStart, 7))}
+                  aria-label="Next week"
+                >
+                  →
+                </button>
+              </div>
+            </div>
+          </Card>
+
+          {#if weekWorkouts.length === 0}
+            <Card style="padding: 14px;">
+              <p class="text-[12px] text-text2">No workouts logged in this week.</p>
+            </Card>
+          {/if}
+
+          {#each weekWorkouts as w (w?.id ?? w?.started_at)}
             <button class="text-left bg-transparent border-none p-0 cursor-pointer w-full" onclick={() => selectedWorkout = w}>
               <Card style="padding: 12px 14px;">
                 <div class="flex items-center gap-3">
@@ -166,7 +382,7 @@
                   </div>
                   <div class="flex-1">
                     <p class="text-[13px] font-semibold">{w.title || (w.sport.charAt(0).toUpperCase() + w.sport.slice(1) + ' Session')}</p>
-                    <p class="text-[11px] text-text2">{format(new Date(w.started_at), 'MMM d')} · {Math.floor(w.duration_secs / 60)} min</p>
+                    <p class="text-[11px] text-text2">{format(new Date(w.started_at), 'MMM d')} · {Math.floor(getDurationSecs(w) / 60)} min</p>
                   </div>
                   <div class="text-right">
                     <p class="text-[16px] font-bold" style="color: {getWorkoutColor(w.sport)}">{Math.round(w.tss || 0)}</p>

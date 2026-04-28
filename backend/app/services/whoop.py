@@ -3,6 +3,7 @@ import hashlib
 import httpx
 from fastapi import HTTPException
 from app.config import settings
+from typing import Any, List, Optional
 
 def verify_webhook_signature(payload_body: bytes, signature_header: str) -> bool:
     """Verifies the HMAC-SHA256 signature using the Client Secret."""
@@ -67,3 +68,59 @@ async def fetch_body_measurement(access_token: str) -> dict:
     async with httpx.AsyncClient() as client:
         response = await client.get(f"{settings.WHOOP_API_BASE}/user/measurement/body", headers=headers)
         return response.json()
+
+
+def _v2_base() -> str:
+    base = settings.WHOOP_API_BASE.rstrip("/")
+    # Many projects store v1 base; collection endpoints are documented under /developer/v2.
+    if base.endswith("/v1"):
+        return base[:-3] + "/v2"
+    if base.endswith("/developer/v1"):
+        return base[:-3] + "v2"
+    if base.endswith("/developer/v2"):
+        return base
+    # Fallback: best guess
+    return "https://api.prod.whoop.com/developer/v2"
+
+
+async def fetch_collection(
+    access_token: str,
+    path: str,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    limit: int = 25,
+) -> List[dict[str, Any]]:
+    """
+    Fetch a paginated WHOOP collection (v2) and return all records.
+    `path` examples: 'recovery', 'activity/sleep', 'activity/workout', 'cycle'
+    """
+    headers = {"Authorization": f"Bearer {access_token}"}
+    url = f"{_v2_base()}/{path.lstrip('/')}"
+
+    records: List[dict[str, Any]] = []
+    next_token: Optional[str] = None
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        while True:
+            params: dict[str, Any] = {"limit": min(max(1, limit), 25)}
+            if start:
+                params["start"] = start
+            if end:
+                params["end"] = end
+            if next_token:
+                params["nextToken"] = next_token
+
+            res = await client.get(url, headers=headers, params=params)
+            if res.status_code != 200:
+                raise HTTPException(status_code=res.status_code, detail=f"WHOOP collection fetch failed: {res.text}")
+
+            payload = res.json() or {}
+            page_records = payload.get("records") or []
+            if isinstance(page_records, list):
+                records.extend(page_records)
+
+            next_token = payload.get("next_token") or payload.get("nextToken")
+            if not next_token:
+                break
+
+    return records
