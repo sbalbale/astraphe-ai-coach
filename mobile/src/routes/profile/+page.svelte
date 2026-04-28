@@ -2,8 +2,8 @@
   import Card from '$lib/components/Card.svelte';
   import Tag from '$lib/components/Tag.svelte';
   import { authStore } from '$lib/stores/authStore.svelte';
+  import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { goto } from '$app/navigation';
-
   import { HealthIntegration } from '$lib/integrations/health';
 
   const menu = [
@@ -13,26 +13,40 @@
     { label: 'Privacy', href: '/profile/privacy' }
   ];
 
-  let connected = $state({ apple: false, garmin: false, whoop: false });
   let syncing = $state('');
+
+  const integrations = $derived(athleteStore.syncStatus?.integrations || {
+    apple: { connected: false },
+    garmin: { connected: false },
+    whoop: { connected: false }
+  });
 
   async function toggleIntegration(id: string) {
     if (syncing) return;
     syncing = id;
 
+    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+
     if (id === 'apple') {
       const granted = await HealthIntegration.requestPermissions();
       if (granted) {
         await HealthIntegration.syncRecentData();
-        connected[id] = true;
-      } else {
-        connected[id] = false;
-        alert('HealthKit permissions denied.');
+        // Since HealthKit is client-side, we just mark it as connected locally for this mock
+        athleteStore.syncStatus = {
+          ...athleteStore.syncStatus,
+          integrations: { ...integrations, apple: { connected: true } }
+        };
       }
-    } else {
-      // Simulate typical network delay for others
+    } else if (id === 'whoop') {
+      // Direct redirect to Whoop OAuth
+      window.location.href = `${API_URL}/v1/sync/oauth/whoop/authorize?athlete_id=${athleteStore.profile?.id}`;
+    } else if (id === 'garmin') {
+      // Mock Garmin connection for now
       await new Promise(resolve => setTimeout(resolve, 1500));
-      connected[id] = !connected[id];
+      athleteStore.syncStatus = {
+        ...athleteStore.syncStatus,
+        integrations: { ...integrations, garmin: { connected: !integrations.garmin.connected } }
+      };
     }
     
     syncing = '';
@@ -52,9 +66,9 @@
 
   <Card style="background: linear-gradient(135deg, rgba(70,33,255,0.1), rgba(0,200,168,0.05)); text-align: center; padding-top: 24px; padding-bottom: 24px;">
     <div class="w-20 h-20 rounded-full bg-gradient-to-br from-blue to-teal flex items-center justify-center text-[32px] text-white font-bold mx-auto mb-3 shadow-[0_4px_24px_rgba(70,33,255,0.3)]">
-      {authStore.user?.user_metadata?.full_name?.charAt(0)?.toUpperCase() || 'M'}
+      {athleteStore.profile?.display_name?.charAt(0)?.toUpperCase() || authStore.user?.user_metadata?.full_name?.charAt(0)?.toUpperCase() || 'M'}
     </div>
-    <h2 class="text-[18px] font-bold mb-1">{authStore.user?.user_metadata?.full_name || 'Athlete'}</h2>
+    <h2 class="text-[18px] font-bold mb-1">{athleteStore.profile?.display_name || authStore.user?.user_metadata?.full_name || 'Athlete'}</h2>
     <p class="text-xs text-text2 mb-3">{authStore.user?.email || 'No email provided'}</p>
     <Tag color="var(--teal)">PREMIUM TIER</Tag>
   </Card>
@@ -73,12 +87,12 @@
         </div>
         <button 
           class="px-3 py-1 rounded-full text-[11px] font-medium cursor-pointer transition-all duration-200"
-          style={connected.apple 
+          style={integrations.apple.connected 
             ? 'background: var(--color-red-dim); color: var(--color-red); border: 1px solid rgba(240,113,120,0.3)' 
             : 'background: rgba(240,113,120,0.15); color: #F07178; border: 1px solid rgba(240,113,120,0.3)'}
           onclick={() => toggleIntegration('apple')}
         >
-          {syncing === 'apple' ? '...' : connected.apple ? 'Unlink' : 'Connect'}
+          {syncing === 'apple' ? '...' : integrations.apple.connected ? 'Unlink' : 'Connect'}
         </button>
       </div>
 
@@ -93,12 +107,12 @@
         </div>
         <button 
           class="px-3 py-1 rounded-full text-[11px] font-medium cursor-pointer transition-all duration-200"
-          style={connected.garmin 
+          style={integrations.garmin.connected 
             ? 'background: var(--color-red-dim); color: var(--color-red); border: 1px solid rgba(240,113,120,0.3)' 
             : 'background: rgba(0,200,168,0.15); color: #00C8A8; border: 1px solid rgba(0,200,168,0.3)'}
           onclick={() => toggleIntegration('garmin')}
         >
-          {syncing === 'garmin' ? '...' : connected.garmin ? 'Unlink' : 'Connect'}
+          {syncing === 'garmin' ? '...' : integrations.garmin.connected ? 'Unlink' : 'Connect'}
         </button>
       </div>
 
@@ -113,12 +127,12 @@
         </div>
         <button 
           class="px-3 py-1 rounded-full text-[11px] font-medium cursor-pointer transition-all duration-200"
-          style={connected.whoop 
+          style={integrations.whoop.connected 
             ? 'background: var(--color-red-dim); color: var(--color-red); border: 1px solid rgba(240,113,120,0.3)' 
             : 'background: rgba(255,203,136,0.15); color: #FFCB88; border: 1px solid rgba(255,203,136,0.3)'}
           onclick={() => toggleIntegration('whoop')}
         >
-          {syncing === 'whoop' ? '...' : connected.whoop ? 'Unlink' : 'Connect'}
+          {syncing === 'whoop' ? '...' : integrations.whoop.connected ? 'Unlink' : 'Connect'}
         </button>
       </div>
     </div>

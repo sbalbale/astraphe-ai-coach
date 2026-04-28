@@ -1,39 +1,14 @@
 <script lang="ts">
   import Card from '$lib/components/Card.svelte';
-  import { athleteStore } from '$lib/stores/athleteStore.svelte';
-  import { api } from '$lib/api';
   import { goto } from '$app/navigation';
 
-  let settings = $state(athleteStore.profile?.settings?.notifications || {
-    push: true,
-    email: false,
-    coach_insights: true,
-    weekly_summary: true,
-    load_alerts: true
-  });
-  let saving = $state(false);
+  let readiness = $state(true);
+  let coach = $state(true);
+  let workouts = $state(false);
+  let insights = $state(true);
 
   function goBack() {
     goto('/profile');
-  }
-
-  async function handleSave() {
-    saving = true;
-    const currentSettings = athleteStore.profile?.settings || {};
-    const success = await api.patch('/v1/athlete/profile', {
-      settings: {
-        ...currentSettings,
-        notifications: settings
-      }
-    });
-
-    if (success) {
-      await athleteStore.fetchAll();
-      goBack();
-    } else {
-      alert('Failed to save notification settings.');
-    }
-    saving = false;
   }
 </script>
 
@@ -50,41 +25,41 @@
 
   <div class="flex flex-col gap-3 mt-2">
     <Card>
-      <div class="flex flex-col gap-5">
-        <div class="flex items-center justify-between">
+      <p class="text-[13px] font-semibold mb-3">Push Notifications</p>
+      <div class="flex flex-col gap-0">
+        <label class="flex justify-between items-center py-3 border-b border-border cursor-pointer group">
           <div>
-            <p class="text-[13px] font-medium">Push Notifications</p>
-            <p class="text-[10px] text-text2">Alerts for readiness and load</p>
+            <p class="text-[13px] font-medium text-text0 group-hover:text-blue transition-colors">Daily Readiness</p>
+            <p class="text-[10px] text-text2 mt-0.5">Morning alerts when your recovery score is ready.</p>
           </div>
-          <button class="w-10 h-5 rounded-full transition-colors relative {settings.push ? 'bg-blue' : 'bg-glass2 border border-border'}" onclick={() => settings.push = !settings.push}>
-            <div class="absolute top-0.5 {settings.push ? 'right-0.5' : 'left-0.5'} w-4 h-4 rounded-full bg-white transition-all shadow-sm"></div>
-          </button>
-        </div>
-
-        <div class="flex items-center justify-between">
+          <input type="checkbox" bind:checked={readiness} class="w-4 h-4 accent-blue" />
+        </label>
+        <label class="flex justify-between items-center py-3 border-b border-border cursor-pointer group">
           <div>
-            <p class="text-[13px] font-medium">Email Updates</p>
-            <p class="text-[10px] text-text2">Weekly training summaries</p>
+            <p class="text-[13px] font-medium text-text0 group-hover:text-teal transition-colors">Coach Messages</p>
+            <p class="text-[10px] text-text2 mt-0.5">Real-time alerts when ASTRAPE updates your plan.</p>
           </div>
-          <button class="w-10 h-5 rounded-full transition-colors relative {settings.email ? 'bg-blue' : 'bg-glass2 border border-border'}" onclick={() => settings.email = !settings.email}>
-            <div class="absolute top-0.5 {settings.email ? 'right-0.5' : 'left-0.5'} w-4 h-4 rounded-full bg-white transition-all shadow-sm"></div>
-          </button>
-        </div>
-
-        <div class="flex items-center justify-between">
+          <input type="checkbox" bind:checked={coach} class="w-4 h-4 accent-teal" />
+        </label>
+        <label class="flex justify-between items-center py-3 border-b border-border cursor-pointer group">
           <div>
-            <p class="text-[13px] font-medium">AI Coach Insights</p>
-            <p class="text-[10px] text-text2">Daily training recommendations</p>
+            <p class="text-[13px] font-medium text-text0 group-hover:text-amber transition-colors">Workout Reminders</p>
+            <p class="text-[10px] text-text2 mt-0.5">1 hour before scheduled sessions.</p>
           </div>
-          <button class="w-10 h-5 rounded-full transition-colors relative {settings.coach_insights ? 'bg-blue' : 'bg-glass2 border border-border'}" onclick={() => settings.coach_insights = !settings.coach_insights}>
-            <div class="absolute top-0.5 {settings.coach_insights ? 'right-0.5' : 'left-0.5'} w-4 h-4 rounded-full bg-white transition-all shadow-sm"></div>
-          </button>
-        </div>
+          <input type="checkbox" bind:checked={workouts} class="w-4 h-4 accent-amber" />
+        </label>
+        <label class="flex justify-between items-center py-3 cursor-pointer group">
+          <div>
+            <p class="text-[13px] font-medium text-text0 group-hover:text-[#4621FF] transition-colors">Weekly Insights</p>
+            <p class="text-[10px] text-text2 mt-0.5">Summary of your load, form, and sleep trends.</p>
+          </div>
+          <input type="checkbox" bind:checked={insights} class="w-4 h-4 accent-[#4621FF]" />
+        </label>
       </div>
     </Card>
 
-    <button onclick={handleSave} disabled={saving} class="w-full py-3.5 bg-blue text-white font-semibold rounded-xl hover:bg-[#3d1ae6] transition-colors mt-2 disabled:opacity-50">
-      {saving ? 'Saving...' : 'Save Preferences'}
-    </button>
+    <p class="text-center text-xs text-text2 p-4">
+      Ensure push notifications are allowed in your device settings.
+    </p>
   </div>
 </div>
