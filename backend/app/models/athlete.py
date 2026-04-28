@@ -32,3 +32,4 @@ class AthleteProfileUpdate(BaseModel):
     notification_settings: Optional[dict] = None
     privacy_settings: Optional[dict] = None
     measurement_units: Optional[str] = None
+    time_format: Optional[str] = None

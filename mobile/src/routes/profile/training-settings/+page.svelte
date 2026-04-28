@@ -12,16 +12,17 @@
   let maxHR = $state(185);
   let ftp = $state(280);
   let pace = $state('5:00');
-  let sport = $state('Running');
+  let sport = $state('running');
   let units = $state<Units>('metric');
+  let timeFormat = $state('12h');
   let initialized = $state(false);
   let saving = $state(false);
 
   const sportOptions = [
-    { value: 'Triathlon', label: 'Triathlon' },
-    { value: 'Running', label: 'Running' },
-    { value: 'Cycling', label: 'Cycling' },
-    { value: 'Rowing', label: 'Rowing' }
+    { value: 'triathlon', label: 'Triathlon' },
+    { value: 'running', label: 'Running' },
+    { value: 'cycling', label: 'Cycling' },
+    { value: 'rowing', label: 'Rowing' }
   ];
 
   onMount(async () => {
@@ -35,8 +36,9 @@
     maxHR = athleteStore.profile?.max_hr ?? 185;
     ftp = athleteStore.profile?.ftp_watts ?? 280;
     pace = athleteStore.profile?.threshold_pace || '5:00';
-    sport = athleteStore.profile?.sport_focus?.[0] || 'Running';
+    sport = (athleteStore.profile?.sport_focus?.[0] || 'running').toLowerCase();
     units = normalizeUnits((athleteStore.profile as any)?.measurement_units);
+    timeFormat = (athleteStore.profile as any)?.time_format || '12h';
     initialized = true;
   });
 
@@ -52,7 +54,8 @@
       ftp_watts: ftp,
       threshold_pace: pace,
       sport_focus: [sport.toLowerCase()],
-      measurement_units: units
+      measurement_units: units,
+      time_format: timeFormat
     });
     saving = false;
     if (success) goBack();
@@ -91,6 +94,13 @@
             <button type="button" class="flex-1 py-1.5 text-xs rounded-md transition-colors {units === 'imperial' ? 'bg-blue text-white' : 'text-text2 hover:text-text0'}" onclick={() => units = 'imperial'}>Imperial</button>
           </div>
         </div>
+        <div>
+          <label for="timeformat" class="block text-[11px] text-text2 mb-1">Time Format</label>
+          <div class="flex p-1 bg-glass2 rounded-lg border border-border">
+            <button type="button" class="flex-1 py-1.5 text-xs rounded-md transition-colors {timeFormat === '12h' ? 'bg-blue text-white' : 'text-text2 hover:text-text0'}" onclick={() => timeFormat = '12h'}>12-Hour</button>
+            <button type="button" class="flex-1 py-1.5 text-xs rounded-md transition-colors {timeFormat === '24h' ? 'bg-blue text-white' : 'text-text2 hover:text-text0'}" onclick={() => timeFormat = '24h'}>24-Hour</button>
+          </div>
+        </div>
       </div>
     </Card>
 
@@ -108,7 +118,7 @@
           </div>
         </div>
         <div>
-          <label for="pace" class="block text-[11px] text-text2 mb-1">Threshold Pace (/km)</label>
+          <label for="pace" class="block text-[11px] text-text2 mb-1">Threshold Pace ({units === 'metric' ? '/km' : '/mile'})</label>
           <input id="pace" type="text" bind:value={pace} class="w-full p-2.5 bg-glass2 border border-border rounded-lg text-sm text-text0 font-mono outline-none focus:border-teal" />
         </div>
       </div>
