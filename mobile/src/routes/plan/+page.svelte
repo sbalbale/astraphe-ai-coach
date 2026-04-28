@@ -1,12 +1,13 @@
 <script lang="ts">
   import Card from '$lib/components/Card.svelte';
   import Tag from '$lib/components/Tag.svelte';
+  import EmptyState from '$lib/components/EmptyState.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
 
   const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   
   // Create an array of schedule items based on the plan object or fallback to mock
-  let schedule = $derived(() => {
+  let schedule = $derived.by(() => {
     if (athleteStore.plan?.plan) {
       const p = athleteStore.plan.plan;
       return Object.keys(p).map(k => ({
@@ -17,12 +18,12 @@
     return [];
   });
   
-  let currentSchedule = $derived(schedule());
+  let currentSchedule = schedule;
 </script>
 
 <div class="flex flex-col gap-3">
   <div>
-    <p class="text-xs text-text2 font-mono uppercase tracking-[0.1em]">Week 12 · Base Phase</p>
+    <p class="text-xs text-text2 font-mono uppercase tracking-[0.1em]">AI Orchestrated</p>
     <h1 class="text-[22px] font-bold tracking-[-0.02em]">Training Plan</h1>
   </div>
 
@@ -69,10 +70,11 @@
       {/each}
     </div>
   {:else}
-    <Card>
-      <div class="flex items-center justify-center h-32">
-        <span class="text-sm text-text2">No plan data available</span>
-      </div>
-    </Card>
+    <EmptyState 
+      title="No Active Plan" 
+      message="Ask the AI Coach to generate a training plan based on your goals and current fitness."
+      actionLabel="Go to Chat"
+      icon="📋"
+    />
   {/if}
 </div>

@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from app.models.workout import WorkoutPayload
 from app.services.algorithms import calculate_cycling_tss
 from app.services.processing import process_and_save_workout
-from app.dependencies import get_current_athlete, get_db
+from app.dependencies import get_current_athlete, get_user_db
 
 router = APIRouter(prefix="/v1/workouts", tags=["Workouts"])
 
@@ -10,7 +10,7 @@ router = APIRouter(prefix="/v1/workouts", tags=["Workouts"])
 async def get_workouts(
     limit: int = 20,
     athlete_id: str = Depends(get_current_athlete),
-    db = Depends(get_db)
+    db = Depends(get_user_db)
 ):
     """Fetch past workouts for the training history tab."""
     res = db.table("workouts").select("*").eq("athlete_id", athlete_id).order("started_at", desc=True).limit(limit).execute()
@@ -21,7 +21,7 @@ async def ingest_workout(
     payload: WorkoutPayload, 
     background_tasks: BackgroundTasks, 
     athlete_id: str = Depends(get_current_athlete), 
-    db = Depends(get_db)
+    db = Depends(get_user_db)
 ):
     """Ingest a new workout and calculate analysis in the background."""
     background_tasks.add_task(process_and_save_workout, payload, athlete_id, db)

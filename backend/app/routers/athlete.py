@@ -2,12 +2,12 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 from datetime import date, timedelta
 from typing import Optional, List
 from app.models.athlete import AthleteState, AthleteProfileUpdate
-from app.dependencies import get_current_athlete, get_db, get_admin_db
+from app.dependencies import get_current_athlete, get_user_db, get_admin_db
 
 router = APIRouter(prefix="/v1/athlete", tags=["Athlete"])
 
 @router.post("/onboard")
-async def onboard_athlete(athlete_id: str = Depends(get_current_athlete), db = Depends(get_db)):
+async def onboard_athlete(athlete_id: str = Depends(get_current_athlete), db = Depends(get_user_db)):
     """Seeds initial sample data for a newly registered athlete."""
     today = date.today()
     
@@ -50,7 +50,7 @@ async def onboard_athlete(athlete_id: str = Depends(get_current_athlete), db = D
 
 
 @router.get("/state", response_model=AthleteState)
-async def get_athlete_state(athlete_id: str = Depends(get_current_athlete), db = Depends(get_db)):
+async def get_athlete_state(athlete_id: str = Depends(get_current_athlete), db = Depends(get_user_db)):
     """
     Returns the athlete's current physiological state including computed CTL, ATL, TSB, and readiness score.
     """
@@ -97,7 +97,7 @@ async def get_athlete_metrics(
     end_date: Optional[date] = None,
     metrics: str = Query("ctl,atl,tsb", description="Comma-separated metrics to include"),
     athlete_id: str = Depends(get_current_athlete),
-    db = Depends(get_db)
+    db = Depends(get_user_db)
 ):
     """Returns computed metrics over a date range."""
     start_date = start_date or (date.today() - timedelta(days=42))
@@ -128,7 +128,7 @@ async def get_athlete_metrics(
 @router.get("/profile")
 async def get_athlete_profile(
     athlete_id: str = Depends(get_current_athlete),
-    db = Depends(get_db)
+    db = Depends(get_user_db)
 ):
     """Fetch current athlete physiological anchors."""
     res = db.table("athletes").select("*").eq("id", athlete_id).single().execute()
@@ -140,7 +140,7 @@ async def get_athlete_profile(
 async def update_athlete_profile(
     payload: AthleteProfileUpdate,
     athlete_id: str = Depends(get_current_athlete),
-    db = Depends(get_db)
+    db = Depends(get_user_db)
 ):
     """
     Update athlete physiological anchors (e.g., FTP, max HR).
@@ -156,7 +156,7 @@ async def update_athlete_profile(
 @router.delete("")
 async def delete_athlete_account(
     athlete_id: str = Depends(get_current_athlete),
-    db = Depends(get_db),
+    db = Depends(get_user_db),
     admin_db = Depends(get_admin_db)
 ):
     "Permanently delete the athlete account and all associated data."
