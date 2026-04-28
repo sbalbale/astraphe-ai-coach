@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     # --- Supabase ---
     SUPABASE_URL: str
     SUPABASE_KEY: str
+    SUPABASE_SERVICE_ROLE_KEY: Optional[str] = None
 
     # --- Gemini AI ---
     GEMINI_API_KEY: str

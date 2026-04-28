@@ -2,17 +2,47 @@
   import Card from '$lib/components/Card.svelte';
   import { goto } from '$app/navigation';
 
-  let shareData = $state(true);
-  let marketing = $state(false);
+  import { athleteStore } from '$lib/stores/athleteStore.svelte';
+  import { authStore } from '$lib/stores/authStore.svelte';
+
+  let settings = $state(athleteStore.profile?.privacy_settings || {
+    share_data: true,
+    marketing: false
+  });
+  
+  let saving = $state(false);
 
   function goBack() {
     goto('/profile');
   }
 
-  function handleDeleteAccount() {
+  async function toggleSetting(key: keyof typeof settings) {
+    settings[key] = !settings[key];
+    saving = true;
+    await athleteStore.updateProfile({
+      privacy_settings: settings
+    });
+    saving = false;
+  }
+
+  async function handleDeleteAccount() {
     if (confirm('Are you sure you want to permanently delete your account? This action cannot be undone.')) {
-      // API call to delete account goes here
-      alert('Account deletion requested.');
+      try {
+        console.log('[Privacy] Deleting account...');
+        const success = await athleteStore.deleteAccount();
+        if (success) {
+          console.log('[Privacy] Account deleted successfully on backend. Signing out...');
+          await authStore.signOut();
+          console.log('[Privacy] Signed out. Redirecting to signin...');
+          goto('/auth/signin');
+        } else {
+          console.error('[Privacy] Failed to delete account on backend.');
+          alert('Failed to delete account. The server might be busy, please try again.');
+        }
+      } catch (err) {
+        console.error('[Privacy] Error during account deletion:', err);
+        alert('An unexpected error occurred. Please try again.');
+      }
     }
   }
 </script>
@@ -37,14 +67,14 @@
             <p class="text-[13px] font-medium text-text0 transition-colors">Anonymous AI Training</p>
             <p class="text-[10px] text-text2 mt-1 leading-relaxed">Allow ASTRAPE to use your anonymized performance data to improve our global coaching models.</p>
           </div>
-          <input type="checkbox" bind:checked={shareData} class="w-4 h-4 accent-teal shrink-0" />
+          <input type="checkbox" checked={settings.share_data} onchange={() => toggleSetting('share_data')} disabled={saving} class="w-4 h-4 accent-teal shrink-0" />
         </label>
         <label class="flex justify-between items-center py-3 cursor-pointer group">
           <div class="pr-4">
             <p class="text-[13px] font-medium text-text0 transition-colors">Product Updates</p>
             <p class="text-[10px] text-text2 mt-1 leading-relaxed">Receive occasional emails about new features and platform updates.</p>
           </div>
-          <input type="checkbox" bind:checked={marketing} class="w-4 h-4 accent-teal shrink-0" />
+          <input type="checkbox" checked={settings.marketing} onchange={() => toggleSetting('marketing')} disabled={saving} class="w-4 h-4 accent-teal shrink-0" />
         </label>
       </div>
     </Card>

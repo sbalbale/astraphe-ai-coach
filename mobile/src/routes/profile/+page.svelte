@@ -28,25 +28,34 @@
     const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
     if (id === 'apple') {
-      const granted = await HealthIntegration.requestPermissions();
-      if (granted) {
-        await HealthIntegration.syncRecentData();
-        // Since HealthKit is client-side, we just mark it as connected locally for this mock
-        athleteStore.syncStatus = {
-          ...athleteStore.syncStatus,
-          integrations: { ...integrations, apple: { connected: true } }
-        };
+      if (integrations.apple.connected) {
+        await athleteStore.unlinkIntegration('apple');
+      } else {
+        const granted = await HealthIntegration.requestPermissions();
+        if (granted) {
+          await HealthIntegration.syncRecentData();
+          athleteStore.syncStatus = {
+            ...athleteStore.syncStatus,
+            integrations: { ...integrations, apple: { connected: true } }
+          };
+        }
       }
     } else if (id === 'whoop') {
-      // Direct redirect to Whoop OAuth
-      window.location.href = `${API_URL}/v1/sync/oauth/whoop/authorize?athlete_id=${athleteStore.profile?.id}`;
+      if (integrations.whoop.connected) {
+        await athleteStore.unlinkIntegration('whoop');
+      } else {
+        window.location.href = `${API_URL}/v1/sync/oauth/whoop/authorize?athlete_id=${athleteStore.profile?.id}`;
+      }
     } else if (id === 'garmin') {
-      // Mock Garmin connection for now
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      athleteStore.syncStatus = {
-        ...athleteStore.syncStatus,
-        integrations: { ...integrations, garmin: { connected: !integrations.garmin.connected } }
-      };
+      if (integrations.garmin.connected) {
+        await athleteStore.unlinkIntegration('garmin');
+      } else {
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        athleteStore.syncStatus = {
+          ...athleteStore.syncStatus,
+          integrations: { ...integrations, garmin: { connected: true } }
+        };
+      }
     }
     
     syncing = '';
