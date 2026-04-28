@@ -1,18 +1,39 @@
 from pydantic import BaseModel
 from typing import Optional
-from datetime import date
+from datetime import date, datetime
 
 class DailyBiometrics(BaseModel):
     date: date
     source: str
-    hrv_rmssd: Optional[float]
-    resting_hr: Optional[int]
-    sleep_duration_min: Optional[int]
-    sleep_score: Optional[int]
-    sleep_deep_pct: Optional[float]
-    sleep_rem_pct: Optional[float]
-    sleep_need_min: Optional[int]
-    sleep_debt_min: Optional[int]
-    day_strain: Optional[float]
-    skin_temp_deviation: Optional[float]
-    spo2_pct: Optional[float]
+    hrv_rmssd: Optional[float] = None
+    resting_hr: Optional[int] = None
+    sleep_duration_min: Optional[int] = None
+    sleep_score: Optional[int] = None
+    sleep_deep_pct: Optional[float] = None
+    sleep_rem_pct: Optional[float] = None
+    sleep_light_pct: Optional[float] = None
+    sleep_awake_pct: Optional[float] = None
+    sleep_bedtime: Optional[datetime] = None
+    sleep_wakeup: Optional[datetime] = None
+    sleep_need_min: Optional[int] = None
+    sleep_debt_min: Optional[int] = None
+    day_strain: Optional[float] = None
+    skin_temp_deviation: Optional[float] = None
+    spo2_pct: Optional[float] = None
+    recovery_score: Optional[int] = None
+    is_nap: Optional[bool] = False
+
+class SleepPeriodPayload(BaseModel):
+    athlete_id: str
+    date: date
+    started_at: datetime
+    ended_at: datetime
+    duration_min: int
+    score: Optional[int] = None
+    deep_pct: Optional[float] = None
+    rem_pct: Optional[float] = None
+    light_pct: Optional[float] = None
+    awake_pct: Optional[float] = None
+    is_nap: bool = False
+    source: str
+    external_id: Optional[str] = None

@@ -20,6 +20,15 @@ async def get_biometrics(
     
     bio_res = db.table("biometrics").select("*").eq("athlete_id", athlete_id).gte("date", start_date.isoformat()).lte("date", end_date.isoformat()).order("date").execute()
     
+    # Fetch individual sleep periods for the range
+    periods_res = db.table("sleep_periods").select("*").eq("athlete_id", athlete_id).gte("date", start_date.isoformat()).lte("date", end_date.isoformat()).order("started_at").execute()
+    periods_by_date = {}
+    for p in periods_res.data:
+        d = p["date"]
+        if d not in periods_by_date:
+            periods_by_date[d] = []
+        periods_by_date[d].append(p)
+
     hrv_data = []
     sleep_data = []
     sleep_scores = []
@@ -37,6 +46,8 @@ async def get_biometrics(
         s_score = row.get("astrape_sleep_score") or row.get("sleep_score") or 0
         sleep_scores.append(s_score)
         
+        # Attach individual periods to the daily row for easy consumption
+        row["periods"] = periods_by_date.get(row["date"], [])
         series.append(row)
 
     return {

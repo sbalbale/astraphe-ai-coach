@@ -6,7 +6,7 @@ from typing import Any, Optional
 from app.services import whoop
 from app.models.biometrics import DailyBiometrics
 from app.models.workout import WorkoutPayload
-from app.services.processing import process_and_save_biometrics, process_and_save_workout
+from app.services.processing import process_and_save_biometrics, process_and_save_workout, recalculate_tss_history
 
 
 def _parse_dt(value: str) -> datetime:
@@ -34,71 +34,36 @@ async def backfill_last_28_days(athlete_id: str, access_token: str, db: Any) -> 
 
     print(f"[whoop.backfill] start={start_s} end={end_s} athlete_id={athlete_id}")
 
-    # 1) Recovery (HRV, RHR, spo2, skin temp, recovery score)
-    recoveries = await whoop.fetch_collection(access_token, "recovery", start_s, end_s)
-    print(f"[whoop.backfill] recoveries={len(recoveries)}")
+    # 1) Cycles (Daily Strain)
+    cycles = await whoop.fetch_collection(access_token, "cycle", start_s, end_s)
+    print(f"[whoop.backfill] cycles={len(cycles)}")
 
-    for rec in recoveries:
-        created_at = rec.get("created_at")
-        if not created_at:
-            continue
-        d: date_type = _parse_dt(created_at).date()
-        score = (rec.get("score") or {}) if isinstance(rec.get("score"), dict) else {}
-
-        payload = DailyBiometrics(
-            date=d,
-            source="whoop",
-            hrv_rmssd=score.get("hrv_rmssd_milli") or score.get("hrv_rmssd_ms"),
-            resting_hr=score.get("resting_heart_rate"),
-            sleep_duration_min=None,
-            sleep_score=None,
-            sleep_deep_pct=None,
-            sleep_rem_pct=None,
-            sleep_need_min=None,
-            sleep_debt_min=None,
-            day_strain=None,
-            skin_temp_deviation=score.get("skin_temp_celsius"),
-            spo2_pct=score.get("spo2_percentage"),
-        )
-        process_and_save_biometrics(payload, athlete_id, db)
-
-    # 2) Sleep (duration + stage breakdown + sleep score)
-    sleeps = await whoop.fetch_collection(access_token, "activity/sleep", start_s, end_s)
-    print(f"[whoop.backfill] sleeps={len(sleeps)}")
-
-    for slp in sleeps:
-        start_time = slp.get("start")
+    for cyc in cycles:
+        start_time = cyc.get("start")
         if not start_time:
             continue
         d = _parse_dt(start_time).date()
-
-        score = (slp.get("score") or {}) if isinstance(slp.get("score"), dict) else {}
-        stage = (score.get("stage_summary") or {}) if isinstance(score.get("stage_summary"), dict) else {}
-
-        light = stage.get("total_light_sleep_time_milli")
-        deep = stage.get("total_slow_wave_sleep_time_milli")
-        rem = stage.get("total_rem_sleep_time_milli")
-        total_sleep_ms = sum(v for v in (light, deep, rem) if isinstance(v, (int, float)))
-        sleep_duration_min = int(total_sleep_ms / 60000) if total_sleep_ms else None
+        score = (cyc.get("score") or {}) if isinstance(cyc.get("score"), dict) else {}
+        strain = score.get("strain")
 
         payload = DailyBiometrics(
             date=d,
             source="whoop",
             hrv_rmssd=None,
             resting_hr=None,
-            sleep_duration_min=sleep_duration_min,
-            sleep_score=score.get("sleep_performance_percentage"),
-            sleep_deep_pct=_pct(deep, total_sleep_ms),
-            sleep_rem_pct=_pct(rem, total_sleep_ms),
+            sleep_duration_min=None,
+            sleep_score=None,
+            sleep_deep_pct=None,
+            sleep_rem_pct=None,
             sleep_need_min=None,
             sleep_debt_min=None,
-            day_strain=None,
+            day_strain=strain,
             skin_temp_deviation=None,
             spo2_pct=None,
         )
         process_and_save_biometrics(payload, athlete_id, db)
 
-    # 3) Workouts
+    # 2) Workouts First (to establish training load for readiness scores)
     workouts = await whoop.fetch_collection(access_token, "activity/workout", start_s, end_s)
     print(f"[whoop.backfill] workouts={len(workouts)}")
 
@@ -123,7 +88,6 @@ async def backfill_last_28_days(athlete_id: str, access_token: str, db: Any) -> 
         z4 = zone.get("zone_four_milli")
         z5 = zone.get("zone_five_milli")
 
-        # Map WHOOP zones into pct of total recorded time.
         hr0 = int(round(((z0 or 0) / total_zone_ms) * 100)) if total_zone_ms else None
         hr1 = int(round(((z1 or 0) / total_zone_ms) * 100)) if total_zone_ms else None
         hr2 = int(round(((z2 or 0) / total_zone_ms) * 100)) if total_zone_ms else None
@@ -132,8 +96,7 @@ async def backfill_last_28_days(athlete_id: str, access_token: str, db: Any) -> 
         hr5 = int(round(((z5 or 0) / total_zone_ms) * 100)) if total_zone_ms else None
 
         external_id = str(w.get("v1_id") or w.get("id"))
-        # Persist a display name while normalizing sport to our internal enum.
-        display_name = (w.get("sport_name") or "Workout")  # e.g. "Weightlifting"
+        display_name = (w.get("sport_name") or "Workout")
         sport_name = (w.get("sport_name") or "other").lower()
         if sport_name in ("weightlifting", "weight lifting", "strength training", "strength_training", "gym", "strength"):
             sport_name = "strength"
@@ -157,6 +120,80 @@ async def backfill_last_28_days(athlete_id: str, access_token: str, db: Any) -> 
             hr_zone_5_pct=hr5,
         )
         process_and_save_workout(payload, athlete_id, db)
+    
+    # Recalculate TSS history once after all workouts are in
+    recalculate_tss_history(athlete_id, db)
+
+    # 2) Recovery (HRV, RHR, spo2, skin temp, recovery score)
+    # This will now have access to the training load (ATL/CTL) for readiness scores
+    recoveries = await whoop.fetch_collection(access_token, "recovery", start_s, end_s)
+    print(f"[whoop.backfill] recoveries={len(recoveries)}")
+
+    for rec in recoveries:
+        created_at = rec.get("created_at")
+        if not created_at:
+            continue
+        d: date_type = _parse_dt(created_at).date()
+        score = (rec.get("score") or {}) if isinstance(rec.get("score"), dict) else {}
+
+        payload = DailyBiometrics(
+            date=d,
+            source="whoop",
+            hrv_rmssd=score.get("hrv_rmssd_milli") or score.get("hrv_rmssd_ms"),
+            resting_hr=score.get("resting_heart_rate"),
+            sleep_duration_min=None,
+            sleep_score=None,
+            sleep_deep_pct=None,
+            sleep_rem_pct=None,
+            sleep_need_min=None,
+            sleep_debt_min=None,
+            day_strain=None,
+            skin_temp_deviation=score.get("skin_temp_celsius"),
+            spo2_pct=score.get("spo2_percentage"),
+            recovery_score=rec.get("score", {}).get("recovery_score") if isinstance(rec.get("score"), dict) else None,
+        )
+        process_and_save_biometrics(payload, athlete_id, db)
+
+    # 3) Sleep (duration + stage breakdown + sleep score)
+    sleeps = await whoop.fetch_collection(access_token, "activity/sleep", start_s, end_s)
+    print(f"[whoop.backfill] sleeps={len(sleeps)}")
+
+    for slp in sleeps:
+        start_time = slp.get("start")
+        if not start_time:
+            continue
+        d = _parse_dt(start_time).date()
+
+        score = (slp.get("score") or {}) if isinstance(slp.get("score"), dict) else {}
+        stage = (score.get("stage_summary") or {}) if isinstance(score.get("stage_summary"), dict) else {}
+
+        light = stage.get("total_light_sleep_time_milli")
+        deep = stage.get("total_slow_wave_sleep_time_milli")
+        rem = stage.get("total_rem_sleep_time_milli")
+        awake = stage.get("total_awake_time_milli")
+        total_sleep_ms = sum(v for v in (light, deep, rem) if isinstance(v, (int, float)))
+        sleep_duration_min = int(total_sleep_ms / 60000) if total_sleep_ms else 0
+
+        payload = DailyBiometrics(
+            date=d,
+            source="whoop",
+            hrv_rmssd=None,
+            resting_hr=None,
+            sleep_duration_min=sleep_duration_min,
+            sleep_score=score.get("sleep_performance_percentage"),
+            sleep_deep_pct=_pct(deep, total_sleep_ms),
+            sleep_rem_pct=_pct(rem, total_sleep_ms),
+            sleep_light_pct=_pct(light, total_sleep_ms),
+            sleep_awake_pct=round((awake / (total_sleep_ms + awake)) * 100, 1) if (total_sleep_ms and awake) else 0.0,
+            sleep_bedtime=start_time,
+            sleep_wakeup=slp.get("end"),
+            is_nap=slp.get("nap", False),
+            sleep_need_min=None,
+            sleep_debt_min=None,
+            day_strain=None,
+            skin_temp_deviation=None,
+            spo2_pct=None,
+        )
+        process_and_save_biometrics(payload, athlete_id, db)
 
     print(f"[whoop.backfill] complete athlete_id={athlete_id}")
-
