@@ -29,3 +29,5 @@ class AthleteProfileUpdate(BaseModel):
     threshold_hr: Optional[int] = None
     threshold_pace: Optional[str] = None # String format like "5:00"
     sport_focus: Optional[List[str]] = None
+    notification_settings: Optional[dict] = None
+    privacy_settings: Optional[dict] = None

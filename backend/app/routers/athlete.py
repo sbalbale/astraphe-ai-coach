@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 from datetime import date, timedelta
 from typing import Optional, List
 from app.models.athlete import AthleteState, AthleteProfileUpdate
-from app.dependencies import get_current_athlete, get_db
+from app.dependencies import get_current_athlete, get_db, get_admin_db
 
 router = APIRouter(prefix="/v1/athlete", tags=["Athlete"])
 
@@ -153,3 +153,26 @@ async def update_athlete_profile(
     response = db.table("athletes").update(update_data).eq("id", athlete_id).execute()
     
     return {"status": "success", "message": "Profile updated successfully", "updated_fields": update_data}
+@router.delete("")
+async def delete_athlete_account(
+    athlete_id: str = Depends(get_current_athlete),
+    db = Depends(get_db),
+    admin_db = Depends(get_admin_db)
+):
+    "Permanently delete the athlete account and all associated data."
+    # Fetch user_id first to delete from auth
+    res = db.table("athletes").select("user_id").eq("id", athlete_id).single().execute()
+    if not res.data:
+        raise HTTPException(status_code=404, detail="Athlete not found")
+    
+    user_id = res.data["user_id"]
+    
+    # Delete athlete (cascades to workouts, biometrics, etc.)
+    admin_db.table("athletes").delete().eq("id", athlete_id).execute()
+    
+    # Delete from Supabase Auth (requires service role key)
+    try:
+        admin_db.auth.admin.delete_user(user_id)
+    except Exception as e:
+        print(f"Warning: Failed to delete auth user {user_id}: {str(e)}")
+    return {"status": "success", "message": "Account deleted successfully"}

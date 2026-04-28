@@ -2,13 +2,26 @@
   import Card from '$lib/components/Card.svelte';
   import { goto } from '$app/navigation';
 
-  let readiness = $state(true);
-  let coach = $state(true);
-  let workouts = $state(false);
-  let insights = $state(true);
+  let settings = $state(athleteStore.profile?.notification_settings || {
+    readiness: true,
+    coach: true,
+    workouts: false,
+    insights: true
+  });
+  
+  let saving = $state(false);
 
   function goBack() {
     goto('/profile');
+  }
+
+  async function toggleSetting(key: keyof typeof settings) {
+    settings[key] = !settings[key];
+    saving = true;
+    await athleteStore.updateProfile({
+      notification_settings: settings
+    });
+    saving = false;
   }
 </script>
 
@@ -32,28 +45,28 @@
             <p class="text-[13px] font-medium text-text0 group-hover:text-blue transition-colors">Daily Readiness</p>
             <p class="text-[10px] text-text2 mt-0.5">Morning alerts when your recovery score is ready.</p>
           </div>
-          <input type="checkbox" bind:checked={readiness} class="w-4 h-4 accent-blue" />
+          <input type="checkbox" checked={settings.readiness} onchange={() => toggleSetting('readiness')} disabled={saving} class="w-4 h-4 accent-blue" />
         </label>
         <label class="flex justify-between items-center py-3 border-b border-border cursor-pointer group">
           <div>
             <p class="text-[13px] font-medium text-text0 group-hover:text-teal transition-colors">Coach Messages</p>
             <p class="text-[10px] text-text2 mt-0.5">Real-time alerts when ASTRAPE updates your plan.</p>
           </div>
-          <input type="checkbox" bind:checked={coach} class="w-4 h-4 accent-teal" />
+          <input type="checkbox" checked={settings.coach} onchange={() => toggleSetting('coach')} disabled={saving} class="w-4 h-4 accent-teal" />
         </label>
         <label class="flex justify-between items-center py-3 border-b border-border cursor-pointer group">
           <div>
             <p class="text-[13px] font-medium text-text0 group-hover:text-amber transition-colors">Workout Reminders</p>
             <p class="text-[10px] text-text2 mt-0.5">1 hour before scheduled sessions.</p>
           </div>
-          <input type="checkbox" bind:checked={workouts} class="w-4 h-4 accent-amber" />
+          <input type="checkbox" checked={settings.workouts} onchange={() => toggleSetting('workouts')} disabled={saving} class="w-4 h-4 accent-amber" />
         </label>
         <label class="flex justify-between items-center py-3 cursor-pointer group">
           <div>
             <p class="text-[13px] font-medium text-text0 group-hover:text-[#4621FF] transition-colors">Weekly Insights</p>
             <p class="text-[10px] text-text2 mt-0.5">Summary of your load, form, and sleep trends.</p>
           </div>
-          <input type="checkbox" bind:checked={insights} class="w-4 h-4 accent-[#4621FF]" />
+          <input type="checkbox" checked={settings.insights} onchange={() => toggleSetting('insights')} disabled={saving} class="w-4 h-4 accent-[#4621FF]" />
         </label>
       </div>
     </Card>

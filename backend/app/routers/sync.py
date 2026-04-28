@@ -189,6 +189,16 @@ async def get_sync_status(athlete_id: str = Depends(get_current_athlete), db=Dep
         }
     }
 
+@router.delete("/{provider}")
+async def unlink_integration(
+    provider: str,
+    athlete_id: str = Depends(get_current_athlete),
+    db = Depends(get_db)
+):
+    """Unlinks a third-party integration by removing its OAuth tokens."""
+    db.table("oauth_tokens").delete().eq("athlete_id", athlete_id).eq("provider", provider).execute()
+    return {"status": "success", "message": f"{provider.capitalize()} unlinked successfully"}
+
 def get_athlete_by_garmin_id(db, garmin_id: str):
     """Looks up internal athlete_id by Garmin ID."""
     if not garmin_id: return None

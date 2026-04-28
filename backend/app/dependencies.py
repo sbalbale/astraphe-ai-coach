@@ -8,6 +8,9 @@ security = HTTPBearer()
 def get_db() -> Client:
     return create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
 
+def get_admin_db() -> Client:
+    return create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_ROLE_KEY or settings.SUPABASE_KEY)
+
 async def get_current_athlete(credentials: HTTPAuthorizationCredentials = Security(security), db: Client = Depends(get_db)) -> str:
     """Extracts athlete_id from Supabase JWT."""
     token = credentials.credentials
