@@ -4,34 +4,85 @@
   import Tag from '$lib/components/Tag.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import Pill from '$lib/components/Pill.svelte';
+  import FormDateInput from '$lib/components/FormDateInput.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
-  import { format, subDays } from 'date-fns';
+  import { addDays, format, subDays } from 'date-fns';
 
   const isConnected = $derived(Object.values(athleteStore.syncStatus?.integrations || {}).some((i: any) => i.connected));
   
-  let dayIndex = $state(0); // Default to today (index 0)
+  // Rolling 7-day window (cannot go into the future).
+  let selectedEndDay = $state(new Date());
+  let dayIndex = $state(0); // most recent on the left
+  const isoDate = (value: unknown) => (typeof value === 'string' ? value.slice(0, 10) : '');
+
+  const today = $derived(new Date());
+  const todayStr = $derived(format(today, 'yyyy-MM-dd'));
+
+  const clampedEndDay = $derived.by(() => {
+    const d = selectedEndDay instanceof Date ? selectedEndDay : new Date(selectedEndDay);
+    if (Number.isNaN(d.getTime())) return new Date();
+    return d > today ? today : d;
+  });
+
+  const windowStart = $derived(subDays(clampedEndDay, 6));
+  const windowEnd = $derived(clampedEndDay);
+  const rangeLabel = $derived(`${format(windowStart, 'MMM d')} – ${format(windowEnd, 'MMM d, yyyy')}`);
+  let endPickerValue = $state('');
+  const canGoForward = $derived(format(windowEnd, 'yyyy-MM-dd') !== todayStr);
+
+  $effect(() => {
+    endPickerValue = format(windowEnd, 'yyyy-MM-dd');
+  });
+
+  $effect(() => {
+    if (endPickerValue) selectedEndDay = new Date(endPickerValue);
+  });
 
   const days = $derived.by(() => {
-    // Today on the left (index 0)
     return Array.from({ length: 7 }, (_, i) => {
-      const d = subDays(new Date(), i);
+      // Most recent day on the left (index 0)
+      const d = subDays(windowEnd, i);
       const dateStr = format(d, 'yyyy-MM-dd');
       
       const b = athleteStore.biometrics?.series?.find((s: any) => s.date === dateStr);
-      const history = athleteStore.metrics?.trainingLoadData?.find((m: any) => m.date === dateStr);
+      const history = athleteStore.metrics?.trainingLoadData?.find((m: any) => isoDate(m?.date) === dateStr);
+      const hasStrain = b?.day_strain !== null && b?.day_strain !== undefined;
+
+      // Workout-derived strain proxy (preferred when day_strain isn't present).
+      // We treat "strain" as "did you train today?" — if no workout, show 0 and no warning.
+      const workoutsForDay = athleteStore.workouts?.filter((w: any) => isoDate(w?.started_at) === dateStr) || [];
+      const hasWorkout = workoutsForDay.length > 0;
+      const workoutStrainScore = Math.min(
+        100,
+        Math.round(
+          workoutsForDay.reduce((acc: number, w: any) => {
+            const s = Number(w?.astrape_strain_score);
+            if (!Number.isNaN(s) && s > 0) return acc + s;
+            const tss = Number(w?.tss);
+            if (!Number.isNaN(tss) && tss > 0) return acc + (tss / 150) * 100;
+            return acc;
+          }, 0),
+        ),
+      );
+      const computedScore = hasStrain ? Math.round((b.day_strain / 21) * 100) : hasWorkout ? workoutStrainScore : 0;
 
       return {
         date: dateStr,
-        label: i === 0 ? 'Today' : format(d, 'MMM d'),
+        label: dateStr === todayStr ? 'Today' : format(d, 'MMM d'),
         day: format(d, 'EE').charAt(0),
-        score: b?.day_strain ? Math.round((b.day_strain / 21) * 100) : 0,
+        score: computedScore,
         ctl: history?.ctl || athleteStore.ctl || 0,
         atl: history?.atl || athleteStore.atl || 0,
         tsb: history?.tsb || athleteStore.tsb || 0,
-        missing: !b && !history,
+        // Only show "no strain data" when a workout exists but we still can't compute strain.
+        missing: hasWorkout && !hasStrain && computedScore === 0,
         data: b
       };
     });
+  });
+
+  $effect(() => {
+    dayIndex = Math.max(0, Math.min(6, dayIndex ?? 0));
   });
 
   const d = $derived(days[dayIndex]);
@@ -60,9 +111,57 @@
       icon="🔥"
     />
   {:else}
+    <!-- 7-day window selector -->
+    <div class="flex items-center justify-between gap-2">
+      <div class="flex items-center gap-1.5 shrink-0">
+        <button
+          type="button"
+          class="h-8 w-8 rounded-md border border-border bg-glass text-text0"
+          aria-label="Previous 7 days"
+          onclick={() => (selectedEndDay = subDays(windowEnd, 7))}
+        >
+          ←
+        </button>
+        <div class="w-[150px]">
+          <FormDateInput
+            id="strain-end"
+            type="date"
+            bind:value={endPickerValue}
+            max={todayStr}
+            ariaLabel="Select end day"
+            inputClass="h-8 px-2 pr-9 rounded-md border border-border bg-glass text-[12px] text-text0"
+          />
+        </div>
+        <button
+          type="button"
+          class="h-8 px-2.5 rounded-md border border-border bg-glass text-text0 text-[12px]"
+          aria-label="Jump to today"
+          onclick={() => (selectedEndDay = new Date())}
+        >
+          Today
+        </button>
+        <button
+          type="button"
+          class="h-8 w-8 rounded-md border border-border bg-glass text-text0"
+          aria-label="Next 7 days"
+          disabled={!canGoForward}
+          style={!canGoForward ? 'opacity: 0.4; cursor: not-allowed;' : ''}
+          onclick={() => {
+            if (!canGoForward) return;
+            selectedEndDay = addDays(windowEnd, 7);
+          }}
+        >
+          →
+        </button>
+      </div>
+      <div class="text-[11px] text-text2 font-mono text-right">
+        {rangeLabel}
+      </div>
+    </div>
+
     <!-- Date selector -->
     <div class="flex gap-1.5 overflow-x-auto pb-0.5 shrink-0">
-      {#each days as day, i}
+      {#each days as day, i (day.date)}
         <Pill active={dayIndex === i} onclick={() => (dayIndex = i)}>
           {day.label}
         </Pill>
@@ -136,6 +235,25 @@
         </Card>
       </div>
 
+      <!-- Timeline -->
+      <Card>
+        <p class="text-[13px] font-semibold mb-3">7-Day Trend</p>
+        <div class="flex gap-2 items-end h-[50px] mb-1 px-1">
+          {#each days as day, i (day.date)}
+            {@const c = day.score >= 80 ? '#F07178' : day.score >= 40 ? '#FFCB88' : '#00C8A8'}
+            <button
+              type="button"
+              class="flex-1 flex flex-col items-center gap-1 cursor-pointer"
+              onclick={() => (dayIndex = i)}
+            >
+              <div class="w-full rounded-t-sm transition-all duration-300" 
+                   style="background: {i === dayIndex ? c : c + '44'}; height: {Math.max(4, (day.score / 100) * 50)}px;"></div>
+              <span class="text-[9px] font-mono {i === dayIndex ? 'text-text0' : 'text-text2'}">{day.day}</span>
+            </button>
+          {/each}
+        </div>
+      </Card>
+
       <!-- Analysis Card -->
       <Card style="background: var(--glass2); border-color: transparent;">
         <p class="text-[13px] font-semibold mb-1">Strain Analysis</p>
@@ -146,21 +264,5 @@
         </p>
       </Card>
     {/if}
-
-    <!-- Timeline -->
-    <Card>
-      <p class="text-[13px] font-semibold mb-3">7-Day Trend</p>
-      <div class="flex gap-2 items-end h-[50px] mb-1 px-1">
-        {#each [...days].reverse() as day, i}
-          {@const actualIdx = 6 - i}
-          {@const c = day.score >= 80 ? '#F07178' : day.score >= 40 ? '#FFCB88' : '#00C8A8'}
-          <div class="flex-1 flex flex-col items-center gap-1 cursor-pointer" onclick={() => dayIndex = actualIdx}>
-            <div class="w-full rounded-t-sm transition-all duration-300" 
-                 style="background: {actualIdx === dayIndex ? c : c + '44'}; height: {Math.max(4, (day.score / 100) * 50)}px;"></div>
-            <span class="text-[9px] font-mono {actualIdx === dayIndex ? 'text-text0' : 'text-text2'}">{day.day}</span>
-          </div>
-        {/each}
-      </div>
-    </Card>
   {/if}
 </div>

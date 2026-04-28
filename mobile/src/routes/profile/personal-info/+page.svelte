@@ -1,15 +1,33 @@
 <script lang="ts">
   import Card from '$lib/components/Card.svelte';
+  import FormDateInput from '$lib/components/FormDateInput.svelte';
   import { authStore } from '$lib/stores/authStore.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { goto } from '$app/navigation';
+  import { onMount } from 'svelte';
 
-  let name = $state(athleteStore.profile?.display_name || authStore.user?.user_metadata?.full_name || '');
+  let name = $state('');
   let email = $state(authStore.user?.email || '');
-  let dob = $state(athleteStore.profile?.date_of_birth || '1990-05-15');
-  let weight = $state(athleteStore.profile?.weight_kg || 75);
-  let height = $state(athleteStore.profile?.height_cm || 180);
+  let dob = $state('1990-05-15');
+  let weight = $state(75);
+  let height = $state(180);
+  let initialized = $state(false);
   let saving = $state(false);
+
+  onMount(async () => {
+    try {
+      await athleteStore.fetchAll();
+    } catch {
+      // ignore
+    }
+
+    if (initialized) return;
+    name = athleteStore.profile?.display_name || authStore.user?.user_metadata?.full_name || '';
+    dob = athleteStore.profile?.date_of_birth || '1990-05-15';
+    weight = athleteStore.profile?.weight_kg ?? 75;
+    height = athleteStore.profile?.height_cm ?? 180;
+    initialized = true;
+  });
 
   function goBack() {
     goto('/profile');
@@ -53,7 +71,7 @@
         </div>
         <div>
           <label for="dob" class="block text-[11px] text-text2 mb-1">Date of Birth</label>
-          <input id="dob" type="date" bind:value={dob} class="w-full p-2.5 bg-glass2 border border-border rounded-lg text-sm text-text0 outline-none focus:border-blue" />
+          <FormDateInput id="dob" type="date" bind:value={dob} ariaLabel="Date of Birth" />
         </div>
       </div>
     </Card>

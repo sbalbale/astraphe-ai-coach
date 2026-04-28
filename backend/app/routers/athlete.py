@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends, Query
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Optional, List
 from app.models.athlete import AthleteState, AthleteProfileUpdate
 from app.dependencies import get_current_athlete, get_user_db, get_admin_db
@@ -104,13 +104,24 @@ async def get_athlete_metrics(
     end_date = end_date or date.today()
     
     # Query recent tss_history
-    tss_res = db.table("tss_history").select("date,ctl,atl,tsb").eq("athlete_id", athlete_id).gte("date", start_date.isoformat()).lte("date", end_date.isoformat()).order("date").execute()
+    tss_res = (
+        db.table("tss_history")
+        .select("date,daily_tss,ctl,atl,tsb")
+        .eq("athlete_id", athlete_id)
+        .gte("date", start_date.isoformat())
+        .lte("date", end_date.isoformat())
+        .order("date")
+        .execute()
+    )
     
     training_load_data = []
     for row in tss_res.data:
         d = date.fromisoformat(row["date"])
         training_load_data.append({
-            "date": d.strftime("%a"),
+            # Keep ISO date for reliable client-side matching, plus a short label for charts.
+            "date": row["date"],
+            "day": d.strftime("%a"),
+            "daily_tss": row.get("daily_tss") or 0,
             "ctl": row["ctl"] or 0,
             "atl": row["atl"] or 0,
             "tsb": row["tsb"] or 0
@@ -150,9 +161,54 @@ async def update_athlete_profile(
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields provided for update")
 
-    response = db.table("athletes").update(update_data).eq("id", athlete_id).execute()
-    
-    return {"status": "success", "message": "Profile updated successfully", "updated_fields": update_data}
+    # Supabase client JSON-encodes request bodies; normalize non-JSON types.
+    for k, v in list(update_data.items()):
+        if isinstance(v, (date, datetime)):
+            update_data[k] = v.isoformat()
+
+    # Normalize values that can vary by client implementation.
+    # - measurement_units: enforce known values
+    units = update_data.get("measurement_units")
+    if units is not None:
+        units_norm = str(units).strip().lower()
+        if units_norm in ("metric", "imperial"):
+            update_data["measurement_units"] = units_norm
+        else:
+            raise HTTPException(status_code=422, detail="measurement_units must be 'metric' or 'imperial'")
+
+    # Execute update with RLS context.
+    # Note: supabase-py/postgrest does not always support chaining `.select()` after `.update()`
+    # across versions. We do a follow-up SELECT to return the updated row consistently.
+    try:
+        update_res = (
+            db.table("athletes")
+            .update(update_data)
+            .eq("id", athlete_id)
+            .execute()
+        )
+    except Exception as e:
+        print(f"[athlete.profile.patch] update failed: {repr(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to update athlete profile: {str(e)}")
+
+    # If RLS blocks the update, some clients won't raise but data may be empty.
+    if getattr(update_res, "data", None) == []:
+        raise HTTPException(status_code=403, detail="Profile update was not permitted")
+
+    try:
+        fresh = db.table("athletes").select("*").eq("id", athlete_id).single().execute()
+    except Exception as e:
+        print(f"[athlete.profile.patch] fetch after update failed: {repr(e)}")
+        raise HTTPException(status_code=500, detail=f"Updated profile but failed to re-fetch: {str(e)}")
+
+    if not getattr(fresh, "data", None):
+        raise HTTPException(status_code=500, detail="Updated profile but could not load updated record")
+
+    return {
+        "status": "success",
+        "message": "Profile updated successfully",
+        "updated_fields": update_data,
+        "profile": fresh.data,
+    }
 @router.delete("")
 async def delete_athlete_account(
     athlete_id: str = Depends(get_current_athlete),

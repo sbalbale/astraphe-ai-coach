@@ -2,10 +2,54 @@
   import Card from '$lib/components/Card.svelte';
   import Pill from '$lib/components/Pill.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
+  import FormDateInput from '$lib/components/FormDateInput.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
+  import {
+    addDays,
+    addMonths,
+    endOfMonth,
+    endOfWeek,
+    format,
+    isWithinInterval,
+    startOfMonth,
+    startOfWeek
+  } from 'date-fns';
 
   let sport = $state('all');
   let editZone: number | null = $state(null);
+
+  type WindowMode = 'week' | 'month';
+  let windowMode: WindowMode = $state('week');
+
+  const pad2 = (n: number) => String(n).padStart(2, '0');
+  const toDateInputValue = (d: Date) =>
+    `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  const toMonthInputValue = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`;
+
+  // Default to "today" in local time for inputs.
+  let selectedDay = $state(toDateInputValue(new Date()));
+  let selectedMonth = $state(toMonthInputValue(new Date()));
+  let dayPickerValue = $state('');
+  let monthPickerValue = $state('');
+
+  function jumpToToday() {
+    const now = new Date();
+    if (windowMode === 'week') selectedDay = toDateInputValue(now);
+    else selectedMonth = toMonthInputValue(now);
+  }
+
+  $effect(() => {
+    dayPickerValue = selectedDay;
+    monthPickerValue = selectedMonth;
+  });
+
+  $effect(() => {
+    if (windowMode === 'week') selectedDay = dayPickerValue;
+  });
+
+  $effect(() => {
+    if (windowMode === 'month') selectedMonth = monthPickerValue;
+  });
 
   const hasProfile = $derived(!!athleteStore.profile);
   
@@ -36,24 +80,61 @@
     { id: 'other', label: '🏁 Other' }
   ];
 
-  const filteredWorkouts = $derived(
+  const sportFilteredWorkouts = $derived(
     sport === 'all' 
       ? athleteStore.workouts 
       : athleteStore.workouts.filter(w => w.sport?.toLowerCase() === sport)
   );
 
-  const hasWorkouts = $derived(filteredWorkouts.length > 0);
+  const windowStart = $derived.by(() => {
+    if (windowMode === 'week') {
+      const d = new Date(selectedDay);
+      return startOfWeek(d, { weekStartsOn: 1 });
+    }
+    const monthDate = new Date(`${selectedMonth}-01T00:00:00`);
+    return startOfMonth(monthDate);
+  });
+
+  const windowEnd = $derived.by(() => {
+    if (windowMode === 'week') {
+      const d = new Date(selectedDay);
+      return endOfWeek(d, { weekStartsOn: 1 });
+    }
+    const monthDate = new Date(`${selectedMonth}-01T00:00:00`);
+    return endOfMonth(monthDate);
+  });
+
+  const windowLabel = $derived.by(() => {
+    if (windowMode === 'week') {
+      return `${format(windowStart, 'MMM d')} – ${format(windowEnd, 'MMM d, yyyy')}`;
+    }
+    return format(windowStart, 'MMM yyyy');
+  });
+
+  const timeAndSportFilteredWorkouts = $derived.by(() => {
+    const start = windowStart;
+    const end = windowEnd;
+    return sportFilteredWorkouts.filter((w) => {
+      const raw = (w as any).started_at;
+      if (!raw) return false;
+      const startedAt = new Date(raw);
+      if (Number.isNaN(startedAt.getTime())) return false;
+      return isWithinInterval(startedAt, { start, end });
+    });
+  });
+
+  const hasWorkouts = $derived(timeAndSportFilteredWorkouts.length > 0);
 
   // Memoize distribution calculation
   const distribution = $derived.by(() => {
-    if (!hasWorkouts) return [0, 0, 0, 0, 0];
+    if (!hasWorkouts) return { pcts: [0, 0, 0, 0, 0] as number[], validCount: 0, totalCount: 0 };
     
     let totals = [0, 0, 0, 0, 0];
     let validCount = 0;
     
     // Use a single pass over workouts
-    for (let i = 0; i < filteredWorkouts.length; i++) {
-      const w = filteredWorkouts[i];
+    for (let i = 0; i < timeAndSportFilteredWorkouts.length; i++) {
+      const w = timeAndSportFilteredWorkouts[i];
       if (w.hr_zone_1_pct !== null) {
         totals[0] += (w.hr_zone_1_pct || 0);
         totals[1] += (w.hr_zone_2_pct || 0);
@@ -64,7 +145,9 @@
       }
     }
     
-    if (validCount === 0) return [0, 0, 0, 0, 0];
+    if (validCount === 0) {
+      return { pcts: [0, 0, 0, 0, 0] as number[], validCount: 0, totalCount: timeAndSportFilteredWorkouts.length };
+    }
     
     const count = validCount;
     
@@ -78,7 +161,7 @@
       rounded[maxIdx] += (100 - sum);
     }
     
-    return rounded;
+    return { pcts: rounded, validCount, totalCount: timeAndSportFilteredWorkouts.length };
   });
 </script>
 
@@ -103,7 +186,7 @@
   {:else}
     <!-- Sport toggle -->
     <div class="flex gap-1.5 overflow-x-auto pb-1 no-scrollbar shrink-0">
-      {#each sportOptions as s}
+      {#each sportOptions as s (s.id)}
         <Pill active={sport === s.id} onclick={() => sport = s.id}>
           {s.label}
         </Pill>
@@ -134,7 +217,7 @@
     <Card>
       <p class="text-[13px] font-semibold mb-3.5">Zone Definitions</p>
       <div class="flex flex-col gap-2.5">
-        {#each zones as z, i}
+        {#each zones as z, i (z.zone)}
           <button 
             class="flex flex-col text-left bg-transparent border-none p-0 cursor-pointer w-full text-text0"
             onclick={() => editZone = editZone === i ? null : i}
@@ -168,6 +251,90 @@
     <!-- Weekly distribution -->
     <Card>
       <p class="text-[13px] font-semibold mb-3">Time in Zones ({sport === 'all' ? 'All Activities' : sport.toUpperCase()})</p>
+      <div class="flex flex-col gap-2.5 mb-3">
+        <div class="flex items-center gap-2">
+          <div class="flex bg-glass2 border border-border/50 rounded-lg overflow-hidden shrink-0">
+            <button
+              class="px-2.5 py-1 text-[10px] font-mono uppercase tracking-widest transition-colors {windowMode === 'week' ? 'bg-glass text-text0' : 'text-text2 hover:text-text0'}"
+              onclick={() => windowMode = 'week'}
+              type="button"
+            >
+              Week
+            </button>
+            <button
+              class="px-2.5 py-1 text-[10px] font-mono uppercase tracking-widest transition-colors {windowMode === 'month' ? 'bg-glass text-text0' : 'text-text2 hover:text-text0'}"
+              onclick={() => windowMode = 'month'}
+              type="button"
+            >
+              Month
+            </button>
+          </div>
+
+          <div class="ml-auto flex items-center gap-1.5">
+            <button
+              class="w-7 h-7 rounded-lg bg-glass2 border border-border/50 hover:bg-glass transition-colors flex items-center justify-center text-text1"
+              onclick={() => {
+                if (windowMode === 'week') selectedDay = toDateInputValue(addDays(new Date(selectedDay), -7));
+                else selectedMonth = toMonthInputValue(addMonths(new Date(`${selectedMonth}-01T00:00:00`), -1));
+              }}
+              type="button"
+              aria-label={windowMode === 'week' ? 'Previous week' : 'Previous month'}
+              title={windowMode === 'week' ? 'Previous week' : 'Previous month'}
+            >
+              ‹
+            </button>
+
+            {#if windowMode === 'week'}
+              <div class="w-[130px]">
+                <FormDateInput
+                  id="zones-week"
+                  type="date"
+                  bind:value={dayPickerValue}
+                  ariaLabel="Select week"
+                  inputClass="h-7 px-2 pr-9 rounded-lg bg-glass2 border border-border/50 text-[10px] font-mono text-text1 focus:outline-none focus:ring-1 focus:ring-blue/40"
+                />
+              </div>
+            {:else}
+              <div class="w-[130px]">
+                <FormDateInput
+                  id="zones-month"
+                  type="month"
+                  bind:value={monthPickerValue}
+                  ariaLabel="Select month"
+                  inputClass="h-7 px-2 pr-9 rounded-lg bg-glass2 border border-border/50 text-[10px] font-mono text-text1 focus:outline-none focus:ring-1 focus:ring-blue/40"
+                />
+              </div>
+            {/if}
+
+            <button
+              class="h-7 px-2 rounded-lg bg-glass2 border border-border/50 hover:bg-glass transition-colors text-[10px] font-mono text-text1"
+              onclick={jumpToToday}
+              type="button"
+              aria-label="Jump to current week/month"
+              title="Today"
+            >
+              Today
+            </button>
+
+            <button
+              class="w-7 h-7 rounded-lg bg-glass2 border border-border/50 hover:bg-glass transition-colors flex items-center justify-center text-text1"
+              onclick={() => {
+                if (windowMode === 'week') selectedDay = toDateInputValue(addDays(new Date(selectedDay), 7));
+                else selectedMonth = toMonthInputValue(addMonths(new Date(`${selectedMonth}-01T00:00:00`), 1));
+              }}
+              type="button"
+              aria-label={windowMode === 'week' ? 'Next week' : 'Next month'}
+              title={windowMode === 'week' ? 'Next week' : 'Next month'}
+            >
+              ›
+            </button>
+          </div>
+        </div>
+
+        <p class="text-[10px] text-text2 text-center font-mono tracking-widest uppercase">
+          {windowLabel}
+        </p>
+      </div>
       {#if !hasWorkouts}
         <div class="flex flex-col items-center justify-center py-6 opacity-60">
           <p class="text-xs text-text2">No training distribution data for this selection.</p>
@@ -175,14 +342,14 @@
       {:else}
         <div class="flex flex-col gap-3">
           <div class="h-6 w-full flex rounded-lg overflow-hidden border border-border/50">
-            {#each distribution as pct, i}
+            {#each distribution.pcts as pct, i (i)}
               {@const colors = ['#4621FF', '#00C8A8', '#FFCB88', '#F07178', '#FF4791']}
               <div class="h-full transition-all duration-500" style="width: {pct}%; background: {colors[i]};" title="Z{i+1}: {pct}%"></div>
             {/each}
           </div>
           
           <div class="grid grid-cols-2 gap-x-4 gap-y-2">
-            {#each distribution as pct, i}
+            {#each distribution.pcts as pct, i (i)}
               {@const colors = ['#4621FF', '#00C8A8', '#FFCB88', '#F07178', '#FF4791']}
               {@const labels = ['Z1 Recovery', 'Z2 Aerobic', 'Z3 Tempo', 'Z4 Threshold', 'Z5 Anaerobic']}
               <div class="flex items-center justify-between">
@@ -196,7 +363,7 @@
           </div>
           
           <p class="text-[10px] text-text2 italic mt-1 text-center">
-            Average distribution across {filteredWorkouts.length} {sport === 'all' ? 'activities' : sport} sessions.
+            Average distribution across {distribution.validCount} sessions (from {distribution.totalCount} in range). {windowLabel}
           </p>
         </div>
       {/if}

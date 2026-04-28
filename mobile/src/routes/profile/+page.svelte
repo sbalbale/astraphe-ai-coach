@@ -5,6 +5,7 @@
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { goto } from '$app/navigation';
   import { HealthIntegration } from '$lib/integrations/health';
+  import { api } from '$lib/api';
 
   const menu = [
     { label: 'Personal Information', href: '/profile/personal-info' },
@@ -29,15 +30,14 @@
 
     if (id === 'apple') {
       if (integrations.apple.connected) {
-        await athleteStore.unlinkIntegration('apple');
+        await athleteStore.unlinkIntegration('healthkit');
       } else {
         const granted = await HealthIntegration.requestPermissions();
         if (granted) {
           await HealthIntegration.syncRecentData();
-          athleteStore.syncStatus = {
-            ...athleteStore.syncStatus,
-            integrations: { ...integrations, apple: { connected: true } }
-          };
+          // Refresh from backend so UI reflects the real connection state.
+          const syncData = await api.getSyncStatus();
+          if (syncData) athleteStore.syncStatus = syncData;
         }
       }
     } else if (id === 'whoop') {
@@ -51,10 +51,8 @@
         await athleteStore.unlinkIntegration('garmin');
       } else {
         await new Promise(resolve => setTimeout(resolve, 1500));
-        athleteStore.syncStatus = {
-          ...athleteStore.syncStatus,
-          integrations: { ...integrations, garmin: { connected: true } }
-        };
+        const syncData = await api.getSyncStatus();
+        if (syncData) athleteStore.syncStatus = syncData;
       }
     }
     

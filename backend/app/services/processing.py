@@ -42,15 +42,31 @@ def process_and_save_workout(payload: WorkoutPayload, athlete_id: str, db):
     mapped_sport = sport if sport in ('run', 'bike', 'swim', 'strength', 'rowing') else 'other'
     if sport == 'cycling': mapped_sport = 'bike'
 
+    # Duration / end time handling:
+    # DB schema uses ended_at; mobile expects duration_secs but we compute that at read time too.
+    duration_seconds = payload.duration_seconds
+    ended_at = payload.ended_at
+    if ended_at is None and payload.start_time and duration_seconds:
+        ended_at = payload.start_time + timedelta(seconds=duration_seconds)
+    if duration_seconds is None and payload.start_time and ended_at:
+        duration_seconds = int(max(0, (ended_at - payload.start_time).total_seconds()))
+
     # 2. Save the workout
     db.table("workouts").upsert({
         "athlete_id": athlete_id,
         "source": payload.source,
         "external_id": payload.external_id,
         "sport": mapped_sport,
+        "title": getattr(payload, "title", None),
         "started_at": payload.start_time.isoformat(),
-        "duration_secs": payload.duration_seconds,
+        "ended_at": ended_at.isoformat() if ended_at else None,
+        "distance_m": payload.distance_m,
+        "avg_hr": payload.average_hr,
+        "max_hr": payload.max_hr,
+        "norm_power_w": payload.normalized_power,
+        "avg_pace_sec_km": payload.avg_pace_sec_km,
         "tss": tss,
+        "astrape_strain_score": astrape_strain_score,
         "hr_zone_1_pct": payload.hr_zone_1_pct,
         "hr_zone_2_pct": payload.hr_zone_2_pct,
         "hr_zone_3_pct": payload.hr_zone_3_pct,

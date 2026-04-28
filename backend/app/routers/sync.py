@@ -1,9 +1,11 @@
 import urllib.parse
 import secrets
+import asyncio
 from fastapi import APIRouter, Request, Response, HTTPException, Depends, BackgroundTasks
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, HTMLResponse
 from app.dependencies import get_current_athlete, get_user_db, get_admin_db
 from app.services import whoop
+from app.services.whoop_backfill import backfill_last_28_days
 from app.config import settings
 from datetime import datetime
 from app.models.workout import WorkoutPayload
@@ -128,6 +130,7 @@ async def whoop_oauth_authorize(athlete_id: str = None):
     """Step 1: Redirect user to WHOOP for authorization."""
     redirect_url = get_clean_redirect_url()
     state = athlete_id or settings.TEST_ATHLETE_ID or secrets.token_urlsafe(16)
+    print(f"[whoop.oauth.authorize] redirect_uri={redirect_url} state={state}")
     
     params = {
         "response_type": "code",
@@ -138,12 +141,14 @@ async def whoop_oauth_authorize(athlete_id: str = None):
     }
     
     query_string = urllib.parse.urlencode(params)
+    print(f"[whoop.oauth.authorize] auth_url={settings.WHOOP_OAUTH_AUTH_URL}?{query_string}")
     return RedirectResponse(url=f"{settings.WHOOP_OAUTH_AUTH_URL}?{query_string}")
 
 @router.get("/oauth/whoop/callback")
 async def whoop_oauth_callback(code: str, state: str = None, db = Depends(get_admin_db)):
     """Step 2: WHOOP redirects back here with a code."""
     redirect_url = get_clean_redirect_url()
+    print(f"[whoop.oauth.callback] state={state} redirect_uri={redirect_url}")
     
     try:
         token_data = await whoop.exchange_oauth_code(code, redirect_url)
@@ -153,12 +158,17 @@ async def whoop_oauth_callback(code: str, state: str = None, db = Depends(get_ad
         profile = await whoop.fetch_profile(access_token)
         measurements = await whoop.fetch_body_measurement(access_token)
         
-        db.table("athletes").upsert({
-            "id": athlete_id,
+        # The athlete row is created at signup and includes a NOT NULL user_id.
+        # Do NOT upsert here (would try to insert with null user_id). Instead update the existing row.
+        existing = db.table("athletes").select("id").eq("id", athlete_id).single().execute()
+        if not getattr(existing, "data", None):
+            raise HTTPException(status_code=404, detail="Athlete not found for WHOOP callback state")
+
+        db.table("athletes").update({
             "display_name": profile.get("first_name", "Athlete"),
             "weight_kg": measurements.get("weight_kilograms"),
             "max_hr": measurements.get("max_heart_rate"),
-        }).execute()
+        }).eq("id", athlete_id).execute()
 
         db.table("oauth_tokens").upsert({
             "athlete_id": athlete_id,
@@ -167,11 +177,39 @@ async def whoop_oauth_callback(code: str, state: str = None, db = Depends(get_ad
             "access_token": access_token,
             "refresh_token": token_data.get("refresh_token"),
         }).execute()
+
+        # Kick off an initial backfill so the app has immediate history.
+        # Runs in-process; in production we'd likely use a job queue.
+        try:
+            asyncio.create_task(backfill_last_28_days(athlete_id, access_token, db))
+        except Exception as e:
+            print(f"[whoop.backfill] failed to start: {repr(e)}")
         
-        return RedirectResponse(url=f"{settings.MOBILE_DEEP_LINK_SCHEME}://connected?status=success")
+        deep_link = f"{settings.MOBILE_DEEP_LINK_SCHEME}://connected?provider=whoop&status=success"
+        # When this flow runs in a desktop browser, custom URI schemes won't open reliably.
+        # Return a tiny HTML page that attempts the deep link and provides a manual link.
+        return HTMLResponse(
+            f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>WHOOP Connected</title>
+  </head>
+  <body style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; padding: 24px;">
+    <h2>WHOOP connected</h2>
+    <p>Your WHOOP account is connected. You can return to the app.</p>
+    <p><a href="{deep_link}">Open ASTRAPE</a></p>
+    <script>
+      try {{ window.location.href = "{deep_link}"; }} catch (e) {{}}
+    </script>
+  </body>
+</html>""",
+            status_code=200,
+        )
         
     except Exception as e:
-        print(f"ERROR in Callback: {str(e)}")
+        print(f"[whoop.oauth.callback] ERROR: {repr(e)}")
         return {"status": "error", "message": str(e)}
 
 @router.get("/status")
@@ -185,7 +223,9 @@ async def get_sync_status(athlete_id: str = Depends(get_current_athlete), db=Dep
         "integrations": {
             "garmin": {"connected": "garmin" in providers, "last_sync": "2026-04-26T10:14:00Z"},
             "whoop": {"connected": "whoop" in providers, "last_sync": None},
-            "healthkit": {"connected": True, "last_sync": "2026-04-26T06:12:00Z"}
+            # HealthKit does not use OAuth tokens. Until the mobile client sends a verifiable
+            # handshake/sync marker, report it as disconnected.
+            "healthkit": {"connected": False, "last_sync": None}
         }
     }
 
