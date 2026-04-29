@@ -142,6 +142,49 @@
     return 0;
   }
 
+  type ZoneBreakdown = {
+    validSeconds: number;
+    zoneSeconds: number[]; // index = zone 0..5
+    zonePct: number[]; // index = zone 0..5
+  };
+
+  function computeZoneBreakdown(workouts: any[]): ZoneBreakdown {
+    const zoneSeconds = [0, 0, 0, 0, 0, 0];
+    let validSeconds = 0;
+
+    for (let i = 0; i < workouts.length; i++) {
+      const w = workouts[i];
+      // We treat zone data as present if at least Z1 exists (matches other pages' convention).
+      if (w?.hr_zone_1_pct === null || w?.hr_zone_1_pct === undefined) continue;
+
+      const duration = getDurationSecs(w);
+      if (!duration) continue;
+
+      const z1 = Number(w?.hr_zone_1_pct || 0);
+      const z2 = Number(w?.hr_zone_2_pct || 0);
+      const z3 = Number(w?.hr_zone_3_pct || 0);
+      const z4 = Number(w?.hr_zone_4_pct || 0);
+      const z5 = Number(w?.hr_zone_5_pct || 0);
+      const z0 = Math.max(0, 100 - (z1 + z2 + z3 + z4 + z5));
+
+      const pcts = [z0, z1, z2, z3, z4, z5];
+      for (let z = 0; z <= 5; z++) zoneSeconds[z] += (duration * pcts[z]) / 100;
+      validSeconds += duration;
+    }
+
+    if (!validSeconds) return { validSeconds: 0, zoneSeconds, zonePct: [0, 0, 0, 0, 0, 0] };
+
+    // Round to whole % and normalize so it sums to exactly 100.
+    let zonePct = zoneSeconds.map((s) => Math.round((s / validSeconds) * 100));
+    let sum = zonePct.reduce((a, b) => a + b, 0);
+    if (sum !== 100 && sum > 0) {
+      const maxIdx = zonePct.indexOf(Math.max(...zonePct));
+      zonePct[maxIdx] += 100 - sum;
+    }
+
+    return { validSeconds, zoneSeconds, zonePct };
+  }
+
   let selectedWorkout = $state<any>(null);
   let showWorkoutModal = $state(false);
 
@@ -149,6 +192,13 @@
     selectedWorkout = w;
     showWorkoutModal = true;
   }
+
+  const dayZones = $derived.by(() => computeZoneBreakdown(d?.workouts || []));
+
+  const formatMinutes = (secs: number) => {
+    const m = Math.round(Math.max(0, secs) / 60);
+    return m < 1 ? '0m' : `${m}m`;
+  };
 </script>
 
 <div class="flex flex-col gap-3">
@@ -316,6 +366,43 @@
           {/each}
         </div>
       </Card>
+
+      {#if dayZones.validSeconds > 0}
+        <Card>
+          <div class="flex justify-between items-center mb-3">
+            <p class="text-[13px] font-semibold">Heart Rate Zones</p>
+            <span class="text-[10px] text-text2 font-mono">
+              {formatMinutes(dayZones.validSeconds)} total
+            </span>
+          </div>
+          <div class="flex flex-col gap-3">
+            {#each [5, 4, 3, 2, 1, 0] as zone (zone)}
+              {@const pct = dayZones.zonePct[zone] || 0}
+              {@const secs = dayZones.zoneSeconds[zone] || 0}
+              <div class="flex items-center gap-3">
+                <div class="w-9 flex items-center gap-1.5 shrink-0">
+                  <div class="w-2 h-2 rounded-full" style="background: var(--zone-{zone})"></div>
+                  <span class="text-[10px] font-mono text-text2">Z{zone}</span>
+                </div>
+                <div class="flex-1 h-1.5 bg-glass rounded-full overflow-hidden relative">
+                  <div
+                    class="absolute inset-y-0 left-0 rounded-full transition-all duration-500"
+                    style="width: {pct}%; background: var(--zone-{zone})"
+                  ></div>
+                </div>
+                <div class="w-[84px] text-right shrink-0">
+                  <span class="text-[11px] font-bold font-mono {pct > 0 ? 'text-text1' : 'text-text3'}">
+                    {formatMinutes(secs)} · {pct}%
+                  </span>
+                </div>
+              </div>
+            {/each}
+          </div>
+          <p class="text-[10px] text-text2 italic mt-3 text-center">
+            Aggregated from sessions on {d.date} with zone data.
+          </p>
+        </Card>
+      {/if}
 
       {#if d.workouts && d.workouts.length > 0}
         <div>

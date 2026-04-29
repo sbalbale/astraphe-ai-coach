@@ -221,6 +221,18 @@ async def update_athlete_profile(
         else:
             raise HTTPException(status_code=422, detail="measurement_units must be 'metric' or 'imperial'")
 
+    # - time_format: enforce known values ("12h" | "24h")
+    tf = update_data.get("time_format")
+    if tf is not None:
+        tf_norm = str(tf).strip().lower()
+        # Accept a few common variants from clients (e.g. "12-hour", "12 hour").
+        if tf_norm in ("12h", "12-hour", "12 hour", "12hour", "12"):
+            update_data["time_format"] = "12h"
+        elif tf_norm in ("24h", "24-hour", "24 hour", "24hour", "24"):
+            update_data["time_format"] = "24h"
+        else:
+            raise HTTPException(status_code=422, detail="time_format must be '12h' or '24h'")
+
     # - gender: used by Banister TRIMP constants; keep supported values narrow
     gender = update_data.get("gender")
     if gender is not None:

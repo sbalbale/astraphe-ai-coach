@@ -2,6 +2,7 @@
   import Card from '$lib/components/Card.svelte';
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
+  import { confirm } from '$lib/confirm';
 
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { authStore } from '$lib/stores/authStore.svelte';
@@ -43,7 +44,14 @@
   }
 
   async function handleDeleteAccount() {
-    if (confirm('Are you sure you want to permanently delete your account? This action cannot be undone.')) {
+    const ok = await confirm({
+      title: 'Delete account?',
+      message: 'Permanently delete your account and wipe all personal data from our servers? This cannot be undone.',
+      confirmText: 'Delete Account',
+      cancelText: 'Cancel',
+      confirmTone: 'danger'
+    });
+    if (ok) {
       try {
         console.log('[Privacy] Deleting account...');
         const success = await athleteStore.deleteAccount();

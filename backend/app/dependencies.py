@@ -56,3 +56,27 @@ async def get_current_athlete(
             print(f"WARNING: Falling back to TEST_ATHLETE_ID: {settings.TEST_ATHLETE_ID}")
             return settings.TEST_ATHLETE_ID
         raise HTTPException(status_code=401, detail=f"Invalid or missing token: {str(e)}")
+
+
+async def get_current_user_tier(
+    credentials: HTTPAuthorizationCredentials = Security(security),
+    db: Client = Depends(get_user_db),
+) -> str:
+    """
+    Returns the authenticated user's tier (free|trial|premium).
+    Source of truth: Supabase Auth app_metadata.tier.
+    """
+    token = credentials.credentials
+    try:
+        user_res = db.auth.get_user(token)
+        u = user_res.user
+        app_meta = getattr(u, "app_metadata", None) or {}
+        user_meta = getattr(u, "user_metadata", None) or {}
+        tier_raw = (app_meta.get("tier") or user_meta.get("tier") or "free")
+        tier = str(tier_raw).strip().lower()
+        if tier not in ("free", "trial", "premium"):
+            return "free"
+        return tier
+    except Exception:
+        # Tier should never block core flows; treat as free on any auth lookup issues.
+        return "free"

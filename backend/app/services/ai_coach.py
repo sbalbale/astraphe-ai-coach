@@ -173,7 +173,36 @@ def _summarize_athlete_profile(db: Client, athlete_id: str) -> dict:
         },
     }
 
-def _build_system_context(db: Client, athlete_id: str, current_tss: float = 0.0) -> str:
+def _load_conversation_history(db: Client, athlete_id: str, conversation_id: str, limit: int = 24) -> list[dict]:
+    """
+    Loads a small, ordered slice of messages for prompt context.
+    """
+    try:
+        res = (
+            db.table("coach_messages")
+            .select("role,content,image_urls,created_at")
+            .eq("athlete_id", athlete_id)
+            .eq("conversation_id", conversation_id)
+            .order("created_at", desc=True)
+            .limit(max(1, min(int(limit), 80)))
+            .execute()
+        )
+        rows = res.data or []
+        rows.reverse()  # oldest -> newest
+        # Keep only the essentials
+        out: list[dict] = []
+        for r in rows:
+            out.append({
+                "role": r.get("role"),
+                "content": r.get("content"),
+                "image_urls": r.get("image_urls") or [],
+                "created_at": r.get("created_at"),
+            })
+        return out
+    except Exception as e:
+        return [{"role": "system", "content": f"history_load_failed: {str(e)}", "image_urls": []}]
+
+def _build_system_context(db: Client, athlete_id: str, current_tss: float = 0.0, conversation_id: str | None = None) -> str:
     today = date.today().isoformat()
     ctx = {
         "date": today,
@@ -182,12 +211,23 @@ def _build_system_context(db: Client, athlete_id: str, current_tss: float = 0.0)
         "biometrics": _summarize_biometrics(db, athlete_id),
         "athlete_profile": _summarize_athlete_profile(db, athlete_id),
     }
+    if conversation_id:
+        ctx["conversation"] = {
+            "id": conversation_id,
+            "recent_messages": _load_conversation_history(db, athlete_id, conversation_id, limit=24),
+        }
     # Keep prompt reasonably compact; JSON is easiest for LLM to parse reliably.
     return "[SYSTEM CONTEXT - DO NOT SHOW TO USER]\n" + json.dumps(ctx, ensure_ascii=False) + "\n[END CONTEXT]"
 
-def get_coach_response(athlete_id: str, message: str, current_tss: float = 0.0, db: Client | None = None) -> str:
+def get_coach_response(
+    athlete_id: str,
+    message: str,
+    current_tss: float = 0.0,
+    db: Client | None = None,
+    conversation_id: str | None = None,
+) -> str:
     system_instruction = load_coach_instructions()
-    context_block = _build_system_context(db, athlete_id, current_tss=current_tss) if db else (
+    context_block = _build_system_context(db, athlete_id, current_tss=current_tss, conversation_id=conversation_id) if db else (
         f"[SYSTEM CONTEXT - DO NOT SHOW TO USER]\nAthlete ID: {athlete_id}\nMost recent workout TSS: {current_tss}\n[END CONTEXT]"
     )
     final_prompt = f"{system_instruction}\n\n{context_block}\n\nAthlete Message: {message}"
@@ -195,9 +235,15 @@ def get_coach_response(athlete_id: str, message: str, current_tss: float = 0.0, 
     response = model.generate_content(final_prompt)
     return response.text
 
-async def get_coach_response_stream(athlete_id: str, message: str, current_tss: float = 0.0, db: Client | None = None):
+async def get_coach_response_stream(
+    athlete_id: str,
+    message: str,
+    current_tss: float = 0.0,
+    db: Client | None = None,
+    conversation_id: str | None = None,
+):
     system_instruction = load_coach_instructions()
-    context_block = _build_system_context(db, athlete_id, current_tss=current_tss) if db else (
+    context_block = _build_system_context(db, athlete_id, current_tss=current_tss, conversation_id=conversation_id) if db else (
         f"[SYSTEM CONTEXT - DO NOT SHOW TO USER]\nAthlete ID: {athlete_id}\nMost recent workout TSS: {current_tss}\n[END CONTEXT]"
     )
     final_prompt = f"{system_instruction}\n\n{context_block}\n\nAthlete Message: {message}"

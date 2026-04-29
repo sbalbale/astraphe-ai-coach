@@ -78,7 +78,13 @@
     </div>
     <h2 class="text-[18px] font-bold mb-1">{athleteStore.profile?.display_name || authStore.user?.user_metadata?.full_name || 'Athlete'}</h2>
     <p class="text-xs text-text2 mb-3">{authStore.user?.email || 'No email provided'}</p>
-    <Tag color="var(--teal)">PREMIUM TIER</Tag>
+    {#if authStore.tier === 'premium'}
+      <Tag color="#00C8A8">PREMIUM</Tag>
+    {:else if authStore.tier === 'trial'}
+      <Tag color="#FFCB88">TRIAL</Tag>
+    {:else}
+      <Tag color="#94a3b8">FREE</Tag>
+    {/if}
   </Card>
 
   <Card>
