@@ -6,16 +6,20 @@
   import MultiLineChart from '$lib/components/charts/MultiLineChart.svelte';
   import LineChart from '$lib/components/charts/LineChart.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
+  import CalibrationBadge from '$lib/components/CalibrationBadge.svelte';
   import { onMount } from 'svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { authStore } from '$lib/stores/authStore.svelte';
   import { goto } from '$app/navigation';
   import { format } from 'date-fns';
 
+  const props = $props();
+
   onMount(() => {
-    athleteStore.fetchAll(true); // Force fresh fetch on mount to ensure all new fields are loaded
+    athleteStore.fetchAll(true);
   });
 
+  const isCalibrating = $derived(athleteStore.days_on_platform < 42);
   const hasData = $derived(athleteStore.workouts?.length > 0 || athleteStore.readiness > 0);
   const isConnected = $derived(Object.values(athleteStore.syncStatus?.integrations || {}).some((i: any) => i.connected));
 
@@ -129,6 +133,9 @@
         <div class="flex-1">
           <div class="flex items-center gap-2 mb-1">
             <span class="font-semibold text-[15px]">Readiness Score</span>
+            {#if isCalibrating}
+              <CalibrationBadge />
+            {/if}
             {#if todayReadiness === null}
               <Tag color="var(--text2)">NO DATA</Tag>
             {:else if todayReadiness > 70}
@@ -150,19 +157,29 @@
     <!-- Metric Row -->
     <div class="grid grid-cols-3 gap-2.5">
       <Card style="padding: 12px 14px;">
-        <MetricBadge label="CTL" value={todayCtl === null ? 'Data not found' : Math.round(todayCtl)} unit="" color="var(--teal)" sub="Fitness" />
+        <div class="flex justify-between items-start">
+          <MetricBadge label="CTL" value={todayCtl === null ? 'Data not found' : Math.round(todayCtl)} unit="" color="var(--teal)" sub="Fitness" />
+          {#if isCalibrating}
+            <CalibrationBadge />
+          {/if}
+        </div>
       </Card>
       <Card style="padding: 12px 14px;">
         <MetricBadge label="ATL" value={todayAtl === null ? 'Data not found' : Math.round(todayAtl)} unit="" color="var(--amber)" sub="Fatigue" />
       </Card>
       <Card style="padding: 12px 14px;">
-        <MetricBadge
-          label="TSB"
-          value={todayTsb === null ? 'Data not found' : (todayTsb > 0 ? `+${Math.round(todayTsb)}` : Math.round(todayTsb))}
-          unit=""
-          color="#4621FF"
-          sub="Form"
-        />
+        <div class="flex justify-between items-start">
+          <MetricBadge
+            label="TSB"
+            value={todayTsb === null ? 'Data not found' : (todayTsb > 0 ? `+${Math.round(todayTsb)}` : Math.round(todayTsb))}
+            unit=""
+            color="#4621FF"
+            sub="Form"
+          />
+          {#if isCalibrating}
+            <CalibrationBadge />
+          {/if}
+        </div>
       </Card>
     </div>
 

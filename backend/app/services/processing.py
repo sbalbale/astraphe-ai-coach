@@ -35,20 +35,27 @@ def recalculate_tss_history(athlete_id: str, db):
     if not daily_tss:
         return
 
-    # 3. Recalculate PMC
+    # 3. Recalculate PMC with Seeding Strategy
     all_dates = sorted(daily_tss.keys())
     start_date, end_date = all_dates[0], all_dates[-1]
     
-    ctl, atl = 0.0, 0.0
-    ctl_decay = 0.9764 # exp(-1/42)
-    atl_decay = 0.8668 # exp(-1/7)
+    # Calculate the average TSS of the first 42 days to seed the history.
+    # This matches the user's new algorithm intent to solve the "cold start" problem.
+    initial_window = [daily_tss.get(d, 0.0) for d in all_dates[:42]]
+    avg_tss = sum(initial_window) / len(initial_window) if initial_window else 0.0
+    
+    # spans match algorithms.py (alpha = 2 / (span + 1))
+    ctl_alpha = 2 / (42 + 1)
+    atl_alpha = 2 / (7 + 1)
+    
+    ctl, atl = avg_tss, avg_tss
     
     records = []
     current = start_date
     while current <= end_date:
         tss = daily_tss.get(current, 0.0)
-        ctl = ctl * ctl_decay + tss * (1 - ctl_decay)
-        atl = atl * atl_decay + tss * (1 - atl_decay)
+        ctl = ctl * (1 - ctl_alpha) + tss * ctl_alpha
+        atl = atl * (1 - atl_alpha) + tss * atl_alpha
         
         records.append({
             "athlete_id": athlete_id,
@@ -155,9 +162,9 @@ def process_and_save_workout(payload: WorkoutPayload, athlete_id: str, db):
 
 def process_and_save_biometrics(payload: DailyBiometrics, athlete_id: str, db):
     # 1. Handle Sleep Periods (if sleep data is present)
-    has_sleep_data = payload.sleep_duration_min is not None or payload.sleep_bedtime is not None
+    has_sleep_session = payload.sleep_bedtime is not None and payload.sleep_wakeup is not None
     
-    if has_sleep_data:
+    if has_sleep_session:
         # Save this specific session to sleep_periods table
         # We use a helper to extract the session-specific fields
         session_data = {

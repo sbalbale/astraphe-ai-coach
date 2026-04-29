@@ -67,12 +67,20 @@ def calculate_training_load(daily_tss_history: List[float]) -> Dict[str, float]:
     if not daily_tss_history:
         return {"ctl": 0.0, "atl": 0.0, "tsb": 0.0}
         
-    tss_series = pd.Series(daily_tss_history)
+    # SEEDING STRATEGY: Handle the "Cold Start" problem for histories under 42 days
+    # By padding the history with the athlete's average, the EWMA has a stable baseline to start from.
+    history_length = len(daily_tss_history)
+    if history_length < 42:
+        historical_average = sum(daily_tss_history) / history_length
+        missing_days = 42 - history_length
+        # Pad the array with the average so the EWMA math can fully saturate
+        padded_history = [historical_average] * missing_days + daily_tss_history
+        tss_series = pd.Series(padded_history)
+    else:
+        tss_series = pd.Series(daily_tss_history)
     
-    # CTL uses a 42-day decay constant
+    # Calculate EWMAs
     ctl_series = tss_series.ewm(span=42, adjust=False).mean()
-    
-    # ATL uses a 7-day decay constant
     atl_series = tss_series.ewm(span=7, adjust=False).mean()
     
     current_ctl = ctl_series.iloc[-1]
@@ -104,7 +112,7 @@ def calculate_raw_strain_score(zone_minutes: Dict[int, float]) -> float:
     return float(min(round(normalized, 1), 21.0))
 
 def calculate_astrape_strain_score(raw_strain: float) -> int:
-    """Normalizes WHOOP/Raw strain (0-21 scale) to Astrape score (0-100 scale)."""
+    """Normalizes Raw strain (0-21 scale) to Astrape score (0-100 scale)."""
     if not raw_strain: 
         return 0
     return int(np.clip(round((raw_strain / 21.0) * 100), 0, 100))
@@ -203,17 +211,34 @@ def calculate_astrape_readiness_score(
 
 def calculate_hrv_trend(hrv_series: np.ndarray) -> dict:
     """
-    Analyze HRV trend over a rolling window to detect stability or severe autonomic drift.
-    Requires at least 7 days of HRV RMSSD data.
+    Analyze HRV trend over a rolling window. Dynamically scales based on available data 
+    (from 1 day to infinity) to prevent crashing on new accounts.
     """
-    if len(hrv_series) < 7:
+    if len(hrv_series) == 0:
         return {"status": "insufficient_data"}
         
-    mean_7d = np.mean(hrv_series[-7:])
-    mean_14d = np.mean(hrv_series[-14:-7]) if len(hrv_series) >= 14 else mean_7d
+    n = len(hrv_series)
     
-    delta = mean_7d - mean_14d
-    cv = (np.std(hrv_series[-7:]) / mean_7d) * 100 if mean_7d > 0 else 0
+    # Dynamic window sizing
+    recent_window = min(7, n)
+    past_window = min(7, max(0, n - recent_window))
+    
+    recent_data = hrv_series[-recent_window:]
+    mean_recent = np.mean(recent_data)
+    
+    # Fallbacks for short histories
+    if past_window > 0:
+        past_data = hrv_series[-recent_window - past_window : -recent_window]
+        mean_past = np.mean(past_data)
+    elif n > 1:
+        # If we have < 7 days total, compare latest day to the average of previous days
+        mean_past = np.mean(hrv_series[:-1])
+    else:
+        # Day 1: Delta is 0
+        mean_past = mean_recent
+        
+    delta = mean_recent - mean_past
+    cv = (np.std(recent_data) / mean_recent) * 100 if mean_recent > 0 else 0
     
     if delta > 3:
         direction = "rising"
@@ -226,5 +251,5 @@ def calculate_hrv_trend(hrv_series: np.ndarray) -> dict:
         "delta_7d": round(delta, 1),
         "coefficient_of_variation": round(cv, 1),
         "trend_direction": direction,
-        "current_baseline_7d": round(mean_7d, 1),
+        "current_baseline_7d": round(mean_recent, 1),
     }
