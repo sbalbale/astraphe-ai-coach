@@ -12,7 +12,11 @@ from app.services.algorithms import (
     calculate_raw_strain_score,
     calculate_astrape_strain_score,
     calculate_astrape_recovery_score,
-    calculate_astrape_readiness_score
+    calculate_astrape_readiness_score,
+    calculate_rhr_baseline,
+    calculate_hrv_baseline,
+    calculate_weekly_tss_target,
+    calculate_threshold_hr_est
 )
 
 def recalculate_tss_history(athlete_id: str, db):
@@ -228,13 +232,46 @@ def process_and_save_biometrics(payload: DailyBiometrics, athlete_id: str, db):
         # Priority: Astrape Custom Strain Score
         prev_strain = prev_res.data.get("astrape_strain_score") or 0.0
         
-    # 4. Fetch Athlete Baselines
-    athlete_res = db.table("athletes").select("hrv_baseline, rhr_baseline").eq("id", athlete_id).single().execute()
-    baseline_hrv = 65.0
+    # 4. Calculate Dynamic Baselines & Targets
+    start_date_42d = (payload.date - timedelta(days=42)).isoformat()
+    history_res = db.table("biometrics").select("resting_hr, hrv_rmssd").eq("athlete_id", athlete_id).gte("date", start_date_42d).order("date").execute()
+    athlete_res = db.table("athletes").select("*").eq("id", athlete_id).single().execute()
+    
     baseline_rhr = 50.0
-    if athlete_res and athlete_res.data:
-        baseline_hrv = athlete_res.data.get("hrv_baseline") or 65.0
-        baseline_rhr = athlete_res.data.get("rhr_baseline") or 50.0
+    baseline_hrv = 65.0
+    athlete_data = athlete_res.data if athlete_res else {}
+    
+    if history_res and history_res.data:
+        rhrs = [row["resting_hr"] for row in history_res.data if row["resting_hr"] is not None]
+        hrvs = [float(row["hrv_rmssd"]) for row in history_res.data if row["hrv_rmssd"] is not None]
+        
+        # Include today's data in the baseline calculation
+        if payload.resting_hr is not None: rhrs.append(payload.resting_hr)
+        if payload.hrv_rmssd is not None: hrvs.append(payload.hrv_rmssd)
+        
+        if rhrs: baseline_rhr = calculate_rhr_baseline(rhrs)
+        if hrvs: baseline_hrv = calculate_hrv_baseline(hrvs)
+
+    # 4.5 Update Athlete Profile with latest physiological state
+    # Fetch current CTL for TSS target calculation
+    ctl_res = db.table("tss_history").select("ctl").eq("athlete_id", athlete_id).eq("date", payload.date.isoformat()).maybe_single().execute()
+    current_ctl = ctl_res.data["ctl"] if (ctl_res and ctl_res.data) else 0.0
+    
+    profile_updates = {
+        "rhr_baseline": int(round(baseline_rhr)),
+        "hrv_baseline": round(baseline_hrv, 1),
+        "resting_hr": int(round(baseline_rhr)), # Sync current resting_hr with baseline
+        "weekly_tss_target": calculate_weekly_tss_target(current_ctl)
+    }
+    
+    # Estimate Threshold HR if missing (using HRR method: 83% intensity)
+    if athlete_data.get("max_hr") and not athlete_data.get("threshold_hr"):
+        profile_updates["threshold_hr"] = calculate_threshold_hr_est(
+            max_hr=athlete_data["max_hr"],
+            resting_hr=int(round(baseline_rhr))
+        )
+    
+    db.table("athletes").update(profile_updates).eq("id", athlete_id).execute()
     
     # 5. Fetch ATL Data for Readiness Modeling
     start_date_30d = (payload.date - timedelta(days=30)).isoformat()

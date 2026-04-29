@@ -62,7 +62,7 @@ def calculate_hr_tss(duration_seconds: int, zone_pcts: Dict[int, float]) -> floa
 def calculate_training_load(daily_tss_history: List[float]) -> Dict[str, float]:
     """
     Calculates today's Chronic Training Load (CTL), Acute Training Load (ATL), 
-    and Training Stress Balance (TSB) using Exponentially Weighted Moving Averages.
+    and Training Stress Balance (TSB).
     """
     if not daily_tss_history:
         return {"ctl": 0.0, "atl": 0.0, "tsb": 0.0}
@@ -253,3 +253,52 @@ def calculate_hrv_trend(hrv_series: np.ndarray) -> dict:
         "trend_direction": direction,
         "current_baseline_7d": round(mean_recent, 1),
     }
+
+def calculate_rhr_baseline(rhr_history: List[int]) -> float:
+    """
+    Calculates the 42-day rolling baseline for Resting Heart Rate.
+    If less than 42 days, returns the average of available data.
+    """
+    if not rhr_history:
+        return 0.0
+    
+    # Use 42 days for cardiovascular baseline alignment
+    window = min(len(rhr_history), 42)
+    recent_rhr = rhr_history[-window:]
+    
+    return float(np.mean(recent_rhr))
+
+def calculate_hrv_baseline(hrv_history: List[float]) -> float:
+    """
+    Calculates the 42-day rolling baseline for HRV (RMSSD).
+    If less than 42 days, returns the average of available data.
+    """
+    if not hrv_history:
+        return 0.0
+    
+    # Use 42 days for cardiovascular baseline alignment
+    window = min(len(hrv_history), 42)
+    recent_hrv = hrv_history[-window:]
+    
+    return float(np.mean(recent_hrv))
+
+def calculate_weekly_tss_target(current_ctl: float) -> int:
+    """
+    Estimates a sustainable weekly TSS target based on current fitness (CTL).
+    Progression Factor: 7.5x CTL (Targeting ~5% weekly load progression).
+    """
+    if not current_ctl:
+        return 200 # Minimum baseline target for beginners
+        
+    return int(round(current_ctl * 7.5))
+
+def calculate_threshold_hr_est(max_hr: int, resting_hr: int) -> int:
+    """
+    Estimates Threshold HR using the Heart Rate Reserve (%HRR) method.
+    Standard Anaerobic Threshold estimate: 83% of HRR + Resting HR.
+    """
+    if not max_hr or not resting_hr:
+        return 0
+        
+    hrr = max_hr - resting_hr
+    return int(round((hrr * 0.83) + resting_hr))
