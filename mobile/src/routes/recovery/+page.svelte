@@ -47,10 +47,10 @@
         date: dateStr,
         label: dateStr === todayStr ? 'Today' : format(d, 'MMM d'),
         day: format(d, 'EE').charAt(0),
-        score: b?.astrape_recovery_score || b?.recovery_score || 0,
+        score: b?.recovery_score || 0,
         hrv: b?.hrv_rmssd || 0,
         rhr: b?.resting_hr || 0,
-        sleepScore: b?.astrape_sleep_score || b?.sleep_score || 0,
+        sleepScore: b?.sleep_score || 0,
         missing: !b || !b.recovery_score,
         data: b
       };

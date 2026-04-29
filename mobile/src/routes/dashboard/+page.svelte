@@ -29,15 +29,15 @@
   const todayBio = $derived(athleteStore.biometrics?.series?.find((s: any) => s.date === todayStr));
   const todayLoad = $derived(athleteStore.metrics?.trainingLoadData?.find((m: any) => isoDate(m?.date) === todayStr));
 
-  const todayReadiness = $derived(todayBio?.astrape_recovery_score ?? todayBio?.recovery_score ?? null);
+  const todayReadiness = $derived(todayBio?.astrape_readiness_score ?? todayBio?.astrape_recovery_score ?? null);
   const todayHrv = $derived(todayBio?.hrv_rmssd ?? null);
   const todaySleepMin = $derived(todayBio?.sleep_duration_min ?? null);
-  const todaySleepScore = $derived(todayBio?.astrape_sleep_score ?? todayBio?.sleep_score ?? null);
+  const todaySleepScore = $derived(todayBio?.astrape_sleep_score ?? null);
 
   const latestBio = $derived(athleteStore.biometrics?.series?.[athleteStore.biometrics.series.length - 1]);
   const latestHrv = $derived(todayHrv ?? latestBio?.hrv_rmssd ?? null);
   const latestSleepMin = $derived(todaySleepMin ?? latestBio?.sleep_duration_min ?? null);
-  const latestSleepScore = $derived(todaySleepScore ?? latestBio?.astrape_sleep_score ?? latestBio?.sleep_score ?? null);
+  const latestSleepScore = $derived(todaySleepScore ?? latestBio?.astrape_sleep_score ?? null);
 
   const todayCtl = $derived(todayLoad?.ctl ?? null);
   const todayAtl = $derived(todayLoad?.atl ?? null);

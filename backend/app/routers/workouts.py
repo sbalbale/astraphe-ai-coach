@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from app.models.workout import WorkoutPayload
-from app.services.algorithms import calculate_cycling_tss
+from app.services.algorithms import compute_tss_power
 from app.services.processing import process_and_save_workout
 from app.dependencies import get_current_athlete, get_user_db
 from datetime import datetime, timezone
@@ -111,6 +111,6 @@ async def process_workout(payload: WorkoutPayload):
     if payload.workout_type.lower() == "cycling":
         if not payload.normalized_power:
             raise HTTPException(status_code=400, detail="Normalized power is required for cycling TSS.")
-        tss = calculate_cycling_tss(payload.duration_seconds, payload.normalized_power, payload.ftp_at_time)
+        tss = compute_tss_power(payload.duration_seconds, payload.normalized_power, payload.ftp_at_time)
         return {"status": "success", "message": "Workout processed", "data": {"calculated_tss": tss}}
     raise HTTPException(status_code=400, detail="Not implemented.")

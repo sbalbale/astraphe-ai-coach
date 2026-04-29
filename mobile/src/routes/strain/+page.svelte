@@ -42,9 +42,9 @@
       
       const b = athleteStore.biometrics?.series?.find((s: any) => s.date === dateStr);
       const history = athleteStore.metrics?.trainingLoadData?.find((m: any) => isoDate(m?.date) === dateStr);
-      const hasStrain = b?.day_strain !== null && b?.day_strain !== undefined;
+      const hasStrain = b?.strain_score !== null && b?.strain_score !== undefined;
 
-      // Workout-derived strain proxy (preferred when day_strain isn't present).
+      // Workout-derived strain proxy (preferred when strain_score isn't present).
       // We treat "strain" as "did you train today?" — if no workout, show 0 and no warning.
       const workoutsForDay = athleteStore.workouts?.filter((w: any) => isoDate(w?.started_at) === dateStr) || [];
       const hasWorkout = workoutsForDay.length > 0;
@@ -52,7 +52,7 @@
         100,
         Math.round(
           workoutsForDay.reduce((acc: number, w: any) => {
-            const s = Number(w?.astrape_strain_score);
+            const s = Number(w?.strain_score);
             if (!Number.isNaN(s) && s > 0) return acc + s;
             const tss = Number(w?.tss);
             if (!Number.isNaN(tss) && tss > 0) return acc + (tss / 150) * 100;
@@ -60,7 +60,7 @@
           }, 0),
         ),
       );
-      const computedScore = hasStrain ? Math.round((b.day_strain / 21) * 100) : hasWorkout ? workoutStrainScore : 0;
+      const computedScore = hasStrain ? Math.round(b.strain_score) : hasWorkout ? workoutStrainScore : 0;
 
       return {
         date: dateStr,
@@ -70,6 +70,7 @@
         ctl: history?.ctl || athleteStore.ctl || 0,
         atl: history?.atl || athleteStore.atl || 0,
         tsb: history?.tsb || athleteStore.tsb || 0,
+        workouts: workoutsForDay,
         // Only show "no strain data" when a workout exists but we still can't compute strain.
         missing: hasWorkout && !hasStrain && computedScore === 0,
         data: b
@@ -87,6 +88,44 @@
   const score = $derived(d.score || 0);
   const scoreColor = $derived(score >= 80 ? '#F07178' : score >= 40 ? '#FFCB88' : '#00C8A8');
   const quality = $derived(score >= 80 ? 'High' : score >= 40 ? 'Moderate' : 'Light');
+
+  function getWorkoutIcon(type: string) {
+    const t = type?.toLowerCase();
+    if (t === 'run') return '🏃';
+    if (t === 'bike' || t === 'cycling') return '🚴';
+    if (t === 'rowing') return '🚣';
+    if (t === 'swim') return '🏊';
+    if (t === 'strength' || t === 'strength_training' || t === 'gym') return '💪';
+    return '🏋️';
+  }
+
+  function getWorkoutLabel(type: string) {
+    const t = type?.toLowerCase();
+    if (t === 'strength_training' || t === 'strength' || t === 'gym') return 'Strength';
+    return t ? t.charAt(0).toUpperCase() + t.slice(1) : 'Workout';
+  }
+
+  function getWorkoutColor(type: string) {
+    const t = type?.toLowerCase();
+    if (t === 'run') return 'var(--blue)';
+    if (t === 'bike' || t === 'cycling') return 'var(--teal)';
+    if (t === 'rowing') return 'var(--amber)';
+    return 'var(--text2)';
+  }
+
+  function getWorkoutBg(type: string) {
+    const t = type?.toLowerCase();
+    if (t === 'run') return 'bg-blue-dim border-blue-glow';
+    if (t === 'bike' || t === 'cycling') return 'bg-teal-dim border-[rgba(0,200,168,0.3)]';
+    if (t === 'rowing') return 'bg-amber-dim border-[rgba(255,203,136,0.3)]';
+    return 'bg-glass border-border';
+  }
+
+  function getDurationSecs(w: any): number {
+    const direct = w?.duration_secs ?? w?.duration_seconds;
+    if (Number.isFinite(direct)) return Math.max(0, Math.floor(Number(direct)));
+    return 0;
+  }
 </script>
 
 <div class="flex flex-col gap-3">
@@ -251,6 +290,35 @@
           {/each}
         </div>
       </Card>
+
+      {#if d.workouts && d.workouts.length > 0}
+        <div>
+          <p class="text-[11px] text-text2 font-mono uppercase tracking-[0.05em] mb-2 px-1">Contributing Activities</p>
+          <div class="flex flex-col gap-2">
+            {#each d.workouts as w (w.id || w.started_at)}
+              <Card style="padding: 12px 14px;">
+                <div class="flex items-center gap-3">
+                  <div class="w-10 h-10 rounded-xl shrink-0 flex items-center justify-center text-[18px] {getWorkoutBg(w.sport)}">
+                    {getWorkoutIcon(w.sport)}
+                  </div>
+                  <div class="flex-1">
+                    <p class="text-[13px] font-semibold">{w.title || (getWorkoutLabel(w.sport) + ' Session')}</p>
+                    <p class="text-[11px] text-text2">
+                      {Math.floor(getDurationSecs(w) / 60)} min · {format(new Date(w.started_at), (athleteStore.profile as any)?.time_format === '24h' ? 'HH:mm' : 'h:mm a')}
+                    </p>
+                  </div>
+                  <div class="text-right">
+                    <p class="text-[16px] font-bold" style="color: {getWorkoutColor(w.sport)}">
+                      {Math.round(w.strain_score || w.tss || 0)}
+                    </p>
+                    <p class="text-[9px] text-text2 font-mono">{w.strain_score ? 'STRAIN' : 'TSS'}</p>
+                  </div>
+                </div>
+              </Card>
+            {/each}
+          </div>
+        </div>
+      {/if}
 
       <!-- Analysis Card -->
       <Card style="background: var(--glass2); border-color: transparent;">

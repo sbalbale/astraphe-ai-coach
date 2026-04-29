@@ -18,7 +18,6 @@ class MockPayload:
         self.sleep_bedtime = kwargs.get('sleep_bedtime')
         self.sleep_wakeup = kwargs.get('sleep_wakeup')
         self.is_nap = kwargs.get('is_nap', False)
-        self.day_strain = kwargs.get('day_strain')
         self.skin_temp_deviation = kwargs.get('skin_temp_deviation')
         self.spo2_pct = kwargs.get('spo2_pct')
 

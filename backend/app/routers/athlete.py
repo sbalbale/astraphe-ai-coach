@@ -86,9 +86,9 @@ async def get_athlete_state(athlete_id: str = Depends(get_current_athlete), db =
         "sleep_hours": bio.get("sleep_duration_min", 0) / 60.0 if bio.get("sleep_duration_min") else None,
         "sleep_score": bio.get("sleep_score"),
         "recovery_score": bio.get("recovery_score"),
-        "readiness_score": bio.get("recovery_score", 0) or 0,
-        "readiness_label": "Optimal" if (bio.get("recovery_score", 0) or 0) > 70 else "Moderate",
-        "readiness_recommendation": "Data pulled from database."
+        "readiness_score": bio.get("readiness_score") or 0,
+        "readiness_label": "Optimal" if (bio.get("readiness_score") or 0) > 70 else "Moderate",
+        "readiness_recommendation": "Calculated by Astrape Intelligence."
     }
 
 @router.get("/metrics")

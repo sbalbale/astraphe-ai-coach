@@ -56,7 +56,6 @@
       const isToday = displayDateStr === todayStr;
       const dateLabel = isToday ? "Today" : format(d, "MMM d");
       const shortLabel = format(d, "MMM d");
-
       if (!b || (!b.sleep_score && !b.sleep_duration_min)) {
         return {
           date: dateLabel,
@@ -74,13 +73,13 @@
         date: dateLabel,
         label: shortLabel,
         rawDate: displayDateStr,
-        score: b.astrape_sleep_score || b.sleep_score || 0,
+        score: b.sleep_score || 0,
         duration: b.sleep_duration_min ? `${h}h ${m}m` : "0h 0m",
         durationRaw: b.sleep_duration_min || 0,
         quality:
-          (b.astrape_sleep_score || b.sleep_score || 0) >= 67
+          (b.sleep_score || 0) >= 67
             ? "Optimal"
-            : (b.astrape_sleep_score || b.sleep_score || 0) >= 34
+            : (b.sleep_score || 0) >= 34
               ? "Moderate"
               : "Poor",
         bedtime: b.sleep_bedtime

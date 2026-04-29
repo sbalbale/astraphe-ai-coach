@@ -57,7 +57,6 @@ async def backfill_last_28_days(athlete_id: str, access_token: str, db: Any) -> 
             sleep_rem_pct=None,
             sleep_need_min=None,
             sleep_debt_min=None,
-            day_strain=strain,
             skin_temp_deviation=None,
             spo2_pct=None,
         )
@@ -147,7 +146,6 @@ async def backfill_last_28_days(athlete_id: str, access_token: str, db: Any) -> 
             sleep_rem_pct=None,
             sleep_need_min=None,
             sleep_debt_min=None,
-            day_strain=None,
             skin_temp_deviation=score.get("skin_temp_celsius"),
             spo2_pct=score.get("spo2_percentage"),
             recovery_score=rec.get("score", {}).get("recovery_score") if isinstance(rec.get("score"), dict) else None,
@@ -190,7 +188,6 @@ async def backfill_last_28_days(athlete_id: str, access_token: str, db: Any) -> 
             is_nap=slp.get("nap", False),
             sleep_need_min=None,
             sleep_debt_min=None,
-            day_strain=None,
             skin_temp_deviation=None,
             spo2_pct=None,
         )
