@@ -176,10 +176,20 @@ def process_and_save_biometrics(payload: DailyBiometrics, athlete_id: str, db):
         # Save this specific session to sleep_periods table
         # We use a helper to extract the session-specific fields
         
-        # Calculate duration from timestamps if duration_min is missing or looks suspicious (feedback loop)
-        # However, for WHOOP, we prefer their reported duration (asleep time).
-        # We only save if external_id is present or if we are confident this is a single session.
-        session_duration = payload.sleep_duration_min or 0
+        # Calculate durations from timestamps to ensure consistency
+        in_bed_min = 0
+        if payload.sleep_bedtime and payload.sleep_wakeup:
+            delta = payload.sleep_wakeup - payload.sleep_bedtime
+            in_bed_min = int(round(delta.total_seconds() / 60.0))
+        
+        # Derive actual sleep duration: Time in Bed * (1 - Awake%)
+        # This ensures mathematical integrity: Asleep + Awake = In Bed
+        awake_pct = payload.sleep_awake_pct or 0.0
+        actual_sleep_min = int(round(in_bed_min * (1.0 - (awake_pct / 100.0))))
+        
+        # If payload already has a duration, we might prefer it IF it's consistent, 
+        # but the user specifically asked for the backend to handle the math.
+        session_duration = actual_sleep_min
         
         session_data = {
             "athlete_id": athlete_id,
@@ -187,6 +197,7 @@ def process_and_save_biometrics(payload: DailyBiometrics, athlete_id: str, db):
             "started_at": payload.sleep_bedtime.isoformat() if payload.sleep_bedtime else None,
             "ended_at": payload.sleep_wakeup.isoformat() if payload.sleep_wakeup else None,
             "duration_min": session_duration,
+            "in_bed_min": in_bed_min,
             "score": payload.sleep_score,
             "deep_pct": payload.sleep_deep_pct,
             "rem_pct": payload.sleep_rem_pct,
@@ -205,31 +216,43 @@ def process_and_save_biometrics(payload: DailyBiometrics, athlete_id: str, db):
         all_periods = all_periods_res.data
     
     total_sleep_min = 0
+    total_in_bed_min = 0
+    total_awake_min = 0
     weighted_deep = 0.0
     weighted_rem = 0.0
     weighted_light = 0.0
     weighted_awake = 0.0
     
     main_sleep = None
-    max_duration = -1
+    max_in_bed = -1
     
     for p in all_periods:
-        dur = p.get("duration_min") or 0
-        total_sleep_min += dur
-        weighted_deep += (p.get("deep_pct") or 0) * dur
-        weighted_rem += (p.get("rem_pct") or 0) * dur
-        weighted_light += (p.get("light_pct") or 0) * dur
-        weighted_awake += (p.get("awake_pct") or 0) * dur
+        in_bed = p.get("in_bed_min") or p.get("duration_min") or 0
+        total_in_bed_min += in_bed
         
-        if dur > max_duration:
-            max_duration = dur
+        # Calculate awake minutes for this period to ensure consistency
+        awake_pct = p.get("awake_pct") or 0.0
+        awake_min = (awake_pct / 100.0) * in_bed
+        total_awake_min += awake_min
+        
+        # Weight percentages by in_bed_min
+        weighted_deep += (p.get("deep_pct") or 0) * in_bed
+        weighted_rem += (p.get("rem_pct") or 0) * in_bed
+        weighted_light += (p.get("light_pct") or 0) * in_bed
+        weighted_awake += awake_pct * in_bed
+        
+        if in_bed > max_in_bed:
+            max_in_bed = in_bed
             main_sleep = p
 
-    # Final aggregated architecture (weighted by duration)
-    agg_deep = round(weighted_deep / total_sleep_min, 1) if total_sleep_min > 0 else None
-    agg_rem = round(weighted_rem / total_sleep_min, 1) if total_sleep_min > 0 else None
-    agg_light = round(weighted_light / total_sleep_min, 1) if total_sleep_min > 0 else None
-    agg_awake = round(weighted_awake / total_sleep_min, 1) if total_sleep_min > 0 else None
+    # Final aggregated architecture (weighted by in-bed duration)
+    agg_deep = round(weighted_deep / total_in_bed_min, 1) if total_in_bed_min > 0 else None
+    agg_rem = round(weighted_rem / total_in_bed_min, 1) if total_in_bed_min > 0 else None
+    agg_light = round(weighted_light / total_in_bed_min, 1) if total_in_bed_min > 0 else None
+    agg_awake = round(weighted_awake / total_in_bed_min, 1) if total_in_bed_min > 0 else None
+
+    # Time Asleep MUST equal Time in Bed minus Awake Time
+    total_sleep_min = int(round(total_in_bed_min - total_awake_min))
 
     # 3. Fetch Previous Day's Biometrics (for sleep debt/strain)
     prev_date = payload.date - timedelta(days=1)
@@ -362,6 +385,7 @@ def process_and_save_biometrics(payload: DailyBiometrics, athlete_id: str, db):
         "hrv_rmssd": final_hrv,
         "resting_hr": final_rhr,
         "sleep_duration_min": total_sleep_min,
+        "sleep_in_bed_min": total_in_bed_min,
         "sleep_score": sleep_score, # Astrape Score
         "recovery_score": recovery_score, # Astrape Score
         "sleep_need_min": int(round(sleep_need)),

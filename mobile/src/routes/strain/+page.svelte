@@ -5,6 +5,7 @@
   import EmptyState from '$lib/components/EmptyState.svelte';
   import Pill from '$lib/components/Pill.svelte';
   import DatePicker from '$lib/components/DatePicker.svelte';
+  import Modal from '$lib/components/Modal.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { addDays, format, subDays } from 'date-fns';
 
@@ -125,6 +126,14 @@
     const direct = w?.duration_secs ?? w?.duration_seconds;
     if (Number.isFinite(direct)) return Math.max(0, Math.floor(Number(direct)));
     return 0;
+  }
+
+  let selectedWorkout = $state<any>(null);
+  let showWorkoutModal = $state(false);
+
+  function openWorkoutDetails(w: any) {
+    selectedWorkout = w;
+    showWorkoutModal = true;
   }
 </script>
 
@@ -296,25 +305,31 @@
           <p class="text-[11px] text-text2 font-mono uppercase tracking-[0.05em] mb-2 px-1">Contributing Activities</p>
           <div class="flex flex-col gap-2">
             {#each d.workouts as w (w.id || w.started_at)}
-              <Card style="padding: 12px 14px;">
-                <div class="flex items-center gap-3">
-                  <div class="w-10 h-10 rounded-xl shrink-0 flex items-center justify-center text-[18px] {getWorkoutBg(w.sport)}">
-                    {getWorkoutIcon(w.sport)}
+              <button 
+                type="button"
+                class="block w-full text-left active:scale-[0.98] transition-transform"
+                onclick={() => openWorkoutDetails(w)}
+              >
+                <Card style="padding: 12px 14px;">
+                  <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-xl shrink-0 flex items-center justify-center text-[18px] {getWorkoutBg(w.sport)}">
+                      {getWorkoutIcon(w.sport)}
+                    </div>
+                    <div class="flex-1">
+                      <p class="text-[13px] font-semibold">{w.title || (getWorkoutLabel(w.sport) + ' Session')}</p>
+                      <p class="text-[11px] text-text2">
+                        {Math.floor(getDurationSecs(w) / 60)} min · {format(new Date(w.started_at), (athleteStore.profile as any)?.time_format === '24h' ? 'HH:mm' : 'h:mm a')}
+                      </p>
+                    </div>
+                    <div class="text-right">
+                      <p class="text-[16px] font-bold" style="color: {getWorkoutColor(w.sport)}">
+                        {Math.round(w.strain_score || w.tss || 0)}
+                      </p>
+                      <p class="text-[9px] text-text2 font-mono">{w.strain_score ? 'STRAIN' : 'TSS'}</p>
+                    </div>
                   </div>
-                  <div class="flex-1">
-                    <p class="text-[13px] font-semibold">{w.title || (getWorkoutLabel(w.sport) + ' Session')}</p>
-                    <p class="text-[11px] text-text2">
-                      {Math.floor(getDurationSecs(w) / 60)} min · {format(new Date(w.started_at), (athleteStore.profile as any)?.time_format === '24h' ? 'HH:mm' : 'h:mm a')}
-                    </p>
-                  </div>
-                  <div class="text-right">
-                    <p class="text-[16px] font-bold" style="color: {getWorkoutColor(w.sport)}">
-                      {Math.round(w.strain_score || w.tss || 0)}
-                    </p>
-                    <p class="text-[9px] text-text2 font-mono">{w.strain_score ? 'STRAIN' : 'TSS'}</p>
-                  </div>
-                </div>
-              </Card>
+                </Card>
+              </button>
             {/each}
           </div>
         </div>
@@ -332,3 +347,110 @@
     {/if}
   {/if}
 </div>
+
+<Modal
+  show={showWorkoutModal}
+  title={selectedWorkout?.title || (getWorkoutLabel(selectedWorkout?.sport) + ' Details')}
+  onClose={() => (showWorkoutModal = false)}
+>
+  {#if selectedWorkout}
+    <div class="flex flex-col gap-6">
+      <div class="flex items-center gap-4">
+        <div class="w-14 h-14 rounded-2xl flex items-center justify-center text-[28px] {getWorkoutBg(selectedWorkout.sport)}">
+          {getWorkoutIcon(selectedWorkout.sport)}
+        </div>
+        <div>
+          <h3 class="text-lg font-bold">{selectedWorkout.title || (getWorkoutLabel(selectedWorkout.sport) + ' Session')}</h3>
+          <p class="text-xs text-text2 font-mono uppercase">
+            {format(new Date(selectedWorkout.started_at), 'MMMM d, yyyy')} · {format(new Date(selectedWorkout.started_at), (athleteStore.profile as any)?.time_format === '24h' ? 'HH:mm' : 'h:mm a')}
+          </p>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 gap-3">
+        <div class="p-4 rounded-2xl bg-glass border border-border/50">
+          <p class="text-[10px] text-text2 font-mono uppercase mb-1">Intensity</p>
+          <div class="flex items-baseline gap-1">
+            <span class="text-[20px] font-bold" style="color: {getWorkoutColor(selectedWorkout.sport)}">
+              {Math.round(selectedWorkout.strain_score || selectedWorkout.tss || 0)}
+            </span>
+            <span class="text-[10px] text-text2 font-mono">{selectedWorkout.strain_score ? 'STRAIN' : 'TSS'}</span>
+          </div>
+        </div>
+        <div class="p-4 rounded-2xl bg-glass border border-border/50">
+          <p class="text-[10px] text-text2 font-mono uppercase mb-1">Duration</p>
+          <div class="flex items-baseline gap-1">
+            <span class="text-[20px] font-bold text-text0">{Math.floor(getDurationSecs(selectedWorkout) / 60)}</span>
+            <span class="text-[10px] text-text2 font-mono">MIN</span>
+          </div>
+        </div>
+        {#if selectedWorkout.avg_hr}
+          <div class="p-4 rounded-2xl bg-glass border border-border/50">
+            <p class="text-[10px] text-text2 font-mono uppercase mb-1">Avg HR</p>
+            <div class="flex items-baseline gap-1">
+              <span class="text-[20px] font-bold text-text0">{selectedWorkout.avg_hr}</span>
+              <span class="text-[10px] text-text2 font-mono">BPM</span>
+            </div>
+          </div>
+        {/if}
+        {#if selectedWorkout.tss != null && selectedWorkout.strain_score != null}
+          <div class="p-4 rounded-2xl bg-glass border border-border/50">
+            <p class="text-[10px] text-text2 font-mono uppercase mb-1">Stress</p>
+            <div class="flex items-baseline gap-1">
+              <span class="text-[20px] font-bold text-text0">{Math.round(selectedWorkout.tss)}</span>
+              <span class="text-[10px] text-text2 font-mono">TSS</span>
+            </div>
+          </div>
+        {/if}
+        {#if selectedWorkout.distance_m}
+          <div class="p-4 rounded-2xl bg-glass border border-border/50">
+            <p class="text-[10px] text-text2 font-mono uppercase mb-1">Distance</p>
+            <div class="flex items-baseline gap-1">
+              <span class="text-[20px] font-bold text-text0">{(selectedWorkout.distance_m / 1000).toFixed(2)}</span>
+              <span class="text-[10px] text-text2 font-mono">KM</span>
+            </div>
+          </div>
+        {/if}
+      </div>
+
+      {#if selectedWorkout.hr_zone_0_pct !== undefined || selectedWorkout.hr_zone_1_pct !== undefined || selectedWorkout.hr_zone_2_pct !== undefined}
+        <div class="flex flex-col gap-4">
+          <p class="text-[13px] font-semibold">Heart Rate Zones</p>
+          <div class="flex flex-col gap-3">
+            {#each [5, 4, 3, 2, 1, 0] as zone}
+              {@const pct = selectedWorkout[`hr_zone_${zone}_pct`] || 0}
+              <div class="flex items-center gap-3">
+                <div class="w-8 flex items-center gap-1.5 shrink-0">
+                  <div class="w-2 h-2 rounded-full" style="background: var(--zone-{zone})"></div>
+                  <span class="text-[10px] font-mono text-text2">Z{zone}</span>
+                </div>
+                <div class="flex-1 h-1.5 bg-glass rounded-full overflow-hidden relative">
+                   <div 
+                    class="absolute inset-y-0 left-0 rounded-full transition-all duration-500" 
+                    style="width: {pct}%; background: var(--zone-{zone})"
+                  ></div>
+                </div>
+                <div class="w-8 text-right shrink-0">
+                  <span class="text-[11px] font-bold font-mono {pct > 0 ? 'text-text1' : 'text-text3'}">{pct}%</span>
+                </div>
+              </div>
+            {/each}
+          </div>
+        </div>
+      {/if}
+
+      <div class="p-4 rounded-xl bg-glass border border-border/50 flex flex-col gap-2">
+         <div class="flex justify-between items-center">
+            <span class="text-xs text-text2">Source</span>
+            <span class="text-xs font-mono font-medium text-text1 uppercase">{selectedWorkout.source || 'Manual'}</span>
+         </div>
+         {#if selectedWorkout.norm_power_w}
+          <div class="flex justify-between items-center">
+              <span class="text-xs text-text2">Normalized Power</span>
+              <span class="text-xs font-mono font-medium text-text1">{selectedWorkout.norm_power_w} W</span>
+          </div>
+         {/if}
+      </div>
+    </div>
+  {/if}
+</Modal>

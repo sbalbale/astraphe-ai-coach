@@ -7,6 +7,7 @@
   import EmptyState from "$lib/components/EmptyState.svelte";
   import DatePicker from "$lib/components/DatePicker.svelte";
   import LineChart from "$lib/components/charts/LineChart.svelte";
+  import Modal from "$lib/components/Modal.svelte";
   import { athleteStore } from "$lib/stores/athleteStore.svelte";
   import { addDays, format, parseISO, subDays } from "date-fns";
   import { calculateSleepScore } from "$lib/utils/biometrics";
@@ -69,28 +70,36 @@
       const h = Math.floor((b.sleep_duration_min || 0) / 60);
       const m = Math.round((b.sleep_duration_min || 0) % 60);
 
-      return {
+      const bedtime = b.sleep_bedtime ? new Date(b.sleep_bedtime) : null;
+      const wakeup = b.sleep_wakeup ? new Date(b.sleep_wakeup) : null;
+      const timeInBedMin = b.sleep_in_bed_min || (bedtime && wakeup ? Math.round((wakeup.getTime() - bedtime.getTime()) / 60000) : 0);
+      const inBedH = Math.floor(timeInBedMin / 60);
+      const inBedM = timeInBedMin % 60;
+
+      const res = {
         date: dateLabel,
         label: shortLabel,
         rawDate: displayDateStr,
         score: b.sleep_score || 0,
         duration: b.sleep_duration_min ? `${h}h ${m}m` : "0h 0m",
         durationRaw: b.sleep_duration_min || 0,
+        inBed: timeInBedMin > 0 ? `${inBedH}h ${inBedM}m` : "0h 0m",
+        inBedRaw: timeInBedMin,
         quality:
           (b.sleep_score || 0) >= 67
             ? "Optimal"
             : (b.sleep_score || 0) >= 34
               ? "Moderate"
               : "Poor",
-        bedtime: b.sleep_bedtime
-          ? new Date(b.sleep_bedtime).toLocaleTimeString([], {
+        bedtime: bedtime
+          ? bedtime.toLocaleTimeString([], {
               hour: "numeric",
               minute: "2-digit",
               hour12: (athleteStore.profile as any)?.time_format !== '24h',
             })
           : "N/A",
-        wakeup: b.sleep_wakeup
-          ? new Date(b.sleep_wakeup).toLocaleTimeString([], {
+        wakeup: wakeup
+          ? wakeup.toLocaleTimeString([], {
               hour: "numeric",
               minute: "2-digit",
               hour12: (athleteStore.profile as any)?.time_format !== '24h',
@@ -104,14 +113,39 @@
         hrv: b.hrv_rmssd || 0,
         debt: b.sleep_debt_min || 0,
         need: b.sleep_need_min || 480,
-        periods: (b.periods || []).map((p: any) => ({
-          ...p,
-          label: p.is_nap ? "Nap" : "Main Sleep",
-          timeRange: `${new Date(p.started_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: (athleteStore.profile as any)?.time_format !== '24h' })} – ${new Date(p.ended_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: (athleteStore.profile as any)?.time_format !== '24h' })}`,
-          duration: `${Math.floor(p.duration_min / 60)}h ${p.duration_min % 60}m`
-        })),
+        periods: (b.periods || []).map((p: any) => {
+          const pStart = new Date(p.started_at);
+          const pEnd = new Date(p.ended_at);
+          const pInBedMin = p.in_bed_min || Math.round((pEnd.getTime() - pStart.getTime()) / 60000);
+          const pAwakeMins = Math.round((pInBedMin * (p.awake_pct || 0)) / 100);
+          const pSleepMins = Math.max(0, pInBedMin - pAwakeMins);
+          
+          return {
+            ...p,
+            label: p.is_nap ? "Nap" : "Main Sleep",
+            timeRange: `${pStart.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: (athleteStore.profile as any)?.time_format !== '24h' })} – ${pEnd.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: (athleteStore.profile as any)?.time_format !== '24h' })}`,
+            duration: `${Math.floor(pSleepMins / 60)}h ${pSleepMins % 60}m`,
+            durationRaw: pSleepMins,
+            inBed: `${Math.floor(pInBedMin / 60)}h ${pInBedMin % 60}m`,
+            inBedRaw: pInBedMin,
+            awakeMins: pAwakeMins,
+            deep: p.deep_pct || 0,
+            rem: p.rem_pct || 0,
+            light: p.light_pct || 0,
+            awake: p.awake_pct || 0,
+          };
+        }),
         missing: false,
       };
+
+      // Aggregating Time in Bed from periods to ensure consistency if naps exist
+      const aggInBed = res.periods.reduce((sum: number, p: any) => sum + p.inBedRaw, 0);
+      if (aggInBed > res.inBedRaw) {
+        res.inBedRaw = aggInBed;
+        res.inBed = `${Math.floor(aggInBed / 60)}h ${aggInBed % 60}m`;
+      }
+
+      return res;
     });
   });
 
@@ -140,6 +174,14 @@
 
   const getSleepColor = (score: number) =>
     score >= 67 ? "#00C8A8" : score >= 34 ? "#FFCB88" : "#F07178";
+
+  let selectedPeriod = $state<any>(null);
+  let showPeriodModal = $state(false);
+
+  function openPeriodDetails(period: any) {
+    selectedPeriod = period;
+    showPeriodModal = true;
+  }
 </script>
 
 <div class="flex flex-col gap-3">
@@ -263,11 +305,16 @@
               >
             </div>
             <p class="text-xs text-text1">{n.bedtime} → {n.wakeup}</p>
-            <p class="text-[20px] font-bold mt-1" style="color: {scoreColor}">
-              {n.duration}
-              <span class="text-[12px] font-normal text-text2">total sleep</span
-              >
-            </p>
+            <div class="mt-1">
+              <p class="text-[18px] font-bold" style="color: {scoreColor}">
+                {n.duration}
+                <span class="text-[11px] font-normal text-text2 uppercase tracking-wide ml-1">asleep</span>
+              </p>
+              <p class="text-[14px] font-medium text-text1">
+                {n.inBed}
+                <span class="text-[10px] font-normal text-text2 uppercase tracking-wide ml-1">in bed</span>
+              </p>
+            </div>
           </div>
         </div>
       </Card>
@@ -330,7 +377,7 @@
           {/each}
         </div>
         <div class="flex flex-col gap-2">
-          {#each [{ key: "deep", label: "Deep Sleep", pct: n.deep, mins: Math.round((n.durationRaw * n.deep) / 100), ideal: "15–25%", desc: "Physical restoration, immune function, memory consolidation" }, { key: "rem", label: "REM Sleep", pct: n.rem, mins: Math.round((n.durationRaw * n.rem) / 100), ideal: "20–25%", desc: "Cognitive restoration, emotional processing, learning" }, { key: "light", label: "Light Sleep", pct: n.light, mins: Math.round((n.durationRaw * n.light) / 100), ideal: "45–55%", desc: "Transition stage, memory consolidation support" }, { key: "awake", label: "Awake", pct: n.awake, mins: Math.round((n.durationRaw * n.awake) / 100), ideal: "< 10%", desc: "Brief wakings during night; normal up to 10%" }] as s (s.key)}
+          {#each [{ key: "deep", label: "Deep Sleep", pct: n.deep, mins: Math.round((n.inBedRaw * n.deep) / 100), ideal: "15–25%", desc: "Physical restoration, immune function, memory consolidation" }, { key: "rem", label: "REM Sleep", pct: n.rem, mins: Math.round((n.inBedRaw * n.rem) / 100), ideal: "20–25%", desc: "Cognitive restoration, emotional processing, learning" }, { key: "light", label: "Light Sleep", pct: n.light, mins: Math.round((n.inBedRaw * n.light) / 100), ideal: "45–55%", desc: "Transition stage, memory consolidation support" }, { key: "awake", label: "Awake", pct: n.awake, mins: n.awakeMins, ideal: "< 10%", desc: "Brief wakings during night; normal up to 10%" }] as s (s.key)}
             <div
               class="flex gap-2.5 py-2 {s.key !== 'awake'
                 ? 'border-b border-border'
@@ -371,7 +418,11 @@
           <p class="text-[13px] font-semibold mb-3">Sleep Sessions</p>
           <div class="flex flex-col gap-2">
             {#each n.periods as period}
-              <div class="flex items-center justify-between p-2.5 rounded-lg bg-glass border border-border/50">
+              <button 
+                type="button"
+                class="flex items-center justify-between p-2.5 rounded-lg bg-glass border border-transparent hover:border-border transition-all active:scale-[0.98] text-left w-full"
+                onclick={() => openPeriodDetails(period)}
+              >
                 <div class="flex flex-col gap-0.5">
                   <div class="flex items-center gap-1.5">
                     <span class="text-[12px] font-bold">{period.label}</span>
@@ -385,7 +436,7 @@
                   <span class="text-[13px] font-bold block">{period.duration}</span>
                   <span class="text-[9px] text-text2 uppercase tracking-widest font-medium">Asleep</span>
                 </div>
-              </div>
+              </button>
             {/each}
           </div>
         </Card>
@@ -411,3 +462,72 @@
     {/if}
   {/if}
 </div>
+
+<Modal
+  show={showPeriodModal}
+  title={selectedPeriod?.label || "Sleep Details"}
+  onClose={() => (showPeriodModal = false)}
+>
+  {#if selectedPeriod}
+    <div class="flex flex-col gap-6">
+      <div class="flex items-center justify-between">
+        <div>
+          <p class="text-[22px] font-bold">{selectedPeriod.duration}</p>
+          <p class="text-[10px] text-text2 font-mono uppercase tracking-widest">Time Asleep</p>
+          
+          <div class="mt-2">
+            <p class="text-[16px] font-semibold text-text1">{selectedPeriod.inBed}</p>
+            <p class="text-[9px] text-text2 font-mono uppercase tracking-widest">Time in Bed</p>
+          </div>
+          
+          <p class="text-[10px] text-text2 font-mono uppercase mt-3">{selectedPeriod.timeRange}</p>
+        </div>
+        {#if selectedPeriod.score}
+          <RadialProgress
+            value={selectedPeriod.score}
+            max={100}
+            size={64}
+            color={getSleepColor(selectedPeriod.score)}
+            label={selectedPeriod.score.toString()}
+            sub="SCORE"
+          />
+        {/if}
+      </div>
+
+      <div class="flex flex-col gap-4">
+        <p class="text-[13px] font-semibold">Stage Breakdown</p>
+        <div class="flex h-6 rounded-lg overflow-hidden gap-0.5">
+          {#each [["deep", selectedPeriod.deep], ["rem", selectedPeriod.rem], ["light", selectedPeriod.light], ["awake", selectedPeriod.awake]] as [k, v] (k)}
+            <div
+              style="flex: {v || 1}; background: {stageColors[k as string]}"
+            ></div>
+          {/each}
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          {#each [{ key: "deep", label: "Deep", pct: selectedPeriod.deep, mins: Math.round((selectedPeriod.inBedRaw * selectedPeriod.deep) / 100) }, { key: "rem", label: "REM", pct: selectedPeriod.rem, mins: Math.round((selectedPeriod.inBedRaw * selectedPeriod.rem) / 100) }, { key: "light", label: "Light", pct: selectedPeriod.light, mins: Math.round((selectedPeriod.inBedRaw * selectedPeriod.light) / 100) }, { key: "awake", label: "Awake", pct: selectedPeriod.awake, mins: selectedPeriod.awakeMins }] as s (s.key)}
+            <div class="p-3 rounded-xl bg-glass border border-border/50">
+              <div class="flex items-center gap-2 mb-1">
+                <div class="w-2 h-2 rounded-full" style="background: {stageColors[s.key]}"></div>
+                <span class="text-xs font-medium text-text1">{s.label}</span>
+              </div>
+              <div class="flex items-baseline gap-1.5">
+                <span class="text-lg font-bold" style="color: {stageColors[s.key]}">{s.pct}%</span>
+                <span class="text-[10px] text-text2 font-mono">{s.mins}m</span>
+              </div>
+            </div>
+          {/each}
+        </div>
+      </div>
+
+      {#if selectedPeriod.is_nap}
+        <div class="p-4 rounded-xl bg-blue/5 border border-blue/20">
+          <p class="text-[12px] text-blue font-semibold mb-1">💡 Coaching Tip</p>
+          <p class="text-[11px] text-text1 leading-relaxed">
+            Naps contribute to your total recovery but can interfere with nighttime sleep if taken too late in the day.
+          </p>
+        </div>
+      {/if}
+    </div>
+  {/if}
+</Modal>
