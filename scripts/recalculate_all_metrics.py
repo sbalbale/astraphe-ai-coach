@@ -17,9 +17,13 @@ from app.services.algorithms import (
     compute_strain_score,
     compute_readiness_score,
     compute_sleep_score,
+    compute_sleep_need,
     compute_recovery_score,
     calculate_rhr_baseline,
-    calculate_hrv_baseline
+    calculate_hrv_baseline,
+    DEFAULT_BASELINE_SLEEP_MIN,
+    MAX_SLEEP_DEBT_MIN,
+    SLEEP_DEBT_DECAY_RATE
 )
 
 def main():
@@ -114,6 +118,9 @@ def main():
         rhr_history = []
         atl_history_30d = []
         
+        # Track sleep debt across days
+        current_sleep_debt = 0.0
+        
         bio_updates = []
         
         for idx, row in enumerate(bio_res.data):
@@ -141,16 +148,30 @@ def main():
             zones = daily_zones.get(curr_date, {z: 0.0 for z in range(1, 6)})
             strain_score = compute_strain_score(zones)
             
-            # 2. Sleep Score
-            # Use original duration and need if available, else defaults
+            # 2. Sleep Need & Score
+            # Base need is 480m (8h). 
+            # Plus impact from previous day's strain and debt.
+            # We look at the strain_score calculated in the previous step for the prior day
+            prior_bio = bio_updates[-1] if len(bio_updates) > 0 else {}
+            prev_strain = prior_bio.get("strain_score", 0)
+
+            carried_debt = float(current_sleep_debt) * SLEEP_DEBT_DECAY_RATE
+            sleep_need = compute_sleep_need(
+                baseline_min=DEFAULT_BASELINE_SLEEP_MIN,
+                strain_score=int(prev_strain or 0),
+                current_debt_min=carried_debt,
+            )
+            
             duration = row.get("sleep_duration_min") or 0
-            need = row.get("sleep_need_min") or 480
             sleep_score = compute_sleep_score(
                 actual_sleep_min=duration,
-                sleep_need_min=need,
+                sleep_need_min=sleep_need,
                 rem_pct=row.get("sleep_rem_pct"),
                 deep_pct=row.get("sleep_deep_pct")
             )
+            
+            # Update debt for the next day (decay + strict physiological cap)
+            current_sleep_debt = float(np.clip(float(sleep_need) - float(duration), 0.0, MAX_SLEEP_DEBT_MIN))
             
             # 3. Recovery Score
             recovery_score = compute_recovery_score(
@@ -174,6 +195,8 @@ def main():
                 "date": row["date"],
                 "strain_score": strain_score,
                 "sleep_score": sleep_score,
+                "sleep_need_min": int(round(sleep_need)),
+                "sleep_debt_min": int(round(current_sleep_debt)),
                 "recovery_score": recovery_score,
                 "readiness_score": readiness_score
             })

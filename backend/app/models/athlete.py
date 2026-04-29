@@ -6,6 +6,7 @@ class AthleteState(BaseModel):
     athlete_id: str
     display_name: str
     date: date
+    days_on_platform: int
     ctl: float
     atl: float
     tsb: float
@@ -22,6 +23,7 @@ class AthleteState(BaseModel):
 class AthleteProfileUpdate(BaseModel):
     display_name: Optional[str] = None
     date_of_birth: Optional[date] = None
+    gender: Optional[str] = None
     weight_kg: Optional[float] = None
     height_cm: Optional[float] = None
     ftp_watts: Optional[int] = None
@@ -33,3 +35,4 @@ class AthleteProfileUpdate(BaseModel):
     privacy_settings: Optional[dict] = None
     measurement_units: Optional[str] = None
     time_format: Optional[str] = None
+    timezone_offset_min: Optional[int] = None

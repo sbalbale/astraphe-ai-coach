@@ -6,9 +6,6 @@ from typing import Dict, Any, List, Optional
 # CONSTANTS
 # ==========================================
 
-# Standard TSS weighting for HR zones
-ZONE_WEIGHT = {0: 0.0, 1: 0.2, 2: 0.5, 3: 0.8, 4: 1.0, 5: 1.3}
-
 # Proprietary Strain weighting for HR zones
 ZONE_STRAIN_COEFFICIENTS = {
     0: 0.0,    # Z0 Resting
@@ -25,9 +22,16 @@ MAX_RAW_STRAIN_24H = 1440 * 8.0  # 11,520
 # Multiplier to account for central nervous system fatigue in non-aerobic sports
 NEUROMUSCULAR_MULTIPLIER = 1.7
 
+# Sleep Debt model constants
+DEFAULT_BASELINE_SLEEP_MIN = 480.0  # 8 hours
+MAX_SLEEP_DEBT_MIN = 120.0          # 2 hours max physiological debt
+MAX_STRAIN_SLEEP_TAX_MIN = 120.0    # 100 Strain = 2 extra hours of sleep need
+SLEEP_DEBT_DECAY_RATE = 0.8         # Unpaid debt decays by 20% each day
+
 # ==========================================
 # CORE LOAD & TSS CALCULATIONS
 # ==========================================
+
 
 def normalized_power(power_series: np.ndarray) -> float:
     """
@@ -50,22 +54,132 @@ def compute_tss_power(duration_sec: int, np_watts: float, ftp: int) -> float:
     intensity_factor = np_watts / ftp
     return (duration_sec * np_watts * intensity_factor) / (ftp * 3600) * 100
 
-def tss_from_hr_zones(zone_minutes: Dict[int, float], sport: str = "other") -> float:
+# ==========================================
+# CONTINUOUS HEART RATE STRESS (HRSS)
+# ==========================================
+
+def compute_hrss_timeseries(
+    hr_series: np.ndarray,
+    max_hr: int,
+    resting_hr: int,
+    threshold_hr: int,
+    sport: str = "other",
+    gender: str = "male",
+) -> float:
     """
-    Estimate TSS based on time spent in heart rate zones.
-    Applies a neuromuscular tax for strength training.
+    Calculates Heart Rate Stress Score (HRSS) continuously from a 1-second heart rate array.
+    Uses Banister's TRIMP to exponentially weight stress against Lactate Threshold Heart Rate.
     """
-    weighted_minutes = sum(
-        minutes * ZONE_WEIGHT.get(zone, 0.0)
-        for zone, minutes in zone_minutes.items()
-    )
-    
-    tss = (weighted_minutes / 60) * 100
-    
-    if sport == 'strength':
-        tss *= NEUROMUSCULAR_MULTIPLIER
-        
-    return tss
+    if max_hr <= resting_hr or threshold_hr <= resting_hr or hr_series is None or len(hr_series) == 0:
+        return 0.0
+
+    # Banister's constant (k) for the exponential lactate accumulation curve
+    k = 1.92 if str(gender).lower() == "male" else 1.67
+
+    # 1. Calculate Heart Rate Reserve (HRR) for every second
+    hr_series_clipped = np.clip(hr_series, resting_hr, max_hr)
+    hrr_series = (hr_series_clipped - resting_hr) / (max_hr - resting_hr)
+
+    # 2. Calculate exponential TRIMP for the entire workout (dt = 1/60 minutes per second)
+    dt = 1.0 / 60.0
+    trimp_per_sec = dt * hrr_series * 0.64 * np.exp(k * hrr_series)
+    total_trimp = float(np.sum(trimp_per_sec))
+
+    # 3. Calculate the baseline: 1-hour TRIMP strictly at LTHR
+    lthr_hrr = (threshold_hr - resting_hr) / (max_hr - resting_hr)
+    lthr_trimp_1hr = 60.0 * lthr_hrr * 0.64 * math.exp(k * lthr_hrr)
+
+    if lthr_trimp_1hr <= 0:
+        return 0.0
+
+    # 4. Normalize into the 100-point TSS scale
+    hrss = (total_trimp / lthr_trimp_1hr) * 100.0
+
+    if sport == "strength":
+        hrss *= NEUROMUSCULAR_MULTIPLIER
+
+    return round(float(hrss), 2)
+
+
+def compute_hrss_from_zones(
+    zone_minutes: Dict[int, float],
+    max_hr: int,
+    resting_hr: int,
+    threshold_hr: int,
+    sport: str = "other",
+    gender: str = "male",
+) -> float:
+    """
+    Estimates HRSS for historical workouts where only aggregated time-in-zone is available.
+    Calculates Banister TRIMP using the mathematical midpoint of each zone.
+    """
+    if max_hr <= resting_hr or threshold_hr <= resting_hr:
+        return 0.0
+
+    k = 1.92 if str(gender).lower() == "male" else 1.67
+
+    # Baseline: 1-hour TRIMP at LTHR
+    lthr_hrr = (threshold_hr - resting_hr) / (max_hr - resting_hr)
+    lthr_trimp_1hr = 60.0 * lthr_hrr * 0.64 * math.exp(k * lthr_hrr)
+    if lthr_trimp_1hr <= 0:
+        return 0.0
+
+    # Mathematical midpoints for standard 5-zone models based on max HR percentages
+    zone_midpoint_hr = {
+        0: resting_hr,
+        1: resting_hr + 0.60 * (max_hr - resting_hr),
+        2: resting_hr + 0.70 * (max_hr - resting_hr),
+        3: resting_hr + 0.80 * (max_hr - resting_hr),
+        4: resting_hr + 0.90 * (max_hr - resting_hr),
+        5: resting_hr + 0.95 * (max_hr - resting_hr),
+    }
+
+    total_trimp = 0.0
+    for zone, minutes in (zone_minutes or {}).items():
+        if not minutes or minutes <= 0:
+            continue
+
+        mid_hr = zone_midpoint_hr.get(int(zone), resting_hr)
+        hrr = (mid_hr - resting_hr) / (max_hr - resting_hr)
+
+        # Exponential TRIMP for this block of time
+        zone_trimp = float(minutes) * float(hrr) * 0.64 * math.exp(k * float(hrr))
+        total_trimp += zone_trimp
+
+    hrss = (total_trimp / lthr_trimp_1hr) * 100.0
+
+    if sport == "strength":
+        hrss *= NEUROMUSCULAR_MULTIPLIER
+
+    return round(float(hrss), 2)
+
+
+# ==========================================
+# PACE-BASED STRESS (tRSS / rTSS)
+# ==========================================
+
+def compute_trss_pace(
+    duration_sec: int,
+    avg_pace_sec_km: float,
+    threshold_pace_sec_km: float,
+) -> float:
+    """
+    Calculates Training Stress Score based on running pace (tRSS/rTSS).
+    Unlike power or heart rate, pace is inversely proportional to speed,
+    so the Intensity Factor (IF) ratio is inverted.
+    """
+    if threshold_pace_sec_km <= 0 or avg_pace_sec_km <= 0 or duration_sec <= 0:
+        return 0.0
+
+    # Intensity Factor (IF) = Threshold Pace / Actual Pace
+    # e.g., Threshold is 300s/km (5:00/km), Actual is 360s/km (6:00/km) -> IF = 0.833
+    intensity_factor = threshold_pace_sec_km / avg_pace_sec_km
+
+    # TSS = Duration in hours * IF^2 * 100
+    duration_hours = duration_sec / 3600.0
+    trss = duration_hours * (intensity_factor ** 2) * 100.0
+
+    return round(float(trss), 2)
 
 def compute_ctl(tss_series: np.ndarray, time_constant: int = 42) -> np.ndarray:
     """
@@ -140,22 +254,20 @@ def compute_sleep_score(
     deep_pct: float
 ) -> int:
     """
-    Compute Sleep Score (0-100) using logarithmic need ratio and architecture penalties.
+    Compute Sleep Score (0-100) using a linear need ratio and architecture penalties.
     """
     if sleep_need_min <= 0 or actual_sleep_min <= 0:
         return 0
 
-    # Base quantity score (capped at 100 to prevent over-rewarding excessive sleep)
-    quantity_score = 100 * (math.log(actual_sleep_min + 1) / math.log(sleep_need_min + 1))
+    # Fixed: strict linear ratio instead of a logarithm
+    quantity_score = 100.0 * (float(actual_sleep_min) / float(sleep_need_min))
     quantity_score = min(quantity_score, 100.0)
     
     # Quality modifier based on sleep architecture
-    # Healthy adult target is ~20% REM and ~15% Deep (35% combined)
     combined_restorative_pct = (rem_pct or 0.0) + (deep_pct or 0.0)
     
     quality_multiplier = 1.0
     if combined_restorative_pct < 30.0:
-        # Penalize poor architecture linearly down to a max 15% penalty
         deficit = 30.0 - combined_restorative_pct
         quality_multiplier = max(0.85, 1.0 - (deficit * 0.01))
         
@@ -175,14 +287,14 @@ def compute_recovery_score(
 ) -> int:
     """
     Compute the composite Recovery Score (0–100).
-    Integrates logarithmic HRV handling alongside established metrics.
+    Uses linear deviation for HRV to correctly penalize physiological stress.
     """
     scores = {}
     
-    # 1. HRV component (weight: 35%) - Logarithmic ratio
+    # 1. HRV component (weight: 35%) - Linear percentage deviation
     if hrv_baseline_30d > 0 and hrv_today > 0:
-        log_ratio = math.log(hrv_today) / math.log(hrv_baseline_30d)
-        scores['hrv'] = np.clip(50 + (50 * log_ratio), 0, 100)
+        hrv_delta_pct = (float(hrv_today) - float(hrv_baseline_30d)) / float(hrv_baseline_30d)
+        scores['hrv'] = np.clip(50 + (hrv_delta_pct * 100), 0, 100)
     else:
         scores['hrv'] = 50.0
 
@@ -190,7 +302,7 @@ def compute_recovery_score(
     rhr_delta = resting_hr - resting_hr_baseline_30d
     scores['rhr'] = np.clip(100 - (rhr_delta * 5), 0, 100)
     
-    # 3. Sleep score component (weight: 30%) - Direct passthrough of proprietary score
+    # 3. Sleep score component (weight: 30%) - Direct passthrough
     scores['sleep'] = float(sleep_score)
     
     # 4. Prior load component (weight: 10%) - Freshness relative to peak ATL
@@ -212,6 +324,57 @@ def compute_recovery_score(
     composite = sum(scores[k] * weights[k] for k in scores)
     
     return int(round(np.clip(composite, 0, 100)))
+
+# ==========================================
+# SLEEP NEED & DEBT CALCULATIONS
+# ==========================================
+def compute_sleep_need(
+    baseline_min: float,
+    strain_score: int,
+    current_debt_min: float,
+) -> int:
+    """
+    Calculate tonight's exact sleep need in minutes.
+    Combines baseline, today's strain tax, and carried-over debt.
+    """
+    safe_strain = float(np.clip(float(strain_score or 0), 0.0, 100.0))
+    safe_debt = float(np.clip(float(current_debt_min or 0.0), 0.0, MAX_SLEEP_DEBT_MIN))
+    strain_tax = (safe_strain / 100.0) * MAX_STRAIN_SLEEP_TAX_MIN
+    total_need = float(baseline_min) + float(strain_tax) + safe_debt
+    return int(round(total_need))
+
+def compute_sleep_debt_series(
+    actual_sleep_series: np.ndarray,
+    strain_series: np.ndarray,
+    baseline_min: float = DEFAULT_BASELINE_SLEEP_MIN,
+) -> np.ndarray:
+    """
+    Compute rolling Sleep Debt over history arrays (ordered oldest-first).
+    Applies daily decay and a strict physiological cap.
+
+    Notes:
+    - `strain_series[i]` is the strain incurred on the same day as `actual_sleep_series[i]`
+      (i.e., it is used to compute the sleep need for that night's sleep).
+    """
+    if actual_sleep_series is None or len(actual_sleep_series) == 0:
+        return np.array([])
+
+    debt = np.zeros(len(actual_sleep_series), dtype=float)
+
+    for i in range(len(actual_sleep_series)):
+        carried_debt_raw = 0.0 if i == 0 else float(debt[i - 1]) * SLEEP_DEBT_DECAY_RATE
+        carried_debt = float(np.clip(carried_debt_raw, 0.0, MAX_SLEEP_DEBT_MIN))
+
+        strain_i_raw = float(np.nan_to_num(strain_series[i], nan=0.0)) if strain_series is not None else 0.0
+        strain_i = float(np.clip(strain_i_raw, 0.0, 100.0))
+        strain_tax = (strain_i / 100.0) * MAX_STRAIN_SLEEP_TAX_MIN
+        need_last_night = float(baseline_min) + float(strain_tax) + float(carried_debt)
+
+        actual_i = float(np.nan_to_num(actual_sleep_series[i], nan=0.0))
+        debt[i] = np.clip(need_last_night - actual_i, 0.0, MAX_SLEEP_DEBT_MIN)
+
+    return np.round(debt, 1)
+
 
 # ==========================================
 # TRENDING & UTILITY (HELPER FUNCTIONS)

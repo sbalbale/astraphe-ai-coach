@@ -6,6 +6,38 @@ from app.dependencies import get_current_athlete, get_user_db, get_admin_db
 
 router = APIRouter(prefix="/v1/athlete", tags=["Athlete"])
 
+def _calc_biometrics_streak_days(bio_rows: list) -> int:
+    """
+    Calculates consecutive days of biometrics availability ending at the most recent date.
+    Assumes `bio_rows` are ordered by date desc and contain a `date` field (ISO string).
+    """
+    if not bio_rows:
+        return 0
+
+    dates: list[date] = []
+    for r in bio_rows:
+        d = r.get("date")
+        if not d:
+            continue
+        try:
+            # Supabase can return YYYY-MM-DD or full ISO datetime strings
+            dates.append(date.fromisoformat(str(d)[:10]))
+        except Exception:
+            continue
+
+    if not dates:
+        return 0
+
+    # Ensure unique + sorted desc (db order should already be desc, but be defensive)
+    uniq = sorted(set(dates), reverse=True)
+    streak = 1
+    for i in range(1, len(uniq)):
+        if (uniq[i - 1] - uniq[i]).days == 1:
+            streak += 1
+        else:
+            break
+    return streak
+
 @router.post("/onboard")
 async def onboard_athlete(athlete_id: str = Depends(get_current_athlete), db = Depends(get_user_db)):
     """Seeds initial sample data for a newly registered athlete."""
@@ -73,10 +105,23 @@ async def get_athlete_state(athlete_id: str = Depends(get_current_athlete), db =
     bio_res = db.table("biometrics").select("*").eq("athlete_id", athlete_id).order("date", desc=True).limit(1).execute()
     bio = bio_res.data[0] if bio_res.data else {}
 
+    # Calibration / history: compute consecutive-day biometrics streak up to ~2 months.
+    # This is more meaningful than "account age" for model readiness.
+    bio_hist_res = (
+        db.table("biometrics")
+        .select("date")
+        .eq("athlete_id", athlete_id)
+        .order("date", desc=True)
+        .limit(70)
+        .execute()
+    )
+    days_on_platform = _calc_biometrics_streak_days(bio_hist_res.data or [])
+
     return {
         "athlete_id": athlete_id,
         "display_name": display_name,
         "date": date.today(),
+        "days_on_platform": int(days_on_platform),
         "ctl": ctl,
         "atl": atl,
         "tsb": tsb,
@@ -175,6 +220,15 @@ async def update_athlete_profile(
             update_data["measurement_units"] = units_norm
         else:
             raise HTTPException(status_code=422, detail="measurement_units must be 'metric' or 'imperial'")
+
+    # - gender: used by Banister TRIMP constants; keep supported values narrow
+    gender = update_data.get("gender")
+    if gender is not None:
+        gender_norm = str(gender).strip().lower()
+        if gender_norm in ("male", "female"):
+            update_data["gender"] = gender_norm
+        else:
+            raise HTTPException(status_code=422, detail="gender must be 'male' or 'female'")
 
     # Execute update with RLS context.
     # Note: supabase-py/postgrest does not always support chaining `.select()` after `.update()`

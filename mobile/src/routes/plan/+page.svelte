@@ -3,6 +3,7 @@
   import Tag from '$lib/components/Tag.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
+  import { tssTextClass } from '$lib/scoreColors';
 
   const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   
@@ -17,8 +18,6 @@
     }
     return [];
   });
-  
-  let currentSchedule = schedule;
 </script>
 
 <div class="flex flex-col gap-3">
@@ -27,9 +26,9 @@
     <h1 class="text-[22px] font-bold tracking-[-0.02em]">Training Plan</h1>
   </div>
 
-  {#if currentSchedule.length > 0}
+  {#if schedule.length > 0}
     <div class="flex flex-col gap-2.5">
-      {#each currentSchedule as s}
+      {#each schedule as s (s.dateStr)}
         <Card style="padding: 14px; opacity: {s.status === 'done' ? '0.6' : '1'}; border-color: {s.status === 'today' ? 'rgba(70,33,255,0.4)' : 'var(--border)'}; background: {s.status === 'today' ? 'linear-gradient(135deg, rgba(70,33,255,0.1), transparent)' : 'var(--glass)'}">
           <div class="flex gap-3">
             <div class="w-12 flex flex-col items-center shrink-0">
@@ -60,7 +59,7 @@
               
               <div class="flex gap-3 mb-2">
                 <span class="text-[11px] text-text1">{s.duration}</span>
-                <span class="text-[11px] text-text2 font-mono">{s.tss} TSS</span>
+                <span class="text-[11px] font-mono {Number.isFinite(Number(s?.tss)) ? tssTextClass(s.tss) : 'text-text2'}">{Number.isFinite(Number(s?.tss)) ? s.tss : '--'} TSS</span>
               </div>
               
               <p class="text-[11px] text-text2 leading-relaxed border-l-2 border-[rgba(255,255,255,0.1)] pl-2">{s.note}</p>
