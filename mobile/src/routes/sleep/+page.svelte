@@ -306,11 +306,7 @@
       </Card>
     {:else}
       <Card
-        style="background: {nightIndex === 0
-          ? 'linear-gradient(135deg, rgba(70,33,255,0.15), rgba(0,200,168,0.08))'
-          : 'var(--glass)'}; border-color: {nightIndex === 0
-          ? 'rgba(70,33,255,0.25)'
-          : 'var(--border)'}"
+        style="background: var(--glass); border-color: var(--border);"
       >
         <div class="flex items-center gap-4">
           <RadialProgress

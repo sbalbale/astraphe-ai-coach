@@ -4,6 +4,7 @@
   import { goto } from '$app/navigation';
   import Sidebar from '$lib/components/Sidebar.svelte';
   import BottomNav from '$lib/components/BottomNav.svelte';
+  import ConfirmHost from '$lib/components/ConfirmHost.svelte';
   import { authStore } from '$lib/stores/authStore.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
 
@@ -13,18 +14,60 @@
   let wide = $derived(innerWidth >= 768);
   
   let isAuthRoute = $derived($page.url.pathname.startsWith('/auth'));
+  let isOnboardingRoute = $derived($page.url.pathname === '/onboarding');
+  let isNoShellRoute = $derived(isAuthRoute || isOnboardingRoute);
+
+  const profileComplete = $derived.by(() => {
+    const p = athleteStore.profile;
+    const sport0 = typeof p?.sport_focus?.[0] === 'string' ? p.sport_focus[0].trim() : '';
+    const mu = typeof p?.measurement_units === 'string' ? p.measurement_units.trim() : '';
+    const tf = typeof p?.time_format === 'string' ? p.time_format.trim() : '';
+    const dob = typeof p?.date_of_birth === 'string' ? p.date_of_birth.trim() : '';
+    const g = typeof p?.gender === 'string' ? p.gender.trim() : '';
+    const w = Number(p?.weight_kg);
+    const h = Number(p?.height_cm);
+    return (
+      !!sport0 &&
+      !!mu &&
+      !!tf &&
+      !!dob &&
+      !!g &&
+      Number.isFinite(w) &&
+      w > 0 &&
+      Number.isFinite(h) &&
+      h > 0
+    );
+  });
 
   $effect(() => {
-    if (!authStore.loading) {
-      if (!authStore.user && !isAuthRoute) {
-        goto('/auth/signin', { replaceState: true });
-      } else if (authStore.user && isAuthRoute) {
-        goto('/dashboard', { replaceState: true });
-      }
+    if (authStore.loading) return;
 
-      if (authStore.user) {
-        athleteStore.fetchAll();
-      }
+    // Signed out: everything except /auth/* requires signin.
+    if (!authStore.user) {
+      if (!isAuthRoute) goto('/auth/signin', { replaceState: true });
+      return;
+    }
+
+    // Signed in: ensure profile loads before deciding redirects.
+    athleteStore.fetchAll();
+    if (athleteStore.loading || !athleteStore.initialLoadDone) return;
+
+    const complete = profileComplete;
+
+    // Signed in but on an auth route: jump into the app flow.
+    if (isAuthRoute) {
+      goto(complete ? '/dashboard' : '/onboarding', { replaceState: true });
+      return;
+    }
+
+    // Enforce onboarding completion (avoid loops while loading by checking initialLoadDone above).
+    if (!complete && !isOnboardingRoute) {
+      goto('/onboarding', { replaceState: true });
+      return;
+    }
+    if (complete && isOnboardingRoute) {
+      goto('/dashboard', { replaceState: true });
+      return;
     }
   });
 </script>
@@ -40,7 +83,7 @@
   <div class="h-full flex items-center justify-center bg-bg0 text-text0 font-mono tracking-widest text-xs">
     ASTRAPE
   </div>
-{:else if isAuthRoute}
+{:else if isNoShellRoute}
   <div class="h-full bg-bg0 text-text0 font-sans overflow-y-auto">
     {@render props.children()}
   </div>
@@ -84,3 +127,5 @@
     </div>
   </div>
 {/if}
+
+<ConfirmHost />

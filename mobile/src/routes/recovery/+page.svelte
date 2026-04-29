@@ -6,11 +6,98 @@
   import Pill from '$lib/components/Pill.svelte';
   import DatePicker from '$lib/components/DatePicker.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
+  import { normalizeUnits, type Units } from '$lib/utils/units';
   import { onMount } from 'svelte';
   import { addDays, format, subDays } from 'date-fns';
   import { page } from '$app/stores';
 
   const isConnected = $derived(Object.values(athleteStore.syncStatus?.integrations || {}).some((i: any) => i.connected));
+  
+  type BiometricsRecord = Record<string, any> & { date?: string };
+  type TrainingLoadRecord = { date: string; daily_tss?: number | null; atl?: number | null };
+  
+  function isFiniteNumber(v: unknown): v is number {
+    return typeof v === 'number' && Number.isFinite(v);
+  }
+  
+  function formatSignedInt(delta: number | null | undefined): string {
+    if (!isFiniteNumber(delta)) return '--';
+    const d = Math.round(delta);
+    if (Math.abs(d) < 1) return '~';
+    return d > 0 ? `+${d}` : `${d}`;
+  }
+  
+  function formatTempDeviationF(v: number | null | undefined): string {
+    if (!isFiniteNumber(v)) return '--';
+    const r = Math.round(v * 10) / 10;
+    const sign = r > 0 ? '+' : r < 0 ? '' : '';
+    return `${sign}${r.toFixed(1)}°F`;
+  }
+
+  function formatSigned1dp(delta: number | null | undefined, unit: string): string {
+    if (!isFiniteNumber(delta)) return '--';
+    const r = Math.round(delta * 10) / 10;
+    if (Math.abs(r) < 0.05) return `~0.0${unit}`;
+    const sign = r > 0 ? '+' : '';
+    return `${sign}${r.toFixed(1)}${unit}`;
+  }
+
+  function cToF(c: number): number {
+    return (c * 9) / 5 + 32;
+  }
+
+  function deltaCToF(dc: number): number {
+    return (dc * 9) / 5;
+  }
+
+  function hexToRgba(hex: string, alpha: number): string {
+    const h = hex.replace('#', '').trim();
+    const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
+    const n = Number.parseInt(full, 16);
+    if (!Number.isFinite(n)) return `rgba(255,255,255,${alpha})`;
+    const r = (n >> 16) & 255;
+    const g = (n >> 8) & 255;
+    const b = n & 255;
+    return `rgba(${r},${g},${b},${alpha})`;
+  }
+
+  const FACTOR_COLORS = {
+    hrv: '#00C8A8',
+    rhr: '#7C3AED',
+    sleep: '#FFCB88',
+    load: '#F07178',
+    temp: '#00C8A8',
+    spo2: '#7C3AED'
+  } as const;
+  
+  function baselineAvg30d(series: BiometricsRecord[] | undefined, endDateStr: string, field: string): number | null {
+    if (!series?.length) return null;
+    const end = new Date(endDateStr + 'T00:00:00');
+    if (Number.isNaN(end.getTime())) return null;
+    // Baseline should be the 30 days *prior* to the selected day (exclude current day).
+    const endExclusive = subDays(end, 1);
+    const start = subDays(endExclusive, 29);
+    
+    const vals = series
+      .filter((r) => {
+        if (!r?.date) return false;
+        const dt = new Date(r.date + 'T00:00:00');
+        if (Number.isNaN(dt.getTime())) return false;
+        return dt >= start && dt <= endExclusive;
+      })
+      .map((r) => Number((r as any)[field]))
+      .filter((v) => Number.isFinite(v) && v !== 0);
+    
+    if (vals.length === 0) return null;
+    return vals.reduce((a, b) => a + b, 0) / vals.length;
+  }
+  
+  function signedDeltaVsBaseline(series: BiometricsRecord[] | undefined, endDateStr: string, field: string, todayValue: number | null): number | null {
+    if (!isFiniteNumber(todayValue)) return null;
+    const base = baselineAvg30d(series, endDateStr, field);
+    if (!isFiniteNumber(base)) return null;
+    return todayValue - base;
+  }
   
   // Rolling 7-day window (cannot go into the future).
   // Source of truth for the picker is a YYYY-MM-DD string.
@@ -68,6 +155,107 @@
     if (vals.length === 0) return null;
     return Math.round(vals.reduce((a, b) => a + b, 0) / vals.length);
   });
+
+  const units = $derived<Units>(normalizeUnits((athleteStore.profile as any)?.measurement_units));
+  const isImperial = $derived(units === 'imperial');
+  
+  const biometricsSeries = $derived(athleteStore.biometrics?.series as BiometricsRecord[] | undefined);
+  
+  const hrvToday = $derived(isFiniteNumber(d?.data?.hrv_rmssd) ? Math.round(d.data.hrv_rmssd) : null);
+  const hrvBaseline = $derived.by(() => {
+    const base = baselineAvg30d(biometricsSeries, d.date, 'hrv_rmssd');
+    return isFiniteNumber(base) ? Math.round(base) : null;
+  });
+  const hrvDelta = $derived(signedDeltaVsBaseline(biometricsSeries, d.date, 'hrv_rmssd', hrvToday));
+  const hrvGood = $derived.by(() => (hrvDelta === null ? null : hrvDelta >= 0));
+  
+  const rhrToday = $derived(isFiniteNumber(d?.data?.resting_hr) ? Math.round(d.data.resting_hr) : null);
+  const rhrBaseline = $derived.by(() => {
+    const base = baselineAvg30d(biometricsSeries, d.date, 'resting_hr');
+    return isFiniteNumber(base) ? Math.round(base) : null;
+  });
+  const rhrDelta = $derived(signedDeltaVsBaseline(biometricsSeries, d.date, 'resting_hr', rhrToday));
+  const rhrGood = $derived.by(() => (rhrDelta === null ? null : rhrDelta <= 0));
+  
+  const sleepScoreToday = $derived(isFiniteNumber(d?.data?.sleep_score) ? Math.round(d.data.sleep_score) : null);
+  const sleepBaseline = $derived.by(() => {
+    const base = baselineAvg30d(biometricsSeries, d.date, 'sleep_score');
+    return isFiniteNumber(base) ? Math.round(base) : null;
+  });
+  const sleepDelta = $derived(signedDeltaVsBaseline(biometricsSeries, d.date, 'sleep_score', sleepScoreToday));
+  const sleepGood = $derived.by(() => (sleepDelta === null ? null : sleepDelta >= 0));
+  
+  const sleepHours = $derived.by(() => (isFiniteNumber(d?.data?.sleep_duration_min) ? Math.round((d.data.sleep_duration_min / 60) * 10) / 10 : null));
+  const sleepDeepPct = $derived.by(() => (isFiniteNumber(d?.data?.sleep_deep_pct) ? Math.round(d.data.sleep_deep_pct) : null));
+  
+  const priorLoad = $derived.by(() => {
+    const series = athleteStore.metrics?.trainingLoadData as TrainingLoadRecord[] | undefined;
+    if (!series?.length || !d?.date) return null;
+    const priorDate = format(subDays(new Date(d.date + 'T00:00:00'), 1), 'yyyy-MM-dd');
+    const priorDay = series.find((x) => x.date === priorDate);
+    if (!priorDay) return null;
+    
+    const end = new Date(priorDate + 'T00:00:00');
+    const start = subDays(end, 29);
+    const inRange = series.filter((x) => {
+      const dt = new Date(x.date + 'T00:00:00');
+      if (Number.isNaN(dt.getTime())) return false;
+      return dt >= start && dt <= end && isFiniteNumber(x.atl);
+    });
+    const peakAtl30d = inRange.length ? Math.max(...inRange.map((x) => Number(x.atl))) : null;
+    const deltaDrop = isFiniteNumber(priorDay.atl) && isFiniteNumber(peakAtl30d) ? Math.round(Number(priorDay.atl) - Number(peakAtl30d)) : null;
+    
+    let trend = '--';
+    if (isFiniteNumber(deltaDrop)) {
+      if (Math.abs(deltaDrop) < 5) trend = '~';
+      else trend = deltaDrop < 0 ? `↓${Math.abs(deltaDrop)}` : `↑${deltaDrop}`;
+    }
+    
+    return {
+      priorDate,
+      dailyTss: isFiniteNumber(priorDay.daily_tss) ? Math.round(Number(priorDay.daily_tss)) : null,
+      deltaDrop,
+      trend
+    };
+  });
+  
+  // NOTE: `skin_temp_deviation` is stored as *skin/body temperature in °C* for WHOOP recovery payloads.
+  // We treat it as an actual temperature measurement and show deviation vs baseline.
+  const bodyTempCToday = $derived(isFiniteNumber(d?.data?.skin_temp_deviation) ? Number(d.data.skin_temp_deviation) : null);
+  const bodyTempCBaseline = $derived.by(() => {
+    const base = baselineAvg30d(biometricsSeries, d.date, 'skin_temp_deviation');
+    if (!isFiniteNumber(base)) return null;
+    return Math.round(base * 10) / 10;
+  });
+  const bodyTempCDelta = $derived.by(() => {
+    if (!isFiniteNumber(bodyTempCToday) || !isFiniteNumber(bodyTempCBaseline)) return null;
+    return bodyTempCToday - bodyTempCBaseline;
+  });
+
+  const bodyTempDisplay = $derived.by(() => {
+    if (!isFiniteNumber(bodyTempCToday)) return null;
+    const val = isImperial ? cToF(bodyTempCToday) : bodyTempCToday;
+    return Math.round(val * 10) / 10;
+  });
+
+  const bodyTempBaselineDisplay = $derived.by(() => {
+    if (!isFiniteNumber(bodyTempCBaseline)) return null;
+    const val = isImperial ? cToF(bodyTempCBaseline) : bodyTempCBaseline;
+    return Math.round(val * 10) / 10;
+  });
+
+  const bodyTempDeltaDisplay = $derived.by(() => {
+    if (!isFiniteNumber(bodyTempCDelta)) return null;
+    const val = isImperial ? deltaCToF(bodyTempCDelta) : bodyTempCDelta;
+    return Math.round(val * 10) / 10;
+  });
+
+  const spo2Pct = $derived(isFiniteNumber(d?.data?.spo2_pct) ? Math.round(d.data.spo2_pct) : null);
+  const spo2Baseline = $derived.by(() => {
+    const base = baselineAvg30d(biometricsSeries, d.date, 'spo2_pct');
+    return isFiniteNumber(base) ? Math.round(base) : null;
+  });
+  const spo2Delta = $derived(signedDeltaVsBaseline(biometricsSeries, d.date, 'spo2_pct', spo2Pct));
 
   // Allow deep-linking to a specific day, e.g. /recovery?day=2026-04-22
   let lastAppliedDay = $state<string | null>(null);
@@ -231,6 +419,190 @@
           </div>
         </Card>
       </div>
+      
+      <!-- Contributing Factors -->
+      <Card style="padding: 14px;">
+        <div class="flex items-center justify-between mb-3">
+          <p class="text-[13px] font-semibold">Contributing Factors</p>
+          <span class="text-[10px] text-text2 font-mono uppercase tracking-[0.1em]">vs 30d</span>
+        </div>
+
+        <div class="flex flex-col gap-3">
+          <!-- HRV -->
+          <div class="flex flex-col gap-1">
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0">
+                <p class="text-[10px] text-text2 font-mono uppercase tracking-[0.1em]">HRV</p>
+              </div>
+              <div class="shrink-0 flex flex-col items-end leading-tight">
+                <span class="text-[11px] font-mono" style="color: {hrvGood === null ? 'var(--text2)' : FACTOR_COLORS.hrv}; opacity: {hrvGood === null ? 0.8 : 1}">
+                  {formatSignedInt(hrvDelta)}
+                </span>
+                <span class="text-[12px] font-semibold" style="color: {hrvToday === null ? 'var(--text2)' : FACTOR_COLORS.hrv}">
+                  {hrvToday === null ? '--' : `${hrvToday}ms`}
+                </span>
+              </div>
+            </div>
+            <div class="h-[3px] rounded-full overflow-hidden" style="background: {hexToRgba(FACTOR_COLORS.hrv, 0.25)}">
+              <div class="h-full w-full rounded-full" style="background: {FACTOR_COLORS.hrv}"></div>
+            </div>
+            <p class="text-[11px] text-text2 leading-snug">
+              {hrvToday === null
+                ? 'Not available for this day.'
+                : hrvBaseline === null
+                  ? 'Baseline not available yet. Keep syncing to build a 30-day trend.'
+                  : hrvDelta !== null && hrvDelta >= 0
+                    ? `Above your 30-day baseline of ${hrvBaseline}ms. Strong parasympathetic response.`
+                    : `Below your 30-day baseline of ${hrvBaseline}ms. Lower HRV can reflect accumulated stress.`}
+            </p>
+          </div>
+
+          <!-- Resting HR -->
+          <div class="flex flex-col gap-1">
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0">
+                <p class="text-[10px] text-text2 font-mono uppercase tracking-[0.1em]">Resting HR</p>
+              </div>
+              <div class="shrink-0 flex flex-col items-end leading-tight">
+                <span class="text-[11px] font-mono" style="color: {rhrGood === null ? 'var(--text2)' : FACTOR_COLORS.rhr}; opacity: {rhrGood === null ? 0.8 : 1}">
+                  {formatSignedInt(rhrDelta)}
+                </span>
+                <span class="text-[12px] font-semibold" style="color: {rhrToday === null ? 'var(--text2)' : FACTOR_COLORS.rhr}">
+                  {rhrToday === null ? '--' : `${rhrToday}bpm`}
+                </span>
+              </div>
+            </div>
+            <div class="h-[3px] rounded-full overflow-hidden" style="background: {hexToRgba(FACTOR_COLORS.rhr, 0.25)}">
+              <div class="h-full w-full rounded-full" style="background: {FACTOR_COLORS.rhr}"></div>
+            </div>
+            <p class="text-[11px] text-text2 leading-snug">
+              {rhrToday === null
+                ? 'Not available for this day.'
+                : rhrBaseline === null || rhrDelta === null
+                  ? 'Baseline not available yet. Keep syncing to build a 30-day trend.'
+                  : rhrDelta < 0
+                    ? `${Math.abs(Math.round(rhrDelta))} bpm below baseline. Low resting HR indicates good cardiac efficiency.`
+                    : `${Math.round(rhrDelta)} bpm above baseline. Elevated RHR can reflect fatigue or stress.`}
+            </p>
+          </div>
+
+          <!-- Sleep Quality -->
+          <div class="flex flex-col gap-1">
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0">
+                <p class="text-[10px] text-text2 font-mono uppercase tracking-[0.1em]">Sleep Quality</p>
+              </div>
+              <div class="shrink-0 flex flex-col items-end leading-tight">
+                <span class="text-[11px] font-mono" style="color: {sleepGood === null ? 'var(--text2)' : FACTOR_COLORS.sleep}; opacity: {sleepGood === null ? 0.8 : 1}">
+                  {formatSignedInt(sleepDelta)}
+                </span>
+                <span class="text-[12px] font-semibold" style="color: {sleepScoreToday === null ? 'var(--text2)' : FACTOR_COLORS.sleep}">
+                  {sleepScoreToday === null ? '--' : `${sleepScoreToday}%`}
+                </span>
+              </div>
+            </div>
+            <div class="h-[3px] rounded-full overflow-hidden" style="background: {hexToRgba(FACTOR_COLORS.sleep, 0.25)}">
+              <div class="h-full w-full rounded-full" style="background: {FACTOR_COLORS.sleep}"></div>
+            </div>
+            <p class="text-[11px] text-text2 leading-snug">
+              {sleepScoreToday === null
+                ? 'Not available for this day.'
+                : `${sleepHours === null ? '--' : sleepHours}h with ${sleepScoreToday}% quality.${sleepDeepPct === null ? '' : ` Deep sleep at ${sleepDeepPct}% — excellent for recovery.`}`}
+            </p>
+          </div>
+
+          <!-- Prior Load -->
+          <div class="flex flex-col gap-1">
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0">
+                <p class="text-[10px] text-text2 font-mono uppercase tracking-[0.1em]">Prior Load</p>
+              </div>
+              <div class="shrink-0 flex flex-col items-end leading-tight">
+                <span class="text-[11px] font-mono" style="color: {priorLoad === null ? 'var(--text2)' : FACTOR_COLORS.load}; opacity: {priorLoad === null ? 0.8 : 1}">
+                  {priorLoad === null ? '--' : priorLoad.trend}
+                </span>
+                <span class="text-[12px] font-semibold" style="color: {priorLoad?.dailyTss == null ? 'var(--text2)' : FACTOR_COLORS.load}">
+                  {priorLoad?.dailyTss == null ? '--' : `${priorLoad.dailyTss}TSS`}
+                </span>
+              </div>
+            </div>
+            <div class="h-[3px] rounded-full overflow-hidden" style="background: {hexToRgba(FACTOR_COLORS.load, 0.25)}">
+              <div class="h-full w-full rounded-full" style="background: {FACTOR_COLORS.load}"></div>
+            </div>
+            <p class="text-[11px] text-text2 leading-snug">
+              {priorLoad === null
+                ? 'Not available for this day.'
+                : priorLoad.deltaDrop === null
+                  ? 'Load trend not available yet.'
+                  : priorLoad.deltaDrop < 0
+                    ? `Yesterday was a recovery day. Acute load dropped ${Math.abs(priorLoad.deltaDrop)} pts from peak.`
+                    : priorLoad.deltaDrop > 0
+                      ? `Yesterday pushed load higher. Acute load rose ${priorLoad.deltaDrop} pts vs peak.`
+                      : 'Acute load stayed steady vs your recent peak.'}
+            </p>
+          </div>
+
+          <!-- Body Temp -->
+          <div class="flex flex-col gap-1">
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0">
+                <p class="text-[10px] text-text2 font-mono uppercase tracking-[0.1em]">Body Temp</p>
+              </div>
+              <div class="shrink-0 flex flex-col items-end leading-tight">
+                <span class="text-[11px] font-mono" style="color: {bodyTempDeltaDisplay === null ? 'var(--text2)' : FACTOR_COLORS.temp}; opacity: {bodyTempDeltaDisplay === null ? 0.8 : 1}">
+                  {bodyTempDeltaDisplay === null ? '--' : '~'}
+                </span>
+                <span class="text-[12px] font-semibold" style="color: {bodyTempDeltaDisplay === null ? 'var(--text2)' : FACTOR_COLORS.temp}">
+                  {bodyTempDeltaDisplay === null ? '--' : formatSigned1dp(bodyTempDeltaDisplay, isImperial ? '°F' : '°C')}
+                </span>
+              </div>
+            </div>
+            <div class="h-[3px] rounded-full overflow-hidden" style="background: {hexToRgba(FACTOR_COLORS.temp, 0.25)}">
+              <div class="h-full w-full rounded-full" style="background: {FACTOR_COLORS.temp}"></div>
+            </div>
+            <p class="text-[11px] text-text2 leading-snug">
+              {bodyTempCToday === null
+                ? 'Not available for this day.'
+                : bodyTempBaselineDisplay === null || bodyTempDeltaDisplay === null || bodyTempDisplay === null
+                  ? `Body temp recorded at ${Math.round((bodyTempDisplay ?? (isImperial ? cToF(bodyTempCToday) : bodyTempCToday)) * 10) / 10}${isImperial ? '°F' : '°C'}. Baseline not available yet.`
+                  : Math.abs(bodyTempDeltaDisplay) > (isImperial ? 0.9 : 0.5)
+                    ? `Temp elevated vs baseline (${bodyTempBaselineDisplay}${isImperial ? '°F' : '°C'}). Monitor for signs of illness or overheating.`
+                    : `Temp stable vs baseline (${bodyTempBaselineDisplay}${isImperial ? '°F' : '°C'}). No signs of illness or overheating.`}
+            </p>
+          </div>
+
+          <!-- SPO2 -->
+          <div class="flex flex-col gap-1">
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0">
+                <p class="text-[10px] text-text2 font-mono uppercase tracking-[0.1em]">SPO2</p>
+              </div>
+              <div class="shrink-0 flex flex-col items-end leading-tight">
+                <span class="text-[11px] font-mono" style="color: {spo2Delta === null ? 'var(--text2)' : FACTOR_COLORS.spo2}; opacity: {spo2Delta === null ? 0.8 : 1}">
+                  {formatSignedInt(spo2Delta)}
+                </span>
+                <span class="text-[12px] font-semibold" style="color: {spo2Pct === null ? 'var(--text2)' : FACTOR_COLORS.spo2}">
+                  {spo2Pct === null ? '--' : `${spo2Pct}%`}
+                </span>
+              </div>
+            </div>
+            <div class="h-[3px] rounded-full overflow-hidden" style="background: {hexToRgba(FACTOR_COLORS.spo2, 0.25)}">
+              <div class="h-full w-full rounded-full" style="background: {FACTOR_COLORS.spo2}"></div>
+            </div>
+            <p class="text-[11px] text-text2 leading-snug">
+              {spo2Pct === null
+                ? 'Not available for this day.'
+                : spo2Baseline === null || spo2Delta === null
+                  ? 'Baseline not available yet. Keep syncing to build a 30-day trend.'
+                  : spo2Pct < 94
+                    ? 'Blood oxygen dipped below normal overnight. Consider sleep position, altitude, or congestion.'
+                    : spo2Delta >= 0
+                      ? `Above your 30-day baseline of ${spo2Baseline}%. Blood oxygen within normal range all night.`
+                      : `Below your 30-day baseline of ${spo2Baseline}%. Blood oxygen slightly reduced overnight.`}
+            </p>
+          </div>
+        </div>
+      </Card>
 
       <!-- 28-Day Trend -->
       <Card>

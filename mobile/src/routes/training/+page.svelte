@@ -8,6 +8,7 @@
   import LineChart from '$lib/components/charts/LineChart.svelte';
   import DonutChart from '$lib/components/charts/DonutChart.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
+  import { confirm } from '$lib/confirm';
   import DatePicker from '$lib/components/DatePicker.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { page } from '$app/stores';
@@ -162,7 +163,14 @@
 
   async function deleteSelectedWorkout() {
     if (!selectedWorkout?.id) return;
-    if (!confirm('Delete this workout?')) return;
+    const ok = await confirm({
+      title: 'Delete workout?',
+      message: 'Delete this workout? This cannot be undone.',
+      confirmText: 'Delete',
+      cancelText: 'Cancel',
+      confirmTone: 'danger'
+    });
+    if (!ok) return;
     try {
       await athleteStore.deleteWorkout(selectedWorkout.id);
       selectedWorkout = null;
