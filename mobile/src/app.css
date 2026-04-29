@@ -18,6 +18,12 @@
     --border: rgba(255,255,255,0.07);
     --glass: rgba(255,255,255,0.04);
     --glass2: rgba(255,255,255,0.08);
+    --zone-0: #94a3b8;
+    --zone-1: #4621FF;
+    --zone-2: #00C8A8;
+    --zone-3: #FFCB88;
+    --zone-4: #F07178;
+    --zone-5: #FF3B6B;
   }
 
   html, body {

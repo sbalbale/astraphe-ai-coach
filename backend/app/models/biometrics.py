@@ -8,6 +8,7 @@ class DailyBiometrics(BaseModel):
     hrv_rmssd: Optional[float] = None
     resting_hr: Optional[int] = None
     sleep_duration_min: Optional[int] = None
+    sleep_in_bed_min: Optional[int] = None
     sleep_score: Optional[int] = None # Astrape proprietary
     sleep_deep_pct: Optional[float] = None
     sleep_rem_pct: Optional[float] = None
@@ -30,6 +31,7 @@ class SleepPeriodPayload(BaseModel):
     started_at: datetime
     ended_at: datetime
     duration_min: int
+    in_bed_min: Optional[int] = None
     score: Optional[int] = None
     deep_pct: Optional[float] = None
     rem_pct: Optional[float] = None
