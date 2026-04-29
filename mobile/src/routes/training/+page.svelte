@@ -1,3 +1,9 @@
+<script module lang="ts">
+  import { SvelteMap } from 'svelte/reactivity';
+
+  const trainingLoadAnalysisMemo = new SvelteMap<string, string | null>();
+</script>
+
 <script lang="ts">
   import Card from '$lib/components/Card.svelte';
   import MetricBadge from '$lib/components/MetricBadge.svelte';
@@ -11,6 +17,7 @@
   import { confirm } from '$lib/confirm';
   import DatePicker from '$lib/components/DatePicker.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
+  import { api } from '$lib/api';
   import { page } from '$app/stores';
   import { addDays, endOfWeek, format, startOfWeek } from 'date-fns';
   import { strainTextClass, tssTextClass } from '$lib/scoreColors';
@@ -52,6 +59,7 @@
 
   const selectedWeekStart = $derived.by(() => startOfWeek(parseDateInputLocal(weekPickerValue), { weekStartsOn: 1 }));
   const selectedWeekEnd = $derived(endOfWeek(selectedWeekStart, { weekStartsOn: 1 }));
+  const selectedWeekEndStr = $derived(format(selectedWeekEnd, 'yyyy-MM-dd'));
   function jumpToCurrentWeek() {
     weekPickerValue = format(new Date(), 'yyyy-MM-dd');
   }
@@ -179,6 +187,35 @@
       alert('Failed to delete workout');
     }
   }
+
+  let analysisText = $state<string | null>(null);
+  let activeAnalysisKey: string | null = null;
+  $effect(() => {
+    const endDay = selectedWeekEndStr;
+    if (!endDay) {
+      analysisText = null;
+      return;
+    }
+
+    const cached = trainingLoadAnalysisMemo.get(endDay);
+    if (cached !== undefined) {
+      analysisText = cached;
+      return;
+    }
+
+    const requestKey = `training-load:${endDay}`;
+    activeAnalysisKey = requestKey;
+
+    (async () => {
+      const res = await api.getTrainingLoadAnalysis(endDay);
+      const content = typeof res?.analysis?.content === 'string' ? res.analysis.content.trim() : '';
+      const next = content ? content : null;
+      trainingLoadAnalysisMemo.set(endDay, next);
+
+      if (activeAnalysisKey !== requestKey) return;
+      analysisText = next;
+    })();
+  });
 </script>
 
 <div class="flex flex-col gap-3">
@@ -234,13 +271,12 @@
       <Card style="background: linear-gradient(135deg, rgba(70,33,255,0.12), transparent);">
         <p class="text-[13px] font-semibold mb-1.5">Load Insight</p>
         <p class="text-xs text-text1 leading-relaxed">
-          {#if athleteStore.tsb > 10}
-            You have significant freshnesh (TSB +{Math.round(athleteStore.tsb)}). Excellent time for a peak performance or hard test.
-          {:else if athleteStore.tsb < -20}
-            High fatigue detected. Consider a deload week to allow CTL to catch up to ATL safely.
-          {:else}
-            Your training load is stable. Continue with your planned progression.
-          {/if}
+          {analysisText ??
+            (athleteStore.tsb > 10
+              ? `You have significant freshnesh (TSB +${Math.round(athleteStore.tsb)}). Excellent time for a peak performance or hard test.`
+              : athleteStore.tsb < -20
+                ? 'High fatigue detected. Consider a deload week to allow CTL to catch up to ATL safely.'
+                : 'Your training load is stable. Continue with your planned progression.')}
         </p>
       </Card>
     {/if}

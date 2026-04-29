@@ -1,3 +1,9 @@
+<script module lang="ts">
+  import { SvelteMap } from 'svelte/reactivity';
+
+  const recoveryAnalysisMemo = new SvelteMap<string, string | null>();
+</script>
+
 <script lang="ts">
   import Card from '$lib/components/Card.svelte';
   import RadialProgress from '$lib/components/RadialProgress.svelte';
@@ -6,6 +12,7 @@
   import Pill from '$lib/components/Pill.svelte';
   import DatePicker from '$lib/components/DatePicker.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
+  import { api } from '$lib/api';
   import { normalizeUnits, type Units } from '$lib/utils/units';
   import { onMount } from 'svelte';
   import { addDays, format, subDays } from 'date-fns';
@@ -40,6 +47,15 @@
     if (Math.abs(r) < 0.05) return `~0.0${unit}`;
     const sign = r > 0 ? '+' : '';
     return `${sign}${r.toFixed(1)}${unit}`;
+  }
+
+  function formatHoursMinutesFromMinutes(mins: number | null | undefined): string {
+    const n = typeof mins === 'number' ? mins : Number(mins);
+    if (!Number.isFinite(n)) return '--';
+    const m = Math.max(0, Math.round(n));
+    const h = Math.floor(m / 60);
+    const r = m % 60;
+    return `${h}h ${r}m`;
   }
 
   function cToF(c: number): number {
@@ -185,7 +201,8 @@
   const sleepDelta = $derived(signedDeltaVsBaseline(biometricsSeries, d.date, 'sleep_score', sleepScoreToday));
   const sleepGood = $derived.by(() => (sleepDelta === null ? null : sleepDelta >= 0));
   
-  const sleepHours = $derived.by(() => (isFiniteNumber(d?.data?.sleep_duration_min) ? Math.round((d.data.sleep_duration_min / 60) * 10) / 10 : null));
+  const sleepDurationMin = $derived.by(() => (isFiniteNumber(d?.data?.sleep_duration_min) ? Math.round(d.data.sleep_duration_min) : null));
+  const sleepDurationHM = $derived.by(() => (sleepDurationMin === null ? null : formatHoursMinutesFromMinutes(sleepDurationMin)));
   const sleepDeepPct = $derived.by(() => (isFiniteNumber(d?.data?.sleep_deep_pct) ? Math.round(d.data.sleep_deep_pct) : null));
   
   const priorLoad = $derived.by(() => {
@@ -269,6 +286,35 @@
     });
 
     return unsub;
+  });
+
+  let analysisText = $state<string | null>(null);
+  let activeAnalysisKey: string | null = null;
+  $effect(() => {
+    const day = d?.date;
+    if (!day) {
+      analysisText = null;
+      return;
+    }
+
+    const cached = recoveryAnalysisMemo.get(day);
+    if (cached !== undefined) {
+      analysisText = cached;
+      return;
+    }
+
+    const requestKey = `recovery:${day}`;
+    activeAnalysisKey = requestKey;
+
+    (async () => {
+      const res = await api.getRecoveryAnalysis(day);
+      const content = typeof res?.analysis?.content === 'string' ? res.analysis.content.trim() : '';
+      const next = content ? content : null;
+      recoveryAnalysisMemo.set(day, next);
+
+      if (activeAnalysisKey !== requestKey) return;
+      analysisText = next;
+    })();
   });
 </script>
 
@@ -507,7 +553,7 @@
             <p class="text-[11px] text-text2 leading-snug">
               {sleepScoreToday === null
                 ? 'Not available for this day.'
-                : `${sleepHours === null ? '--' : sleepHours}h with ${sleepScoreToday}% quality.${sleepDeepPct === null ? '' : ` Deep sleep at ${sleepDeepPct}% — excellent for recovery.`}`}
+                : `${sleepDurationHM === null ? '--' : sleepDurationHM} with ${sleepScoreToday}% quality.${sleepDeepPct === null ? '' : ` Deep sleep at ${sleepDeepPct}% — excellent for recovery.`}`}
             </p>
           </div>
 
@@ -635,9 +681,12 @@
       <Card style="background: var(--glass2); border-color: transparent;">
         <p class="text-[13px] font-semibold mb-1">Recovery Analysis</p>
         <p class="text-[12px] text-text2 leading-relaxed italic">
-          {score >= 67 ? 'Your recovery architecture looks balanced. Systemic fatigue is low.' : 
-           score >= 34 ? 'Your autonomic system is recovering. Focus on maintaining parasympathetic tone.' : 
-           'High systemic load detected. Prioritize high-quality sleep to accelerate repair.'}
+          {analysisText ??
+            (score >= 67
+              ? 'Your recovery architecture looks balanced. Systemic fatigue is low.'
+              : score >= 34
+                ? 'Your autonomic system is recovering. Focus on maintaining parasympathetic tone.'
+                : 'High systemic load detected. Prioritize high-quality sleep to accelerate repair.')}
         </p>
       </Card>
     {/if}

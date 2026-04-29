@@ -1,7 +1,7 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from typing import Optional
 from datetime import date, timedelta
-from app.dependencies import get_current_athlete, get_user_db
+from app.dependencies import get_current_athlete, get_current_user_tier, get_user_db
 
 router = APIRouter(prefix="/v1/plan", tags=["Training Plan"])
 
@@ -10,9 +10,12 @@ async def get_training_plan(
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
     athlete_id: str = Depends(get_current_athlete),
+    tier: str = Depends(get_current_user_tier),
     db = Depends(get_user_db)
 ):
     """Returns the athlete's training plan for a date range."""
+    if tier != "premium":
+        raise HTTPException(status_code=403, detail="Premium membership required for Training Plan.")
     start_date = start_date or date.today()
     end_date = end_date or (date.today() + timedelta(days=7))
     
