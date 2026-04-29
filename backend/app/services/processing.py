@@ -3,18 +3,19 @@ from app.models.workout import WorkoutPayload
 from app.models.biometrics import DailyBiometrics
 
 from app.services.algorithms import (
-    calculate_cycling_tss, 
-    calculate_hr_tss,
-    calculate_training_load, 
-    calculate_astrape_sleep_score,
-    calculate_astrape_sleep_need,
+    compute_tss_power, 
+    tss_from_hr_zones,
+    compute_ctl,
+    compute_atl,
+    compute_sleep_score,
     normalize_rowing_watts,
-    calculate_raw_strain_score,
-    calculate_astrape_strain_score,
-    calculate_astrape_recovery_score,
-    calculate_astrape_readiness_score,
+    compute_strain_score,
+    compute_recovery_score,
+    compute_readiness_score,
     calculate_rhr_baseline,
     calculate_hrv_baseline,
+    calculate_spo2_baseline,
+    calculate_temp_baseline,
     calculate_weekly_tss_target,
     calculate_threshold_hr_est
 )
@@ -39,35 +40,37 @@ def recalculate_tss_history(athlete_id: str, db):
     if not daily_tss:
         return
 
-    # 3. Recalculate PMC with Seeding Strategy
+    # 3. Recalculate PMC with New proprietary Seeding Strategy
     all_dates = sorted(daily_tss.keys())
+    if not all_dates:
+        return
+
     start_date, end_date = all_dates[0], all_dates[-1]
     
-    # Calculate the average TSS of the first 42 days to seed the history.
-    # This matches the user's new algorithm intent to solve the "cold start" problem.
-    initial_window = [daily_tss.get(d, 0.0) for d in all_dates[:42]]
-    avg_tss = sum(initial_window) / len(initial_window) if initial_window else 0.0
+    # Extract TSS series as numpy array for compute_ctl/atl
+    # Fill in missing days with 0.0
+    tss_list = []
+    current = start_date
+    while current <= end_date:
+        tss_list.append(daily_tss.get(current, 0.0))
+        current += timedelta(days=1)
     
-    # spans match algorithms.py (alpha = 2 / (span + 1))
-    ctl_alpha = 2 / (42 + 1)
-    atl_alpha = 2 / (7 + 1)
-    
-    ctl, atl = avg_tss, avg_tss
+    tss_series = np.array(tss_list)
+    ctl_series = compute_ctl(tss_series)
+    atl_series = compute_atl(tss_series)
     
     records = []
     current = start_date
-    while current <= end_date:
-        tss = daily_tss.get(current, 0.0)
-        ctl = ctl * (1 - ctl_alpha) + tss * ctl_alpha
-        atl = atl * (1 - atl_alpha) + tss * atl_alpha
-        
+    for i in range(len(tss_series)):
+        ctl = ctl_series[i]
+        atl = atl_series[i]
         records.append({
             "athlete_id": athlete_id,
             "date": current.isoformat(),
-            "daily_tss": round(tss, 2),
-            "ctl": round(ctl, 2),
-            "atl": round(atl, 2),
-            "tsb": round(ctl - atl, 2)
+            "daily_tss": round(float(tss_series[i]), 2),
+            "ctl": round(float(ctl), 2),
+            "atl": round(float(atl), 2),
+            "tsb": round(float(ctl - atl), 2)
         })
         current += timedelta(days=1)
 
@@ -101,14 +104,16 @@ def process_and_save_workout(payload: WorkoutPayload, athlete_id: str, db):
 
     # 2. Calculate Training Stress Score (TSS)
     if sport == "cycling" and payload.normalized_power:
-        tss = calculate_cycling_tss(payload.duration_seconds, payload.normalized_power, payload.ftp_at_time)
+        tss = compute_tss_power(payload.duration_seconds, payload.normalized_power, payload.ftp_at_time)
     elif has_hr_zones and payload.duration_seconds:
-        # Use HR zones for TSS if available (standard for Run/Strength/Rowing when power is missing)
-        tss = calculate_hr_tss(payload.duration_seconds, hr_zones)
+        # Use HR zones for TSS
+        safe_hr_zones = {k: (v or 0.0) for k, v in hr_zones.items()}
+        zone_minutes = {k: (v / 100.0) * (payload.duration_seconds / 60.0) for k, v in safe_hr_zones.items()}
+        tss = tss_from_hr_zones(payload.duration_seconds, zone_minutes)
     elif sport == "rowing" and hasattr(payload, 'avg_power') and payload.avg_power:
-        # Fallback for rowing if HR zones missing
+        # Fallback for rowing
         norm_watts = normalize_rowing_watts(payload.avg_power)
-        tss = calculate_cycling_tss(payload.duration_seconds, int(norm_watts), payload.ftp_at_time)
+        tss = compute_tss_power(payload.duration_seconds, int(norm_watts), payload.ftp_at_time)
     elif getattr(payload, "tss", None):
         tss = getattr(payload, "tss")
     
@@ -125,15 +130,13 @@ def process_and_save_workout(payload: WorkoutPayload, athlete_id: str, db):
         duration_seconds = int(max(0, (ended_at - payload.start_time).total_seconds()))
 
     # 3. Calculate Physiological Cardiovascular Strain (0-100 scale)
-    raw_strain = 0.0
+    strain_score = 0
     if has_hr_zones and duration_seconds:
         # Convert the None values to 0.0 for safety
         safe_hr_zones = {k: (v or 0.0) for k, v in hr_zones.items()}
         # Get duration in minutes for the specific zones
         zone_minutes = {k: (v / 100.0) * (duration_seconds / 60.0) for k, v in safe_hr_zones.items()}
-        raw_strain = calculate_raw_strain_score(zone_minutes)
-    
-    astrape_strain_score = calculate_astrape_strain_score(raw_strain)
+        strain_score = compute_strain_score(zone_minutes)
 
     # 4. Save the workout to Supabase
     db.table("workouts").upsert({
@@ -151,7 +154,7 @@ def process_and_save_workout(payload: WorkoutPayload, athlete_id: str, db):
         "norm_power_w": payload.normalized_power,
         "avg_pace_sec_km": payload.avg_pace_sec_km,
         "tss": tss,
-        "astrape_strain_score": astrape_strain_score,
+        "strain_score": strain_score,
         "hr_zone_0_pct": hr_zone_0_pct,
         "hr_zone_1_pct": payload.hr_zone_1_pct,
         "hr_zone_2_pct": payload.hr_zone_2_pct,
@@ -226,11 +229,11 @@ def process_and_save_biometrics(payload: DailyBiometrics, athlete_id: str, db):
     prev_res = db.table("biometrics").select("sleep_debt_min, astrape_strain_score").eq("athlete_id", athlete_id).eq("date", prev_date.isoformat()).maybe_single().execute()
     
     prev_debt = 0.0
-    prev_strain = 0.0
+    prev_strain = 0
     if prev_res and prev_res.data:
         prev_debt = prev_res.data.get("sleep_debt_min") or 0.0
         # Priority: Astrape Custom Strain Score
-        prev_strain = prev_res.data.get("astrape_strain_score") or 0.0
+        prev_strain = prev_res.data.get("strain_score") or 0
         
     # 4. Calculate Dynamic Baselines & Targets
     start_date_42d = (payload.date - timedelta(days=42)).isoformat()
@@ -287,16 +290,20 @@ def process_and_save_biometrics(payload: DailyBiometrics, athlete_id: str, db):
             prior_day_atl = atls[-1]
             
     # 6. Process Sleep Architecture (Aggregated)
-    astrape_need = calculate_astrape_sleep_need(480, prev_strain, prev_debt)
+    # New proprietary sleep need calculation logic should be integrated if different, 
+    # but for now we follow the user's provided compute_sleep_score.
+    # The sleep need still uses a baseline (e.g. 480) + strain/debt impact.
+    strain_impact = min(120, (prev_strain or 0) * 1.8)
+    sleep_need = 480 + strain_impact + prev_debt
     
-    astrape_sleep = calculate_astrape_sleep_score(
-        duration_min=total_sleep_min,
-        sleep_need_min=astrape_need,
+    sleep_score = compute_sleep_score(
+        actual_sleep_min=total_sleep_min,
+        sleep_need_min=sleep_need,
         rem_pct=agg_rem,
         deep_pct=agg_deep
     )
 
-    next_night_debt = min(120, max(0, astrape_need - total_sleep_min))
+    next_night_debt = min(120, max(0, sleep_need - total_sleep_min))
 
     # 7. Merge with existing Biometrics row (HRV/RHR/Strain)
     existing_res = db.table("biometrics").select("*").eq("athlete_id", athlete_id).eq("date", payload.date.isoformat()).maybe_single().execute()
@@ -308,43 +315,38 @@ def process_and_save_biometrics(payload: DailyBiometrics, athlete_id: str, db):
     # Fetch all workouts for this day to aggregate raw strain
     day_workouts_res = db.table("workouts").select("hr_zone_1_pct, hr_zone_2_pct, hr_zone_3_pct, hr_zone_4_pct, hr_zone_5_pct, duration_seconds").eq("athlete_id", athlete_id).filter("started_at", "gte", payload.date.isoformat()).filter("started_at", "lt", (payload.date + timedelta(days=1)).isoformat()).execute()
     
-    total_zone_minutes = {1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0, 5: 0.0}
+    day_zone_minutes = {1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0, 5: 0.0}
     if day_workouts_res and day_workouts_res.data:
         for w in day_workouts_res.data:
             dur_sec = w.get("duration_seconds") or 0
             for z in range(1, 6):
                 pct = w.get(f"hr_zone_{z}_pct") or 0
-                total_zone_minutes[z] += (pct / 100.0) * (dur_sec / 60.0)
+                day_zone_minutes[z] += (pct / 100.0) * (dur_sec / 60.0)
     
-    astrape_day_raw_strain = calculate_raw_strain_score(total_zone_minutes)
-    astrape_day_strain = calculate_astrape_strain_score(astrape_day_raw_strain)
+    astrape_strain_score = compute_strain_score(day_zone_minutes)
 
     final_hrv = payload.hrv_rmssd if payload.hrv_rmssd is not None else existing.get("hrv_rmssd")
     final_rhr = payload.resting_hr if payload.resting_hr is not None else existing.get("resting_hr")
-    # We still keep WHOOP strain in day_strain for comparison, but Astrape will use its own
-    final_strain = payload.day_strain if payload.day_strain is not None else existing.get("day_strain")
     final_temp = payload.skin_temp_deviation if payload.skin_temp_deviation is not None else existing.get("skin_temp_deviation")
     final_spo2 = payload.spo2_pct if payload.spo2_pct is not None else existing.get("spo2_pct")
-    final_recovery = payload.recovery_score if payload.recovery_score is not None else existing.get("recovery_score")
     final_source = payload.source if payload.hrv_rmssd is not None else existing.get("hrv_source", payload.source)
 
     # 8. Process Recovery (Autonomic Repair)
-    astrape_recovery = calculate_astrape_recovery_score(
-        hrv_rmssd=final_hrv or 0.0,
+    recovery_score = compute_recovery_score(
+        hrv_today=final_hrv or 0.0,
         hrv_baseline_30d=baseline_hrv,
         resting_hr=final_rhr or 0,
         resting_hr_baseline_30d=baseline_rhr,
-        sleep_score=astrape_sleep
-    )
-    
-    # 9. Process Readiness (Capacity to Train)
-    astrape_readiness = calculate_astrape_readiness_score(
-        recovery_score=astrape_recovery,
+        sleep_score=sleep_score,
         prior_day_atl=prior_day_atl,
         prior_day_atl_max_30d=prior_day_atl_max_30d,
         skin_temp_deviation=final_temp or 0.0,
         spo2_pct=final_spo2 or 100.0
     )
+    
+    # 9. Process Readiness (Capacity to Train)
+    # TSB based readiness
+    readiness_score = compute_readiness_score(current_ctl - prior_day_atl)
     
     # 10. Save aggregated record to biometrics
     db.table("biometrics").upsert({
@@ -353,14 +355,12 @@ def process_and_save_biometrics(payload: DailyBiometrics, athlete_id: str, db):
         "hrv_rmssd": final_hrv,
         "resting_hr": final_rhr,
         "sleep_duration_min": total_sleep_min,
-        "sleep_score": main_sleep.get("score") if main_sleep else payload.sleep_score,
-        "recovery_score": final_recovery,
-        "sleep_need_min": astrape_need,
+        "sleep_score": sleep_score, # Astrape Score
+        "recovery_score": recovery_score, # Astrape Score
+        "sleep_need_min": sleep_need,
         "sleep_debt_min": next_night_debt,
-        "astrape_sleep_score": astrape_sleep,
-        "astrape_recovery_score": astrape_recovery,
-        "astrape_readiness_score": astrape_readiness,
-        "astrape_strain_score": astrape_day_strain,
+        "readiness_score": readiness_score,
+        "strain_score": astrape_strain_score,
         "hrv_source": final_source,
         "sleep_deep_pct": agg_deep,
         "sleep_rem_pct": agg_rem,
@@ -369,6 +369,5 @@ def process_and_save_biometrics(payload: DailyBiometrics, athlete_id: str, db):
         "sleep_bedtime": main_sleep.get("started_at") if main_sleep else None,
         "sleep_wakeup": main_sleep.get("ended_at") if main_sleep else None,
         "skin_temp_deviation": final_temp,
-        "spo2_pct": final_spo2,
-        "day_strain": final_strain
+        "spo2_pct": final_spo2
     }, on_conflict="athlete_id,date").execute()

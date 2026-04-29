@@ -43,7 +43,7 @@ async def get_biometrics(
             sleep_data.append(row["sleep_duration_min"] / 60.0)
         
         # Sleep Score
-        s_score = row.get("astrape_sleep_score") or row.get("sleep_score") or 0
+        s_score = row.get("sleep_score") or 0
         sleep_scores.append(s_score)
         
         # Attach individual periods to the daily row for easy consumption

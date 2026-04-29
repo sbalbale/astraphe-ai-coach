@@ -234,7 +234,7 @@ def ingest_biometrics(db: Client, athlete_id: str):
         wake_date = ts_wake.date().isoformat()
         
         # 1. Strain belongs to the START date
-        daily_data[start_date]["day_strain"] = to_float(row.get("Day Strain", 0))
+        # (We skip storing WHOOP proprietary day_strain)
         
         # 2. Track wake/start for second pass
         row["_wake_date"] = wake_date
@@ -246,8 +246,9 @@ def ingest_biometrics(db: Client, athlete_id: str):
         start_date = row["_start_date"]
         cycle_start = (row.get("Cycle start time") or "").strip()
         
-        day_strain = daily_data[start_date].get("day_strain", 0)
-        s_need = calculate_astrape_sleep_need(480, day_strain, current_rolling_debt)
+        # Use previous day strain if needed for sleep need, but for seeding we might just use 0 or a proxy
+        # Since we are not storing day_strain anymore, we'll use a fixed impact or ignore for seed
+        s_need = calculate_astrape_sleep_need(480, 0, current_rolling_debt)
         s_actual = to_int(row.get("Asleep duration (min)", 0)) or 0
         current_rolling_debt = min(120, max(0, s_need - s_actual))
 
@@ -273,13 +274,11 @@ def ingest_biometrics(db: Client, athlete_id: str):
             "hrv_rmssd":          to_float(row.get("Heart rate variability (ms)", "")),
             "hrv_source":         "whoop",
             "resting_hr":         to_int(row.get("Resting heart rate (bpm)", "")),
-            "recovery_score":     to_int(row.get("Recovery score %", "")),
             "sleep_duration_min": s_actual,
-            "sleep_score":        to_int(row.get("Sleep performance %", "")),
             "sleep_debt_min":     current_rolling_debt,
             "sleep_need_min":     s_need,
-            "astrape_sleep_score": s_score,
-            "astrape_recovery_score": r_score,
+            "sleep_score":        s_score, # Using astrape score as primary
+            "recovery_score":     r_score, # Using astrape score as primary
             "sleep_deep_pct":     detail.get("deep_pct"),
             "sleep_rem_pct":      detail.get("rem_pct"),
             "sleep_light_pct":    detail.get("light_pct"),
@@ -358,7 +357,7 @@ def ingest_workouts(db: Client, athlete_id: str) -> dict[date, float]:
                 "avg_hr":      to_int(row.get("Average HR (bpm)", "")),
                 "max_hr":      to_int(row.get("Max HR (bpm)", "")),
                 "tss":         tss_val if tss_val > 0 else None,
-                "astrape_strain_score": int(min(100, round((tss_val / 150) * 100))) if tss_val > 0 else 0,
+                "strain_score": int(min(100, round((tss_val / 150) * 100))) if tss_val > 0 else 0,
                 "hr_zone_1_pct": zones[1],
                 "hr_zone_2_pct": zones[2],
                 "hr_zone_3_pct": zones[3],
