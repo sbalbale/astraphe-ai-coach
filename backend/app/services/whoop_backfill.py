@@ -160,21 +160,15 @@ async def backfill_last_28_days(athlete_id: str, access_token: str, db: Any) -> 
         start_time = slp.get("start")
         if not start_time:
             continue
-        d = _parse_dt(start_time).date()
-
-        score = (slp.get("score") or {}) if isinstance(slp.get("score"), dict) else {}
-        stage = (score.get("stage_summary") or {}) if isinstance(score.get("stage_summary"), dict) else {}
-
-        light = stage.get("total_light_sleep_time_milli")
-        deep = stage.get("total_slow_wave_sleep_time_milli")
-        rem = stage.get("total_rem_sleep_time_milli")
-        awake = stage.get("total_awake_time_milli")
-        total_sleep_ms = sum(v for v in (light, deep, rem) if isinstance(v, (int, float)))
-        sleep_duration_min = int(total_sleep_ms / 60000) if total_sleep_ms else 0
+        # Standardize to wake date for biological day alignment
+        wake_dt = _parse_dt(slp.get("end") or start_time)
+        d = wake_dt.date()
+        external_id = str(slp.get("id"))
 
         payload = DailyBiometrics(
             date=d,
             source="whoop",
+            external_id=external_id,
             hrv_rmssd=None,
             resting_hr=None,
             sleep_duration_min=sleep_duration_min,

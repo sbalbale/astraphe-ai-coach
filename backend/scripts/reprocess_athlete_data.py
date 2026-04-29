@@ -5,6 +5,9 @@ from datetime import datetime, date
 # Add the parent directory to sys.path so we can import from 'app'
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+from dotenv import load_dotenv
+load_dotenv(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".env")))
+
 from app.dependencies import get_admin_db
 from app.models.workout import WorkoutPayload
 from app.models.biometrics import DailyBiometrics
@@ -59,14 +62,17 @@ def reprocess_athlete(athlete_id: str):
                 source=b.get("hrv_source") or "whoop",
                 hrv_rmssd=float(b["hrv_rmssd"]) if b.get("hrv_rmssd") is not None else None,
                 resting_hr=b.get("resting_hr"),
-                sleep_duration_min=b.get("sleep_duration_min"),
+                # DO NOT pass sleep_duration_min, bedtime, or wakeup.
+                # This prevents the feedback loop where aggregated daily totals 
+                # are saved back as individual periods.
+                sleep_duration_min=None,
                 sleep_score=b.get("sleep_score"),
                 sleep_deep_pct=float(b["sleep_deep_pct"]) if b.get("sleep_deep_pct") is not None else None,
                 sleep_rem_pct=float(b["sleep_rem_pct"]) if b.get("sleep_rem_pct") is not None else None,
                 sleep_light_pct=float(b["sleep_light_pct"]) if b.get("sleep_light_pct") is not None else None,
                 sleep_awake_pct=float(b["sleep_awake_pct"]) if b.get("sleep_awake_pct") is not None else None,
-                sleep_bedtime=b.get("sleep_bedtime"),
-                sleep_wakeup=b.get("sleep_wakeup"),
+                sleep_bedtime=None,
+                sleep_wakeup=None,
                 skin_temp_deviation=float(b["skin_temp_deviation"]) if b.get("skin_temp_deviation") is not None else None,
                 spo2_pct=float(b["spo2_pct"]) if b.get("spo2_pct") is not None else None,
                 recovery_score=b.get("recovery_score")

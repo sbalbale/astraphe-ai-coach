@@ -1,4 +1,5 @@
 from datetime import date, timedelta, datetime
+import numpy as np
 from app.models.workout import WorkoutPayload
 from app.models.biometrics import DailyBiometrics
 
@@ -102,6 +103,10 @@ def process_and_save_workout(payload: WorkoutPayload, athlete_id: str, db):
         except Exception:
             hr_zone_0_pct = None
 
+    # Map sport to internal enum conventions
+    mapped_sport = sport if sport in ('run', 'bike', 'swim', 'strength', 'rowing') else 'other'
+    if sport == 'cycling': mapped_sport = 'bike'
+
     # 2. Calculate Training Stress Score (TSS)
     if sport == "cycling" and payload.normalized_power:
         tss = compute_tss_power(payload.duration_seconds, payload.normalized_power, payload.ftp_at_time)
@@ -109,7 +114,7 @@ def process_and_save_workout(payload: WorkoutPayload, athlete_id: str, db):
         # Use HR zones for TSS
         safe_hr_zones = {k: (v or 0.0) for k, v in hr_zones.items()}
         zone_minutes = {k: (v / 100.0) * (payload.duration_seconds / 60.0) for k, v in safe_hr_zones.items()}
-        tss = tss_from_hr_zones(payload.duration_seconds, zone_minutes)
+        tss = tss_from_hr_zones(zone_minutes, mapped_sport)
     elif sport == "rowing" and hasattr(payload, 'avg_power') and payload.avg_power:
         # Fallback for rowing
         norm_watts = normalize_rowing_watts(payload.avg_power)
@@ -117,10 +122,6 @@ def process_and_save_workout(payload: WorkoutPayload, athlete_id: str, db):
     elif getattr(payload, "tss", None):
         tss = getattr(payload, "tss")
     
-    # Map sport to internal enum conventions
-    mapped_sport = sport if sport in ('run', 'bike', 'swim', 'strength', 'rowing') else 'other'
-    if sport == 'cycling': mapped_sport = 'bike'
-
     # Duration / end time alignment
     duration_seconds = payload.duration_seconds
     ended_at = payload.ended_at
@@ -174,12 +175,18 @@ def process_and_save_biometrics(payload: DailyBiometrics, athlete_id: str, db):
     if has_sleep_session:
         # Save this specific session to sleep_periods table
         # We use a helper to extract the session-specific fields
+        
+        # Calculate duration from timestamps if duration_min is missing or looks suspicious (feedback loop)
+        # However, for WHOOP, we prefer their reported duration (asleep time).
+        # We only save if external_id is present or if we are confident this is a single session.
+        session_duration = payload.sleep_duration_min or 0
+        
         session_data = {
             "athlete_id": athlete_id,
             "date": payload.date.isoformat(),
             "started_at": payload.sleep_bedtime.isoformat() if payload.sleep_bedtime else None,
             "ended_at": payload.sleep_wakeup.isoformat() if payload.sleep_wakeup else None,
-            "duration_min": payload.sleep_duration_min or 0,
+            "duration_min": session_duration,
             "score": payload.sleep_score,
             "deep_pct": payload.sleep_deep_pct,
             "rem_pct": payload.sleep_rem_pct,
@@ -226,7 +233,7 @@ def process_and_save_biometrics(payload: DailyBiometrics, athlete_id: str, db):
 
     # 3. Fetch Previous Day's Biometrics (for sleep debt/strain)
     prev_date = payload.date - timedelta(days=1)
-    prev_res = db.table("biometrics").select("sleep_debt_min, astrape_strain_score").eq("athlete_id", athlete_id).eq("date", prev_date.isoformat()).maybe_single().execute()
+    prev_res = db.table("biometrics").select("sleep_debt_min, strain_score").eq("athlete_id", athlete_id).eq("date", prev_date.isoformat()).maybe_single().execute()
     
     prev_debt = 0.0
     prev_strain = 0
@@ -357,8 +364,8 @@ def process_and_save_biometrics(payload: DailyBiometrics, athlete_id: str, db):
         "sleep_duration_min": total_sleep_min,
         "sleep_score": sleep_score, # Astrape Score
         "recovery_score": recovery_score, # Astrape Score
-        "sleep_need_min": sleep_need,
-        "sleep_debt_min": next_night_debt,
+        "sleep_need_min": int(round(sleep_need)),
+        "sleep_debt_min": int(round(next_night_debt)),
         "readiness_score": readiness_score,
         "strain_score": astrape_strain_score,
         "hrv_source": final_source,
