@@ -3,6 +3,7 @@
   import Tag from '$lib/components/Tag.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
+  import { authStore } from '$lib/stores/authStore.svelte';
   import { tssTextClass } from '$lib/scoreColors';
 
   const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -26,7 +27,13 @@
     <h1 class="text-[22px] font-bold tracking-[-0.02em]">Training Plan</h1>
   </div>
 
-  {#if schedule.length > 0}
+  {#if authStore.tier !== 'premium'}
+    <EmptyState
+      title="Premium required"
+      message="You must be a premium member to access the Training Plan feature."
+      icon="🔒"
+    />
+  {:else if schedule.length > 0}
     <div class="flex flex-col gap-2.5">
       {#each schedule as s (s.dateStr)}
         <Card style="padding: 14px; opacity: {s.status === 'done' ? '0.6' : '1'}; border-color: {s.status === 'today' ? 'rgba(70,33,255,0.4)' : 'var(--border)'}; background: {s.status === 'today' ? 'linear-gradient(135deg, rgba(70,33,255,0.1), transparent)' : 'var(--glass)'}">

@@ -3,7 +3,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional, List
 from app.services.ai_coach import get_coach_response, get_coach_response_stream
-from app.dependencies import get_current_athlete, get_user_db
+from app.dependencies import get_current_athlete, get_current_user_tier, get_user_db
 import json
 from datetime import datetime
 
@@ -94,11 +94,17 @@ def _insert_message(db, athlete_id: str, conversation_id: str, role: str, conten
 
 router = APIRouter(prefix="/v1/coach", tags=["AI Coach"])
 
+def _require_premium(tier: str):
+    if tier != "premium":
+        raise HTTPException(status_code=403, detail="Premium membership required for AI Coach.")
+
 @router.get("/conversations")
 async def list_conversations(
     athlete_id: str = Depends(get_current_athlete),
+    tier: str = Depends(get_current_user_tier),
     db = Depends(get_user_db),
 ):
+    _require_premium(tier)
     res = (
         db.table("coach_conversations")
         .select("id,title,created_at,updated_at")
@@ -113,8 +119,10 @@ async def list_conversations(
 async def create_conversation(
     payload: CreateConversation,
     athlete_id: str = Depends(get_current_athlete),
+    tier: str = Depends(get_current_user_tier),
     db = Depends(get_user_db),
 ):
+    _require_premium(tier)
     cid = _create_conversation(db, athlete_id, payload.title)
     return {"status": "success", "conversation": {"id": cid, "title": payload.title}}
 
@@ -122,8 +130,10 @@ async def create_conversation(
 async def get_conversation_messages(
     conversation_id: str,
     athlete_id: str = Depends(get_current_athlete),
+    tier: str = Depends(get_current_user_tier),
     db = Depends(get_user_db),
 ):
+    _require_premium(tier)
     # Ensure conversation exists + is owned by this athlete (RLS will also enforce)
     _ = (
         db.table("coach_conversations")
@@ -149,8 +159,10 @@ async def get_conversation_messages(
 async def delete_conversation(
     conversation_id: str,
     athlete_id: str = Depends(get_current_athlete),
+    tier: str = Depends(get_current_user_tier),
     db = Depends(get_user_db),
 ):
+    _require_premium(tier)
     # Cascades to messages.
     db.table("coach_conversations").delete().eq("id", conversation_id).eq("athlete_id", athlete_id).execute()
     return {"status": "success"}
@@ -159,8 +171,10 @@ async def delete_conversation(
 async def chat_with_coach(
     payload: ChatMessage,
     athlete_id: str = Depends(get_current_athlete),
+    tier: str = Depends(get_current_user_tier),
     db = Depends(get_user_db),
 ):
+    _require_premium(tier)
     try:
         conversation_id = payload.conversation_id or _create_conversation(db, athlete_id, title=None)
         _insert_message(db, athlete_id, conversation_id, role="user", content=payload.message, image_urls=payload.image_urls)
@@ -180,8 +194,10 @@ async def chat_with_coach(
 async def stream_chat_with_coach(
     payload: ChatMessage,
     athlete_id: str = Depends(get_current_athlete),
+    tier: str = Depends(get_current_user_tier),
     db = Depends(get_user_db),
 ):
+    _require_premium(tier)
     async def event_generator():
         conversation_id = payload.conversation_id
         if not conversation_id:

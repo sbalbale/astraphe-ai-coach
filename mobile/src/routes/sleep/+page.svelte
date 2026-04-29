@@ -1,3 +1,9 @@
+<script module lang="ts">
+  import { SvelteMap } from 'svelte/reactivity';
+
+  const sleepAnalysisMemo = new SvelteMap<string, string | null>();
+</script>
+
 <script lang="ts">
   import Card from "$lib/components/Card.svelte";
   import MetricBadge from "$lib/components/MetricBadge.svelte";
@@ -8,6 +14,7 @@
   import DatePicker from "$lib/components/DatePicker.svelte";
   import Modal from "$lib/components/Modal.svelte";
   import { athleteStore } from "$lib/stores/athleteStore.svelte";
+  import { api } from "$lib/api";
   import { addDays, format, parseISO, subDays } from "date-fns";
   import { calculateSleepScore } from "$lib/utils/biometrics";
   import { onMount } from "svelte";
@@ -19,6 +26,15 @@
     ),
   );
   const hasData = $derived(athleteStore.biometrics?.series?.length > 0);
+
+  function formatHoursMinutesFromMinutes(mins: number | null | undefined): string {
+    const n = typeof mins === "number" ? mins : Number(mins);
+    if (!Number.isFinite(n)) return "--";
+    const m = Math.max(0, Math.round(n));
+    const h = Math.floor(m / 60);
+    const r = m % 60;
+    return `${h}h ${r}m`;
+  }
 
   // Rolling 7-day window (cannot go into the future).
   // Source of truth for the picker is a YYYY-MM-DD string.
@@ -47,7 +63,48 @@
   const canGoForward = $derived(format(windowEnd, "yyyy-MM-dd") !== todayStr);
 
   // Map biometrics to nights array (filling in missing dates for the last 7 days)
-  let nights = $derived.by(() => {
+  type NightMissing = {
+    rawDate: string;
+    date: string;
+    label: string;
+    day: string;
+    missing: true;
+    score: 0;
+  };
+
+  type NightData = {
+    rawDate: string;
+    date: string;
+    label: string;
+    day: string;
+    missing: false;
+    score: number;
+    duration: string;
+    durationRaw: number;
+    inBed: string;
+    inBedRaw: number;
+    quality: "Optimal" | "Moderate" | "Poor";
+    bedtime: string;
+    wakeup: string;
+    deep: number;
+    rem: number;
+    light: number;
+    awake: number;
+    awakeMins: number;
+    hr: number;
+    hrv: number;
+    debt: number;
+    need: number;
+    periods: any[];
+  };
+
+  type Night = NightMissing | NightData;
+
+  function isNightData(x: Night): x is NightData {
+    return x.missing === false;
+  }
+
+  const nights = $derived.by<Night[]>(() => {
     // Build oldest→newest for display (today on the right).
     const asc = Array.from({ length: 7 }, (_, i) => {
       const d = addDays(windowStart, i);
@@ -72,7 +129,7 @@
           rawDate: displayDateStr,
           missing: true,
           score: 0,
-        };
+        } satisfies NightMissing;
       }
 
       const h = Math.floor((b.sleep_duration_min || 0) / 60);
@@ -84,7 +141,7 @@
       const inBedH = Math.floor(timeInBedMin / 60);
       const inBedM = timeInBedMin % 60;
 
-      const res = {
+      const res: NightData = {
         date: dateLabel,
         label: shortLabel,
         day: dayLabel,
@@ -118,6 +175,7 @@
         rem: b.sleep_rem_pct || 0,
         light: b.sleep_light_pct || 0,
         awake: b.sleep_awake_pct || 0,
+        awakeMins: 0,
         hr: b.resting_hr || 0,
         hrv: b.hrv_rmssd || 0,
         debt: b.sleep_debt_min || 0,
@@ -154,6 +212,10 @@
         res.inBed = `${Math.floor(aggInBed / 60)}h ${aggInBed % 60}m`;
       }
 
+      // Keep `awakeMins` consistent for the "whole night" row too.
+      const wholeAwakeMins = Math.round((res.inBedRaw * (res.awake || 0)) / 100);
+      res.awakeMins = wholeAwakeMins;
+
       return res;
     });
     return asc;
@@ -164,7 +226,8 @@
     nightIndex = Math.max(0, Math.min(6, nightIndex ?? 0));
   });
 
-  let n = $derived(nights[nightIndex] || nights[0]);
+  const n = $derived<Night>(nights[nightIndex] || nights[0]);
+  const nightData = $derived.by<NightData | null>(() => (n && isNightData(n) ? n : null));
   const avg7d = $derived.by(() => {
     const vals = nights.map((x) => Number(x.score)).filter((v) => Number.isFinite(v) && v > 0);
     if (vals.length === 0) return null;
@@ -178,13 +241,7 @@
     awake: "#F07178",
   };
   let scoreColor = $derived(
-    n
-      ? n.score >= 67
-        ? "#00C8A8"
-        : n.score >= 34
-          ? "#FFCB88"
-          : "#F07178"
-      : "var(--text2)",
+    n.score >= 67 ? "#00C8A8" : n.score >= 34 ? "#FFCB88" : "#F07178",
   );
 
   const getSleepColor = (score: number) =>
@@ -210,6 +267,35 @@
     selectedPeriod = period;
     showPeriodModal = true;
   }
+
+  let analysisText = $state<string | null>(null);
+  let activeAnalysisKey: string | null = null;
+  $effect(() => {
+    const day = n?.rawDate;
+    if (!day) {
+      analysisText = null;
+      return;
+    }
+
+    const cached = sleepAnalysisMemo.get(day);
+    if (cached !== undefined) {
+      analysisText = cached;
+      return;
+    }
+
+    const requestKey = `sleep:${day}`;
+    activeAnalysisKey = requestKey;
+
+    (async () => {
+      const res = await api.getSleepAnalysis(day);
+      const content = typeof res?.analysis?.content === "string" ? res.analysis.content.trim() : "";
+      const next = content ? content : null;
+      sleepAnalysisMemo.set(day, next);
+
+      if (activeAnalysisKey !== requestKey) return;
+      analysisText = next;
+    })();
+  });
 </script>
 
 <div class="flex flex-col gap-3">
@@ -293,7 +379,45 @@
     </div>
 
     <!-- Score card -->
-    {#if n.missing}
+    {#if nightData}
+      <Card
+        style="background: var(--glass); border-color: var(--border);"
+      >
+        <div class="flex items-center gap-4">
+          <RadialProgress
+            value={nightData.score}
+            max={100}
+            size={72}
+            color={scoreColor}
+            label={nightData.score.toString()}
+            sub="SLEEP"
+          />
+          <div class="flex-1">
+            <div class="flex items-center gap-2 mb-1">
+              <span class="text-[18px] font-bold">{nightData.quality}</span>
+              <Tag color={scoreColor}
+                >{nightData.score >= 67
+                  ? "OPTIMAL"
+                  : nightData.score >= 34
+                    ? "MODERATE"
+                    : "POOR"}</Tag
+              >
+            </div>
+            <p class="text-xs text-text1">{nightData.bedtime} → {nightData.wakeup}</p>
+            <div class="mt-1">
+              <p class="text-[18px] font-bold" style="color: {scoreColor}">
+                {nightData.duration}
+                <span class="text-[11px] font-normal text-text2 uppercase tracking-wide ml-1">asleep</span>
+              </p>
+              <p class="text-[14px] font-medium text-text1">
+                {nightData.inBed}
+                <span class="text-[10px] font-normal text-text2 uppercase tracking-wide ml-1">in bed</span>
+              </p>
+            </div>
+          </div>
+        </div>
+      </Card>
+    {:else}
       <Card style="border-style: dashed; opacity: 0.8;">
         <div class="flex flex-col items-center justify-center py-6 text-center">
           <span class="text-[32px] mb-2">🤷‍♂️</span>
@@ -304,57 +428,19 @@
           </p>
         </div>
       </Card>
-    {:else}
-      <Card
-        style="background: var(--glass); border-color: var(--border);"
-      >
-        <div class="flex items-center gap-4">
-          <RadialProgress
-            value={n.score}
-            max={100}
-            size={72}
-            color={scoreColor}
-            label={n.score.toString()}
-            sub="SLEEP"
-          />
-          <div class="flex-1">
-            <div class="flex items-center gap-2 mb-1">
-              <span class="text-[18px] font-bold">{n.quality}</span>
-              <Tag color={scoreColor}
-                >{n.score >= 67
-                  ? "OPTIMAL"
-                  : n.score >= 34
-                    ? "MODERATE"
-                    : "POOR"}</Tag
-              >
-            </div>
-            <p class="text-xs text-text1">{n.bedtime} → {n.wakeup}</p>
-            <div class="mt-1">
-              <p class="text-[18px] font-bold" style="color: {scoreColor}">
-                {n.duration}
-                <span class="text-[11px] font-normal text-text2 uppercase tracking-wide ml-1">asleep</span>
-              </p>
-              <p class="text-[14px] font-medium text-text1">
-                {n.inBed}
-                <span class="text-[10px] font-normal text-text2 uppercase tracking-wide ml-1">in bed</span>
-              </p>
-            </div>
-          </div>
-        </div>
-      </Card>
     {/if}
 
-    {#if !n.missing}
+    {#if nightData}
       <!-- Sleep metrics row -->
       <div class="grid grid-cols-3 gap-2">
         <Card style="padding: 8px 10px;">
-          <MetricBadge label="HRV" value={n.hrv} unit="ms" color="var(--teal)" sub="Avg" />
+          <MetricBadge label="HRV" value={nightData.hrv} unit="ms" color="var(--teal)" sub="Avg" />
         </Card>
         <Card style="padding: 8px 10px;">
-          <MetricBadge label="RHR" value={n.hr} unit="bpm" color="var(--blue)" sub="Avg" />
+          <MetricBadge label="RHR" value={nightData.hr} unit="bpm" color="var(--blue)" sub="Avg" />
         </Card>
         <Card style="padding: 8px 10px;">
-          <MetricBadge label="Debt" value={n.debt} unit="m" color="var(--amber)" sub="Debt" />
+          <MetricBadge label="Debt" value={formatHoursMinutesFromMinutes(nightData.debt)} color="var(--amber)" sub="Debt" />
         </Card>
       </div>
 
@@ -363,7 +449,7 @@
         <div class="flex justify-between items-center mb-3">
           <p class="text-[13px] font-semibold">7-Day Trend</p>
           <span class="text-[10px] text-text2 font-mono">
-            avg {avg7d === null ? "--" : `${avg7d}%`} · {n.score}% current
+            avg {avg7d === null ? "--" : `${avg7d}%`} · {nightData.score}% current
           </span>
         </div>
         <div class="flex gap-2 items-end h-[50px] mb-1 px-1">
@@ -390,14 +476,14 @@
         <p class="text-[13px] font-semibold mb-3">Sleep Stages</p>
         <!-- Stacked bar -->
         <div class="flex h-5 rounded-md overflow-hidden gap-0.5 mb-3.5">
-          {#each [["deep", n.deep], ["rem", n.rem], ["light", n.light], ["awake", n.awake]] as [k, v] (k)}
+          {#each [["deep", nightData.deep], ["rem", nightData.rem], ["light", nightData.light], ["awake", nightData.awake]] as [k, v] (k)}
             <div
               style="flex: {v}; background: {stageColors[k as string]}"
             ></div>
           {/each}
         </div>
         <div class="flex flex-col gap-2">
-          {#each [{ key: "deep", label: "Deep Sleep", pct: n.deep, mins: Math.round((n.inBedRaw * n.deep) / 100), ideal: "15–25%", desc: "Physical restoration, immune function, memory consolidation" }, { key: "rem", label: "REM Sleep", pct: n.rem, mins: Math.round((n.inBedRaw * n.rem) / 100), ideal: "20–25%", desc: "Cognitive restoration, emotional processing, learning" }, { key: "light", label: "Light Sleep", pct: n.light, mins: Math.round((n.inBedRaw * n.light) / 100), ideal: "45–55%", desc: "Transition stage, memory consolidation support" }, { key: "awake", label: "Awake", pct: n.awake, mins: n.awakeMins, ideal: "< 10%", desc: "Brief wakings during night; normal up to 10%" }] as s (s.key)}
+          {#each [{ key: "deep", label: "Deep Sleep", pct: nightData.deep, mins: Math.round((nightData.inBedRaw * nightData.deep) / 100), ideal: "15–25%", desc: "Physical restoration, immune function, memory consolidation" }, { key: "rem", label: "REM Sleep", pct: nightData.rem, mins: Math.round((nightData.inBedRaw * nightData.rem) / 100), ideal: "20–25%", desc: "Cognitive restoration, emotional processing, learning" }, { key: "light", label: "Light Sleep", pct: nightData.light, mins: Math.round((nightData.inBedRaw * nightData.light) / 100), ideal: "45–55%", desc: "Transition stage, memory consolidation support" }, { key: "awake", label: "Awake", pct: nightData.awake, mins: nightData.awakeMins, ideal: "< 10%", desc: "Brief wakings during night; normal up to 10%" }] as s (s.key)}
             <div
               class="flex gap-2.5 py-2 {s.key !== 'awake'
                 ? 'border-b border-border'
@@ -420,7 +506,7 @@
                     >
                       {s.pct}%
                       <span class="text-[9px] font-normal text-text2"
-                        >{s.mins}m</span
+                        >{formatHoursMinutesFromMinutes(s.mins)}</span
                       >
                     </span>
                   </div>
@@ -433,11 +519,11 @@
       </Card>
       
       <!-- Individual Sleep Sessions (Naps) -->
-      {#if n.periods && n.periods.length > 0}
+      {#if nightData.periods && nightData.periods.length > 0}
         <Card>
           <p class="text-[13px] font-semibold mb-3">Sleep Sessions</p>
           <div class="flex flex-col gap-2">
-            {#each n.periods as period (period?.id ?? period?.started_at ?? period?.ended_at ?? period?.label)}
+            {#each nightData.periods as period (period?.id ?? period?.started_at ?? period?.ended_at ?? period?.label)}
               <button 
                 type="button"
                 class="flex items-center justify-between p-2.5 rounded-lg bg-glass border border-transparent hover:border-border transition-all active:scale-[0.98] text-left w-full"
@@ -468,15 +554,12 @@
       >
         <p class="text-[13px] font-semibold mb-1.5">Sleep Analysis</p>
         <p class="text-xs text-text1 leading-relaxed">
-          {#if n.deep < 15}
-            Your deep sleep is below your baseline. Focus on reducing screen
-            time and cooling your room tonight.
-          {:else if n.rem < 20}
-            REM sleep is slightly low. This might affect cognitive performance
-            today.
-          {:else}
-            Your sleep architecture looks balanced. Recovery is on track.
-          {/if}
+          {analysisText ??
+            (nightData.deep < 15
+              ? "Your deep sleep is below your baseline. Focus on reducing screen time and cooling your room tonight."
+              : nightData.rem < 20
+                ? "REM sleep is slightly low. This might affect cognitive performance today."
+                : "Your sleep architecture looks balanced. Recovery is on track.")}
         </p>
       </Card>
     {/if}
@@ -533,7 +616,7 @@
               </div>
               <div class="flex items-baseline gap-1.5">
                 <span class="text-lg font-bold" style="color: {stageColors[s.key]}">{s.pct}%</span>
-                <span class="text-[10px] text-text2 font-mono">{s.mins}m</span>
+                <span class="text-[10px] text-text2 font-mono">{formatHoursMinutesFromMinutes(s.mins)}</span>
               </div>
             </div>
           {/each}

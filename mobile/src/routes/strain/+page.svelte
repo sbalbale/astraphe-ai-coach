@@ -1,3 +1,9 @@
+<script module lang="ts">
+  import { SvelteMap } from 'svelte/reactivity';
+
+  const strainAnalysisMemo = new SvelteMap<string, string | null>();
+</script>
+
 <script lang="ts">
   import Card from '$lib/components/Card.svelte';
   import RadialProgress from '$lib/components/RadialProgress.svelte';
@@ -7,6 +13,7 @@
   import DatePicker from '$lib/components/DatePicker.svelte';
   import Modal from '$lib/components/Modal.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
+  import { api } from '$lib/api';
   import { addDays, format, subDays } from 'date-fns';
   import { strainTextClass, tssTextClass } from '$lib/scoreColors';
 
@@ -199,6 +206,35 @@
     const m = Math.round(Math.max(0, secs) / 60);
     return m < 1 ? '0m' : `${m}m`;
   };
+
+  let analysisText = $state<string | null>(null);
+  let activeAnalysisKey: string | null = null;
+  $effect(() => {
+    const day = d?.date;
+    if (!day) {
+      analysisText = null;
+      return;
+    }
+
+    const cached = strainAnalysisMemo.get(day);
+    if (cached !== undefined) {
+      analysisText = cached;
+      return;
+    }
+
+    const requestKey = `strain:${day}`;
+    activeAnalysisKey = requestKey;
+
+    (async () => {
+      const res = await api.getStrainAnalysis(day);
+      const content = typeof res?.analysis?.content === 'string' ? res.analysis.content.trim() : '';
+      const next = content ? content : null;
+      strainAnalysisMemo.set(day, next);
+
+      if (activeAnalysisKey !== requestKey) return;
+      analysisText = next;
+    })();
+  });
 </script>
 
 <div class="flex flex-col gap-3">
@@ -453,9 +489,12 @@
       <Card style="background: var(--glass2); border-color: transparent;">
         <p class="text-[13px] font-semibold mb-1">Strain Analysis</p>
         <p class="text-[12px] text-text2 leading-relaxed italic">
-          {d.tsb < -20 ? 'Your training form is highly negative. Prioritize active recovery sessions.' : 
-           d.tsb > 10 ? 'Your body is fresh and primed for a high-intensity block. CTL is stable.' : 
-           'Your training volume is well-balanced with your current fitness level.'}
+          {analysisText ??
+            (d.tsb < -20
+              ? 'Your training form is highly negative. Prioritize active recovery sessions.'
+              : d.tsb > 10
+                ? 'Your body is fresh and primed for a high-intensity block. CTL is stable.'
+                : 'Your training volume is well-balanced with your current fitness level.')}
         </p>
       </Card>
     {/if}

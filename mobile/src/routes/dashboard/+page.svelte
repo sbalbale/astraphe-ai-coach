@@ -1,3 +1,9 @@
+<script module lang="ts">
+  import { SvelteMap } from 'svelte/reactivity';
+
+  const dashboardAiSummaryMemo = new SvelteMap<string, string | null>();
+</script>
+
 <script lang="ts">
   import Card from '$lib/components/Card.svelte';
   import MetricBadge from '$lib/components/MetricBadge.svelte';
@@ -10,6 +16,7 @@
   import { onMount } from 'svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { authStore } from '$lib/stores/authStore.svelte';
+  import { api } from '$lib/api';
   import { goto } from '$app/navigation';
   import { resolve } from '$app/paths';
   import { format } from 'date-fns';
@@ -49,6 +56,63 @@
   const todayCtl = $derived(todayLoad?.ctl ?? null);
   const todayAtl = $derived(todayLoad?.atl ?? null);
   const todayTsb = $derived(todayLoad?.tsb ?? null);
+
+  function isFiniteNumber(v: unknown): v is number {
+    return typeof v === 'number' && Number.isFinite(v);
+  }
+
+  let analysisText = $state<string | null>(null);
+  let activeAnalysisKey: string | null = null;
+  $effect(() => {
+    const endDay = todayStr;
+
+    const cached = dashboardAiSummaryMemo.get(endDay);
+    if (cached !== undefined) {
+      analysisText = cached;
+      return;
+    }
+
+    const requestKey = `dashboard-ai-summary:${endDay}`;
+    activeAnalysisKey = requestKey;
+
+    (async () => {
+      try {
+        const res = await api.getTrainingLoadAnalysis(endDay);
+        const content = typeof res?.analysis?.content === 'string' ? res.analysis.content.trim() : '';
+        const next = content ? content : null;
+        dashboardAiSummaryMemo.set(endDay, next);
+
+        if (activeAnalysisKey !== requestKey) return;
+        analysisText = next;
+      } catch (e) {
+        console.error(e);
+        dashboardAiSummaryMemo.set(endDay, null);
+        if (activeAnalysisKey !== requestKey) return;
+        // Keep previous text while loading/failing.
+      }
+    })();
+  });
+
+  const fallbackSummary = $derived.by(() => {
+    const tsb = isFiniteNumber(todayTsb) ? todayTsb : null;
+    const ctl = isFiniteNumber(todayCtl) ? todayCtl : null;
+    const atl = isFiniteNumber(todayAtl) ? todayAtl : null;
+
+    if (tsb !== null) {
+      if (tsb > 10) return `You look fresh today (TSB +${Math.round(tsb)}). Consider a quality session or a performance-focused workout.`;
+      if (tsb < -20) return `You’re carrying high fatigue (TSB ${Math.round(tsb)}). Prioritize recovery or keep intensity low today.`;
+      return `Your training balance looks steady (TSB ${tsb > 0 ? '+' : ''}${Math.round(tsb)}). Stay consistent with your planned progression.`;
+    }
+
+    if (ctl !== null && atl !== null) {
+      const delta = atl - ctl;
+      if (delta > 10) return `Your short-term load is above your baseline (ATL > CTL). Consider dialing back intensity if you feel run-down.`;
+      if (delta < -10) return `Your short-term load is below your baseline (ATL < CTL). You may be ready to build back up if recovery is good.`;
+      return `Your load looks balanced (ATL ~ CTL). Maintain a steady rhythm and adjust based on how you feel.`;
+    }
+
+    return 'Your training summary will appear once today’s load metrics finish syncing.';
+  });
 
   const sleepHM = (mins: number | null) => {
     if (mins === null || mins === undefined) return 'Data not found';
@@ -241,6 +305,17 @@
         </div>
       </Card>
     </div>
+
+    <!-- AI Summary -->
+    <Card style="background: linear-gradient(135deg, rgba(70,33,255,0.12), transparent);">
+      <div class="flex justify-between items-center mb-2">
+        <span class="text-[13px] font-semibold">AI Summary</span>
+        <Tag color="var(--blue)">BETA</Tag>
+      </div>
+      <p class="text-xs text-text1 leading-relaxed">
+        {analysisText ?? fallbackSummary}
+      </p>
+    </Card>
 
     <!-- Training Load Chart -->
     {#if athleteStore.metrics?.trainingLoadData?.length > 0}
