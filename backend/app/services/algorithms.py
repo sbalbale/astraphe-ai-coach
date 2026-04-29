@@ -22,6 +22,9 @@ ZONE_STRAIN_COEFFICIENTS = {
 # The absolute maximum theoretical strain (24 hours at pure Zone 5)
 MAX_RAW_STRAIN_24H = 1440 * 8.0  # 11,520
 
+# Multiplier to account for central nervous system fatigue in non-aerobic sports
+NEUROMUSCULAR_MULTIPLIER = 1.7
+
 # ==========================================
 # CORE LOAD & TSS CALCULATIONS
 # ==========================================
@@ -47,15 +50,22 @@ def compute_tss_power(duration_sec: int, np_watts: float, ftp: int) -> float:
     intensity_factor = np_watts / ftp
     return (duration_sec * np_watts * intensity_factor) / (ftp * 3600) * 100
 
-def tss_from_hr_zones(duration_sec: int, zone_minutes: Dict[int, float]) -> float:
+def tss_from_hr_zones(zone_minutes: Dict[int, float], sport: str = "other") -> float:
     """
     Estimate TSS based on time spent in heart rate zones.
+    Applies a neuromuscular tax for strength training.
     """
     weighted_minutes = sum(
         minutes * ZONE_WEIGHT.get(zone, 0.0)
         for zone, minutes in zone_minutes.items()
     )
-    return (weighted_minutes / 60) * 100
+    
+    tss = (weighted_minutes / 60) * 100
+    
+    if sport == 'strength':
+        tss *= NEUROMUSCULAR_MULTIPLIER
+        
+    return tss
 
 def compute_ctl(tss_series: np.ndarray, time_constant: int = 42) -> np.ndarray:
     """
@@ -95,7 +105,7 @@ def compute_atl(tss_series: np.ndarray, time_constant: int = 7) -> np.ndarray:
 # PROPRIETARY ASTRAPE SCORES (0-100)
 # ==========================================
 
-def compute_strain_score(zone_minutes: Dict[int, float]) -> int:
+def compute_strain_score(zone_minutes: Dict[int, float], sport: str = "other") -> int:
     """
     Compute Strain Score (0-100) using natural logarithmic scaling.
     100 is anchored to 24 hours of pure maximum HR output.
@@ -105,6 +115,9 @@ def compute_strain_score(zone_minutes: Dict[int, float]) -> int:
         for zone, minutes in zone_minutes.items()
     )
     
+    if sport == 'strength':
+        raw_strain *= NEUROMUSCULAR_MULTIPLIER
+        
     if raw_strain <= 0:
         return 0
         

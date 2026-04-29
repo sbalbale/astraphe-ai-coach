@@ -176,9 +176,14 @@ async def whoop_webhook(request: Request, background_tasks: BackgroundTasks, db=
                     return None
                 return round((ms / total_sleep_ms) * 100.0, 1)
 
+            # For WHOOP, the "biological day" is most consistently represented 
+            # by the day you wake up (end of sleep). This aligns with recovery scores.
+            wake_dt = datetime.fromisoformat(sleep_data["end"].replace("Z", "+00:00"))
+            
             bio_payload = DailyBiometrics(
-                date=sleep_data["start"][:10],
+                date=wake_dt.date(),
                 source="whoop",
+                external_id=str(sleep_data.get("id") or event_id),
                 sleep_score=score.get("sleep_performance_percentage"),
                 sleep_duration_min=int(total_sleep_ms / 60000) if total_sleep_ms else 0,
                 sleep_deep_pct=_pct(deep),
