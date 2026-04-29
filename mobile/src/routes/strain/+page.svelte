@@ -8,20 +8,24 @@
   import Modal from '$lib/components/Modal.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { addDays, format, subDays } from 'date-fns';
+  import { strainTextClass, tssTextClass } from '$lib/scoreColors';
 
   const isConnected = $derived(Object.values(athleteStore.syncStatus?.integrations || {}).some((i: any) => i.connected));
   
   // Rolling 7-day window (cannot go into the future).
   // Source of truth for the picker is a YYYY-MM-DD string.
   let endPickerValue = $state('');
-  let dayIndex = $state(0); // most recent on the left
+  let dayIndex = $state(6); // most recent on the right
   const isoDate = (value: unknown) => (typeof value === 'string' ? value.slice(0, 10) : '');
 
   const today = $derived(new Date());
   const todayStr = $derived(format(today, 'yyyy-MM-dd'));
 
   $effect(() => {
-    if (!endPickerValue) endPickerValue = todayStr;
+    if (!endPickerValue) {
+      endPickerValue = todayStr;
+      dayIndex = 6;
+    }
   });
 
   const clampedEndDay = $derived.by(() => {
@@ -36,13 +40,15 @@
   const canGoForward = $derived(format(windowEnd, 'yyyy-MM-dd') !== todayStr);
 
   const days = $derived.by(() => {
-    return Array.from({ length: 7 }, (_, i) => {
-      // Most recent day on the left (index 0)
-      const d = subDays(windowEnd, i);
+    // Build oldest→newest for display (today on the right).
+    const asc = Array.from({ length: 7 }, (_, i) => {
+      const d = addDays(windowStart, i);
       const dateStr = format(d, 'yyyy-MM-dd');
       
       const b = athleteStore.biometrics?.series?.find((s: any) => s.date === dateStr);
       const history = athleteStore.metrics?.trainingLoadData?.find((m: any) => isoDate(m?.date) === dateStr);
+      const dow = format(d, 'EE');
+      const dayLabel = dow === 'Thu' ? 'Th' : dow.charAt(0);
       const hasStrain = b?.strain_score !== null && b?.strain_score !== undefined;
 
       // Workout-derived strain proxy (preferred when strain_score isn't present).
@@ -66,7 +72,7 @@
       return {
         date: dateStr,
         label: dateStr === todayStr ? 'Today' : format(d, 'MMM d'),
-        day: format(d, 'EE').charAt(0),
+        day: dayLabel,
         score: computedScore,
         ctl: history?.ctl || athleteStore.ctl || 0,
         atl: history?.atl || athleteStore.atl || 0,
@@ -77,6 +83,7 @@
         data: b
       };
     });
+    return asc;
   });
 
   $effect(() => {
@@ -87,8 +94,15 @@
   const hasData = $derived(days.some(day => !day.missing) || athleteStore.atl > 0);
   
   const score = $derived(d.score || 0);
-  const scoreColor = $derived(score >= 80 ? '#F07178' : score >= 40 ? '#FFCB88' : '#00C8A8');
-  const quality = $derived(score >= 80 ? 'High' : score >= 40 ? 'Moderate' : 'Light');
+  // Strain is inverted: higher strain = "worse" (red).
+  const scoreColor = $derived(score >= 67 ? '#F07178' : score >= 34 ? '#FFCB88' : '#00C8A8');
+  const quality = $derived(score >= 67 ? 'High' : score >= 34 ? 'Moderate' : 'Light');
+
+  const avg7d = $derived.by(() => {
+    const vals = days.map((x) => Number(x.score)).filter((v) => Number.isFinite(v) && v > 0);
+    if (vals.length === 0) return null;
+    return Math.round(vals.reduce((a, b) => a + b, 0) / vals.length);
+  });
 
   function getWorkoutIcon(type: string) {
     const t = type?.toLowerCase();
@@ -181,7 +195,7 @@
           aria-label="Jump to today"
           onclick={() => {
             endPickerValue = todayStr;
-            dayIndex = 0;
+            dayIndex = 6;
           }}
         >
           Today
@@ -239,11 +253,11 @@
           <div class="flex-1">
             <div class="flex items-center gap-2 mb-1">
               <span class="text-[18px] font-bold text-text0">{quality}</span>
-              <Tag color={scoreColor}>{score >= 80 ? 'HIGH' : score >= 40 ? 'PRODUCTIVE' : 'BASE'}</Tag>
+              <Tag color={scoreColor}>{score >= 67 ? 'HIGH' : score >= 34 ? 'PRODUCTIVE' : 'BASE'}</Tag>
             </div>
             <p class="text-xs text-text1 leading-relaxed">
-              {score >= 80 ? 'Your training volume is significantly higher than your baseline.' : 
-               score >= 40 ? 'Productive stress detected. You are building fitness efficiently.' : 
+              {score >= 67 ? 'Your training volume is significantly higher than your baseline.' : 
+               score >= 34 ? 'Productive stress detected. You are building fitness efficiently.' : 
                'Light recovery day. Focus on maintaining aerobic foundation.'}
             </p>
           </div>
@@ -283,10 +297,13 @@
 
       <!-- Timeline -->
       <Card>
-        <p class="text-[13px] font-semibold mb-3">7-Day Trend</p>
+        <div class="flex justify-between items-center mb-3">
+          <p class="text-[13px] font-semibold">7-Day Trend</p>
+          <span class="text-[10px] text-text2 font-mono">avg {avg7d === null ? '--' : avg7d}</span>
+        </div>
         <div class="flex gap-2 items-end h-[50px] mb-1 px-1">
           {#each days as day, i (day.date)}
-            {@const c = day.score >= 80 ? '#F07178' : day.score >= 40 ? '#FFCB88' : '#00C8A8'}
+            {@const c = day.score >= 67 ? '#F07178' : day.score >= 34 ? '#FFCB88' : '#00C8A8'}
             <button
               type="button"
               class="flex-1 flex flex-col items-center gap-1 cursor-pointer"
@@ -305,6 +322,8 @@
           <p class="text-[11px] text-text2 font-mono uppercase tracking-[0.05em] mb-2 px-1">Contributing Activities</p>
           <div class="flex flex-col gap-2">
             {#each d.workouts as w (w.id || w.started_at)}
+              {@const strainVal = Number.isFinite(Number(w?.strain_score)) ? Math.round(Number(w.strain_score)) : null}
+              {@const tssVal = Number.isFinite(Number(w?.tss)) ? Math.round(Number(w.tss)) : null}
               <button 
                 type="button"
                 class="block w-full text-left active:scale-[0.98] transition-transform"
@@ -321,11 +340,19 @@
                         {Math.floor(getDurationSecs(w) / 60)} min · {format(new Date(w.started_at), (athleteStore.profile as any)?.time_format === '24h' ? 'HH:mm' : 'h:mm a')}
                       </p>
                     </div>
-                    <div class="text-right">
-                      <p class="text-[16px] font-bold" style="color: {getWorkoutColor(w.sport)}">
-                        {Math.round(w.strain_score || w.tss || 0)}
-                      </p>
-                      <p class="text-[9px] text-text2 font-mono">{w.strain_score ? 'STRAIN' : 'TSS'}</p>
+                    <div class="text-right flex flex-col gap-1">
+                      <div>
+                        <p class="text-[14px] font-bold {strainVal === null ? 'text-text2' : strainTextClass(strainVal)}">
+                          {strainVal === null ? '--' : strainVal}
+                        </p>
+                        <p class="text-[9px] text-text2 font-mono">STRAIN</p>
+                      </div>
+                      <div>
+                        <p class="text-[14px] font-bold {tssVal === null ? 'text-text2' : tssTextClass(tssVal)}">
+                          {tssVal === null ? '--' : tssVal}
+                        </p>
+                        <p class="text-[9px] text-text2 font-mono">TSS</p>
+                      </div>
                     </div>
                   </div>
                 </Card>
@@ -354,6 +381,8 @@
   onClose={() => (showWorkoutModal = false)}
 >
   {#if selectedWorkout}
+    {@const selectedStrainVal = Number.isFinite(Number(selectedWorkout?.strain_score)) ? Math.round(Number(selectedWorkout.strain_score)) : null}
+    {@const selectedTssVal = Number.isFinite(Number(selectedWorkout?.tss)) ? Math.round(Number(selectedWorkout.tss)) : null}
     <div class="flex flex-col gap-6">
       <div class="flex items-center gap-4">
         <div class="w-14 h-14 rounded-2xl flex items-center justify-center text-[28px] {getWorkoutBg(selectedWorkout.sport)}">
@@ -371,10 +400,10 @@
         <div class="p-4 rounded-2xl bg-glass border border-border/50">
           <p class="text-[10px] text-text2 font-mono uppercase mb-1">Intensity</p>
           <div class="flex items-baseline gap-1">
-            <span class="text-[20px] font-bold" style="color: {getWorkoutColor(selectedWorkout.sport)}">
-              {Math.round(selectedWorkout.strain_score || selectedWorkout.tss || 0)}
+            <span class="text-[20px] font-bold {selectedStrainVal === null ? 'text-text2' : strainTextClass(selectedStrainVal)}">
+              {selectedStrainVal === null ? '--' : selectedStrainVal}
             </span>
-            <span class="text-[10px] text-text2 font-mono">{selectedWorkout.strain_score ? 'STRAIN' : 'TSS'}</span>
+            <span class="text-[10px] text-text2 font-mono">STRAIN</span>
           </div>
         </div>
         <div class="p-4 rounded-2xl bg-glass border border-border/50">
@@ -393,15 +422,15 @@
             </div>
           </div>
         {/if}
-        {#if selectedWorkout.tss != null && selectedWorkout.strain_score != null}
-          <div class="p-4 rounded-2xl bg-glass border border-border/50">
-            <p class="text-[10px] text-text2 font-mono uppercase mb-1">Stress</p>
-            <div class="flex items-baseline gap-1">
-              <span class="text-[20px] font-bold text-text0">{Math.round(selectedWorkout.tss)}</span>
-              <span class="text-[10px] text-text2 font-mono">TSS</span>
-            </div>
+        <div class="p-4 rounded-2xl bg-glass border border-border/50">
+          <p class="text-[10px] text-text2 font-mono uppercase mb-1">Stress</p>
+          <div class="flex items-baseline gap-1">
+            <span class="text-[20px] font-bold {selectedTssVal === null ? 'text-text2' : tssTextClass(selectedTssVal)}">
+              {selectedTssVal === null ? '--' : selectedTssVal}
+            </span>
+            <span class="text-[10px] text-text2 font-mono">TSS</span>
           </div>
-        {/if}
+        </div>
         {#if selectedWorkout.distance_m}
           <div class="p-4 rounded-2xl bg-glass border border-border/50">
             <p class="text-[10px] text-text2 font-mono uppercase mb-1">Distance</p>
@@ -417,7 +446,7 @@
         <div class="flex flex-col gap-4">
           <p class="text-[13px] font-semibold">Heart Rate Zones</p>
           <div class="flex flex-col gap-3">
-            {#each [5, 4, 3, 2, 1, 0] as zone}
+            {#each [5, 4, 3, 2, 1, 0] as zone (zone)}
               {@const pct = selectedWorkout[`hr_zone_${zone}_pct`] || 0}
               <div class="flex items-center gap-3">
                 <div class="w-8 flex items-center gap-1.5 shrink-0">

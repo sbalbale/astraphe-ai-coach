@@ -12,6 +12,7 @@
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { page } from '$app/stores';
   import { addDays, endOfWeek, format, startOfWeek } from 'date-fns';
+  import { strainTextClass, tssTextClass } from '$lib/scoreColors';
 
   let metric = $state('load');
   const tabs = ['load', 'history']; // Simplified tabs for now as pace/zones need complex processing
@@ -256,6 +257,8 @@
         </div>
         
         <Card>
+          {@const selectedStrainVal = Number.isFinite(Number(selectedWorkout?.strain_score)) ? Math.round(Number(selectedWorkout.strain_score)) : null}
+          {@const selectedTssVal = Number.isFinite(Number(selectedWorkout?.tss)) ? Math.round(Number(selectedWorkout.tss)) : null}
           <div class="flex items-center gap-4 mb-4">
             <div class="w-12 h-12 rounded-2xl flex items-center justify-center text-2xl {getWorkoutBg(selectedWorkout.sport)}">
               {getWorkoutIcon(selectedWorkout.sport)}
@@ -264,9 +267,19 @@
               <h2 class="text-lg font-bold leading-tight">{selectedWorkout.title || (getWorkoutLabel(selectedWorkout.sport) + ' Session')}</h2>
               <p class="text-xs text-text2">{format(new Date(selectedWorkout.started_at), (athleteStore.profile as any)?.time_format === '24h' ? 'EEEE, MMM d · HH:mm' : 'EEEE, MMM d · h:mm a')}</p>
             </div>
-            <div class="text-right">
-              <p class="text-2xl font-bold" style="color: {getWorkoutColor(selectedWorkout.sport)}">{Math.round(selectedWorkout.tss || 0)}</p>
-              <p class="text-[10px] text-text2 font-mono">TSS</p>
+            <div class="text-right flex flex-col gap-1">
+              <div>
+                <p class="text-[18px] font-bold {selectedStrainVal === null ? 'text-text2' : strainTextClass(selectedStrainVal)}">
+                  {selectedStrainVal === null ? '--' : selectedStrainVal}
+                </p>
+                <p class="text-[9px] text-text2 font-mono">STRAIN</p>
+              </div>
+              <div>
+                <p class="text-[18px] font-bold {selectedTssVal === null ? 'text-text2' : tssTextClass(selectedTssVal)}">
+                  {selectedTssVal === null ? '--' : selectedTssVal}
+                </p>
+                <p class="text-[9px] text-text2 font-mono">TSS</p>
+              </div>
             </div>
           </div>
 
@@ -385,6 +398,8 @@
           {/if}
 
           {#each weekWorkouts as w (w?.id ?? w?.started_at)}
+            {@const strainVal = Number.isFinite(Number(w?.strain_score)) ? Math.round(Number(w.strain_score)) : null}
+            {@const tssVal = Number.isFinite(Number(w?.tss)) ? Math.round(Number(w.tss)) : null}
             <button class="text-left bg-transparent border-none p-0 cursor-pointer w-full" onclick={() => selectedWorkout = w}>
               <Card style="padding: 12px 14px;">
                 <div class="flex items-center gap-3">
@@ -395,9 +410,19 @@
                     <p class="text-[13px] font-semibold">{w.title || (getWorkoutLabel(w.sport) + ' Session')}</p>
                     <p class="text-[11px] text-text2">{format(new Date(w.started_at), 'MMM d')} · {Math.floor(getDurationSecs(w) / 60)} min</p>
                   </div>
-                  <div class="text-right">
-                    <p class="text-[16px] font-bold" style="color: {getWorkoutColor(w.sport)}">{Math.round(w.tss || 0)}</p>
-                    <p class="text-[9px] text-text2 font-mono">TSS</p>
+                  <div class="text-right flex flex-col gap-1">
+                    <div>
+                      <p class="text-[14px] font-bold {strainVal === null ? 'text-text2' : strainTextClass(strainVal)}">
+                        {strainVal === null ? '--' : strainVal}
+                      </p>
+                      <p class="text-[9px] text-text2 font-mono">STRAIN</p>
+                    </div>
+                    <div>
+                      <p class="text-[14px] font-bold {tssVal === null ? 'text-text2' : tssTextClass(tssVal)}">
+                        {tssVal === null ? '--' : tssVal}
+                      </p>
+                      <p class="text-[9px] text-text2 font-mono">TSS</p>
+                    </div>
                   </div>
                 </div>
               </Card>

@@ -3,11 +3,8 @@
   import SelectMenu from '$lib/components/SelectMenu.svelte';
   import { goto } from '$app/navigation';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
+  import { convertPace, normalizeUnits, type Units } from '$lib/utils/units';
   import { onMount } from 'svelte';
-
-  type Units = 'metric' | 'imperial';
-  const normalizeUnits = (value: unknown): Units =>
-    typeof value === 'string' && value.toLowerCase().includes('imperial') ? 'imperial' : 'metric';
 
   let maxHR = $state(185);
   let ftp = $state(280);
@@ -17,6 +14,8 @@
   let timeFormat = $state('12h');
   let initialized = $state(false);
   let saving = $state(false);
+  let saved = $state(false);
+  let saveError = $state<string | null>(null);
 
   const sportOptions = [
     { value: 'triathlon', label: 'Triathlon' },
@@ -46,9 +45,17 @@
     goto('/profile');
   }
 
+  function setUnits(next: Units) {
+    if (next === units) return;
+    pace = convertPace(pace, units, next);
+    units = next;
+  }
+
   async function handleSave(e: Event) {
     e.preventDefault();
     saving = true;
+    saved = false;
+    saveError = null;
     const success = await athleteStore.updateProfile({
       max_hr: maxHR,
       ftp_watts: ftp,
@@ -58,7 +65,14 @@
       time_format: timeFormat
     });
     saving = false;
-    if (success) goBack();
+    if (success) {
+      saved = true;
+      window.setTimeout(() => {
+        saved = false;
+      }, 2500);
+    } else {
+      saveError = 'Failed to save changes. Please try again.';
+    }
   }
 </script>
 
@@ -74,6 +88,16 @@
   </div>
 
   <form onsubmit={handleSave} class="flex flex-col gap-3 mt-2">
+    {#if saved}
+      <div class="px-3 py-2 rounded-xl border text-[12px] bg-teal-dim border-[rgba(0,200,168,0.35)] text-teal">
+        Saved successfully.
+      </div>
+    {/if}
+    {#if saveError}
+      <div class="px-3 py-2 rounded-xl border text-[12px] bg-red-dim border-[rgba(240,113,120,0.35)] text-red">
+        {saveError}
+      </div>
+    {/if}
     <Card>
       <p class="text-[13px] font-semibold mb-3">Primary Focus</p>
       <div class="flex flex-col gap-4">
@@ -90,8 +114,8 @@
         <div>
           <label for="units" class="block text-[11px] text-text2 mb-1">Measurement Units</label>
           <div class="flex p-1 bg-glass2 rounded-lg border border-border">
-            <button type="button" class="flex-1 py-1.5 text-xs rounded-md transition-colors {units === 'metric' ? 'bg-blue text-white' : 'text-text2 hover:text-text0'}" onclick={() => units = 'metric'}>Metric</button>
-            <button type="button" class="flex-1 py-1.5 text-xs rounded-md transition-colors {units === 'imperial' ? 'bg-blue text-white' : 'text-text2 hover:text-text0'}" onclick={() => units = 'imperial'}>Imperial</button>
+            <button type="button" class="flex-1 py-1.5 text-xs rounded-md transition-colors {units === 'metric' ? 'bg-blue text-white' : 'text-text2 hover:text-text0'}" onclick={() => setUnits('metric')}>Metric</button>
+            <button type="button" class="flex-1 py-1.5 text-xs rounded-md transition-colors {units === 'imperial' ? 'bg-blue text-white' : 'text-text2 hover:text-text0'}" onclick={() => setUnits('imperial')}>Imperial</button>
           </div>
         </div>
         <div>

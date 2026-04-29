@@ -18,7 +18,7 @@ def verify_webhook_signature(payload_body: bytes, signature_header: str) -> bool
 
 async def exchange_oauth_code(code: str, redirect_url: str) -> dict:
     """Exchanges the code for tokens. Must match the URL sent in the first step."""
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=10.0) as client:
         response = await client.post(
             settings.WHOOP_OAUTH_TOKEN_URL,
             data={

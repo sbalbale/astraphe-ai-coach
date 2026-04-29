@@ -7,6 +7,7 @@ from app.services import whoop
 from app.models.biometrics import DailyBiometrics
 from app.models.workout import WorkoutPayload
 from app.services.processing import process_and_save_biometrics, process_and_save_workout, recalculate_tss_history
+from app.dependencies import get_admin_db
 
 
 def _parse_dt(value: str) -> datetime:
@@ -22,27 +23,62 @@ def _pct(part_ms: Optional[float], total_ms: Optional[float]) -> Optional[float]
     return round((part_ms / total_ms) * 100.0, 1)
 
 
-async def backfill_last_28_days(athlete_id: str, access_token: str, db: Any) -> None:
+async def backfill_historical_data(athlete_id: str, access_token: str, db: Any = None, days: int = 90) -> None:
     """
-    Pull last 28 days of WHOOP sleep/recovery/workouts and persist into Supabase.
+    Pull historical WHOOP sleep/recovery/workouts and persist into Supabase.
     This is intended to run right after OAuth connect.
     """
+    # If no DB provided (common for background tasks), create one.
+    if db is None:
+        db = get_admin_db()
+
+    # 0) Fetch Profile & Update Athlete (moved from sync.py for speed)
+    print(f"[whoop.backfill] Fetching profile for athlete_id={athlete_id}")
+    try:
+        profile = await whoop.fetch_profile(access_token)
+        measurements = await whoop.fetch_body_measurement(access_token)
+        
+        profile_update = {}
+        if profile.get("first_name"): profile_update["display_name"] = profile["first_name"]
+        if measurements.get("weight_kilograms"): profile_update["weight_kg"] = measurements["weight_kilograms"]
+        if measurements.get("max_heart_rate"): profile_update["max_hr"] = measurements["max_heart_rate"]
+        
+        # Also update the oauth_token with the external_user_id
+        if profile.get("user_id"):
+            db.table("oauth_tokens").update({
+                "external_user_id": str(profile.get("user_id"))
+            }).eq("athlete_id", athlete_id).eq("provider", "whoop").execute()
+
+        if profile_update:
+            db.table("athletes").update(profile_update).eq("id", athlete_id).execute()
+    except Exception as e:
+        print(f"[whoop.backfill] Failed to update profile/measurements: {e}")
+
     end = datetime.utcnow()
-    start = end - timedelta(days=28)
+    start = end - timedelta(days=days)
     start_s = start.isoformat(timespec="milliseconds") + "Z"
     end_s = end.isoformat(timespec="milliseconds") + "Z"
 
     print(f"[whoop.backfill] start={start_s} end={end_s} athlete_id={athlete_id}")
+
+    # Fetch athlete timezone for correct date mapping
+    athlete_res = db.table("athletes").select("timezone_offset_min").eq("id", athlete_id).single().execute()
+    offset = (athlete_res.data.get("timezone_offset_min") or 0) if athlete_res.data else 0
 
     # 1) Cycles (Daily Strain)
     cycles = await whoop.fetch_collection(access_token, "cycle", start_s, end_s)
     print(f"[whoop.backfill] cycles={len(cycles)}")
 
     for cyc in cycles:
-        start_time = cyc.get("start")
-        if not start_time:
+        # WHOOP cycle biological day is best determined by the end of the cycle (the day you wake up)
+        # or if end is null (current cycle), use created_at or start + some hours.
+        cycle_ref_time = cyc.get("end") or cyc.get("created_at") or cyc.get("start")
+        if not cycle_ref_time:
             continue
-        d = _parse_dt(start_time).date()
+            
+        utc_ref = _parse_dt(cycle_ref_time)
+        local_ref = utc_ref + timedelta(minutes=offset)
+        d = local_ref.date()
         score = (cyc.get("score") or {}) if isinstance(cyc.get("score"), dict) else {}
         strain = score.get("strain")
 
@@ -132,7 +168,9 @@ async def backfill_last_28_days(athlete_id: str, access_token: str, db: Any) -> 
         created_at = rec.get("created_at")
         if not created_at:
             continue
-        d: date_type = _parse_dt(created_at).date()
+        utc_created = _parse_dt(created_at)
+        local_created = utc_created + timedelta(minutes=offset)
+        d: date_type = local_created.date()
         score = (rec.get("score") or {}) if isinstance(rec.get("score"), dict) else {}
 
         payload = DailyBiometrics(
@@ -160,9 +198,24 @@ async def backfill_last_28_days(athlete_id: str, access_token: str, db: Any) -> 
         start_time = slp.get("start")
         if not start_time:
             continue
-        # Standardize to wake date for biological day alignment
+
+        score = (slp.get("score") or {}) if isinstance(slp.get("score"), dict) else {}
+        stage = (score.get("stage_summary") or {}) if isinstance(score.get("stage_summary"), dict) else {}
+        
+        light = stage.get("total_light_sleep_time_milli")
+        deep = stage.get("total_slow_wave_sleep_time_milli")
+        rem = stage.get("total_rem_sleep_time_milli")
+        awake = stage.get("total_awake_time_milli")
+        
+        # Filter out "empty" sleep records
+        total_sleep_ms = sum(v for v in (light, deep, rem) if isinstance(v, (int, float)))
+        if not total_sleep_ms or total_sleep_ms <= 0:
+            continue
+
+        # Standardize to wake date for biological day alignment, adjusted for athlete timezone
         wake_dt = _parse_dt(slp.get("end") or start_time)
-        d = wake_dt.date()
+        local_wake = wake_dt + timedelta(minutes=offset)
+        d = local_wake.date()
         external_id = str(slp.get("id"))
 
         payload = DailyBiometrics(
@@ -171,14 +224,14 @@ async def backfill_last_28_days(athlete_id: str, access_token: str, db: Any) -> 
             external_id=external_id,
             hrv_rmssd=None,
             resting_hr=None,
-            sleep_duration_min=sleep_duration_min,
+            sleep_duration_min=int(total_sleep_ms / 60000),
             sleep_score=score.get("sleep_performance_percentage"),
             sleep_deep_pct=_pct(deep, total_sleep_ms),
             sleep_rem_pct=_pct(rem, total_sleep_ms),
             sleep_light_pct=_pct(light, total_sleep_ms),
             sleep_awake_pct=round((awake / (total_sleep_ms + awake)) * 100, 1) if (total_sleep_ms and awake) else 0.0,
-            sleep_bedtime=start_time,
-            sleep_wakeup=slp.get("end"),
+            sleep_bedtime=datetime.fromisoformat(start_time.replace("Z", "+00:00")),
+            sleep_wakeup=datetime.fromisoformat((slp.get("end") or start_time).replace("Z", "+00:00")),
             is_nap=slp.get("nap", False),
             sleep_need_min=None,
             sleep_debt_min=None,

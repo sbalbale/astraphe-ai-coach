@@ -6,11 +6,12 @@
   import RadialProgress from "$lib/components/RadialProgress.svelte";
   import EmptyState from "$lib/components/EmptyState.svelte";
   import DatePicker from "$lib/components/DatePicker.svelte";
-  import LineChart from "$lib/components/charts/LineChart.svelte";
   import Modal from "$lib/components/Modal.svelte";
   import { athleteStore } from "$lib/stores/athleteStore.svelte";
   import { addDays, format, parseISO, subDays } from "date-fns";
   import { calculateSleepScore } from "$lib/utils/biometrics";
+  import { onMount } from "svelte";
+  import { page } from "$app/stores";
 
   const isConnected = $derived(
     Object.values(athleteStore.syncStatus?.integrations || {}).some(
@@ -22,13 +23,16 @@
   // Rolling 7-day window (cannot go into the future).
   // Source of truth for the picker is a YYYY-MM-DD string.
   let endPickerValue = $state("");
-  let nightIndex = $state(0); // most recent on the left
+  let nightIndex = $state(6); // most recent on the right
 
   const today = $derived(new Date());
   const todayStr = $derived(format(today, "yyyy-MM-dd"));
 
   $effect(() => {
-    if (!endPickerValue) endPickerValue = todayStr;
+    if (!endPickerValue) {
+      endPickerValue = todayStr;
+      nightIndex = 6;
+    }
   });
 
   const clampedEndDay = $derived.by(() => {
@@ -44,8 +48,9 @@
 
   // Map biometrics to nights array (filling in missing dates for the last 7 days)
   let nights = $derived.by(() => {
-    return Array.from({ length: 7 }, (_, i) => {
-      const d = subDays(windowEnd, i);
+    // Build oldest→newest for display (today on the right).
+    const asc = Array.from({ length: 7 }, (_, i) => {
+      const d = addDays(windowStart, i);
       const displayDateStr = format(d, "yyyy-MM-dd");
 
       // In this UI, the selector day represents the **wake day** (the morning you wake up).
@@ -57,10 +62,13 @@
       const isToday = displayDateStr === todayStr;
       const dateLabel = isToday ? "Today" : format(d, "MMM d");
       const shortLabel = format(d, "MMM d");
+      const dow = format(d, "EE");
+      const dayLabel = dow === "Thu" ? "Th" : dow.charAt(0);
       if (!b || (!b.sleep_score && !b.sleep_duration_min)) {
         return {
           date: dateLabel,
           label: shortLabel,
+          day: dayLabel,
           rawDate: displayDateStr,
           missing: true,
           score: 0,
@@ -79,6 +87,7 @@
       const res = {
         date: dateLabel,
         label: shortLabel,
+        day: dayLabel,
         rawDate: displayDateStr,
         score: b.sleep_score || 0,
         duration: b.sleep_duration_min ? `${h}h ${m}m` : "0h 0m",
@@ -147,6 +156,7 @@
 
       return res;
     });
+    return asc;
   });
 
   $effect(() => {
@@ -155,6 +165,11 @@
   });
 
   let n = $derived(nights[nightIndex] || nights[0]);
+  const avg7d = $derived.by(() => {
+    const vals = nights.map((x) => Number(x.score)).filter((v) => Number.isFinite(v) && v > 0);
+    if (vals.length === 0) return null;
+    return Math.round(vals.reduce((a, b) => a + b, 0) / vals.length);
+  });
 
   const stageColors: Record<string, string> = {
     deep: "#4621FF",
@@ -174,6 +189,19 @@
 
   const getSleepColor = (score: number) =>
     score >= 67 ? "#00C8A8" : score >= 34 ? "#FFCB88" : "#F07178";
+
+  // Allow deep-linking to a specific day, e.g. /sleep?day=2026-04-22
+  let lastAppliedDay = $state<string | null>(null);
+  onMount(() => {
+    const unsub = page.subscribe(($p) => {
+      const day = $p.url.searchParams.get("day");
+      if (!day || day === lastAppliedDay) return;
+      lastAppliedDay = day;
+      endPickerValue = day;
+      nightIndex = 6;
+    });
+    return unsub;
+  });
 
   let selectedPeriod = $state<any>(null);
   let showPeriodModal = $state(false);
@@ -231,7 +259,7 @@
           aria-label="Jump to today"
           onclick={() => {
             endPickerValue = todayStr;
-            nightIndex = 0;
+            nightIndex = 6;
           }}
         >
           Today
@@ -334,35 +362,31 @@
         </Card>
       </div>
 
-      <!-- 28-Day Trend -->
+      <!-- 7-Day Trend -->
       <Card>
         <div class="flex justify-between items-center mb-3">
-          <p class="text-[13px] font-semibold">28-Day Sleep Trend</p>
-          <span class="text-[10px] text-text2 font-mono">{n.score}% current</span>
+          <p class="text-[13px] font-semibold">7-Day Trend</p>
+          <span class="text-[10px] text-text2 font-mono">
+            avg {avg7d === null ? "--" : `${avg7d}%`} · {n.score}% current
+          </span>
         </div>
-        {#if (athleteStore.biometrics?.sleepScores?.length || 0) > 1}
-          <div class="h-[60px]">
-            <LineChart
-              data={athleteStore.biometrics.sleepScores}
-              color={getSleepColor(n.score)}
-              height={60}
-              formatValue={(v) => `${v}%`}
-              getValueColor={getSleepColor}
-            />
-          </div>
-        {:else if (athleteStore.biometrics?.sleepData?.length || 0) > 1}
-           <!-- Fallback to duration if scores missing -->
-           <div class="h-[60px]">
-            <LineChart
-              data={athleteStore.biometrics.sleepData}
-              color={getSleepColor(n.score)}
-              height={60}
-              formatValue={(v) => `${v.toFixed(1)}h`}
-            />
-          </div>
-        {:else}
-          <div class="h-[60px] flex items-center justify-center text-[10px] text-text2 italic">Pending trend data...</div>
-        {/if}
+        <div class="flex gap-2 items-end h-[50px] mb-1 px-1">
+          {#each nights as nt, i (nt.rawDate)}
+            {@const c = getSleepColor(nt.score)}
+            <button
+              type="button"
+              class="flex-1 flex flex-col items-center gap-1 cursor-pointer"
+              onclick={() => (nightIndex = i)}
+              aria-label={`Select ${nt.date}: ${nt.score}%`}
+            >
+              <div
+                class="w-full rounded-t-sm transition-all duration-300"
+                style="background: {i === nightIndex ? c : c + '44'}; height: {Math.max(4, (nt.score / 100) * 50)}px;"
+              ></div>
+              <span class="text-[9px] font-mono {i === nightIndex ? 'text-text0' : 'text-text2'}">{nt.day}</span>
+            </button>
+          {/each}
+        </div>
       </Card>
 
       <!-- Stage breakdown -->
@@ -417,7 +441,7 @@
         <Card>
           <p class="text-[13px] font-semibold mb-3">Sleep Sessions</p>
           <div class="flex flex-col gap-2">
-            {#each n.periods as period}
+            {#each n.periods as period (period?.id ?? period?.started_at ?? period?.ended_at ?? period?.label)}
               <button 
                 type="button"
                 class="flex items-center justify-between p-2.5 rounded-lg bg-glass border border-transparent hover:border-border transition-all active:scale-[0.98] text-left w-full"

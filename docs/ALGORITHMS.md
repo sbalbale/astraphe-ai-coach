@@ -48,34 +48,24 @@ def normalized_power(power_series: np.ndarray) -> float:
     return mean_fourth ** 0.25
 ```
 
-### Running TSS (Pace + HR Hybrid)
+### Running TSS (Pace-Based tRSS / rTSS)
 
-For running, power meters are less common. ASTRAPE uses a HR-based approach when power is unavailable:
-
-```
-TSS = duration_hours × (avg_hr / threshold_hr)² × 100
-```
-
-When running power is available (e.g., Stryd pod):
+For running, ASTRAPE prefers **pace-based** stress when the athlete has a threshold pace anchor:
 
 ```
-TSS = (duration_sec × run_watts × IF) / (rFTPw × 3600) × 100
+IF = threshold_pace_sec_km / avg_pace_sec_km
+TSS = duration_hours × IF² × 100
 ```
 
-### Strength / Other Sports TSS
+Because pace is inversely proportional to speed, the IF ratio is inverted compared to power-based formulas.
 
-For activities without power or pace data, TSS is estimated from HR zone time distribution:
+### Heart Rate Stress Score (HRSS) — Banister TRIMP
 
-```python
-ZONE_WEIGHT = {1: 0.2, 2: 0.5, 3: 0.8, 4: 1.0, 5: 1.3}
+When continuous HR is available, HRSS is computed using Banister’s exponential TRIMP and normalized so that
+**1 hour at LTHR = 100**. When only aggregated time-in-zone is available, ASTRAPE approximates HRSS using
+the mathematical midpoint HR of each zone.
 
-def tss_from_hr_zones(zone_minutes: dict, threshold_hr: int) -> float:
-    weighted_minutes = sum(
-        minutes * ZONE_WEIGHT[zone]
-        for zone, minutes in zone_minutes.items()
-    )
-    return (weighted_minutes / 60) * 100
-```
+Strength training (and other neuromuscular-dominant sports) applies a central nervous system multiplier.
 
 ---
 

@@ -5,7 +5,7 @@ from fastapi import APIRouter, Request, Response, HTTPException, Depends, Backgr
 from fastapi.responses import RedirectResponse, HTMLResponse
 from app.dependencies import get_current_athlete, get_user_db, get_admin_db
 from app.services import whoop
-from app.services.whoop_backfill import backfill_last_28_days
+from app.services.whoop_backfill import backfill_historical_data
 from app.config import settings
 from datetime import datetime
 from app.models.workout import WorkoutPayload
@@ -35,16 +35,24 @@ async def garmin_webhook(request: Request, background_tasks: BackgroundTasks, db
             try:
                 athlete_id = get_athlete_by_garmin_id(db, activity.get("userId"))
                 if not athlete_id: continue
+
+                # Fetch athlete timezone for correct date mapping
+                athlete_res = db.table("athletes").select("timezone_offset_min").eq("id", athlete_id).single().execute()
+                offset = (athlete_res.data.get("timezone_offset_min") or 0) if athlete_res.data else 0
+                
+                utc_start = datetime.utcfromtimestamp(activity.get("startTimeInSeconds"))
+                local_start = utc_start + timedelta(minutes=offset)
                 
                 workout_payload = WorkoutPayload(
                     source="garmin",
                     external_id=str(activity.get("activityId")),
                     workout_type=map_garmin_sport(activity.get("activityType")),
                     title=(str(activity.get("activityType") or "")).replace("_", " ").title() or None,
-                    start_time=datetime.utcfromtimestamp(activity.get("startTimeInSeconds")),
+                    start_time=utc_start,
                     duration_seconds=activity.get("durationInSeconds"),
-                    tss=activity.get("trainingStressScore") # Garmin sometimes provides this
+                    tss=activity.get("trainingStressScore")
                 )
+                # Ensure the workout payload date (if used) is local
                 background_tasks.add_task(process_and_save_workout, workout_payload, athlete_id, db)
             except Exception as e:
                 print(f"Failed to process Garmin activity: {e}")
@@ -139,8 +147,16 @@ async def whoop_webhook(request: Request, background_tasks: BackgroundTasks, db=
                         raise
                 else:
                     raise
+            # Fetch athlete timezone for correct date mapping
+            athlete_res = db.table("athletes").select("timezone_offset_min").eq("id", athlete_id).single().execute()
+            offset = (athlete_res.data.get("timezone_offset_min") or 0) if athlete_res.data else 0
+            
+            # For recovery, created_at is usually the wake-up morning
+            utc_created = datetime.fromisoformat(recovery_data["created_at"].replace("Z", "+00:00"))
+            local_created = utc_created + timedelta(minutes=offset)
+
             bio_payload = DailyBiometrics(
-                date=recovery_data["created_at"][:10],
+                date=local_created.date(),
                 source="whoop",
                 hrv_rmssd=recovery_data["score"]["hrv_rmssd_ms"],
                 resting_hr=recovery_data["score"]["resting_heart_rate"],
@@ -176,12 +192,17 @@ async def whoop_webhook(request: Request, background_tasks: BackgroundTasks, db=
                     return None
                 return round((ms / total_sleep_ms) * 100.0, 1)
 
+            # Fetch athlete timezone for correct date mapping
+            athlete_res = db.table("athletes").select("timezone_offset_min").eq("id", athlete_id).single().execute()
+            offset = (athlete_res.data.get("timezone_offset_min") or 0) if athlete_res.data else 0
+
             # For WHOOP, the "biological day" is most consistently represented 
             # by the day you wake up (end of sleep). This aligns with recovery scores.
             wake_dt = datetime.fromisoformat(sleep_data["end"].replace("Z", "+00:00"))
+            local_wake_dt = wake_dt + timedelta(minutes=offset)
             
             bio_payload = DailyBiometrics(
-                date=wake_dt.date(),
+                date=local_wake_dt.date(),
                 source="whoop",
                 external_id=str(sleep_data.get("id") or event_id),
                 sleep_score=score.get("sleep_performance_percentage"),
@@ -260,6 +281,9 @@ async def whoop_webhook(request: Request, background_tasks: BackgroundTasks, db=
 @router.get("/oauth/whoop/authorize")
 async def whoop_oauth_authorize(athlete_id: str = None):
     """Step 1: Redirect user to WHOOP for authorization."""
+    if athlete_id == "undefined" or not athlete_id:
+        athlete_id = None
+        
     redirect_url = get_clean_redirect_url()
     state = athlete_id or settings.TEST_ATHLETE_ID or secrets.token_urlsafe(16)
     print(f"[whoop.oauth.authorize] redirect_uri={redirect_url} state={state}")
@@ -277,45 +301,40 @@ async def whoop_oauth_authorize(athlete_id: str = None):
     return RedirectResponse(url=f"{settings.WHOOP_OAUTH_AUTH_URL}?{query_string}")
 
 @router.get("/oauth/whoop/callback")
-async def whoop_oauth_callback(code: str, state: str = None, db = Depends(get_admin_db)):
+async def whoop_oauth_callback(code: str, state: str = None, background_tasks: BackgroundTasks = None, db = Depends(get_admin_db)):
     """Step 2: WHOOP redirects back here with a code."""
+    print(f"[whoop.oauth.callback] !!! COLD START callback reached !!! state={state}")
     redirect_url = get_clean_redirect_url()
-    print(f"[whoop.oauth.callback] state={state} redirect_uri={redirect_url}")
-    
     try:
+        print(f"[whoop.oauth.callback] Exchanging code for tokens... redirect_uri={redirect_url}")
         token_data = await whoop.exchange_oauth_code(code, redirect_url)
         access_token = token_data.get("access_token")
-        athlete_id = state
+        print(f"[whoop.oauth.callback] Token exchange SUCCESS")
         
-        profile = await whoop.fetch_profile(access_token)
-        measurements = await whoop.fetch_body_measurement(access_token)
-        
-        # The athlete row is created at signup and includes a NOT NULL user_id.
-        # Do NOT upsert here (would try to insert with null user_id). Instead update the existing row.
-        existing = db.table("athletes").select("id").eq("id", athlete_id).single().execute()
-        if not getattr(existing, "data", None):
-            raise HTTPException(status_code=404, detail="Athlete not found for WHOOP callback state")
+        # Handle state correctly
+        athlete_id = state if state != "undefined" else None
+        if not athlete_id:
+             print(f"[whoop.oauth.callback] ERROR: athlete_id is missing or undefined")
+             raise HTTPException(status_code=400, detail="Missing athlete_id")
 
-        db.table("athletes").update({
-            "display_name": profile.get("first_name", "Athlete"),
-            "weight_kg": measurements.get("weight_kilograms"),
-            "max_hr": measurements.get("max_heart_rate"),
-        }).eq("id", athlete_id).execute()
-
+        # Save tokens first (lightweight)
+        print(f"[whoop.oauth.callback] Saving tokens to DB for athlete {athlete_id}...")
         db.table("oauth_tokens").upsert({
             "athlete_id": athlete_id,
             "provider": "whoop",
-            "external_user_id": str(profile.get("user_id")),
             "access_token": access_token,
             "refresh_token": token_data.get("refresh_token"),
         }).execute()
+        print(f"[whoop.oauth.callback] Token persistence SUCCESS")
 
-        # Kick off an initial backfill so the app has immediate history.
-        # Runs in-process; in production we'd likely use a job queue.
-        try:
-            asyncio.create_task(backfill_last_28_days(athlete_id, access_token, db))
-        except Exception as e:
-            print(f"[whoop.backfill] failed to start: {repr(e)}")
+        # Everything else in background
+        if background_tasks:
+            print(f"[whoop.oauth.callback] Scheduling background backfill task...")
+            background_tasks.add_task(backfill_historical_data, athlete_id, access_token, None, 90)
+            print(f"[whoop.oauth.callback] Task scheduled")
+        
+        print(f"[whoop.oauth.callback] Sending HTML response...")
+        
         
         deep_link = f"{settings.MOBILE_DEEP_LINK_SCHEME}://connected?provider=whoop&status=success"
         # When this flow runs in a desktop browser, custom URI schemes won't open reliably.
@@ -326,14 +345,179 @@ async def whoop_oauth_callback(code: str, state: str = None, db = Depends(get_ad
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>WHOOP Connected</title>
+    <title>ASTRAPE • WHOOP Connected</title>
+    <meta name="color-scheme" content="dark light" />
+    <style>
+      :root {{
+        --bg0: #070A12;
+        --bg1: #0B1022;
+        --card: rgba(255, 255, 255, 0.06);
+        --cardBorder: rgba(255, 255, 255, 0.10);
+        --text: rgba(255, 255, 255, 0.92);
+        --muted: rgba(255, 255, 255, 0.70);
+        --brandA: #7C3AED; /* violet */
+        --brandB: #22D3EE; /* cyan */
+        --ok: #34D399;     /* emerald */
+      }}
+      * {{ box-sizing: border-box; }}
+      body {{
+        margin: 0;
+        min-height: 100vh;
+        color: var(--text);
+        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
+        background:
+          radial-gradient(1200px 600px at 20% -10%, rgba(124, 58, 237, 0.35), transparent 60%),
+          radial-gradient(900px 500px at 90% 10%, rgba(34, 211, 238, 0.22), transparent 55%),
+          linear-gradient(180deg, var(--bg0), var(--bg1));
+        display: grid;
+        place-items: center;
+        padding: 24px;
+      }}
+      .wrap {{ width: min(560px, 100%); }}
+      .card {{
+        background: var(--card);
+        border: 1px solid var(--cardBorder);
+        border-radius: 18px;
+        padding: 22px;
+        backdrop-filter: blur(10px);
+        box-shadow:
+          0 24px 50px rgba(0, 0, 0, 0.45),
+          inset 0 1px 0 rgba(255, 255, 255, 0.05);
+      }}
+      .brand {{
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 14px;
+      }}
+      .logo {{
+        width: 36px;
+        height: 36px;
+        border-radius: 12px;
+        background: linear-gradient(135deg, var(--brandA), var(--brandB));
+        box-shadow: 0 10px 24px rgba(124, 58, 237, 0.25);
+      }}
+      .brand h1 {{
+        margin: 0;
+        font-size: 14px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }}
+      .title {{
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin: 6px 0 8px;
+      }}
+      .check {{
+        width: 22px;
+        height: 22px;
+        border-radius: 999px;
+        display: grid;
+        place-items: center;
+        background: rgba(52, 211, 153, 0.15);
+        border: 1px solid rgba(52, 211, 153, 0.35);
+        color: var(--ok);
+        flex: 0 0 auto;
+      }}
+      h2 {{
+        margin: 0;
+        font-size: 22px;
+        line-height: 1.2;
+      }}
+      p {{
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.5;
+      }}
+      .actions {{
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-top: 16px;
+      }}
+      a.btn, button.btn {{
+        appearance: none;
+        border: 0;
+        cursor: pointer;
+        text-decoration: none;
+        font-weight: 600;
+        padding: 12px 14px;
+        border-radius: 12px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+      }}
+      .primary {{
+        color: #081018;
+        background: linear-gradient(135deg, var(--brandA), var(--brandB));
+        box-shadow: 0 18px 34px rgba(124, 58, 237, 0.22);
+      }}
+      .secondary {{
+        color: var(--text);
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+      }}
+      .tiny {{
+        font-size: 12px;
+        margin-top: 14px;
+        color: rgba(255, 255, 255, 0.55);
+      }}
+      code {{
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        font-size: 12px;
+        color: rgba(255, 255, 255, 0.78);
+      }}
+    </style>
   </head>
-  <body style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; padding: 24px;">
-    <h2>WHOOP connected</h2>
-    <p>Your WHOOP account is connected. You can return to the app.</p>
-    <p><a href="{deep_link}">Open ASTRAPE</a></p>
+  <body>
+    <div class="wrap">
+      <div class="card">
+        <div class="brand">
+          <div class="logo" aria-hidden="true"></div>
+          <h1>ASTRAPE AI Coach</h1>
+        </div>
+
+        <div class="title">
+          <div class="check" aria-hidden="true">✓</div>
+          <h2>WHOOP connected</h2>
+        </div>
+        <p>Your WHOOP account is now linked to ASTRAPE. You can safely return to the app.</p>
+
+        <div class="actions">
+          <a class="btn primary" href="{deep_link}">Open ASTRAPE</a>
+          <button class="btn secondary" type="button" id="copyBtn">Copy link</button>
+        </div>
+
+        <div class="tiny">
+          If your browser didn’t open the app automatically, use the button above. Link:
+          <br />
+          <code id="dl">{deep_link}</code>
+        </div>
+      </div>
+    </div>
+
     <script>
-      try {{ window.location.href = "{deep_link}"; }} catch (e) {{}}
+      const deepLink = "{deep_link}";
+
+      // Attempt deep link quickly, but leave the page usable if blocked.
+      setTimeout(() => {{
+        try {{ window.location.href = deepLink; }} catch (e) {{}}
+      }}, 50);
+
+      const copyBtn = document.getElementById("copyBtn");
+      copyBtn?.addEventListener("click", async () => {{
+        try {{
+          await navigator.clipboard.writeText(deepLink);
+          copyBtn.textContent = "Copied";
+          setTimeout(() => (copyBtn.textContent = "Copy link"), 1200);
+        }} catch (e) {{
+          // Clipboard can be blocked; fall back to a prompt.
+          window.prompt("Copy this link:", deepLink);
+        }}
+      }});
     </script>
   </body>
 </html>""",

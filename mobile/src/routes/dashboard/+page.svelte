@@ -4,14 +4,16 @@
   import Tag from '$lib/components/Tag.svelte';
   import RadialProgress from '$lib/components/RadialProgress.svelte';
   import MultiLineChart from '$lib/components/charts/MultiLineChart.svelte';
-  import LineChart from '$lib/components/charts/LineChart.svelte';
+  import TrendBars from '$lib/components/charts/TrendBars.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import CalibrationBadge from '$lib/components/CalibrationBadge.svelte';
   import { onMount } from 'svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { authStore } from '$lib/stores/authStore.svelte';
   import { goto } from '$app/navigation';
+  import { resolve } from '$app/paths';
   import { format } from 'date-fns';
+  import { strainTextClass, tssTextClass } from '$lib/scoreColors';
 
   const props = $props();
 
@@ -19,7 +21,11 @@
     athleteStore.fetchAll(true);
   });
 
-  const isCalibrating = $derived(athleteStore.days_on_platform < 42);
+  const isCalibrating = $derived(
+    athleteStore.initialLoadDone &&
+    athleteStore.days_on_platform > 0 &&
+    athleteStore.days_on_platform < 42
+  );
   const hasData = $derived(athleteStore.workouts?.length > 0 || athleteStore.readiness > 0);
   const isConnected = $derived(Object.values(athleteStore.syncStatus?.integrations || {}).some((i: any) => i.connected));
 
@@ -29,15 +35,16 @@
   const todayBio = $derived(athleteStore.biometrics?.series?.find((s: any) => s.date === todayStr));
   const todayLoad = $derived(athleteStore.metrics?.trainingLoadData?.find((m: any) => isoDate(m?.date) === todayStr));
 
-  const todayReadiness = $derived(todayBio?.astrape_readiness_score ?? todayBio?.astrape_recovery_score ?? null);
+  const todayReadiness = $derived(todayBio?.readiness_score ?? todayBio?.recovery_score ?? null);
   const todayHrv = $derived(todayBio?.hrv_rmssd ?? null);
   const todaySleepMin = $derived(todayBio?.sleep_duration_min ?? null);
-  const todaySleepScore = $derived(todayBio?.astrape_sleep_score ?? null);
+  const todaySleepScore = $derived(todayBio?.sleep_score ?? null);
 
   const latestBio = $derived(athleteStore.biometrics?.series?.[athleteStore.biometrics.series.length - 1]);
   const latestHrv = $derived(todayHrv ?? latestBio?.hrv_rmssd ?? null);
   const latestSleepMin = $derived(todaySleepMin ?? latestBio?.sleep_duration_min ?? null);
-  const latestSleepScore = $derived(todaySleepScore ?? latestBio?.astrape_sleep_score ?? null);
+  const latestSleepScore = $derived(todaySleepScore ?? latestBio?.sleep_score ?? null);
+  const latestRecovery = $derived(todayReadiness ?? latestBio?.readiness_score ?? latestBio?.recovery_score ?? null);
 
   const todayCtl = $derived(todayLoad?.ctl ?? null);
   const todayAtl = $derived(todayLoad?.atl ?? null);
@@ -51,11 +58,9 @@
     return `${h}h ${r}m`;
   };
 
-  const hrvColor = (val: number) => {
-    const base = Number(athleteStore.profile?.hrv_baseline) || 0;
-    if (!base) return '#00C8A8';
-    if (val >= base * 1.05) return '#00C8A8';
-    if (val >= base * 0.95) return '#FFCB88';
+  const recoveryColor = (score: number) => {
+    if (score >= 67) return '#00C8A8';
+    if (score >= 34) return '#FFCB88';
     return '#F07178';
   };
 
@@ -84,10 +89,64 @@
     return a === null ? null : Math.round(a);
   });
 
+  const recoveryTrend = $derived.by(() => {
+    const series = athleteStore.biometrics?.series || [];
+    return series.slice(-28).map((s: any) => {
+      const v = Number(s?.readiness_score ?? s?.recovery_score);
+      return {
+        date: typeof s?.date === 'string' ? s.date : '',
+        value: Number.isFinite(v) && v > 0 ? v : null
+      };
+    });
+  });
+
+  const recoveryTrendData = $derived(recoveryTrend.map((p: any) => p.value));
+  const recoveryTrendKeys = $derived(recoveryTrend.map((p: any) => p.date));
+  const recoveryTrendLabels = $derived(
+    recoveryTrend.map((p: any) => {
+      if (!p?.date) return '';
+      const d = new Date(p.date + 'T00:00:00');
+      return Number.isNaN(d.getTime()) ? String(p.date) : format(d, 'MMM d');
+    })
+  );
+
+  const avgRecovery7d = $derived.by(() => {
+    const src = recoveryTrendData.slice(-7);
+    const a = avg(src);
+    return a === null ? null : Math.round(a);
+  });
+
   const avgSleep7dMin = $derived.by(() => {
     const src = (athleteStore.biometrics?.sleepData || []).slice(-7); // hours (float)
     const a = avg(src.map((v: unknown) => Number(v)).filter((v: number) => v > 0));
     return a === null ? null : Math.round(a * 60);
+  });
+
+  const sleepTrend = $derived.by(() => {
+    const series = athleteStore.biometrics?.series || [];
+    return series.slice(-28).map((s: any) => {
+      const v = Number(s?.sleep_score);
+      return {
+        date: typeof s?.date === 'string' ? s.date : '',
+        value: Number.isFinite(v) && v > 0 ? v : null
+      };
+    });
+  });
+
+  const sleepTrendData = $derived(sleepTrend.map((p: any) => p.value));
+  const sleepTrendKeys = $derived(sleepTrend.map((p: any) => p.date));
+  const sleepTrendLabels = $derived(
+    sleepTrend.map((p: any) => {
+      if (!p?.date) return '';
+      const d = new Date(p.date + 'T00:00:00');
+      return Number.isNaN(d.getTime()) ? String(p.date) : format(d, 'MMM d');
+    })
+  );
+
+  const avgSleepScore7d = $derived.by(() => {
+    const vals = sleepTrendData.slice(-7).map((x: any) => Number(x)).filter((v: number) => Number.isFinite(v) && v > 0);
+    if (vals.length === 0) return null;
+    return Math.round(vals.reduce((a: number, b: number) => a + b, 0) / vals.length);
   });
 </script>
 
@@ -201,33 +260,41 @@
       </Card>
     {/if}
 
-    <!-- HRV + Sleep -->
+    <!-- Recovery trends + Sleep -->
     <div class="grid grid-cols-2 gap-2.5">
       <Card>
         <div class="flex justify-between items-start mb-2">
-          <span class="text-[9px] text-text2 font-mono uppercase tracking-[0.08em]">HRV Trend</span>
-          {#if todayHrv === null && latestHrv !== null}
+          <span class="text-[9px] text-text2 font-mono uppercase tracking-[0.08em]">Recovery trends</span>
+          {#if todayReadiness === null && latestRecovery !== null}
             <span class="text-[8px] bg-white/5 px-1 rounded text-text2 border border-white/5 uppercase">Latest</span>
           {/if}
         </div>
         <div class="flex items-baseline gap-1.5">
-          <span class="text-[20px] font-bold" style="color: {latestHrv === null ? 'var(--text2)' : hrvColor(Number(latestHrv))}">
-            {latestHrv === null ? 'Data not found' : Math.round(latestHrv)}
-            <span class="text-[11px] text-text2 font-normal">ms</span>
+          <span class="text-[20px] font-bold" style="color: {latestRecovery === null ? 'var(--text2)' : recoveryColor(Number(latestRecovery))}">
+            {latestRecovery === null ? 'Data not found' : Math.round(Number(latestRecovery))}
+            <span class="text-[11px] text-text2 font-normal">/100</span>
           </span>
         </div>
         <p class="text-[10px] text-text2 mt-1">
-          7d avg <span class="text-text1 font-medium">{avgHrv7d === null ? '--' : `${avgHrv7d}ms`}</span>
+          7d avg <span class="text-text1 font-medium">{avgRecovery7d === null ? '--' : `${avgRecovery7d}/100`}</span>
         </p>
-        {#if athleteStore.biometrics?.hrvData?.length > 1}
+        {#if recoveryTrendData.length > 1}
           <div class="mt-2">
-            <LineChart
-              data={athleteStore.biometrics.hrvData}
-              color={latestHrv === null ? '#00C8A8' : hrvColor(Number(latestHrv))}
+            <TrendBars
+              data={recoveryTrendData}
+              labels={recoveryTrendLabels}
+              keys={recoveryTrendKeys}
               height={48}
+              min={0}
+              max={100}
+              getValueColor={(v) => recoveryColor(v)}
               formatValue={(v) => `${Math.round(Number(v))}`}
-              getValueColor={(v) => hrvColor(v)}
-              unit="ms"
+              unit="/100"
+              showBottomLabels={true}
+              onSelect={({ key }) => {
+                if (!key) return;
+                goto(resolve(`/recovery?day=${encodeURIComponent(String(key))}`));
+              }}
             />
           </div>
         {:else}
@@ -249,24 +316,26 @@
         </div>
         <p class="text-[10px] text-text2 mt-1">
           7d avg <span class="text-text1 font-medium">{avgSleep7dMin === null ? '--' : sleepHM(avgSleep7dMin)}</span>
+          <span class="text-text2"> · </span>
+          <span class="text-text1 font-medium">{avgSleepScore7d === null ? '--' : `${avgSleepScore7d}%`}</span>
         </p>
-        {#if (athleteStore.biometrics?.sleepScores?.length || 0) > 1}
+        {#if sleepTrendData.length > 1}
           <div class="mt-2">
-            <LineChart
-              data={athleteStore.biometrics.sleepScores}
-              color={sleepColor(latestSleepScore)}
+            <TrendBars
+              data={sleepTrendData}
+              labels={sleepTrendLabels}
+              keys={sleepTrendKeys}
               height={48}
-              formatValue={(v) => `${v}%`}
+              min={0}
+              max={100}
               getValueColor={(v) => sleepColor(v)}
-            />
-          </div>
-        {:else if (athleteStore.biometrics?.sleepData?.length || 0) > 1}
-          <div class="mt-2">
-            <LineChart
-              data={athleteStore.biometrics.sleepData}
-              color={latestSleepMin === null ? '#FFCB88' : sleepColor(latestSleepScore)}
-              height={48}
-              formatValue={formatSleepHours}
+              formatValue={(v) => `${Math.round(Number(v))}`}
+              unit="%"
+              showBottomLabels={true}
+              onSelect={({ key }) => {
+                if (!key) return;
+                goto(resolve(`/sleep?day=${encodeURIComponent(String(key))}`));
+              }}
             />
           </div>
         {:else}
@@ -283,12 +352,14 @@
           <Tag color="var(--blue)">SYNCED</Tag>
         </div>
         <div class="flex flex-col gap-2.5">
-          {#each athleteStore.workouts.slice(0, 3) as w, i}
+          {#each athleteStore.workouts.slice(0, 3) as w, i (w.id)}
             {@const type = w.sport?.toLowerCase()}
+            {@const strainVal = Number.isFinite(Number(w?.strain_score)) ? Math.round(Number(w.strain_score)) : null}
+            {@const tssVal = Number.isFinite(Number(w?.tss)) ? Math.round(Number(w.tss)) : null}
             <button
               type="button"
               class="text-left bg-transparent border-none p-0 cursor-pointer w-full"
-              onclick={() => goto(`/training?workout_id=${encodeURIComponent(String(w.id))}`)}
+              onclick={() => goto(resolve(`/training?workout_id=${encodeURIComponent(String(w.id))}`))}
               aria-label="View workout details"
             >
               <div class="flex items-center gap-3 py-2.5 {i < 2 ? 'border-b border-border' : ''}">
@@ -303,9 +374,19 @@
                   <p class="text-[13px] font-medium">{w.title || (w.sport?.toUpperCase() + ' Session')}</p>
                   <p class="text-[11px] text-text2">{format(new Date(w.started_at), 'MMM d')} · {Math.floor(w.duration_secs / 60)} min</p>
                 </div>
-                <div class="text-right">
-                  <p class="text-[13px] font-semibold {w.tss > 75 ? 'text-red' : w.tss > 55 ? 'text-amber' : 'text-teal'}">{Math.round(w.tss || 0)}</p>
-                  <p class="text-[9px] text-text2 font-mono">TSS</p>
+                <div class="text-right flex flex-col gap-1">
+                  <div>
+                    <p class="text-[13px] font-semibold {strainVal === null ? 'text-text2' : strainTextClass(strainVal)}">
+                      {strainVal === null ? '--' : strainVal}
+                    </p>
+                    <p class="text-[9px] text-text2 font-mono">STRAIN</p>
+                  </div>
+                  <div>
+                    <p class="text-[13px] font-semibold {tssVal === null ? 'text-text2' : tssTextClass(tssVal)}">
+                      {tssVal === null ? '--' : tssVal}
+                    </p>
+                    <p class="text-[9px] text-text2 font-mono">TSS</p>
+                  </div>
                 </div>
               </div>
             </button>

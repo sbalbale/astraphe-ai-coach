@@ -44,7 +44,8 @@
       if (integrations.whoop.connected) {
         await athleteStore.unlinkIntegration('whoop');
       } else {
-        window.location.href = `${API_URL}/v1/sync/oauth/whoop/authorize?athlete_id=${athleteStore.profile?.id}`;
+        const aid = athleteStore.profile?.id || '';
+        window.location.href = `${API_URL}/v1/sync/oauth/whoop/authorize?athlete_id=${aid}`;
       }
     } else if (id === 'garmin') {
       if (integrations.garmin.connected) {

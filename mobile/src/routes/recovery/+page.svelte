@@ -5,24 +5,20 @@
   import EmptyState from '$lib/components/EmptyState.svelte';
   import Pill from '$lib/components/Pill.svelte';
   import DatePicker from '$lib/components/DatePicker.svelte';
-  import LineChart from '$lib/components/charts/LineChart.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
+  import { onMount } from 'svelte';
   import { addDays, format, subDays } from 'date-fns';
+  import { page } from '$app/stores';
 
   const isConnected = $derived(Object.values(athleteStore.syncStatus?.integrations || {}).some((i: any) => i.connected));
   
   // Rolling 7-day window (cannot go into the future).
   // Source of truth for the picker is a YYYY-MM-DD string.
-  let endPickerValue = $state(''); // YYYY-MM-DD
-  let dayIndex = $state(0); // default to most recent day in window (left)
+  let endPickerValue = $state(format(new Date(), 'yyyy-MM-dd')); // YYYY-MM-DD
+  let dayIndex = $state(6); // default to most recent day in window (right)
 
   const today = $derived(new Date());
   const todayStr = $derived(format(today, 'yyyy-MM-dd'));
-
-  $effect(() => {
-    // Initialize once (avoids effect loops).
-    if (!endPickerValue) endPickerValue = todayStr;
-  });
 
   const clampedEndDay = $derived.by(() => {
     const d = endPickerValue ? new Date(endPickerValue + 'T00:00:00') : new Date();
@@ -36,17 +32,19 @@
   const canGoForward = $derived(format(windowEnd, 'yyyy-MM-dd') !== todayStr);
 
   const days = $derived.by(() => {
-    return Array.from({ length: 7 }, (_, i) => {
-      // Most recent day on the left (index 0)
-      const d = subDays(windowEnd, i);
+    // Build oldest→newest for display (today on the right).
+    const asc = Array.from({ length: 7 }, (_, i) => {
+      const d = addDays(windowStart, i);
       const dateStr = format(d, 'yyyy-MM-dd');
       
       const b = athleteStore.biometrics?.series?.find((s: any) => s.date === dateStr);
+      const dow = format(d, 'EE');
+      const dayLabel = dow === 'Thu' ? 'Th' : dow.charAt(0);
       
       return {
         date: dateStr,
         label: dateStr === todayStr ? 'Today' : format(d, 'MMM d'),
-        day: format(d, 'EE').charAt(0),
+        day: dayLabel,
         score: b?.recovery_score || 0,
         hrv: b?.hrv_rmssd || 0,
         rhr: b?.resting_hr || 0,
@@ -55,19 +53,35 @@
         data: b
       };
     });
-  });
-
-  $effect(() => {
-    // Keep selection clamped to [0..6] and default to latest day in the window.
-    dayIndex = Math.max(0, Math.min(6, dayIndex ?? 0));
+    return asc;
   });
 
   const d = $derived(days[dayIndex]);
   const hasData = $derived(days.some(day => !day.missing) || athleteStore.readiness > 0);
   
   const score = $derived(d.score || (d?.date === todayStr ? athleteStore.readiness : 0));
-  const scoreColor = $derived(score >= 75 ? '#00C8A8' : score >= 50 ? '#FFCB88' : '#F07178');
-  const quality = $derived(score >= 75 ? 'Optimal' : score >= 50 ? 'Moderate' : 'Fatigued');
+  const scoreColor = $derived(score >= 67 ? '#00C8A8' : score >= 34 ? '#FFCB88' : '#F07178');
+  const quality = $derived(score >= 67 ? 'Optimal' : score >= 34 ? 'Moderate' : 'Fatigued');
+
+  const avg7d = $derived.by(() => {
+    const vals = days.map((x) => Number(x.score)).filter((v) => Number.isFinite(v) && v > 0);
+    if (vals.length === 0) return null;
+    return Math.round(vals.reduce((a, b) => a + b, 0) / vals.length);
+  });
+
+  // Allow deep-linking to a specific day, e.g. /recovery?day=2026-04-22
+  let lastAppliedDay = $state<string | null>(null);
+  onMount(() => {
+    const unsub = page.subscribe(($p) => {
+      const day = $p.url.searchParams.get('day');
+      if (!day || day === lastAppliedDay) return;
+      lastAppliedDay = day;
+      endPickerValue = day;
+      dayIndex = 6;
+    });
+
+    return unsub;
+  });
 </script>
 
 <div class="flex flex-col gap-3">
@@ -115,7 +129,7 @@
           aria-label="Jump to today"
           onclick={() => {
             endPickerValue = todayStr;
-            dayIndex = 0;
+            dayIndex = 6;
           }}
         >
           Today
@@ -173,11 +187,11 @@
           <div class="flex-1">
             <div class="flex items-center gap-2 mb-1">
               <span class="text-[18px] font-bold text-text0">{quality}</span>
-              <Tag color={scoreColor}>{score >= 75 ? 'OPTIMAL' : 'RECOVERING'}</Tag>
+              <Tag color={scoreColor}>{score >= 67 ? 'OPTIMAL' : score >= 34 ? 'MODERATE' : 'FATIGUED'}</Tag>
             </div>
             <p class="text-xs text-text1 leading-relaxed">
-              {score >= 75 ? 'Your nervous system is well-rested and primed for quality effort.' : 
-               score >= 50 ? 'Moderate physiological state. Listen to your body during training.' : 
+              {score >= 67 ? 'Your nervous system is well-rested and primed for quality effort.' : 
+               score >= 34 ? 'Moderate physiological state. Listen to your body during training.' : 
                'Significant fatigue detected. Prioritize sleep and active recovery today.'}
             </p>
           </div>
@@ -221,36 +235,36 @@
       <!-- 28-Day Trend -->
       <Card>
         <div class="flex justify-between items-center mb-3">
-          <p class="text-[13px] font-semibold">28-Day HRV Trend</p>
-          <span class="text-[10px] text-text2 font-mono">{d.hrv}ms current</span>
+          <p class="text-[13px] font-semibold">Recovery trends</p>
+          <span class="text-[10px] text-text2 font-mono">
+            avg {avg7d === null ? '--' : `${avg7d}/100`} · {score}/100 current
+          </span>
         </div>
-        {#if (athleteStore.biometrics?.hrvData?.length || 0) > 1}
-          <div class="h-[60px]">
-            <LineChart
-              data={athleteStore.biometrics.hrvData}
-              color="#00C8A8"
-              height={60}
-              formatValue={(v) => `${Math.round(v)}ms`}
-              getValueColor={(v) => {
-                const base = Number(athleteStore.profile?.hrv_baseline) || 0;
-                if (!base) return '#00C8A8';
-                if (v >= base * 1.05) return '#00C8A8';
-                if (v >= base * 0.95) return '#FFCB88';
-                return '#F07178';
-              }}
-            />
-          </div>
-        {:else}
-          <div class="h-[60px] flex items-center justify-center text-[10px] text-text2 italic">Pending trend data...</div>
-        {/if}
+        <div class="flex gap-2 items-end h-[50px] mb-1 px-1 pb-2">
+          {#each days as day, i (day.date)}
+            {@const c = day.score >= 67 ? '#00C8A8' : day.score >= 34 ? '#FFCB88' : '#F07178'}
+            <button
+              type="button"
+              class="flex-1 flex flex-col items-center gap-1 cursor-pointer"
+              onclick={() => (dayIndex = i)}
+              aria-label={`Select ${day.label}: ${day.score}/100`}
+            >
+              <div
+                class="w-full rounded-t-sm transition-all duration-300"
+                style="background: {i === dayIndex ? c : c + '44'}; height: {Math.max(4, (day.score / 100) * 50)}px;"
+              ></div>
+              <span class="text-[9px] font-mono {i === dayIndex ? 'text-text0' : 'text-text2'}">{day.day}</span>
+            </button>
+          {/each}
+        </div>
       </Card>
 
       <!-- Analysis Card -->
       <Card style="background: var(--glass2); border-color: transparent;">
         <p class="text-[13px] font-semibold mb-1">Recovery Analysis</p>
         <p class="text-[12px] text-text2 leading-relaxed italic">
-          {score >= 75 ? 'Your recovery architecture looks balanced. Systemic fatigue is low.' : 
-           score >= 50 ? 'Your autonomic system is recovering. Focus on maintaining parasympathetic tone.' : 
+          {score >= 67 ? 'Your recovery architecture looks balanced. Systemic fatigue is low.' : 
+           score >= 34 ? 'Your autonomic system is recovering. Focus on maintaining parasympathetic tone.' : 
            'High systemic load detected. Prioritize high-quality sleep to accelerate repair.'}
         </p>
       </Card>

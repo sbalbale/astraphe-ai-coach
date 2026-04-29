@@ -5,10 +5,15 @@ from app.models.biometrics import DailyBiometrics
 
 from app.services.algorithms import (
     compute_tss_power, 
-    tss_from_hr_zones,
+    compute_hrss_from_zones,
+    compute_trss_pace,
     compute_ctl,
     compute_atl,
     compute_sleep_score,
+    compute_sleep_need,
+    DEFAULT_BASELINE_SLEEP_MIN,
+    MAX_SLEEP_DEBT_MIN,
+    SLEEP_DEBT_DECAY_RATE,
     normalize_rowing_watts,
     compute_strain_score,
     compute_recovery_score,
@@ -21,6 +26,44 @@ from app.services.algorithms import (
     calculate_threshold_hr_est
 )
 
+def _parse_pace_to_sec_per_km(pace: object) -> float:
+    """
+    Accepts pace like '5:00', '05:00', '5:00/km', returns seconds per km.
+    Returns 0.0 for invalid inputs.
+    """
+    if pace is None:
+        return 0.0
+    if isinstance(pace, (int, float)):
+        return float(pace) if float(pace) > 0 else 0.0
+
+    s = str(pace).strip().lower()
+    if not s:
+        return 0.0
+
+    # remove common suffixes
+    for suffix in ("/km", "per km", "km", "min/km"):
+        s = s.replace(suffix, "")
+    s = s.strip()
+
+    # Support "m:ss" or "mm:ss"
+    if ":" in s:
+        parts = [p for p in s.split(":") if p != ""]
+        if len(parts) == 2:
+            try:
+                mins = int(parts[0])
+                secs = int(parts[1])
+                total = mins * 60 + secs
+                return float(total) if total > 0 else 0.0
+            except Exception:
+                return 0.0
+
+    # Fallback: treat as numeric seconds
+    try:
+        v = float(s)
+        return v if v > 0 else 0.0
+    except Exception:
+        return 0.0
+
 def recalculate_tss_history(athlete_id: str, db):
     """
     Fetches all workouts for an athlete, aggregates TSS by date,
@@ -31,11 +74,17 @@ def recalculate_tss_history(athlete_id: str, db):
     if not res or not res.data:
         return
 
+    # 1.5 Fetch athlete timezone for correct date mapping
+    athlete_res = db.table("athletes").select("timezone_offset_min").eq("id", athlete_id).single().execute()
+    offset = (athlete_res.data.get("timezone_offset_min") or 0) if athlete_res.data else 0
+
     # 2. Aggregate TSS by date
     daily_tss = {}
     for w in res.data:
-        # Robustly parse date from ISO string (YYYY-MM-DD)
-        d = date.fromisoformat(w["started_at"][:10])
+        # Parse ISO string and adjust for athlete's local offset
+        utc_start = datetime.fromisoformat(w["started_at"].replace("Z", "+00:00"))
+        local_start = utc_start + timedelta(minutes=offset)
+        d = local_start.date()
         daily_tss[d] = daily_tss.get(d, 0.0) + (w["tss"] or 0.0)
 
     if not daily_tss:
@@ -107,14 +156,41 @@ def process_and_save_workout(payload: WorkoutPayload, athlete_id: str, db):
     mapped_sport = sport if sport in ('run', 'bike', 'swim', 'strength', 'rowing') else 'other'
     if sport == 'cycling': mapped_sport = 'bike'
 
+    # Load athlete anchors needed for HRSS / pace-based models
+    athlete_res = db.table("athletes").select("max_hr,resting_hr,threshold_hr,threshold_pace,gender").eq("id", athlete_id).single().execute()
+    athlete = athlete_res.data if (athlete_res and athlete_res.data) else {}
+
+    anchor_max_hr = athlete.get("max_hr") or payload.max_hr
+    anchor_resting_hr = athlete.get("resting_hr")
+    anchor_threshold_hr = athlete.get("threshold_hr")
+    anchor_gender = athlete.get("gender") or "male"
+    threshold_pace_sec_km = _parse_pace_to_sec_per_km(athlete.get("threshold_pace"))
+
     # 2. Calculate Training Stress Score (TSS)
     if sport == "cycling" and payload.normalized_power:
         tss = compute_tss_power(payload.duration_seconds, payload.normalized_power, payload.ftp_at_time)
+    elif mapped_sport == "run" and payload.duration_seconds and payload.avg_pace_sec_km and threshold_pace_sec_km > 0:
+        # Use pace-based load when threshold pace is available (speed-based tracking)
+        tss = compute_trss_pace(
+            duration_sec=payload.duration_seconds,
+            avg_pace_sec_km=float(payload.avg_pace_sec_km),
+            threshold_pace_sec_km=float(threshold_pace_sec_km),
+        )
     elif has_hr_zones and payload.duration_seconds:
-        # Use HR zones for TSS
-        safe_hr_zones = {k: (v or 0.0) for k, v in hr_zones.items()}
+        # Use Banister TRIMP HRSS estimated from time-in-zone (historical aggregate)
+        safe_hr_zones = {k: float(v or 0.0) for k, v in hr_zones.items()}
+        if hr_zone_0_pct is not None:
+            safe_hr_zones[0] = float(hr_zone_0_pct or 0.0)
+
         zone_minutes = {k: (v / 100.0) * (payload.duration_seconds / 60.0) for k, v in safe_hr_zones.items()}
-        tss = tss_from_hr_zones(zone_minutes, mapped_sport)
+        tss = compute_hrss_from_zones(
+            zone_minutes=zone_minutes,
+            max_hr=int(anchor_max_hr or 0),
+            resting_hr=int(anchor_resting_hr or 0),
+            threshold_hr=int(anchor_threshold_hr or 0),
+            sport=mapped_sport,
+            gender=str(anchor_gender),
+        )
     elif sport == "rowing" and hasattr(payload, 'avg_power') and payload.avg_power:
         # Fallback for rowing
         norm_watts = normalize_rowing_watts(payload.avg_power)
@@ -323,8 +399,12 @@ def process_and_save_biometrics(payload: DailyBiometrics, athlete_id: str, db):
     # New proprietary sleep need calculation logic should be integrated if different, 
     # but for now we follow the user's provided compute_sleep_score.
     # The sleep need still uses a baseline (e.g. 480) + strain/debt impact.
-    strain_impact = min(120, (prev_strain or 0) * 1.8)
-    sleep_need = 480 + strain_impact + prev_debt
+    carried_debt = float(prev_debt or 0.0) * SLEEP_DEBT_DECAY_RATE
+    sleep_need = compute_sleep_need(
+        baseline_min=DEFAULT_BASELINE_SLEEP_MIN,
+        strain_score=int(prev_strain or 0),
+        current_debt_min=carried_debt,
+    )
     
     sleep_score = compute_sleep_score(
         actual_sleep_min=total_sleep_min,
@@ -333,7 +413,7 @@ def process_and_save_biometrics(payload: DailyBiometrics, athlete_id: str, db):
         deep_pct=agg_deep
     )
 
-    next_night_debt = min(120, max(0, sleep_need - total_sleep_min))
+    next_night_debt = float(np.clip(float(sleep_need) - float(total_sleep_min), 0.0, MAX_SLEEP_DEBT_MIN))
 
     # 7. Merge with existing Biometrics row (HRV/RHR/Strain)
     existing_res = db.table("biometrics").select("*").eq("athlete_id", athlete_id).eq("date", payload.date.isoformat()).maybe_single().execute()
