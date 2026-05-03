@@ -13,6 +13,11 @@
   import EmptyState from "$lib/components/EmptyState.svelte";
   import DatePicker from "$lib/components/DatePicker.svelte";
   import Modal from "$lib/components/Modal.svelte";
+  import TrendIndicator from "$lib/components/TrendIndicator.svelte";
+  import {
+    boundedScoreCssColor,
+    sleepDebtCssColor
+  } from "$lib/scoreColors";
   import { analysisNavEpoch } from "$lib/analysisNavEpoch.svelte";
   import { athleteStore } from "$lib/stores/athleteStore.svelte";
   import { api } from "$lib/api";
@@ -94,6 +99,8 @@
     awakeMins: number;
     hr: number;
     hrv: number;
+    hrvZ: number | null;
+    rhrZ: number | null;
     debt: number;
     need: number;
     periods: any[];
@@ -179,6 +186,8 @@
         awakeMins: 0,
         hr: b.resting_hr || 0,
         hrv: b.hrv_rmssd || 0,
+        hrvZ: typeof b.hrv_z === 'number' && Number.isFinite(b.hrv_z) ? Number(b.hrv_z) : null,
+        rhrZ: typeof b.rhr_z === 'number' && Number.isFinite(b.rhr_z) ? Number(b.rhr_z) : null,
         debt: b.sleep_debt_min || 0,
         need: b.sleep_need_min || 480,
         periods: (b.periods || []).map((p: any) => {
@@ -235,18 +244,19 @@
     return Math.round(vals.reduce((a, b) => a + b, 0) / vals.length);
   });
 
+  // Stage colors are categorical (deep/rem/light/awake), not bounded scores
+  // — they encode a *category* of sleep architecture, so they're allowed to
+  // stay distinct and are not driven by the semantic ASTRAPE rules.
   const stageColors: Record<string, string> = {
     deep: "#4621FF",
     rem: "#00C8A8",
     light: "#FFCB88",
     awake: "#F07178",
   };
-  let scoreColor = $derived(
-    n.score >= 67 ? "#00C8A8" : n.score >= 34 ? "#FFCB88" : "#F07178",
-  );
-
-  const getSleepColor = (score: number) =>
-    score >= 67 ? "#00C8A8" : score >= 34 ? "#FFCB88" : "#F07178";
+  // Sleep score is a bounded 0-100 score so it follows the unified rule of
+  // thirds (>=67 teal / 34-66 amber / <=33 red).
+  let scoreColor = $derived(boundedScoreCssColor(n.score));
+  const getSleepColor = (score: number) => boundedScoreCssColor(score);
 
   // Allow deep-linking to a specific day, e.g. /sleep?day=2026-04-22
   let lastAppliedDay = $state<string | null>(null);
@@ -334,7 +344,7 @@
           type="button"
           class="h-8 w-8 rounded-md border border-border bg-glass text-text0"
           aria-label="Previous 7 days"
-          onclick={() => (endPickerValue = format(subDays(windowEnd, 7), "yyyy-MM-dd"))}
+          onclick={() => (endPickerValue = format(subDays(windowEnd, 1), "yyyy-MM-dd"))}
         >
           ←
         </button>
@@ -366,7 +376,7 @@
           style={!canGoForward ? "opacity: 0.4; cursor: not-allowed;" : ""}
           onclick={() => {
             if (!canGoForward) return;
-            endPickerValue = format(addDays(windowEnd, 7), "yyyy-MM-dd");
+            endPickerValue = format(addDays(windowEnd, 1), "yyyy-MM-dd");
           }}
         >
           →
@@ -377,14 +387,6 @@
       </div>
     </div>
 
-    <!-- Night selector -->
-    <div class="flex gap-1.5 overflow-x-auto pb-0.5 shrink-0">
-      {#each nights as nt, i (nt.rawDate)}
-        <Pill active={nightIndex === i} onclick={() => (nightIndex = i)}>
-          {nt.date}
-        </Pill>
-      {/each}
-    </div>
 
     <!-- Score card -->
     {#if nightData}
@@ -412,8 +414,10 @@
               >
             </div>
             <p class="text-xs text-text1">{nightData.bedtime} → {nightData.wakeup}</p>
+            <!-- Sleep duration is a raw absolute -> neutral text. The colored
+                 ring + tag above carry the actionable sleep-score signal. -->
             <div class="mt-1">
-              <p class="text-[18px] font-bold" style="color: {scoreColor}">
+              <p class="text-[18px] font-bold text-text0">
                 {nightData.duration}
                 <span class="text-[11px] font-normal text-text2 uppercase tracking-wide ml-1">asleep</span>
               </p>
@@ -439,16 +443,29 @@
     {/if}
 
     {#if nightData}
-      <!-- Sleep metrics row -->
+      <!-- Sleep metrics row.
+           HRV ms / RHR bpm are raw absolutes -> neutral with a colored z-score
+           arrow. Sleep debt has its own threshold rule (45/90 min). -->
       <div class="grid grid-cols-3 gap-2">
         <Card style="padding: 8px 10px;">
-          <MetricBadge label="HRV" value={nightData.hrv} unit="ms" color="var(--teal)" sub="Avg" />
+          <div class="flex items-start justify-between gap-1">
+            <MetricBadge label="HRV" value={nightData.hrv} unit="ms" color="var(--text0)" sub="Avg" />
+            <TrendIndicator z={nightData.hrvZ} size={14} />
+          </div>
         </Card>
         <Card style="padding: 8px 10px;">
-          <MetricBadge label="RHR" value={nightData.hr} unit="bpm" color="var(--blue)" sub="Avg" />
+          <div class="flex items-start justify-between gap-1">
+            <MetricBadge label="RHR" value={nightData.hr} unit="bpm" color="var(--text0)" sub="Avg" />
+            <TrendIndicator z={nightData.rhrZ} inverted size={14} />
+          </div>
         </Card>
         <Card style="padding: 8px 10px;">
-          <MetricBadge label="Debt" value={formatHoursMinutesFromMinutes(nightData.debt)} color="var(--amber)" sub="Debt" />
+          <MetricBadge
+            label="Debt"
+            value={formatHoursMinutesFromMinutes(nightData.debt)}
+            color={sleepDebtCssColor(nightData.debt)}
+            sub="Debt"
+          />
         </Card>
       </div>
 
@@ -471,7 +488,7 @@
             >
               <div
                 class="w-full rounded-t-sm transition-all duration-300"
-                style="background: {i === nightIndex ? c : c + '44'}; height: {Math.max(4, (nt.score / 100) * 50)}px;"
+                style="background: {c}; opacity: {i === nightIndex ? 1 : 0.35}; height: {Math.max(4, (nt.score / 100) * 50)}px;"
               ></div>
               <span class="text-[9px] font-mono {i === nightIndex ? 'text-text0' : 'text-text2'}">{nt.day}</span>
             </button>

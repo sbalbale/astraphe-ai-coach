@@ -3,10 +3,12 @@ from __future__ import annotations
 from datetime import date, timedelta
 from typing import Any, Dict, Optional
 
+import numpy as np
 from fastapi import APIRouter, Depends, Query
 from supabase import Client
 
 from app.dependencies import get_current_athlete, get_current_gemini_model, get_current_user_tier, get_user_db
+from app.services.algorithms import compute_z_score
 from app.services.analysis_cache import (
     fingerprint_context,
     generate_gemini_analysis,
@@ -40,6 +42,29 @@ def _baseline_30d(rows: list[dict], field: str) -> Optional[float]:
     if not vals:
         return None
     return sum(vals) / len(vals)
+
+
+def _zscore_for(rows: list[dict], field: str, latest: Optional[float], span: int = 7) -> tuple[Optional[float], Optional[float], Optional[float]]:
+    """Compute (z, baseline, sd) over `rows` history for `latest`. Returns Nones if no history."""
+    if latest is None or not rows:
+        return None, None, None
+    vals: list[float] = []
+    for r in rows:
+        v = r.get(field)
+        try:
+            if v is None:
+                continue
+            fv = float(v)
+            if fv == 0:
+                continue
+            vals.append(fv)
+        except Exception:
+            continue
+    if not vals:
+        return None, None, None
+    arr = np.array(vals, dtype=float)
+    z, mean, sd = compute_z_score(float(latest), arr, span=span)
+    return float(z), float(mean), float(sd)
 
 
 def _load_biometrics_context(db: Client, athlete_id: str, day: date) -> Dict[str, Any]:
@@ -83,6 +108,14 @@ def _load_biometrics_context(db: Client, athlete_id: str, day: date) -> Dict[str
     )
     prior_load = prior_load_res.data if prior_load_res else None
 
+    # 7-day EWMA z-scores for HRV/RHR (baseline excludes today, since base_rows is
+    # the prior 30-day window). These are also surfaced to the LLM context so
+    # narrative analyses can mention z-score deviations explicitly.
+    today_hrv = (b or {}).get("hrv_rmssd") if b else None
+    today_rhr = (b or {}).get("resting_hr") if b else None
+    hrv_z, hrv_base_7d, hrv_sd_7d = _zscore_for(base_rows, "hrv_rmssd", float(today_hrv) if today_hrv is not None else None)
+    rhr_z, rhr_base_7d, rhr_sd_7d = _zscore_for(base_rows, "resting_hr", float(today_rhr) if today_rhr is not None else None)
+
     return {
         "day": day_str,
         "biometrics": b or {"available": False},
@@ -93,6 +126,15 @@ def _load_biometrics_context(db: Client, athlete_id: str, day: date) -> Dict[str
             "spo2_pct": _baseline_30d(base_rows, "spo2_pct"),
             "skin_temp_deviation": _baseline_30d(base_rows, "skin_temp_deviation"),
         },
+        "ewma_7d": {
+            "hrv_baseline_7d": hrv_base_7d,
+            "hrv_sd_7d": hrv_sd_7d,
+            "hrv_z": hrv_z,
+            "rhr_baseline_7d": rhr_base_7d,
+            "rhr_sd_7d": rhr_sd_7d,
+            "rhr_z": rhr_z,
+        },
+        "sleep_debt_min": (b or {}).get("sleep_debt_min") if b else None,
         "prior_day_load": prior_load or {"available": False},
     }
 

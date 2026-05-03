@@ -8,7 +8,7 @@ BEGIN
   -- 1. Create a user in auth.users if it doesn't exist
   -- Note: We must use the auth schema which is managed by Supabase
   IF NOT EXISTS (SELECT 1 FROM auth.users WHERE id = test_user_id) THEN
-    INSERT INTO auth.users (id, instance_id, email, aud, role, raw_user_meta_data, is_super_admin, created_at, updated_at, last_sign_in_at, email_confirmed_at)
+    INSERT INTO auth.users (id, instance_id, email, aud, role, raw_user_meta_data, raw_app_meta_data, is_super_admin, created_at, updated_at, last_sign_in_at, email_confirmed_at)
     VALUES (
       test_user_id,
       '00000000-0000-0000-0000-000000000000',
@@ -16,6 +16,7 @@ BEGIN
       'authenticated',
       'authenticated',
       '{"full_name": "Sean Balbale"}',
+      jsonb_build_object('gemini_model', 'gemma-4-26b-a4b-it'),
       false,
       now(),
       now(),
@@ -42,3 +43,9 @@ BEGIN
   END IF;
 
 END $$;
+
+-- Keep hosted model aligned for seeded Sean even if auth.users predates raw_app_meta_data on insert.
+UPDATE auth.users
+SET raw_app_meta_data = COALESCE(raw_app_meta_data, '{}'::jsonb)
+  || jsonb_build_object('gemini_model', 'gemma-4-26b-a4b-it')
+WHERE id = '52c00ba6-d91b-4eb3-b0ad-c533161da9bd';

@@ -1,7 +1,11 @@
 from fastapi import APIRouter, HTTPException, Depends, Query
 from datetime import date, datetime, timedelta
 from typing import Optional, List
+
+import numpy as np
+
 from app.models.athlete import AthleteState, AthleteProfileUpdate
+from app.services.algorithms import compute_z_score
 from app.dependencies import get_current_athlete, get_user_db, get_admin_db
 
 router = APIRouter(prefix="/v1/athlete", tags=["Athlete"])
@@ -105,6 +109,50 @@ async def get_athlete_state(athlete_id: str = Depends(get_current_athlete), db =
     bio_res = db.table("biometrics").select("*").eq("athlete_id", athlete_id).order("date", desc=True).limit(1).execute()
     bio = bio_res.data[0] if bio_res.data else {}
 
+    # Pull last ~30 biometrics rows (date asc) for HRV/RHR EWMA z-scores.
+    # We want a stable rolling window; 30 samples is plenty for a span=7 EWMA.
+    bio_window_res = (
+        db.table("biometrics")
+        .select("date,hrv_rmssd,resting_hr")
+        .eq("athlete_id", athlete_id)
+        .order("date", desc=True)
+        .limit(30)
+        .execute()
+    )
+    window_rows = list(reversed(bio_window_res.data or []))
+
+    def _series(field: str) -> np.ndarray:
+        vals: list[float] = []
+        for r in window_rows:
+            v = r.get(field)
+            try:
+                if v is None:
+                    continue
+                fv = float(v)
+                if fv == 0:
+                    continue
+                vals.append(fv)
+            except Exception:
+                continue
+        return np.array(vals, dtype=float) if vals else np.array([], dtype=float)
+
+    hrv_series = _series("hrv_rmssd")
+    rhr_series = _series("resting_hr")
+
+    hrv_latest = bio.get("hrv_rmssd")
+    rhr_latest = bio.get("resting_hr")
+
+    hrv_z, hrv_base, hrv_sd = (
+        compute_z_score(float(hrv_latest), hrv_series[:-1] if len(hrv_series) > 1 else hrv_series, span=7)
+        if hrv_latest is not None and len(hrv_series) > 0
+        else (None, None, None)
+    )
+    rhr_z, rhr_base, rhr_sd = (
+        compute_z_score(float(rhr_latest), rhr_series[:-1] if len(rhr_series) > 1 else rhr_series, span=7)
+        if rhr_latest is not None and len(rhr_series) > 0
+        else (None, None, None)
+    )
+
     # Calibration / history: compute consecutive-day biometrics streak up to ~2 months.
     # This is more meaningful than "account age" for model readiness.
     bio_hist_res = (
@@ -126,10 +174,17 @@ async def get_athlete_state(athlete_id: str = Depends(get_current_athlete), db =
         "atl": atl,
         "tsb": tsb,
         "hrv_rmssd": bio.get("hrv_rmssd"),
-        "hrv_delta_7d": 0.0, # Placeholder
+        "hrv_delta_7d": (float(hrv_latest) - float(hrv_base)) if (hrv_latest is not None and hrv_base is not None) else 0.0,
+        "hrv_baseline_7d": hrv_base,
+        "hrv_sd_7d": hrv_sd,
+        "hrv_z": hrv_z,
         "resting_hr": bio.get("resting_hr"),
+        "rhr_baseline_7d": rhr_base,
+        "rhr_sd_7d": rhr_sd,
+        "rhr_z": rhr_z,
         "sleep_hours": bio.get("sleep_duration_min", 0) / 60.0 if bio.get("sleep_duration_min") else None,
         "sleep_score": bio.get("sleep_score"),
+        "sleep_debt_min": bio.get("sleep_debt_min"),
         "recovery_score": bio.get("recovery_score"),
         "readiness_score": bio.get("readiness_score") or 0,
         "readiness_label": "Optimal" if (bio.get("readiness_score") or 0) > 70 else "Moderate",

@@ -44,7 +44,7 @@
       } catch {
         // Non-fatal — dashboard will handle empty state gracefully
       }
-      goto('/dashboard');
+      goto('/onboarding');
     } else {
       // Email confirmation required
       errorMsg = 'Check your email to confirm your account, then sign in.';

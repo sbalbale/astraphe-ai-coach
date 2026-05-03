@@ -1,11 +1,51 @@
 from fastapi import APIRouter, Depends, BackgroundTasks
 from typing import Optional
 from datetime import date, timedelta
+import math
+
 from app.models.biometrics import DailyBiometrics
 from app.services.processing import process_and_save_biometrics
 from app.dependencies import get_current_athlete, get_user_db
 
 router = APIRouter(prefix="/v1/biometrics", tags=["Biometrics"])
+
+
+def _attach_running_zscores(rows: list[dict], field: str, z_field: str, span: int = 7) -> None:
+    """
+    Single-pass EWMA + EWMVar over `rows` (oldest -> newest), writing `z_field` on
+    each row. The z-score on row i is computed against the EWMA *just before* i
+    so today's value isn't allowed to influence its own baseline.
+    """
+    if not rows:
+        return
+    alpha = 2.0 / (float(span) + 1.0)
+    ewma: Optional[float] = None
+    ewmvar: float = 0.0
+    seen = 0
+    for row in rows:
+        raw = row.get(field)
+        try:
+            v = float(raw) if raw is not None else None
+        except Exception:
+            v = None
+        if v is None or v == 0:
+            row[z_field] = None
+            continue
+
+        if ewma is None or seen < 2:
+            row[z_field] = 0.0 if seen == 0 else None
+        else:
+            sd = math.sqrt(max(ewmvar, 0.0))
+            row[z_field] = 0.0 if sd <= 1e-9 else (v - ewma) / sd
+
+        if ewma is None:
+            ewma = v
+            ewmvar = 0.0
+        else:
+            diff = v - ewma
+            ewma = ewma + alpha * diff
+            ewmvar = (1.0 - alpha) * (ewmvar + alpha * (diff ** 2))
+        seen += 1
 
 @router.get("")
 async def get_biometrics(
@@ -79,6 +119,12 @@ async def get_biometrics(
     sleep_data = []
     sleep_scores = []
     series = []
+
+    # Attach per-row HRV/RHR z-scores (single pass, running EWMA span=7).
+    # Each row's z is computed against the EWMA up to *but excluding* that row,
+    # so today's reading can't inflate its own baseline.
+    _attach_running_zscores(bio_rows, "hrv_rmssd", "hrv_z", span=7)
+    _attach_running_zscores(bio_rows, "resting_hr", "rhr_z", span=7)
 
     for row in bio_rows:
         if row.get("hrv_rmssd"):

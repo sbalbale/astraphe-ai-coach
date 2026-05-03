@@ -12,9 +12,16 @@ class AthleteState(BaseModel):
     tsb: float
     hrv_rmssd: Optional[float]
     hrv_delta_7d: Optional[float]
+    hrv_baseline_7d: Optional[float] = None
+    hrv_sd_7d: Optional[float] = None
+    hrv_z: Optional[float] = None
     resting_hr: Optional[int]
+    rhr_baseline_7d: Optional[float] = None
+    rhr_sd_7d: Optional[float] = None
+    rhr_z: Optional[float] = None
     sleep_hours: Optional[float]
     sleep_score: Optional[int]
+    sleep_debt_min: Optional[int] = None
     recovery_score: Optional[int]
     readiness_score: int
     readiness_label: str

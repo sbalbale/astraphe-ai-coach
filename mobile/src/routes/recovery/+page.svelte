@@ -12,6 +12,13 @@
   import EmptyState from '$lib/components/EmptyState.svelte';
   import Pill from '$lib/components/Pill.svelte';
   import DatePicker from '$lib/components/DatePicker.svelte';
+  import TrendIndicator from '$lib/components/TrendIndicator.svelte';
+  import DeviationTrack from '$lib/components/DeviationTrack.svelte';
+  import {
+    boundedScoreCssColor,
+    getBoundedScoreColor,
+    zScoreCssColor
+  } from '$lib/scoreColors';
   import { analysisNavEpoch } from '$lib/analysisNavEpoch.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { api } from '$lib/api';
@@ -36,13 +43,6 @@
     return d > 0 ? `+${d}` : `${d}`;
   }
   
-  function formatTempDeviationF(v: number | null | undefined): string {
-    if (!isFiniteNumber(v)) return '--';
-    const r = Math.round(v * 10) / 10;
-    const sign = r > 0 ? '+' : r < 0 ? '' : '';
-    return `${sign}${r.toFixed(1)}°F`;
-  }
-
   function formatSigned1dp(delta: number | null | undefined, unit: string): string {
     if (!isFiniteNumber(delta)) return '--';
     const r = Math.round(delta * 10) / 10;
@@ -68,35 +68,14 @@
     return (dc * 9) / 5;
   }
 
-  function hexToRgba(hex: string, alpha: number): string {
-    const h = hex.replace('#', '').trim();
-    const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
-    const n = Number.parseInt(full, 16);
-    if (!Number.isFinite(n)) return `rgba(255,255,255,${alpha})`;
-    const r = (n >> 16) & 255;
-    const g = (n >> 8) & 255;
-    const b = n & 255;
-    return `rgba(${r},${g},${b},${alpha})`;
-  }
-
-  const FACTOR_COLORS = {
-    hrv: '#00C8A8',
-    rhr: '#4621FF',
-    sleep: '#FFCB88',
-    load: '#F07178',
-    temp: '#00C8A8',
-    spo2: '#4621FF'
-  } as const;
-  
-  function baselineAvg30d(series: BiometricsRecord[] | undefined, endDateStr: string, field: string): number | null {
-    if (!series?.length) return null;
+  function baselineWindowVals(series: BiometricsRecord[] | undefined, endDateStr: string, field: string, days: number): number[] {
+    if (!series?.length) return [];
     const end = new Date(endDateStr + 'T00:00:00');
-    if (Number.isNaN(end.getTime())) return null;
-    // Baseline should be the 30 days *prior* to the selected day (exclude current day).
+    if (Number.isNaN(end.getTime())) return [];
+    // Baseline excludes the selected day so today's value can't bias its own baseline.
     const endExclusive = subDays(end, 1);
-    const start = subDays(endExclusive, 29);
-    
-    const vals = series
+    const start = subDays(endExclusive, Math.max(0, days - 1));
+    return series
       .filter((r) => {
         if (!r?.date) return false;
         const dt = new Date(r.date + 'T00:00:00');
@@ -105,16 +84,38 @@
       })
       .map((r) => Number((r as any)[field]))
       .filter((v) => Number.isFinite(v) && v !== 0);
-    
+  }
+
+  function baselineAvg(series: BiometricsRecord[] | undefined, endDateStr: string, field: string, days: number): number | null {
+    const vals = baselineWindowVals(series, endDateStr, field, days);
     if (vals.length === 0) return null;
     return vals.reduce((a, b) => a + b, 0) / vals.length;
   }
+
+  function baselineAvg7d(series: BiometricsRecord[] | undefined, endDateStr: string, field: string): number | null {
+    return baselineAvg(series, endDateStr, field, 7);
+  }
   
-  function signedDeltaVsBaseline(series: BiometricsRecord[] | undefined, endDateStr: string, field: string, todayValue: number | null): number | null {
+  function signedDeltaVsBaseline(series: BiometricsRecord[] | undefined, endDateStr: string, field: string, todayValue: number | null, days = 7): number | null {
     if (!isFiniteNumber(todayValue)) return null;
-    const base = baselineAvg30d(series, endDateStr, field);
+    const base = baselineAvg(series, endDateStr, field, days);
     if (!isFiniteNumber(base)) return null;
     return todayValue - base;
+  }
+
+  // Local z-score helper for fields the backend doesn't ship `*_z` for
+  // (body temp, SpO2). Uses a 7-day baseline + sample stddev — same window
+  // the backend's HRV/RHR EWMA uses, so the deviation track's center is
+  // semantically equivalent across all four vitals.
+  function zScoreFromSeries(series: BiometricsRecord[] | undefined, endDateStr: string, field: string, todayValue: number | null, days = 7): number | null {
+    if (!isFiniteNumber(todayValue)) return null;
+    const vals = baselineWindowVals(series, endDateStr, field, days);
+    if (vals.length < 3) return null;
+    const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+    const variance = vals.reduce((a, b) => a + (b - mean) ** 2, 0) / Math.max(1, vals.length - 1);
+    const sd = Math.sqrt(variance);
+    if (!Number.isFinite(sd) || sd <= 1e-6) return null;
+    return (todayValue - mean) / sd;
   }
   
   // Rolling 7-day window (cannot go into the future).
@@ -165,8 +166,17 @@
   const hasData = $derived(days.some(day => !day.missing) || athleteStore.readiness > 0);
   
   const score = $derived(d.score || (d?.date === todayStr ? athleteStore.readiness : 0));
-  const scoreColor = $derived(score >= 67 ? '#00C8A8' : score >= 34 ? '#FFCB88' : '#F07178');
+  const scoreColor = $derived(boundedScoreCssColor(score));
   const quality = $derived(score >= 67 ? 'Optimal' : score >= 34 ? 'Moderate' : 'Fatigued');
+
+  // HRV / RHR z-scores come straight off the biometrics row (computed on the
+  // backend in /v1/biometrics with a single-pass running EWMA span=7).
+  const hrvZ = $derived(
+    typeof d?.data?.hrv_z === 'number' && Number.isFinite(d.data.hrv_z) ? Number(d.data.hrv_z) : null
+  );
+  const rhrZ = $derived(
+    typeof d?.data?.rhr_z === 'number' && Number.isFinite(d.data.rhr_z) ? Number(d.data.rhr_z) : null
+  );
 
   const avg7d = $derived.by(() => {
     const vals = days.map((x) => Number(x.score)).filter((v) => Number.isFinite(v) && v > 0);
@@ -181,27 +191,20 @@
   
   const hrvToday = $derived(isFiniteNumber(d?.data?.hrv_rmssd) ? Math.round(d.data.hrv_rmssd) : null);
   const hrvBaseline = $derived.by(() => {
-    const base = baselineAvg30d(biometricsSeries, d.date, 'hrv_rmssd');
+    const base = baselineAvg7d(biometricsSeries, d.date, 'hrv_rmssd');
     return isFiniteNumber(base) ? Math.round(base) : null;
   });
-  const hrvDelta = $derived(signedDeltaVsBaseline(biometricsSeries, d.date, 'hrv_rmssd', hrvToday));
-  const hrvGood = $derived.by(() => (hrvDelta === null ? null : hrvDelta >= 0));
-  
+  const hrvDelta = $derived(signedDeltaVsBaseline(biometricsSeries, d.date, 'hrv_rmssd', hrvToday, 7));
+
   const rhrToday = $derived(isFiniteNumber(d?.data?.resting_hr) ? Math.round(d.data.resting_hr) : null);
   const rhrBaseline = $derived.by(() => {
-    const base = baselineAvg30d(biometricsSeries, d.date, 'resting_hr');
+    const base = baselineAvg7d(biometricsSeries, d.date, 'resting_hr');
     return isFiniteNumber(base) ? Math.round(base) : null;
   });
-  const rhrDelta = $derived(signedDeltaVsBaseline(biometricsSeries, d.date, 'resting_hr', rhrToday));
-  const rhrGood = $derived.by(() => (rhrDelta === null ? null : rhrDelta <= 0));
-  
+  const rhrDelta = $derived(signedDeltaVsBaseline(biometricsSeries, d.date, 'resting_hr', rhrToday, 7));
+
   const sleepScoreToday = $derived(isFiniteNumber(d?.data?.sleep_score) ? Math.round(d.data.sleep_score) : null);
-  const sleepBaseline = $derived.by(() => {
-    const base = baselineAvg30d(biometricsSeries, d.date, 'sleep_score');
-    return isFiniteNumber(base) ? Math.round(base) : null;
-  });
-  const sleepDelta = $derived(signedDeltaVsBaseline(biometricsSeries, d.date, 'sleep_score', sleepScoreToday));
-  const sleepGood = $derived.by(() => (sleepDelta === null ? null : sleepDelta >= 0));
+  const sleepDelta = $derived(signedDeltaVsBaseline(biometricsSeries, d.date, 'sleep_score', sleepScoreToday, 7));
   
   const sleepDurationMin = $derived.by(() => (isFiniteNumber(d?.data?.sleep_duration_min) ? Math.round(d.data.sleep_duration_min) : null));
   const sleepDurationHM = $derived.by(() => (sleepDurationMin === null ? null : formatHoursMinutesFromMinutes(sleepDurationMin)));
@@ -242,7 +245,7 @@
   // We treat it as an actual temperature measurement and show deviation vs baseline.
   const bodyTempCToday = $derived(isFiniteNumber(d?.data?.skin_temp_deviation) ? Number(d.data.skin_temp_deviation) : null);
   const bodyTempCBaseline = $derived.by(() => {
-    const base = baselineAvg30d(biometricsSeries, d.date, 'skin_temp_deviation');
+    const base = baselineAvg7d(biometricsSeries, d.date, 'skin_temp_deviation');
     if (!isFiniteNumber(base)) return null;
     return Math.round(base * 10) / 10;
   });
@@ -271,10 +274,45 @@
 
   const spo2Pct = $derived(isFiniteNumber(d?.data?.spo2_pct) ? Math.round(d.data.spo2_pct) : null);
   const spo2Baseline = $derived.by(() => {
-    const base = baselineAvg30d(biometricsSeries, d.date, 'spo2_pct');
+    const base = baselineAvg7d(biometricsSeries, d.date, 'spo2_pct');
     return isFiniteNumber(base) ? Math.round(base) : null;
   });
-  const spo2Delta = $derived(signedDeltaVsBaseline(biometricsSeries, d.date, 'spo2_pct', spo2Pct));
+  const spo2Delta = $derived(signedDeltaVsBaseline(biometricsSeries, d.date, 'spo2_pct', spo2Pct, 7));
+
+  // Locally-computed z-scores for vitals the backend doesn't ship explicit
+  // `*_z` fields for. Used to drive the colored deviation track + delta
+  // coloring on the Contributing Factors panel.
+  const bodyTempZ = $derived(zScoreFromSeries(biometricsSeries, d.date, 'skin_temp_deviation', bodyTempCToday));
+  const spo2Z = $derived(zScoreFromSeries(biometricsSeries, d.date, 'spo2_pct', spo2Pct));
+
+  // Prior day's strain score (0-100) drives the bar fill + delta color for
+  // the "Prior Load" row. We still display the raw TSS as the value text,
+  // because TSS is the unit athletes recognise — strain just gives us a
+  // bounded score we can apply the rule of thirds to.
+  const priorStrainScore = $derived.by(() => {
+    if (!biometricsSeries?.length || !d?.date) return null;
+    const priorDate = format(subDays(new Date(d.date + 'T00:00:00'), 1), 'yyyy-MM-dd');
+    const priorRow = biometricsSeries.find((s) => s?.date === priorDate);
+    const v = priorRow ? Number((priorRow as any).strain_score) : NaN;
+    return Number.isFinite(v) ? Math.round(v) : null;
+  });
+
+  const priorStrainBaseline = $derived.by(() => {
+    if (!biometricsSeries?.length || !d?.date) return null;
+    const priorDate = format(subDays(new Date(d.date + 'T00:00:00'), 1), 'yyyy-MM-dd');
+    const vals = baselineWindowVals(biometricsSeries, priorDate, 'strain_score', 30);
+    if (vals.length < 4) return null;
+    return Math.round(vals.reduce((a, b) => a + b, 0) / vals.length);
+  });
+
+  const priorStrainDelta = $derived(
+    isFiniteNumber(priorStrainScore) && isFiniteNumber(priorStrainBaseline)
+      ? priorStrainScore - priorStrainBaseline
+      : null
+  );
+
+  const sleepFillPct = $derived(sleepScoreToday === null ? 0 : Math.max(0, Math.min(100, sleepScoreToday)));
+  const priorFillPct = $derived(priorStrainScore === null ? 0 : Math.max(0, Math.min(100, priorStrainScore)));
 
   // Allow deep-linking to a specific day, e.g. /recovery?day=2026-04-22
   let lastAppliedDay = $state<string | null>(null);
@@ -352,7 +390,7 @@
           type="button"
           class="h-8 w-8 rounded-md border border-border bg-glass text-text0"
           aria-label="Previous 7 days"
-          onclick={() => (endPickerValue = format(subDays(windowEnd, 7), 'yyyy-MM-dd'))}
+          onclick={() => (endPickerValue = format(subDays(windowEnd, 1), 'yyyy-MM-dd'))}
         >
           ←
         </button>
@@ -385,7 +423,7 @@
           style={!canGoForward ? 'opacity: 0.4; cursor: not-allowed;' : ''}
           onclick={() => {
             if (!canGoForward) return;
-            endPickerValue = format(addDays(windowEnd, 7), 'yyyy-MM-dd');
+            endPickerValue = format(addDays(windowEnd, 1), 'yyyy-MM-dd');
           }}
         >
           →
@@ -396,14 +434,6 @@
       </div>
     </div>
 
-    <!-- Date selector -->
-    <div class="flex gap-1.5 overflow-x-auto pb-0.5 shrink-0">
-      {#each days as day, i (day.date)}
-        <Pill active={dayIndex === i} onclick={() => (dayIndex = i)}>
-          {day.label}
-        </Pill>
-      {/each}
-    </div>
 
     {#if d.missing}
       <Card style="border-style: dashed; opacity: 0.8;">
@@ -441,188 +471,157 @@
         </div>
       </Card>
 
-      <!-- Metrics Grid -->
+      <!-- Metrics Grid.
+           HRV ms / RHR bpm are raw absolutes — value text stays neutral, the
+           colored TrendIndicator next to the label carries the z-score signal
+           (RHR is inverted: higher = worse). Sleep is a 0-100 score so the
+           value itself is colored by the bounded-score rule. -->
       <div class="grid grid-cols-3 gap-2">
         <Card style="padding: 8px 10px;">
-          <MetricBadge label="HRV" value={d.hrv} unit="ms" color="var(--teal)" sub="Avg" />
+          <div class="flex items-start justify-between gap-1">
+            <MetricBadge label="HRV" value={d.hrv} unit="ms" color="var(--text0)" sub="Avg" />
+            <TrendIndicator z={hrvZ} size={14} />
+          </div>
         </Card>
         <Card style="padding: 8px 10px;">
-          <MetricBadge label="RHR" value={d.rhr} unit="bpm" color="var(--blue)" sub="Avg" />
+          <div class="flex items-start justify-between gap-1">
+            <MetricBadge label="RHR" value={d.rhr} unit="bpm" color="var(--text0)" sub="Avg" />
+            <TrendIndicator z={rhrZ} inverted size={14} />
+          </div>
         </Card>
         <Card style="padding: 8px 10px;">
-          <MetricBadge label="Sleep" value={d.sleepScore} unit="%" color="var(--amber)" sub="Score" />
+          <MetricBadge
+            label="Sleep"
+            value={d.sleepScore}
+            unit="%"
+            color={d.sleepScore ? boundedScoreCssColor(d.sleepScore) : 'var(--text2)'}
+            sub="Score"
+          />
         </Card>
       </div>
       
-      <!-- Contributing Factors -->
+      <!-- Contributing Factors — split by behavior.
+           Unbounded vitals (HRV, RHR, Body Temp, SpO2): raw value text is
+             neutral; the colored arrow + delta + center-anchored deviation
+             dot carry the z-score signal. Track center == 7-day EWMA
+             baseline, and the highlighted band marks the ±0.5 SD "normal
+             range".
+           Bounded scores (Sleep Quality, Prior Load): raw value text is
+             neutral; the colored delta + left-to-right progress fill carry
+             the rule-of-thirds signal applied to the underlying score
+             (sleep score for Sleep Quality, prior-day strain score for
+             Prior Load — strain is inverted, high strain == bad recovery
+             contribution). -->
       <Card style="padding: 14px;">
         <div class="flex items-center justify-between mb-3">
           <p class="text-[13px] font-semibold">Contributing Factors</p>
-          <span class="text-[10px] text-text2 font-mono uppercase tracking-[0.1em]">vs 30d</span>
+          <span class="text-[10px] text-text2 font-mono uppercase tracking-[0.1em]">vs baseline</span>
         </div>
 
-        <div class="flex flex-col gap-3">
+        <!-- ─── Vitals & Trends (unbounded, deviation tracks) ─── -->
+        <p class="text-[9px] text-text2 font-mono uppercase tracking-[0.14em] mb-2">Vitals &amp; Trends</p>
+        <div class="flex flex-col gap-3.5 mb-4">
           <!-- HRV -->
-          <div class="flex flex-col gap-1">
+          <div class="flex flex-col gap-1.5">
             <div class="flex items-start justify-between gap-3">
-              <div class="min-w-0">
+              <div class="min-w-0 flex items-center gap-1.5">
                 <p class="text-[10px] text-text2 font-mono uppercase tracking-[0.1em]">HRV</p>
+                <TrendIndicator z={hrvZ} size={12} />
               </div>
-              <div class="shrink-0 flex flex-col items-end leading-tight">
-                <span class="text-[11px] font-mono" style="color: {hrvGood === null ? 'var(--text2)' : FACTOR_COLORS.hrv}; opacity: {hrvGood === null ? 0.8 : 1}">
+              <div class="shrink-0 flex items-baseline gap-2 leading-tight">
+                <span class="text-[11px] font-mono" style="color: {hrvZ === null ? 'var(--text2)' : zScoreCssColor(hrvZ)}">
                   {formatSignedInt(hrvDelta)}
                 </span>
-                <span class="text-[12px] font-semibold" style="color: {hrvToday === null ? 'var(--text2)' : FACTOR_COLORS.hrv}">
+                <span class="text-[12px] font-semibold text-text0">
                   {hrvToday === null ? '--' : `${hrvToday}ms`}
                 </span>
               </div>
             </div>
-            <div class="h-[3px] rounded-full overflow-hidden" style="background: {hexToRgba(FACTOR_COLORS.hrv, 0.25)}">
-              <div class="h-full w-full rounded-full" style="background: {FACTOR_COLORS.hrv}"></div>
-            </div>
+            <DeviationTrack z={hrvZ} />
             <p class="text-[11px] text-text2 leading-snug">
               {hrvToday === null
                 ? 'Not available for this day.'
                 : hrvBaseline === null
                   ? 'Baseline not available yet. Keep syncing to build a 30-day trend.'
                   : hrvDelta !== null && hrvDelta >= 0
-                    ? `Above your 30-day baseline of ${hrvBaseline}ms. Strong parasympathetic response.`
-                    : `Below your 30-day baseline of ${hrvBaseline}ms. Lower HRV can reflect accumulated stress.`}
+                    ? `${Math.round(hrvDelta)}ms above your 7-day baseline of ${hrvBaseline}ms. Strong parasympathetic response.`
+                    : `${Math.abs(Math.round(hrvDelta ?? 0))}ms below your 7-day baseline of ${hrvBaseline}ms. Lower HRV can reflect accumulated stress.`}
             </p>
           </div>
 
-          <!-- Resting HR -->
-          <div class="flex flex-col gap-1">
+          <!-- Resting HR (inverted: higher == worse) -->
+          <div class="flex flex-col gap-1.5">
             <div class="flex items-start justify-between gap-3">
-              <div class="min-w-0">
+              <div class="min-w-0 flex items-center gap-1.5">
                 <p class="text-[10px] text-text2 font-mono uppercase tracking-[0.1em]">Resting HR</p>
+                <TrendIndicator z={rhrZ} inverted size={12} />
               </div>
-              <div class="shrink-0 flex flex-col items-end leading-tight">
-                <span class="text-[11px] font-mono" style="color: {rhrGood === null ? 'var(--text2)' : FACTOR_COLORS.rhr}; opacity: {rhrGood === null ? 0.8 : 1}">
+              <div class="shrink-0 flex items-baseline gap-2 leading-tight">
+                <span class="text-[11px] font-mono" style="color: {rhrZ === null ? 'var(--text2)' : zScoreCssColor(rhrZ, true)}">
                   {formatSignedInt(rhrDelta)}
                 </span>
-                <span class="text-[12px] font-semibold" style="color: {rhrToday === null ? 'var(--text2)' : FACTOR_COLORS.rhr}">
+                <span class="text-[12px] font-semibold text-text0">
                   {rhrToday === null ? '--' : `${rhrToday}bpm`}
                 </span>
               </div>
             </div>
-            <div class="h-[3px] rounded-full overflow-hidden" style="background: {hexToRgba(FACTOR_COLORS.rhr, 0.25)}">
-              <div class="h-full w-full rounded-full" style="background: {FACTOR_COLORS.rhr}"></div>
-            </div>
+            <DeviationTrack z={rhrZ} inverted />
             <p class="text-[11px] text-text2 leading-snug">
               {rhrToday === null
                 ? 'Not available for this day.'
                 : rhrBaseline === null || rhrDelta === null
                   ? 'Baseline not available yet. Keep syncing to build a 30-day trend.'
                   : rhrDelta < 0
-                    ? `${Math.abs(Math.round(rhrDelta))} bpm below baseline. Low resting HR indicates good cardiac efficiency.`
-                    : `${Math.round(rhrDelta)} bpm above baseline. Elevated RHR can reflect fatigue or stress.`}
+                    ? `${Math.abs(Math.round(rhrDelta))} bpm below your 7-day baseline of ${rhrBaseline}bpm. Low RHR indicates good cardiac efficiency.`
+                    : `${Math.round(rhrDelta)} bpm above your 7-day baseline of ${rhrBaseline}bpm. Elevated RHR can reflect fatigue or stress.`}
             </p>
           </div>
 
-          <!-- Sleep Quality -->
-          <div class="flex flex-col gap-1">
+          <!-- Body Temp (inverted: deviation higher == worse) -->
+          <div class="flex flex-col gap-1.5">
             <div class="flex items-start justify-between gap-3">
-              <div class="min-w-0">
-                <p class="text-[10px] text-text2 font-mono uppercase tracking-[0.1em]">Sleep Quality</p>
-              </div>
-              <div class="shrink-0 flex flex-col items-end leading-tight">
-                <span class="text-[11px] font-mono" style="color: {sleepGood === null ? 'var(--text2)' : FACTOR_COLORS.sleep}; opacity: {sleepGood === null ? 0.8 : 1}">
-                  {formatSignedInt(sleepDelta)}
-                </span>
-                <span class="text-[12px] font-semibold" style="color: {sleepScoreToday === null ? 'var(--text2)' : FACTOR_COLORS.sleep}">
-                  {sleepScoreToday === null ? '--' : `${sleepScoreToday}%`}
-                </span>
-              </div>
-            </div>
-            <div class="h-[3px] rounded-full overflow-hidden" style="background: {hexToRgba(FACTOR_COLORS.sleep, 0.25)}">
-              <div class="h-full w-full rounded-full" style="background: {FACTOR_COLORS.sleep}"></div>
-            </div>
-            <p class="text-[11px] text-text2 leading-snug">
-              {sleepScoreToday === null
-                ? 'Not available for this day.'
-                : `${sleepDurationHM === null ? '--' : sleepDurationHM} with ${sleepScoreToday}% quality.${sleepDeepPct === null ? '' : ` Deep sleep at ${sleepDeepPct}% — excellent for recovery.`}`}
-            </p>
-          </div>
-
-          <!-- Prior Load -->
-          <div class="flex flex-col gap-1">
-            <div class="flex items-start justify-between gap-3">
-              <div class="min-w-0">
-                <p class="text-[10px] text-text2 font-mono uppercase tracking-[0.1em]">Prior Load</p>
-              </div>
-              <div class="shrink-0 flex flex-col items-end leading-tight">
-                <span class="text-[11px] font-mono" style="color: {priorLoad === null ? 'var(--text2)' : FACTOR_COLORS.load}; opacity: {priorLoad === null ? 0.8 : 1}">
-                  {priorLoad === null ? '--' : priorLoad.trend}
-                </span>
-                <span class="text-[12px] font-semibold" style="color: {priorLoad?.dailyTss == null ? 'var(--text2)' : FACTOR_COLORS.load}">
-                  {priorLoad?.dailyTss == null ? '--' : `${priorLoad.dailyTss}TSS`}
-                </span>
-              </div>
-            </div>
-            <div class="h-[3px] rounded-full overflow-hidden" style="background: {hexToRgba(FACTOR_COLORS.load, 0.25)}">
-              <div class="h-full w-full rounded-full" style="background: {FACTOR_COLORS.load}"></div>
-            </div>
-            <p class="text-[11px] text-text2 leading-snug">
-              {priorLoad === null
-                ? 'Not available for this day.'
-                : priorLoad.deltaDrop === null
-                  ? 'Load trend not available yet.'
-                  : priorLoad.deltaDrop < 0
-                    ? `Yesterday was a recovery day. Acute load dropped ${Math.abs(priorLoad.deltaDrop)} pts from peak.`
-                    : priorLoad.deltaDrop > 0
-                      ? `Yesterday pushed load higher. Acute load rose ${priorLoad.deltaDrop} pts vs peak.`
-                      : 'Acute load stayed steady vs your recent peak.'}
-            </p>
-          </div>
-
-          <!-- Body Temp -->
-          <div class="flex flex-col gap-1">
-            <div class="flex items-start justify-between gap-3">
-              <div class="min-w-0">
+              <div class="min-w-0 flex items-center gap-1.5">
                 <p class="text-[10px] text-text2 font-mono uppercase tracking-[0.1em]">Body Temp</p>
+                <TrendIndicator z={bodyTempZ} inverted size={12} />
               </div>
-              <div class="shrink-0 flex flex-col items-end leading-tight">
-                <span class="text-[11px] font-mono" style="color: {bodyTempDeltaDisplay === null ? 'var(--text2)' : FACTOR_COLORS.temp}; opacity: {bodyTempDeltaDisplay === null ? 0.8 : 1}">
-                  {bodyTempDeltaDisplay === null ? '--' : '~'}
-                </span>
-                <span class="text-[12px] font-semibold" style="color: {bodyTempDeltaDisplay === null ? 'var(--text2)' : FACTOR_COLORS.temp}">
+              <div class="shrink-0 flex items-baseline gap-2 leading-tight">
+                <span class="text-[11px] font-mono" style="color: {bodyTempZ === null ? 'var(--text2)' : zScoreCssColor(bodyTempZ, true)}">
                   {bodyTempDeltaDisplay === null ? '--' : formatSigned1dp(bodyTempDeltaDisplay, isImperial ? '°F' : '°C')}
                 </span>
+                <span class="text-[12px] font-semibold text-text0">
+                  {bodyTempDisplay === null ? '--' : `${bodyTempDisplay}${isImperial ? '°F' : '°C'}`}
+                </span>
               </div>
             </div>
-            <div class="h-[3px] rounded-full overflow-hidden" style="background: {hexToRgba(FACTOR_COLORS.temp, 0.25)}">
-              <div class="h-full w-full rounded-full" style="background: {FACTOR_COLORS.temp}"></div>
-            </div>
+            <DeviationTrack z={bodyTempZ} inverted />
             <p class="text-[11px] text-text2 leading-snug">
               {bodyTempCToday === null
                 ? 'Not available for this day.'
-                : bodyTempBaselineDisplay === null || bodyTempDeltaDisplay === null || bodyTempDisplay === null
-                  ? `Body temp recorded at ${Math.round((bodyTempDisplay ?? (isImperial ? cToF(bodyTempCToday) : bodyTempCToday)) * 10) / 10}${isImperial ? '°F' : '°C'}. Baseline not available yet.`
+                : bodyTempBaselineDisplay === null || bodyTempDeltaDisplay === null
+                  ? `Body temp recorded at ${bodyTempDisplay}${isImperial ? '°F' : '°C'}. Baseline not available yet.`
                   : Math.abs(bodyTempDeltaDisplay) > (isImperial ? 0.9 : 0.5)
-                    ? `Temp elevated vs baseline (${bodyTempBaselineDisplay}${isImperial ? '°F' : '°C'}). Monitor for signs of illness or overheating.`
-                    : `Temp stable vs baseline (${bodyTempBaselineDisplay}${isImperial ? '°F' : '°C'}). No signs of illness or overheating.`}
+                    ? `${formatSigned1dp(bodyTempDeltaDisplay, isImperial ? '°F' : '°C')} vs your 7-day baseline of ${bodyTempBaselineDisplay}${isImperial ? '°F' : '°C'}. Monitor for signs of illness or overheating.`
+                    : `${formatSigned1dp(bodyTempDeltaDisplay, isImperial ? '°F' : '°C')} vs your 7-day baseline of ${bodyTempBaselineDisplay}${isImperial ? '°F' : '°C'}. Body temperature is stable.`}
             </p>
           </div>
 
-          <!-- SPO2 -->
-          <div class="flex flex-col gap-1">
+          <!-- SpO2 -->
+          <div class="flex flex-col gap-1.5">
             <div class="flex items-start justify-between gap-3">
-              <div class="min-w-0">
-                <p class="text-[10px] text-text2 font-mono uppercase tracking-[0.1em]">SPO2</p>
+              <div class="min-w-0 flex items-center gap-1.5">
+                <p class="text-[10px] text-text2 font-mono uppercase tracking-[0.1em]">SpO2</p>
+                <TrendIndicator z={spo2Z} size={12} />
               </div>
-              <div class="shrink-0 flex flex-col items-end leading-tight">
-                <span class="text-[11px] font-mono" style="color: {spo2Delta === null ? 'var(--text2)' : FACTOR_COLORS.spo2}; opacity: {spo2Delta === null ? 0.8 : 1}">
+              <div class="shrink-0 flex items-baseline gap-2 leading-tight">
+                <span class="text-[11px] font-mono" style="color: {spo2Z === null ? 'var(--text2)' : zScoreCssColor(spo2Z)}">
                   {formatSignedInt(spo2Delta)}
                 </span>
-                <span class="text-[12px] font-semibold" style="color: {spo2Pct === null ? 'var(--text2)' : FACTOR_COLORS.spo2}">
+                <span class="text-[12px] font-semibold text-text0">
                   {spo2Pct === null ? '--' : `${spo2Pct}%`}
                 </span>
               </div>
             </div>
-            <div class="h-[3px] rounded-full overflow-hidden" style="background: {hexToRgba(FACTOR_COLORS.spo2, 0.25)}">
-              <div class="h-full w-full rounded-full" style="background: {FACTOR_COLORS.spo2}"></div>
-            </div>
+            <DeviationTrack z={spo2Z} />
             <p class="text-[11px] text-text2 leading-snug">
               {spo2Pct === null
                 ? 'Not available for this day.'
@@ -631,8 +630,72 @@
                   : spo2Pct < 94
                     ? 'Blood oxygen dipped below normal overnight. Consider sleep position, altitude, or congestion.'
                     : spo2Delta >= 0
-                      ? `Above your 30-day baseline of ${spo2Baseline}%. Blood oxygen within normal range all night.`
-                      : `Below your 30-day baseline of ${spo2Baseline}%. Blood oxygen slightly reduced overnight.`}
+                      ? `${Math.round(spo2Delta)}% above your 7-day baseline of ${spo2Baseline}%. Blood oxygen within normal range all night.`
+                      : `${Math.abs(Math.round(spo2Delta))}% below your 7-day baseline of ${spo2Baseline}%. Blood oxygen slightly reduced overnight.`}
+            </p>
+          </div>
+        </div>
+
+        <!-- ─── Performance Drivers (bounded scores, progress bars) ─── -->
+        <p class="text-[9px] text-text2 font-mono uppercase tracking-[0.14em] mb-2">Performance Drivers</p>
+        <div class="flex flex-col gap-3.5">
+          <!-- Sleep Quality (rule of thirds, not inverted) -->
+          <div class="flex flex-col gap-1.5">
+            <div class="flex items-start justify-between gap-3">
+              <p class="text-[10px] text-text2 font-mono uppercase tracking-[0.1em]">Sleep Quality</p>
+              <div class="shrink-0 flex items-baseline gap-2 leading-tight">
+                <span class="text-[11px] font-mono" style="color: {sleepScoreToday === null ? 'var(--text2)' : boundedScoreCssColor(sleepScoreToday)}">
+                  {formatSignedInt(sleepDelta)}
+                </span>
+                <span class="text-[12px] font-semibold text-text0">
+                  {sleepScoreToday === null ? '--' : `${sleepScoreToday}%`}
+                </span>
+              </div>
+            </div>
+            <div class="h-[6px] rounded-full overflow-hidden bg-white/[0.04]">
+              <div
+                class="h-full rounded-full transition-[width] duration-300"
+                style="width: {sleepFillPct}%; background: {sleepScoreToday === null ? 'var(--text2)' : boundedScoreCssColor(sleepScoreToday)};"
+              ></div>
+            </div>
+            <p class="text-[11px] text-text2 leading-snug">
+              {sleepScoreToday === null
+                ? 'Not available for this day.'
+                : `${sleepDurationHM === null ? '--' : sleepDurationHM} asleep with ${sleepScoreToday}% quality.${sleepDeepPct === null ? '' : ` Deep sleep at ${sleepDeepPct}%.`}`}
+            </p>
+          </div>
+
+          <!-- Prior Load (strain score, INVERTED rule of thirds — high == bad) -->
+          <div class="flex flex-col gap-1.5">
+            <div class="flex items-start justify-between gap-3">
+              <p class="text-[10px] text-text2 font-mono uppercase tracking-[0.1em]">Prior Load</p>
+              <div class="shrink-0 flex items-baseline gap-2 leading-tight">
+                <span class="text-[11px] font-mono" style="color: {priorStrainScore === null ? 'var(--text2)' : boundedScoreCssColor(priorStrainScore, true)}">
+                  {formatSignedInt(priorStrainDelta)}
+                </span>
+                <span class="text-[12px] font-semibold text-text0">
+                  {priorLoad?.dailyTss == null ? '--' : `${priorLoad.dailyTss} TSS`}
+                </span>
+              </div>
+            </div>
+            <div class="h-[6px] rounded-full overflow-hidden bg-white/[0.04]">
+              <div
+                class="h-full rounded-full transition-[width] duration-300"
+                style="width: {priorFillPct}%; background: {priorStrainScore === null ? 'var(--text2)' : boundedScoreCssColor(priorStrainScore, true)};"
+              ></div>
+            </div>
+            <p class="text-[11px] text-text2 leading-snug">
+              {priorLoad === null
+                ? 'Not available for this day.'
+                : priorStrainScore === null
+                  ? 'Yesterday’s strain score is not available yet.'
+                  : priorStrainBaseline === null
+                    ? `Yesterday's strain came in at ${priorStrainScore}/100. Baseline not available yet.`
+                    : priorStrainDelta !== null && priorStrainDelta > 5
+                      ? `Yesterday pushed strain ${priorStrainDelta} pts above your 30-day average. Expect some residual fatigue.`
+                      : priorStrainDelta !== null && priorStrainDelta < -5
+                        ? `Yesterday was a recovery day, ${Math.abs(priorStrainDelta)} pts below your 30-day strain average.`
+                        : `Yesterday's strain (${priorStrainScore}/100) tracked your 30-day average.`}
             </p>
           </div>
         </div>
@@ -648,7 +711,7 @@
         </div>
         <div class="flex gap-2 items-end h-[50px] mb-1 px-1">
           {#each days as day, i (day.date)}
-            {@const c = day.score >= 67 ? '#00C8A8' : day.score >= 34 ? '#FFCB88' : '#F07178'}
+            {@const c = boundedScoreCssColor(day.score)}
             <button
               type="button"
               class="flex-1 flex flex-col items-center gap-1 cursor-pointer"
@@ -657,7 +720,7 @@
             >
               <div
                 class="w-full rounded-t-sm transition-all duration-300"
-                style="background: {i === dayIndex ? c : c + '44'}; height: {Math.max(4, (day.score / 100) * 50)}px;"
+                style="background: {c}; opacity: {i === dayIndex ? 1 : 0.35}; height: {Math.max(4, (day.score / 100) * 50)}px;"
               ></div>
               <span class="text-[9px] font-mono {i === dayIndex ? 'text-text0' : 'text-text2'}">{day.day}</span>
             </button>

@@ -17,7 +17,11 @@
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { api } from '$lib/api';
   import { addDays, format, subDays } from 'date-fns';
-  import { strainTextClass, tssTextClass } from '$lib/scoreColors';
+  import {
+    getBoundedScoreColor,
+    boundedScoreCssColor,
+    formCssColor
+  } from '$lib/scoreColors';
 
   const isConnected = $derived(Object.values(athleteStore.syncStatus?.integrations || {}).some((i: any) => i.connected));
   
@@ -103,8 +107,10 @@
   const hasData = $derived(days.some(day => !day.missing) || athleteStore.atl > 0);
   
   const score = $derived(d.score || 0);
-  // Strain is inverted: higher strain = "worse" (red).
-  const scoreColor = $derived(score >= 67 ? '#F07178' : score >= 34 ? '#FFCB88' : '#00C8A8');
+  // Strain is INVERTED relative to the other 0-100 scores: low strain is a
+  // recovery day (teal), high strain is overreaching territory (red). The
+  // unified bounded-score helper gets the same rule of thirds, just flipped.
+  const scoreColor = $derived(boundedScoreCssColor(score, true));
   const quality = $derived(score >= 67 ? 'High' : score >= 34 ? 'Moderate' : 'Light');
 
   const avg7d = $derived.by(() => {
@@ -273,7 +279,7 @@
           type="button"
           class="h-8 w-8 rounded-md border border-border bg-glass text-text0"
           aria-label="Previous 7 days"
-          onclick={() => (endPickerValue = format(subDays(windowEnd, 7), 'yyyy-MM-dd'))}
+          onclick={() => (endPickerValue = format(subDays(windowEnd, 1), 'yyyy-MM-dd'))}
         >
           ←
         </button>
@@ -305,7 +311,7 @@
           style={!canGoForward ? 'opacity: 0.4; cursor: not-allowed;' : ''}
           onclick={() => {
             if (!canGoForward) return;
-            endPickerValue = format(addDays(windowEnd, 7), 'yyyy-MM-dd');
+            endPickerValue = format(addDays(windowEnd, 1), 'yyyy-MM-dd');
           }}
         >
           →
@@ -316,14 +322,6 @@
       </div>
     </div>
 
-    <!-- Date selector -->
-    <div class="flex gap-1.5 overflow-x-auto pb-0.5 shrink-0">
-      {#each days as day, i (day.date)}
-        <Pill active={dayIndex === i} onclick={() => (dayIndex = i)}>
-          {day.label}
-        </Pill>
-      {/each}
-    </div>
 
     {#if d.missing}
       <Card style="border-style: dashed; opacity: 0.8;">
@@ -361,16 +359,19 @@
         </div>
       </Card>
 
-      <!-- Metrics Grid -->
+      <!-- Metrics Grid.
+           CTL (fitness) and ATL (fatigue) are raw absolute training-load
+           numbers and stay neutral. Only Form (TSB) is colored, using the
+           three-band rule from formCssColor. -->
       <div class="grid grid-cols-3 gap-2">
         <Card style="padding: 8px 10px;">
-          <MetricBadge label="Fatigue" value={Math.round(d.atl)} unit="" color="var(--amber)" sub="ATL" />
+          <MetricBadge label="Fatigue" value={Math.round(d.atl)} unit="" color="var(--text0)" sub="ATL" />
         </Card>
         <Card style="padding: 8px 10px;">
-          <MetricBadge label="Fitness" value={Math.round(d.ctl)} unit="" color="var(--teal)" sub="CTL" />
+          <MetricBadge label="Fitness" value={Math.round(d.ctl)} unit="" color="var(--text0)" sub="CTL" />
         </Card>
         <Card style="padding: 8px 10px;">
-          <MetricBadge label="Form" value={Math.round(d.tsb)} unit="" color="var(--blue)" sub="TSB" />
+          <MetricBadge label="Form" value={Math.round(d.tsb)} unit="" color={formCssColor(d.tsb)} sub="TSB" />
         </Card>
       </div>
 
@@ -384,15 +385,15 @@
         </div>
         <div class="flex gap-2 items-end h-[50px] mb-1 px-1">
           {#each days as day, i (day.date)}
-            {@const c = day.score >= 67 ? '#F07178' : day.score >= 34 ? '#FFCB88' : '#00C8A8'}
+            {@const c = boundedScoreCssColor(day.score, true)}
             <button
               type="button"
               class="flex-1 flex flex-col items-center gap-1 cursor-pointer"
               onclick={() => (dayIndex = i)}
               aria-label={`Select ${day.label}: ${day.score}%`}
             >
-              <div class="w-full rounded-t-sm transition-all duration-300" 
-                   style="background: {i === dayIndex ? c : c + '44'}; height: {Math.max(4, (day.score / 100) * 50)}px;"></div>
+              <div class="w-full rounded-t-sm transition-all duration-300"
+                   style="background: {c}; opacity: {i === dayIndex ? 1 : 0.35}; height: {Math.max(4, (day.score / 100) * 50)}px;"></div>
               <span class="text-[9px] font-mono {i === dayIndex ? 'text-text0' : 'text-text2'}">{day.day}</span>
             </button>
           {/each}
@@ -461,13 +462,14 @@
                     </div>
                     <div class="text-right flex flex-col gap-1">
                       <div>
-                        <p class="text-[14px] font-bold {strainVal === null ? 'text-text2' : strainTextClass(strainVal)}">
+                        <p class="text-[14px] font-bold {strainVal === null ? 'text-text2' : getBoundedScoreColor(strainVal, true)}">
                           {strainVal === null ? '--' : strainVal}
                         </p>
                         <p class="text-[9px] text-text2 font-mono">STRAIN</p>
                       </div>
                       <div>
-                        <p class="text-[14px] font-bold {tssVal === null ? 'text-text2' : tssTextClass(tssVal)}">
+                        <!-- TSS is a raw absolute training-stress dose: never color-coded. -->
+                        <p class="text-[14px] font-bold {tssVal === null ? 'text-text2' : 'text-text0'}">
                           {tssVal === null ? '--' : tssVal}
                         </p>
                         <p class="text-[9px] text-text2 font-mono">TSS</p>
@@ -524,7 +526,7 @@
         <div class="p-4 rounded-2xl bg-glass border border-border/50">
           <p class="text-[10px] text-text2 font-mono uppercase mb-1">Intensity</p>
           <div class="flex items-baseline gap-1">
-            <span class="text-[20px] font-bold {selectedStrainVal === null ? 'text-text2' : strainTextClass(selectedStrainVal)}">
+            <span class="text-[20px] font-bold {selectedStrainVal === null ? 'text-text2' : getBoundedScoreColor(selectedStrainVal, true)}">
               {selectedStrainVal === null ? '--' : selectedStrainVal}
             </span>
             <span class="text-[10px] text-text2 font-mono">STRAIN</span>
@@ -549,7 +551,8 @@
         <div class="p-4 rounded-2xl bg-glass border border-border/50">
           <p class="text-[10px] text-text2 font-mono uppercase mb-1">Stress</p>
           <div class="flex items-baseline gap-1">
-            <span class="text-[20px] font-bold {selectedTssVal === null ? 'text-text2' : tssTextClass(selectedTssVal)}">
+            <!-- TSS is a raw absolute training-stress dose: never color-coded. -->
+            <span class="text-[20px] font-bold {selectedTssVal === null ? 'text-text2' : 'text-text0'}">
               {selectedTssVal === null ? '--' : selectedTssVal}
             </span>
             <span class="text-[10px] text-text2 font-mono">TSS</span>

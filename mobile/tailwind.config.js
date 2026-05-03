@@ -31,6 +31,14 @@ export default {
         text0: '#F0F0FF',
         text1: 'rgba(240,240,255,0.65)',
         text2: 'rgba(240,240,255,0.35)',
+        astrape: {
+          neutral: '#F0F0FF',
+          muted: 'rgba(240,240,255,0.65)',
+          teal: '#00C8A8',
+          amber: '#FFCB88',
+          red: '#F07178',
+          blue: '#4621FF',
+        },
       },
       fontFamily: {
         sans: ['"Space Grotesk"', 'sans-serif'],

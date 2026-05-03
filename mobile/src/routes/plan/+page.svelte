@@ -4,7 +4,6 @@
   import EmptyState from '$lib/components/EmptyState.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { authStore } from '$lib/stores/authStore.svelte';
-  import { tssTextClass } from '$lib/scoreColors';
 
   const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   
@@ -66,7 +65,8 @@
               
               <div class="flex gap-3 mb-2">
                 <span class="text-[11px] text-text1">{s.duration}</span>
-                <span class="text-[11px] font-mono {Number.isFinite(Number(s?.tss)) ? tssTextClass(s.tss) : 'text-text2'}">{Number.isFinite(Number(s?.tss)) ? s.tss : '--'} TSS</span>
+                <!-- Planned TSS is a raw absolute target dose: stays neutral. -->
+                <span class="text-[11px] font-mono {Number.isFinite(Number(s?.tss)) ? 'text-text0' : 'text-text2'}">{Number.isFinite(Number(s?.tss)) ? s.tss : '--'} TSS</span>
               </div>
               
               <p class="text-[11px] text-text2 leading-relaxed border-l-2 border-[rgba(255,255,255,0.1)] pl-2">{s.note}</p>

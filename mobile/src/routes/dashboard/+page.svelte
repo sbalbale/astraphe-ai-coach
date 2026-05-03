@@ -21,7 +21,11 @@
   import { goto } from '$app/navigation';
   import { resolve } from '$app/paths';
   import { format } from 'date-fns';
-  import { strainTextClass, tssTextClass } from '$lib/scoreColors';
+  import {
+    getBoundedScoreColor,
+    boundedScoreCssColor,
+    formCssColor
+  } from '$lib/scoreColors';
 
   const props = $props();
 
@@ -146,18 +150,11 @@
     return `${h}h ${r}m`;
   };
 
-  const recoveryColor = (score: number) => {
-    if (score >= 67) return '#00C8A8';
-    if (score >= 34) return '#FFCB88';
-    return '#F07178';
-  };
-
-  const sleepColor = (score: number | null) => {
-    if (score === null || score === undefined) return 'var(--text2)';
-    if (score >= 67) return '#00C8A8'; // Green
-    if (score >= 34) return '#FFCB88'; // Yellow/Amber
-    return '#F07178'; // Red
-  };
+  // Bounded scores (Recovery, Sleep) follow the unified rule of thirds —
+  // see scoreColors.ts. Local hex literals were removed so the rule lives in
+  // exactly one place across the app.
+  const recoveryColor = (score: number) => boundedScoreCssColor(score);
+  const sleepColor = (score: number | null) => boundedScoreCssColor(score);
   const formatSleepHours = (hrsRaw: any) => {
     const hrs = typeof hrsRaw === 'number' ? hrsRaw : Number(hrsRaw);
     if (!Number.isFinite(hrs)) return 'Data not found';
@@ -273,7 +270,7 @@
           value={todayReadiness ?? 0}
           max={100}
           size={64}
-          color="#4621FF"
+          color={todayReadiness === null ? 'var(--text2)' : boundedScoreCssColor(todayReadiness)}
           label={(todayReadiness ?? null) === null ? 'N/A' : String(todayReadiness)}
           sub="RDY"
         />
@@ -285,34 +282,36 @@
             {/if}
             {#if todayReadiness === null}
               <Tag color="var(--text2)">NO DATA</Tag>
-            {:else if todayReadiness > 70}
+            {:else if todayReadiness >= 67}
               <Tag color="var(--teal)">OPTIMAL</Tag>
-            {:else if todayReadiness > 40}
+            {:else if todayReadiness >= 34}
               <Tag color="var(--amber)">MODERATE</Tag>
             {:else}
               <Tag color="var(--red)">RECOVERY</Tag>
             {/if}
           </div>
           <p class="text-xs text-text1 leading-relaxed">
-            HRV {todayHrv === null ? 'Data not found' : `${Math.round(todayHrv)}ms`} · Sleep {todaySleepMin === null ? 'Data not found' : sleepHM(todaySleepMin)}
+            HRV <span class="text-text0">{todayHrv === null ? 'Data not found' : `${Math.round(todayHrv)}ms`}</span> · Sleep <span class="text-text0">{todaySleepMin === null ? 'Data not found' : sleepHM(todaySleepMin)}</span>
           </p>
           <p class="text-[11px] text-text2 mt-1">Data synced from your connected services.</p>
         </div>
       </div>
     </Card>
 
-    <!-- Metric Row -->
+    <!-- Metric Row.
+         CTL/ATL are raw absolute fitness/fatigue numbers — they MUST stay neutral.
+         Only TSB (Form) is colored, using the three-band rule from formCssColor. -->
     <div class="grid grid-cols-3 gap-2.5">
       <Card style="padding: 12px 14px;">
         <div class="flex justify-between items-start">
-          <MetricBadge label="CTL" value={todayCtl === null ? 'Data not found' : Math.round(todayCtl)} unit="" color="var(--teal)" sub="Fitness" />
+          <MetricBadge label="CTL" value={todayCtl === null ? 'Data not found' : Math.round(todayCtl)} unit="" color="var(--text0)" sub="Fitness" />
           {#if isCalibrating}
             <CalibrationBadge />
           {/if}
         </div>
       </Card>
       <Card style="padding: 12px 14px;">
-        <MetricBadge label="ATL" value={todayAtl === null ? 'Data not found' : Math.round(todayAtl)} unit="" color="var(--amber)" sub="Fatigue" />
+        <MetricBadge label="ATL" value={todayAtl === null ? 'Data not found' : Math.round(todayAtl)} unit="" color="var(--text0)" sub="Fatigue" />
       </Card>
       <Card style="padding: 12px 14px;">
         <div class="flex justify-between items-start">
@@ -320,7 +319,7 @@
             label="TSB"
             value={todayTsb === null ? 'Data not found' : (todayTsb > 0 ? `+${Math.round(todayTsb)}` : Math.round(todayTsb))}
             unit=""
-            color="#4621FF"
+            color={todayTsb === null ? 'var(--text2)' : formCssColor(todayTsb)}
             sub="Form"
           />
           {#if isCalibrating}
@@ -341,17 +340,20 @@
       </p>
     </Card>
 
-    <!-- Training Load Chart -->
+    <!-- Training Load Chart.
+         Legend swatches are neutral because CTL and ATL are raw absolutes. The
+         chart itself paints CTL/ATL in muted neutrals and reserves color for
+         TSB (Form), which IS actionable. -->
     {#if athleteStore.metrics?.trainingLoadData?.length > 0}
       <Card>
         <div class="flex justify-between items-center mb-3">
           <span class="text-[13px] font-semibold">Training Load</span>
           <div class="flex gap-3">
-            <span class="text-[10px] text-teal font-mono flex items-center gap-1">
-              <span class="w-4 h-0.5 bg-teal inline-block rounded-[1px]"></span> CTL
+            <span class="text-[10px] text-text1 font-mono flex items-center gap-1">
+              <span class="w-4 h-0.5 bg-text1 inline-block rounded-[1px]"></span> CTL
             </span>
-            <span class="text-[10px] text-blue font-mono flex items-center gap-1">
-              <span class="w-2.5 h-2.5 bg-blue/40 inline-block rounded-sm"></span> ATL
+            <span class="text-[10px] text-text2 font-mono flex items-center gap-1">
+              <span class="w-2.5 h-2.5 bg-text2/40 inline-block rounded-sm"></span> ATL
             </span>
           </div>
         </div>
@@ -408,15 +410,19 @@
             <span class="text-[8px] bg-white/5 px-1 rounded text-text2 border border-white/5 uppercase">Latest</span>
           {/if}
         </div>
+        <!-- Sleep duration is a raw absolute and stays neutral. The colored
+             7-day score badge below carries the actionable signal. -->
         <div class="flex items-baseline gap-1.5">
-          <span class="text-[20px] font-bold" style="color: {sleepColor(latestSleepScore)}">
+          <span class="text-[20px] font-bold text-text0">
             {latestSleepMin === null ? 'Data not found' : sleepHM(latestSleepMin)}
           </span>
         </div>
         <p class="text-[10px] text-text2 mt-1">
-          7d avg <span class="text-text1 font-medium">{avgSleep7dMin === null ? '--' : sleepHM(avgSleep7dMin)}</span>
+          7d avg <span class="text-text0 font-medium">{avgSleep7dMin === null ? '--' : sleepHM(avgSleep7dMin)}</span>
           <span class="text-text2"> · </span>
-          <span class="text-text1 font-medium">{avgSleepScore7d === null ? '--' : `${avgSleepScore7d}%`}</span>
+          <span class="font-medium {avgSleepScore7d === null ? 'text-text2' : getBoundedScoreColor(avgSleepScore7d)}">
+            {avgSleepScore7d === null ? '--' : `${avgSleepScore7d}%`}
+          </span>
         </p>
         {#if sleepTrendData.length > 1}
           <div class="mt-2">
@@ -475,13 +481,14 @@
                 </div>
                 <div class="text-right flex flex-col gap-1">
                   <div>
-                    <p class="text-[13px] font-semibold {strainVal === null ? 'text-text2' : strainTextClass(strainVal)}">
+                    <p class="text-[13px] font-semibold {strainVal === null ? 'text-text2' : getBoundedScoreColor(strainVal, true)}">
                       {strainVal === null ? '--' : strainVal}
                     </p>
                     <p class="text-[9px] text-text2 font-mono">STRAIN</p>
                   </div>
                   <div>
-                    <p class="text-[13px] font-semibold {tssVal === null ? 'text-text2' : tssTextClass(tssVal)}">
+                    <!-- TSS is a raw absolute training-stress dose: never color-coded. -->
+                    <p class="text-[13px] font-semibold {tssVal === null ? 'text-text2' : 'text-text0'}">
                       {tssVal === null ? '--' : tssVal}
                     </p>
                     <p class="text-[9px] text-text2 font-mono">TSS</p>

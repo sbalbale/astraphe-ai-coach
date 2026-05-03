@@ -114,38 +114,51 @@
     return haveSport && haveUnits && haveTime && haveDob && haveGender && haveBio && !saving;
   });
 
+  /** Optional numeric fields use `type="number"`; bind values may be number or empty, never call .trim() blindly. */
+  function optionalNumericText(v: unknown): string {
+    if (v == null || v === '') return '';
+    return typeof v === 'string' ? v.trim() : String(v).trim();
+  }
+
   async function handleSubmit(e: Event) {
     e.preventDefault();
     saveError = null;
     saving = true;
+    try {
+      const nextWeightKg = units === 'imperial' ? lbToKg(weightLb) : Number(weightKg);
+      const nextHeightCm = units === 'imperial' ? ftInToCm(heightFt, heightIn) : Number(heightCm);
 
-    const nextWeightKg = units === 'imperial' ? lbToKg(weightLb) : Number(weightKg);
-    const nextHeightCm = units === 'imperial' ? ftInToCm(heightFt, heightIn) : Number(heightCm);
+      const payload: Record<string, unknown> = {
+        sport_focus: [String(sport).toLowerCase()],
+        measurement_units: units,
+        time_format: timeFormat,
+        date_of_birth: dob,
+        gender,
+        weight_kg: nextWeightKg,
+        height_cm: nextHeightCm
+      };
 
-    const payload: any = {
-      sport_focus: [String(sport).toLowerCase()],
-      measurement_units: units,
-      time_format: timeFormat,
-      date_of_birth: dob,
-      gender,
-      weight_kg: nextWeightKg,
-      height_cm: nextHeightCm
-    };
+      const maxHrStr = optionalNumericText(maxHrRaw);
+      const maxHr = Number(maxHrStr);
+      if (maxHrStr && Number.isFinite(maxHr) && maxHr > 0) payload.max_hr = maxHr;
 
-    const maxHr = Number(maxHrRaw);
-    if (maxHrRaw.trim() && Number.isFinite(maxHr) && maxHr > 0) payload.max_hr = maxHr;
+      const ftpStr = optionalNumericText(ftpRaw);
+      const ftp = Number(ftpStr);
+      if (ftpStr && Number.isFinite(ftp) && ftp > 0) payload.ftp_watts = ftp;
 
-    const ftp = Number(ftpRaw);
-    if (ftpRaw.trim() && Number.isFinite(ftp) && ftp > 0) payload.ftp_watts = ftp;
+      const paceTrim = pace.trim();
+      if (paceTrim) payload.threshold_pace = paceTrim;
 
-    if (pace.trim()) payload.threshold_pace = pace.trim();
-
-    const success = await athleteStore.updateProfile(payload);
-    saving = false;
-    if (success) {
-      goto('/dashboard', { replaceState: true });
-    } else {
-      saveError = 'Failed to save your setup. Please try again.';
+      const success = await athleteStore.updateProfile(payload);
+      if (success) {
+        goto('/dashboard', { replaceState: true });
+      } else {
+        saveError = 'Failed to save your setup. Please try again.';
+      }
+    } catch {
+      saveError = 'Something went wrong while saving. Please try again.';
+    } finally {
+      saving = false;
     }
   }
 </script>
