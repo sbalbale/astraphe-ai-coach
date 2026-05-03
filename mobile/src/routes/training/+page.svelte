@@ -22,10 +22,8 @@
   import { page } from '$app/stores';
   import { addDays, endOfWeek, format, startOfWeek } from 'date-fns';
   import { boundedScoreCssColor } from '$lib/colorSystem';
-  import {
-    formCssColor,
-    getWeeklyLoadDeltaColor,
-  } from '$lib/scoreColors';
+  import { formCssColor, getWeeklyLoadDeltaColor } from '$lib/scoreColors';
+  import { Lightbulb } from 'lucide-svelte';
 
   const CTL_IDENTITY_HEX = '#3b82f6';
   const ATL_IDENTITY_HEX = '#64748b';
@@ -281,8 +279,8 @@
 
 <div class="flex flex-col gap-3">
   <div>
-    <p class="text-xs text-text2 font-mono uppercase tracking-[0.1em]">Performance</p>
-    <h1 class="text-[22px] font-bold tracking-[-0.02em]">Training Analysis</h1>
+    <p class="text-xs text-slate-400 font-mono uppercase tracking-[0.1em]">Performance</p>
+    <h1 class="text-[22px] font-bold tracking-[-0.02em] text-slate-200">Training Analysis</h1>
   </div>
 
   {#if showNoTrainingData}
@@ -307,57 +305,100 @@
     </div>
 
     {#if metric === 'load'}
-      <div class="grid grid-cols-2 gap-2.5">
-        <Card>
-          <MetricBadge label="Fitness (CTL)" value={Math.round(athleteStore.ctl)} color={CTL_IDENTITY_HEX} sub="Long-term load" />
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
+        <Card paddingClass="px-6 py-5">
+          <div class="flex flex-col justify-start items-start w-full">
+            <MetricBadge
+              label="Fitness (CTL)"
+              value={Math.round(athleteStore.ctl)}
+              color={CTL_IDENTITY_HEX}
+              sub="Long-term load"
+              labelClass="text-[10px] text-slate-400 uppercase tracking-[0.08em] font-mono"
+              subClass="text-[10px] text-slate-400"
+            />
+          </div>
         </Card>
-        <Card>
-          <MetricBadge label="Fatigue (ATL)" value={Math.round(athleteStore.atl)} color={ATL_IDENTITY_HEX} sub="Short-term load" />
+        <Card paddingClass="px-6 py-5">
+          <div class="flex flex-col justify-start items-start w-full">
+            <MetricBadge
+              label="Fatigue (ATL)"
+              value={Math.round(athleteStore.atl)}
+              color={ATL_IDENTITY_HEX}
+              sub="Short-term load"
+              labelClass="text-[10px] text-slate-400 uppercase tracking-[0.08em] font-mono"
+              subClass="text-[10px] text-slate-400"
+              valueClassName="text-slate-200"
+            />
+          </div>
         </Card>
-        <Card>
-          <MetricBadge
-            label="Form (TSB)"
-            value={athleteStore.tsb > 0 ? `+${Math.round(athleteStore.tsb)}` : Math.round(athleteStore.tsb)}
-            color={formCssColor(athleteStore.tsb)}
-            sub="Training balance"
-          />
+        <Card paddingClass="px-6 py-5">
+          <div class="flex flex-col justify-start items-start w-full">
+            <MetricBadge
+              label="Form (TSB)"
+              value={athleteStore.tsb > 0 ? `+${Math.round(athleteStore.tsb)}` : Math.round(athleteStore.tsb)}
+              color={formCssColor(athleteStore.tsb)}
+              sub="Training balance"
+              labelClass="text-[10px] text-slate-400 uppercase tracking-[0.08em] font-mono"
+              subClass="text-[10px] text-slate-400"
+            />
+          </div>
         </Card>
-        <Card>
-          <MetricBadge
-            label="Weekly TSS"
-            value={weeklyRollingContext.weekSum}
-            color="var(--text0)"
-            sub="Rolling 7d (daily TSS)"
-          />
-          {#if weeklyRollingContext.baseline !== null && weeklyRollingContext.delta !== null && weeklyRollingContext.pct !== null}
-            <p class="text-[10px] text-text2 font-mono mt-2 leading-snug border-t border-border/60 pt-2">
-              Baseline ø {weeklyRollingContext.baseline}&nbsp;&nbsp;
-              <span class="text-text2">Δ</span>
-              <span class={getWeeklyLoadDeltaColor(weeklyRollingContext.pct)}>
-                {weeklyRollingContext.delta >= 0 ? '+' : ''}{weeklyRollingContext.delta}
-              </span>
-            </p>
-          {/if}
+        <Card paddingClass="px-6 py-5">
+          <div class="flex flex-col justify-start items-start w-full leading-tight">
+            <div class="flex flex-col gap-0.5 w-full">
+              <span class="text-[10px] font-mono uppercase tracking-wide text-slate-400">Weekly TSS</span>
+              <div class="flex flex-col gap-1">
+                <p class="text-[22px] font-semibold tabular-nums leading-none text-slate-200 tracking-[-0.02em]">
+                  {weeklyRollingContext.weekSum}
+                </p>
+                {#if weeklyRollingContext.baseline !== null && weeklyRollingContext.delta !== null && weeklyRollingContext.pct !== null}
+                  {@const delta = weeklyRollingContext.delta}
+                  <div class="flex flex-row flex-wrap items-baseline gap-x-2 gap-y-0">
+                    <span class="text-[10px] font-mono tabular-nums text-slate-400">
+                      Baseline: {weeklyRollingContext.baseline}
+                    </span>
+                    <span class="text-[10px] font-mono tabular-nums {getWeeklyLoadDeltaColor(weeklyRollingContext.pct)}">
+                      {#if delta > 0}
+                        ↑ {delta}
+                      {:else if delta < 0}
+                        ↓ {Math.abs(delta)}
+                      {:else}
+                        0
+                      {/if}
+                    </span>
+                  </div>
+                {/if}
+              </div>
+            </div>
+          </div>
         </Card>
       </div>
       
       {#if athleteStore.metrics?.trainingLoadData?.length > 0}
         <Card>
-          <p class="text-[13px] font-semibold mb-3">Training Load Trend</p>
+          <p class="text-[13px] font-semibold mb-3 text-slate-200">Training Load Trend</p>
           <MultiLineChart data={athleteStore.metrics.trainingLoadData} height={120} />
         </Card>
       {/if}
       
-      <Card style="background: linear-gradient(135deg, rgba(70,33,255,0.12), transparent);">
-        <p class="text-[13px] font-semibold mb-1.5">Load Insight</p>
-        <p class="text-xs text-text1 leading-relaxed">
-          {analysisText ??
-            (athleteStore.tsb > 10
-              ? `You have significant freshnesh (TSB +${Math.round(athleteStore.tsb)}). Excellent time for a peak performance or hard test.`
-              : athleteStore.tsb < -20
-                ? 'High fatigue detected. Consider a deload week to allow CTL to catch up to ATL safely.'
-                : 'Your training load is stable. Continue with your planned progression.')}
-        </p>
+      <Card
+        paddingClass="px-6 py-4"
+        style="background: linear-gradient(135deg, rgba(70,33,255,0.12), transparent);"
+      >
+        <div class="flex gap-3 items-start">
+          <Lightbulb class="w-4 h-4 shrink-0 text-slate-500 mt-0.5" strokeWidth={1.5} aria-hidden="true" />
+          <div class="flex-1 min-w-0">
+            <p class="text-[13px] font-semibold mb-1.5 text-slate-400">Load Insight</p>
+            <p class="text-xs text-slate-300 leading-relaxed">
+              {analysisText ??
+                (athleteStore.tsb > 10
+                  ? `You have significant freshness (TSB +${Math.round(athleteStore.tsb)}). Excellent time for a peak performance or hard test.`
+                  : athleteStore.tsb < -20
+                    ? 'High fatigue detected. Consider a deload week to allow CTL to catch up to ATL safely.'
+                    : 'Your training load is stable. Continue with your planned progression.')}
+            </p>
+          </div>
+        </div>
       </Card>
     {/if}
 
