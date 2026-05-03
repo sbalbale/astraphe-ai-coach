@@ -495,7 +495,10 @@
             <button
               type="button"
               class="flex-1 flex flex-col items-center gap-1 cursor-pointer"
-              onclick={() => (nightIndex = i)}
+              onclick={() => {
+                endPickerValue = nt.rawDate;
+                nightIndex = 6;
+              }}
               aria-label={`Select ${nt.date}: ${nt.score}%`}
             >
               <div

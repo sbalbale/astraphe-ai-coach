@@ -384,7 +384,10 @@
             <button
               type="button"
               class="flex-1 flex flex-col items-center gap-1 cursor-pointer"
-              onclick={() => (dayIndex = i)}
+              onclick={() => {
+                endPickerValue = day.date;
+                dayIndex = 6;
+              }}
               aria-label={`Select ${day.label}: ${day.score}%`}
             >
               <div class="w-full rounded-t-sm transition-all duration-300"

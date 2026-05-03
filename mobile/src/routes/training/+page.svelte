@@ -471,24 +471,24 @@
         <div class="flex flex-col gap-2.5">
           <!-- Week selector -->
           <Card style="padding: 12px 14px;">
-            <div class="flex items-center justify-between gap-3">
+            <div class="flex flex-col gap-3 min-w-0 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
               <div class="min-w-0">
                 <p class="text-[10px] text-text2 font-mono uppercase tracking-[0.08em]">Week</p>
-                <p class="text-[13px] font-semibold truncate">
-                  {format(selectedWeekStart, 'MMM d')} – {format(selectedWeekEnd, 'MMM d')}
+                <p class="text-[13px] font-semibold break-words">
+                  {format(selectedWeekStart, 'MMM d')} – {format(selectedWeekEnd, 'MMM d, yyyy')}
                 </p>
               </div>
 
-              <div class="flex items-center gap-2 shrink-0">
+              <div class="flex items-center gap-2 min-w-0 w-full sm:w-auto sm:shrink-0 sm:max-w-full">
                 <button
-                  class="px-2 py-1 rounded-lg border border-border bg-glass2 text-[11px] text-text1 cursor-pointer"
+                  class="shrink-0 px-2 py-1 rounded-lg border border-border bg-glass2 text-[11px] text-text1 cursor-pointer"
                   onclick={() => (weekPickerValue = format(addDays(selectedWeekStart, -7), 'yyyy-MM-dd'))}
                   aria-label="Previous week"
                 >
                   ←
                 </button>
 
-                <div class="w-[160px]">
+                <div class="min-w-0 flex-1 sm:flex-none sm:w-[160px]">
                   <DatePicker
                     id="training-history-week"
                     bind:value={weekPickerValue}
@@ -498,7 +498,7 @@
                 </div>
 
                 <button
-                  class="px-2 py-1 rounded-lg border border-border bg-glass2 text-[11px] text-text1 cursor-pointer"
+                  class="shrink-0 whitespace-nowrap px-2 py-1 rounded-lg border border-border bg-glass2 text-[11px] text-text1 cursor-pointer"
                   onclick={jumpToCurrentWeek}
                   aria-label="Jump to current week"
                 >
@@ -506,7 +506,7 @@
                 </button>
 
                 <button
-                  class="px-2 py-1 rounded-lg border border-border bg-glass2 text-[11px] text-text1 cursor-pointer"
+                  class="shrink-0 px-2 py-1 rounded-lg border border-border bg-glass2 text-[11px] text-text1 cursor-pointer"
                   onclick={() => (weekPickerValue = format(addDays(selectedWeekStart, 7), 'yyyy-MM-dd'))}
                   aria-label="Next week"
                 >
