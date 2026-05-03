@@ -62,6 +62,25 @@
     if (windowMode === 'month') selectedMonth = monthPickerValue;
   });
 
+  /** Local calendar caps for navigation and pickers (ISO strings compare lexicographically). */
+  const todayDayMax = $derived(toDateInputValue(new Date()));
+  const todayMonthMax = $derived(toMonthInputValue(new Date()));
+
+  $effect(() => {
+    if (selectedDay > todayDayMax) selectedDay = todayDayMax;
+  });
+  $effect(() => {
+    if (selectedMonth > todayMonthMax) selectedMonth = todayMonthMax;
+  });
+
+  const canGoForwardWeek = $derived(
+    toDateInputValue(addDays(parseDateInputLocal(selectedDay), 7)) <= todayDayMax
+  );
+  const canGoForwardMonth = $derived(
+    toMonthInputValue(addMonths(parseDateInputLocal(`${selectedMonth}-01`), 1)) <= todayMonthMax
+  );
+  const canGoForward = $derived(windowMode === 'week' ? canGoForwardWeek : canGoForwardMonth);
+
   const hasProfile = $derived(!!athleteStore.profile);
   
   // Fallbacks if profile not loaded
@@ -315,6 +334,7 @@
                 <DatePicker
                   id="zones-week"
                   bind:value={dayPickerValue}
+                  max={todayDayMax}
                   ariaLabel="Select end date"
                   buttonClass="h-7 px-2 pr-2 rounded-lg bg-glass2 border border-border/50 text-[10px] font-mono text-text1"
                 />
@@ -324,6 +344,7 @@
                 <MonthPicker
                   id="zones-month"
                   bind:value={monthPickerValue}
+                  max={todayMonthMax}
                   ariaLabel="Select month"
                   buttonClass="h-7 px-2 pr-2 rounded-lg bg-glass2 border border-border/50 text-[10px] font-mono text-text1"
                 />
@@ -341,14 +362,16 @@
             </button>
 
             <button
-              class="w-7 h-7 rounded-lg bg-glass2 border border-border/50 hover:bg-glass transition-colors flex items-center justify-center text-text1"
+              class="w-7 h-7 rounded-lg bg-glass2 border border-border/50 transition-colors flex items-center justify-center text-text1 {canGoForward ? 'hover:bg-glass' : 'opacity-40 cursor-not-allowed'}"
               onclick={() => {
+                if (!canGoForward) return;
                 if (windowMode === 'week') selectedDay = toDateInputValue(addDays(parseDateInputLocal(selectedDay), 7));
                 else selectedMonth = toMonthInputValue(addMonths(parseDateInputLocal(`${selectedMonth}-01`), 1));
               }}
               type="button"
+              disabled={!canGoForward}
               aria-label={windowMode === 'week' ? 'Next 7 days' : 'Next month'}
-              title={windowMode === 'week' ? 'Next 7 days' : 'Next month'}
+              title={canGoForward ? (windowMode === 'week' ? 'Next 7 days' : 'Next month') : 'Cannot go past today'}
             >
               ›
             </button>

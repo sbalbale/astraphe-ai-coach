@@ -161,60 +161,42 @@ Note: TSB uses _yesterday's_ CTL and ATL, not today's. This represents the form 
 
 ## Recovery Score
 
-The ASTRAPE Recovery Score (0–100) is a weighted composite of multiple physiological signals. Unlike WHOOP's proprietary recovery model, ASTRAPE's formula is transparent and auditable.
+The ASTRAPE Recovery Score (0–100) is designed to avoid “regression to the mean” by (1) using Z-scores relative to the athlete’s own baseline variability and (2) dynamically weighting the Autonomic Nervous System (ANS) as a trump card on bad days.
 
 ```python
 def compute_recovery_score(
-    hrv_rmssd: float,
-    hrv_baseline_30d: float,
-    resting_hr: int,
-    resting_hr_baseline_30d: float,
+    hrv_today: float,
+    hrv_avg_30d: float,
+    hrv_std_30d: float,
+    rhr_today: int,
+    rhr_avg_30d: float,
+    rhr_std_30d: float,
     sleep_score: int,
     prior_day_atl: float,
     prior_day_atl_max_30d: float,
-    skin_temp_deviation: float,
-    spo2_pct: float,
 ) -> int:
     """
-    Compute the ASTRAPE Recovery Score (0–100).
-
-    Higher scores indicate greater readiness for high-intensity training.
+    Computes a highly volatile Recovery Score (0-100) using Z-scores and a Sigmoid curve.
+    Lets the ANS dominate via dynamic weighting.
     """
-    scores = {}
+    # Z-scores (RHR inverted: lower is better)
+    z_hrv = (hrv_today - hrv_avg_30d) / max(hrv_std_30d, 1.0)
+    z_rhr = (rhr_avg_30d - rhr_today) / max(rhr_std_30d, 1.0)
 
-    # HRV component (weight: 35%)
-    # Deviation from 30-day baseline, normalized to ±30% range
-    hrv_delta_pct = (hrv_rmssd - hrv_baseline_30d) / hrv_baseline_30d
-    scores['hrv'] = np.clip(50 + hrv_delta_pct * 100, 0, 100)
+    ans_z = (z_hrv * 0.6) + (z_rhr * 0.4)
+    ans_score = 100.0 / (1.0 + math.exp(-1.5 * (ans_z - 0.4)))
 
-    # Resting HR component (weight: 20%)
-    # Elevated RHR = fatigue signal
-    rhr_delta = resting_hr - resting_hr_baseline_30d
-    scores['rhr'] = np.clip(100 - rhr_delta * 5, 0, 100)
+    load_ratio = prior_day_atl / max(prior_day_atl_max_30d, 1.0)
+    load_score = np.clip(100 - (load_ratio * 60), 0, 100)
 
-    # Sleep score component (weight: 30%)
-    # Direct passthrough of sleep quality score
-    scores['sleep'] = float(sleep_score)
+    if ans_score < 40:
+        final = (ans_score * 0.80) + (sleep_score * 0.15) + (load_score * 0.05)
+    elif ans_score > 70:
+        final = (ans_score * 0.50) + (sleep_score * 0.35) + (load_score * 0.15)
+    else:
+        final = (ans_score * 0.65) + (sleep_score * 0.25) + (load_score * 0.10)
 
-    # Prior load component (weight: 10%)
-    # How fresh is the athlete relative to their recent peak?
-    load_ratio = prior_day_atl / max(prior_day_atl_max_30d, 1)
-    scores['load'] = np.clip(100 - load_ratio * 60, 0, 100)
-
-    # Illness indicator (weight: 5%)
-    # Elevated skin temp or low SpO2 tanks recovery
-    illness_penalty = 0
-    if skin_temp_deviation > 0.5:
-        illness_penalty += min((skin_temp_deviation - 0.5) * 40, 50)
-    if spo2_pct < 95:
-        illness_penalty += (95 - spo2_pct) * 10
-    scores['vitals'] = max(0, 100 - illness_penalty)
-
-    # Weighted sum
-    weights = {'hrv': 0.35, 'rhr': 0.20, 'sleep': 0.30, 'load': 0.10, 'vitals': 0.05}
-    composite = sum(scores[k] * weights[k] for k in scores)
-
-    return int(round(np.clip(composite, 0, 100)))
+    return int(round(np.clip(final, 0, 100)))
 ```
 
 **Recovery score interpretation:**

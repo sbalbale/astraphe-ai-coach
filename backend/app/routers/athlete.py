@@ -187,8 +187,12 @@ async def get_athlete_profile(
     db = Depends(get_user_db)
 ):
     """Fetch current athlete physiological anchors."""
-    res = db.table("athletes").select("*").eq("id", athlete_id).single().execute()
-    if not res.data:
+    try:
+        res = db.table("athletes").select("*").eq("id", athlete_id).maybe_single().execute()
+    except Exception:
+        # Keep error surface clean; auth issues are handled in dependency.
+        raise HTTPException(status_code=500, detail="Failed to load athlete profile")
+    if not res or not res.data:
         raise HTTPException(status_code=404, detail="Athlete not found")
     return res.data
 

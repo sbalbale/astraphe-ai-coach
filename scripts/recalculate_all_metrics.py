@@ -21,6 +21,7 @@ from app.services.algorithms import (
     compute_recovery_score,
     calculate_rhr_baseline,
     calculate_hrv_baseline,
+    compute_ewma_stats,
     DEFAULT_BASELINE_SLEEP_MIN,
     MAX_SLEEP_DEBT_MIN,
     SLEEP_DEBT_DECAY_RATE
@@ -142,6 +143,8 @@ def main():
             # We'll use 42d history for the baseline functions to be safe.
             hrv_baseline = calculate_hrv_baseline(hrv_history)
             rhr_baseline = calculate_rhr_baseline(rhr_history)
+            hrv_avg_30d, hrv_std_30d = compute_ewma_stats(np.array(hrv_history[-30:], dtype=float), span=30) if hrv_history else (0.0, 0.0)
+            rhr_avg_30d, rhr_std_30d = compute_ewma_stats(np.array(rhr_history[-30:], dtype=float), span=30) if rhr_history else (0.0, 0.0)
             max_atl_30d = max(atl_history_30d) if atl_history_30d else 1.0
             
             # 1. Strain Score
@@ -176,14 +179,14 @@ def main():
             # 3. Recovery Score
             recovery_score = compute_recovery_score(
                 hrv_today=hrv or 0.0,
-                hrv_baseline_30d=hrv_baseline,
-                resting_hr=rhr or 0,
-                resting_hr_baseline_30d=rhr_baseline,
+                hrv_avg_30d=hrv_avg_30d or hrv_baseline,
+                hrv_std_30d=hrv_std_30d,
+                rhr_today=rhr or 0,
+                rhr_avg_30d=rhr_avg_30d or rhr_baseline,
+                rhr_std_30d=rhr_std_30d,
                 sleep_score=sleep_score,
                 prior_day_atl=prior_atl,
                 prior_day_atl_max_30d=max_atl_30d,
-                skin_temp_deviation=row.get("skin_temp_deviation") or 0.0,
-                spo2_pct=row.get("spo2_pct") or 100.0
             )
             
             # 4. Readiness Score

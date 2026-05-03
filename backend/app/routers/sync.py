@@ -301,7 +301,12 @@ async def whoop_oauth_authorize(athlete_id: str = None):
     return RedirectResponse(url=f"{settings.WHOOP_OAUTH_AUTH_URL}?{query_string}")
 
 @router.get("/oauth/whoop/callback")
-async def whoop_oauth_callback(code: str, state: str = None, background_tasks: BackgroundTasks = None, db = Depends(get_admin_db)):
+async def whoop_oauth_callback(
+    code: str,
+    background_tasks: BackgroundTasks,
+    state: str = None,
+    db = Depends(get_admin_db),
+):
     """Step 2: WHOOP redirects back here with a code."""
     print(f"[whoop.oauth.callback] !!! COLD START callback reached !!! state={state}")
     redirect_url = get_clean_redirect_url()
@@ -327,11 +332,17 @@ async def whoop_oauth_callback(code: str, state: str = None, background_tasks: B
         }).execute()
         print(f"[whoop.oauth.callback] Token persistence SUCCESS")
 
-        # Everything else in background
-        if background_tasks:
-            print(f"[whoop.oauth.callback] Scheduling background backfill task...")
+        # Everything else in background.
+        # NOTE: FastAPI only injects BackgroundTasks reliably when it is an explicit dependency.
+        # When this handler is called without an injected instance (e.g. mis-configured signature),
+        # fall back to running the backfill asynchronously in-process so we still populate data.
+        print(f"[whoop.oauth.callback] Scheduling background backfill task (90d)...")
+        if background_tasks is not None:
             background_tasks.add_task(backfill_historical_data, athlete_id, access_token, None, 90)
-            print(f"[whoop.oauth.callback] Task scheduled")
+        else:
+            # Last-resort for environments where BackgroundTasks isn't injected.
+            asyncio.create_task(backfill_historical_data(athlete_id, access_token, None, 90))
+        print(f"[whoop.oauth.callback] Backfill scheduled")
         
         print(f"[whoop.oauth.callback] Sending HTML response...")
         
@@ -552,8 +563,57 @@ async def unlink_integration(
     db = Depends(get_user_db)
 ):
     """Unlinks a third-party integration by removing its OAuth tokens."""
-    db.table("oauth_tokens").delete().eq("athlete_id", athlete_id).eq("provider", provider).execute()
-    return {"status": "success", "message": f"{provider.capitalize()} unlinked successfully"}
+    prov = (provider or "").strip().lower()
+    if not prov:
+        raise HTTPException(status_code=400, detail="Missing provider")
+
+    # Delete tokens owned by this athlete for the provider.
+    db.table("oauth_tokens").delete().eq("athlete_id", athlete_id).eq("provider", prov).execute()
+
+    # Return whether anything remains (helps clients update UI deterministically).
+    remaining = (
+        db.table("oauth_tokens")
+        .select("id")
+        .eq("athlete_id", athlete_id)
+        .eq("provider", prov)
+        .execute()
+    )
+    still_connected = bool(getattr(remaining, "data", None))
+
+    return {
+        "status": "success",
+        "provider": prov,
+        "connected": still_connected,
+        "message": f"{prov.capitalize()} unlinked successfully" if not still_connected else f"{prov.capitalize()} unlink requested",
+    }
+
+
+@router.post("/whoop/backfill")
+async def whoop_backfill_now(
+    days: int = 90,
+    athlete_id: str = Depends(get_current_athlete),
+    db=Depends(get_user_db),
+    admin_db=Depends(get_admin_db),
+):
+    """
+    Manually trigger a WHOOP backfill for the authenticated athlete.
+    Useful for local/dev recovery when the OAuth callback backfill fails mid-way.
+    """
+    d = max(1, min(int(days), 365))
+    tok = (
+        admin_db.table("oauth_tokens")
+        .select("access_token")
+        .eq("athlete_id", athlete_id)
+        .eq("provider", "whoop")
+        .maybe_single()
+        .execute()
+    )
+    access_token = (tok.data or {}).get("access_token") if tok else None
+    if not access_token:
+        raise HTTPException(status_code=400, detail="WHOOP not connected")
+
+    asyncio.create_task(backfill_historical_data(athlete_id, access_token, admin_db, d))
+    return {"status": "success", "scheduled": True, "days": d}
 
 def get_athlete_by_garmin_id(db, garmin_id: str):
     """Looks up internal athlete_id by Garmin ID."""
@@ -580,7 +640,7 @@ def map_whoop_sport(sport: object) -> str:
         if s in ("swimming", "swim"):
             return "swim"
         if s in ("rowing", "row"):
-            return "rowing"
+            return "row"
         # If it's a numeric string, fall through to id mapping.
         if s.isdigit():
             sport = int(s)
