@@ -296,9 +296,9 @@
     <!-- Weekly distribution -->
     <Card>
       <p class="text-[13px] font-semibold mb-3">Time in Zones ({sport === 'all' ? 'All Activities' : sport.toUpperCase()})</p>
-      <div class="flex flex-col gap-2.5 mb-3">
-        <div class="flex items-center gap-2">
-          <div class="flex bg-glass2 border border-border/50 rounded-lg overflow-hidden shrink-0">
+      <div class="flex flex-col gap-2.5 mb-3 min-w-0">
+        <div class="flex flex-col gap-2 min-w-0 sm:flex-row sm:items-center sm:gap-2">
+          <div class="flex bg-glass2 border border-border/50 rounded-lg overflow-hidden shrink-0 w-fit">
             <button
               class="px-2.5 py-1 text-[10px] font-mono uppercase tracking-widest transition-colors {windowMode === 'week' ? 'bg-glass text-text0' : 'text-text2 hover:text-text0'}"
               onclick={() => windowMode = 'week'}
@@ -315,9 +315,9 @@
             </button>
           </div>
 
-          <div class="ml-auto flex items-center gap-1.5">
+          <div class="flex items-center gap-1.5 min-w-0 w-full sm:flex-1 sm:justify-end">
             <button
-              class="w-7 h-7 rounded-lg bg-glass2 border border-border/50 hover:bg-glass transition-colors flex items-center justify-center text-text1"
+              class="w-7 h-7 shrink-0 rounded-lg bg-glass2 border border-border/50 hover:bg-glass transition-colors flex items-center justify-center text-text1"
               onclick={() => {
                 if (windowMode === 'week') selectedDay = toDateInputValue(addDays(parseDateInputLocal(selectedDay), -7));
                 else selectedMonth = toMonthInputValue(addMonths(parseDateInputLocal(`${selectedMonth}-01`), -1));
@@ -330,7 +330,7 @@
             </button>
 
             {#if windowMode === 'week'}
-              <div class="w-[130px]">
+              <div class="min-w-0 flex-1 sm:flex-none sm:w-[130px]">
                 <DatePicker
                   id="zones-week"
                   bind:value={dayPickerValue}
@@ -340,7 +340,7 @@
                 />
               </div>
             {:else}
-              <div class="w-[130px]">
+              <div class="min-w-0 flex-1 sm:flex-none sm:w-[130px]">
                 <MonthPicker
                   id="zones-month"
                   bind:value={monthPickerValue}
@@ -352,7 +352,7 @@
             {/if}
 
             <button
-              class="h-7 px-2 rounded-lg bg-glass2 border border-border/50 hover:bg-glass transition-colors text-[10px] font-mono text-text1"
+              class="h-7 shrink-0 px-2 rounded-lg bg-glass2 border border-border/50 hover:bg-glass transition-colors text-[10px] font-mono text-text1 whitespace-nowrap"
               onclick={jumpToToday}
               type="button"
               aria-label="Jump to current week/month"
@@ -362,7 +362,7 @@
             </button>
 
             <button
-              class="w-7 h-7 rounded-lg bg-glass2 border border-border/50 transition-colors flex items-center justify-center text-text1 {canGoForward ? 'hover:bg-glass' : 'opacity-40 cursor-not-allowed'}"
+              class="w-7 h-7 shrink-0 rounded-lg bg-glass2 border border-border/50 transition-colors flex items-center justify-center text-text1 {canGoForward ? 'hover:bg-glass' : 'opacity-40 cursor-not-allowed'}"
               onclick={() => {
                 if (!canGoForward) return;
                 if (windowMode === 'week') selectedDay = toDateInputValue(addDays(parseDateInputLocal(selectedDay), 7));
@@ -378,7 +378,7 @@
           </div>
         </div>
 
-        <p class="text-[10px] text-text2 text-center font-mono tracking-widest uppercase">
+        <p class="text-[10px] text-text2 text-center font-mono uppercase tracking-widest max-sm:tracking-wide break-words leading-snug px-0.5">
           {windowLabel}
         </p>
       </div>
@@ -409,7 +409,7 @@
             {/each}
           </div>
           
-          <p class="text-[10px] text-text2 italic mt-1 text-center">
+          <p class="text-[10px] text-text2 italic mt-1 text-center break-words leading-snug px-0.5">
             Average distribution across {distribution.validCount} sessions (from {distribution.totalCount} in range). {windowLabel}
           </p>
         </div>

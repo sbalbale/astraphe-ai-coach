@@ -526,7 +526,7 @@
           <span class="text-[10px] uppercase tracking-wider text-slate-400">vs baseline</span>
         </div>
 
-        <div class="mx-auto w-full max-w-md space-y-0">
+        <div class="w-full space-y-0">
         <!-- ─── Vitals & Trends (unbounded, deviation tracks) ─── -->
         <p class="mb-3 text-[10px] uppercase tracking-wider text-slate-400">Vitals &amp; Trends</p>
         <div class="mb-6 flex w-full flex-col">
@@ -735,7 +735,10 @@
             <button
               type="button"
               class="flex-1 flex flex-col items-center gap-1 cursor-pointer"
-              onclick={() => (dayIndex = i)}
+              onclick={() => {
+                endPickerValue = day.date;
+                dayIndex = 6;
+              }}
               aria-label={`Select ${day.label}: ${day.score}/100`}
             >
               <div
