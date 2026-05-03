@@ -247,32 +247,62 @@ def compute_readiness_score(tsb: float) -> int:
     score = 100 / (1 + math.exp(-k * tsb))
     return int(round(np.clip(score, 0, 100)))
 
-def compute_sleep_score(
-    actual_sleep_min: float, 
-    sleep_need_min: float, 
-    rem_pct: float, 
-    deep_pct: float
+def calculate_astrape_sleep_score(
+    actual_sleep_min: float,
+    sleep_need_min: float,
+    rem_min: float,
+    deep_min: float,
+    awake_min: float,
 ) -> int:
     """
-    Compute Sleep Score (0-100) using a linear need ratio and architecture penalties.
+    Computes a strict, volatile Sleep Score (0-100).
+    Removes the safety net by uncapping architecture penalties and punishing fragmentation.
+    Inputs are raw minutes (e.g. Garmin JSON), not precomputed percentages.
     """
     if sleep_need_min <= 0 or actual_sleep_min <= 0:
         return 0
 
-    # Fixed: strict linear ratio instead of a logarithm
-    quantity_score = 100.0 * (float(actual_sleep_min) / float(sleep_need_min))
+    # 1. Base Quantity Score (Linear, max 100)
+    quantity_score = 100.0 * (actual_sleep_min / sleep_need_min)
     quantity_score = min(quantity_score, 100.0)
-    
-    # Quality modifier based on sleep architecture
-    combined_restorative_pct = (rem_pct or 0.0) + (deep_pct or 0.0)
-    
+
+    # Calculate Restorative Percentage based on raw minutes
+    restorative_pct = ((rem_min + deep_min) / actual_sleep_min) * 100.0
+
+    # 2. Uncapped Architecture Penalty (Quality)
+    # The body requires ~30% restorative sleep.
+    # This applies a steep 2.5% multiplier penalty for every 1% missed below the threshold.
     quality_multiplier = 1.0
-    if combined_restorative_pct < 30.0:
-        deficit = 30.0 - combined_restorative_pct
-        quality_multiplier = max(0.85, 1.0 - (deficit * 0.01))
-        
-    final_score = quantity_score * quality_multiplier
+    if restorative_pct < 30.0:
+        deficit = 30.0 - restorative_pct
+        quality_multiplier = max(0.0, 1.0 - (deficit * 0.025))
+
+    # 3. Efficiency Penalty (Fragmentation)
+    # Deducts flat points for time spent awake after falling asleep.
+    # 0.3 points per minute = an 18-point drop for an hour of tossing and turning.
+    efficiency_penalty = awake_min * 0.3
+
+    # 4. Final Calculation
+    final_score = (quantity_score * quality_multiplier) - efficiency_penalty
+
     return int(round(np.clip(final_score, 0, 100)))
+
+
+def compute_sleep_score(
+    actual_sleep_min: float,
+    sleep_need_min: float,
+    rem_min: float,
+    deep_min: float,
+    awake_min: float,
+) -> int:
+    """Astrape sleep score (0-100); delegates to the strict athlete sleep model."""
+    return calculate_astrape_sleep_score(
+        actual_sleep_min,
+        sleep_need_min,
+        rem_min,
+        deep_min,
+        awake_min,
+    )
 
 def compute_recovery_score(
     hrv_today: float,
