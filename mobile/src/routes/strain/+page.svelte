@@ -17,11 +17,10 @@
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { api } from '$lib/api';
   import { addDays, format, subDays } from 'date-fns';
-  import {
-    getBoundedScoreColor,
-    boundedScoreCssColor,
-    formCssColor
-  } from '$lib/scoreColors';
+  import { boundedScoreCssColor, formCssColor, workoutOutputTextClass } from '$lib/scoreColors';
+
+  const CTL_IDENTITY_HEX = '#3b82f6';
+  const ATL_IDENTITY_HEX = '#64748b';
 
   const isConnected = $derived(Object.values(athleteStore.syncStatus?.integrations || {}).some((i: any) => i.connected));
   
@@ -359,16 +358,12 @@
         </div>
       </Card>
 
-      <!-- Metrics Grid.
-           CTL (fitness) and ATL (fatigue) are raw absolute training-load
-           numbers and stay neutral. Only Form (TSB) is colored, using the
-           three-band rule from formCssColor. -->
       <div class="grid grid-cols-3 gap-2">
         <Card style="padding: 8px 10px;">
-          <MetricBadge label="Fatigue" value={Math.round(d.atl)} unit="" color="var(--text0)" sub="ATL" />
+          <MetricBadge label="Fatigue" value={Math.round(d.atl)} unit="" color={ATL_IDENTITY_HEX} sub="ATL" />
         </Card>
         <Card style="padding: 8px 10px;">
-          <MetricBadge label="Fitness" value={Math.round(d.ctl)} unit="" color="var(--text0)" sub="CTL" />
+          <MetricBadge label="Fitness" value={Math.round(d.ctl)} unit="" color={CTL_IDENTITY_HEX} sub="CTL" />
         </Card>
         <Card style="padding: 8px 10px;">
           <MetricBadge label="Form" value={Math.round(d.tsb)} unit="" color={formCssColor(d.tsb)} sub="TSB" />
@@ -444,6 +439,7 @@
             {#each d.workouts as w (w.id || w.started_at)}
               {@const strainVal = Number.isFinite(Number(w?.strain_score)) ? Math.round(Number(w.strain_score)) : null}
               {@const tssVal = Number.isFinite(Number(w?.tss)) ? Math.round(Number(w.tss)) : null}
+              {@const actCls = strainVal === null ? 'text-text2' : workoutOutputTextClass(strainVal)}
               <button 
                 type="button"
                 class="block w-full text-left active:scale-[0.98] transition-transform"
@@ -455,21 +451,20 @@
                       {getWorkoutIcon(w.sport)}
                     </div>
                     <div class="flex-1">
-                      <p class="text-[13px] font-semibold">{w.title || (getWorkoutLabel(w.sport) + ' Session')}</p>
+                      <p class="text-[13px] font-semibold {actCls}">{w.title || (getWorkoutLabel(w.sport) + ' Session')}</p>
                       <p class="text-[11px] text-text2">
                         {Math.floor(getDurationSecs(w) / 60)} min · {format(new Date(w.started_at), (athleteStore.profile as any)?.time_format === '24h' ? 'HH:mm' : 'h:mm a')}
                       </p>
                     </div>
                     <div class="text-right flex flex-col gap-1">
                       <div>
-                        <p class="text-[14px] font-bold {strainVal === null ? 'text-text2' : getBoundedScoreColor(strainVal, true)}">
+                        <p class="text-[14px] font-bold {actCls}">
                           {strainVal === null ? '--' : strainVal}
                         </p>
                         <p class="text-[9px] text-text2 font-mono">STRAIN</p>
                       </div>
                       <div>
-                        <!-- TSS is a raw absolute training-stress dose: never color-coded. -->
-                        <p class="text-[14px] font-bold {tssVal === null ? 'text-text2' : 'text-text0'}">
+                        <p class="text-[14px] font-bold {tssVal === null ? 'text-text2' : actCls}">
                           {tssVal === null ? '--' : tssVal}
                         </p>
                         <p class="text-[9px] text-text2 font-mono">TSS</p>
@@ -509,13 +504,14 @@
   {#if selectedWorkout}
     {@const selectedStrainVal = Number.isFinite(Number(selectedWorkout?.strain_score)) ? Math.round(Number(selectedWorkout.strain_score)) : null}
     {@const selectedTssVal = Number.isFinite(Number(selectedWorkout?.tss)) ? Math.round(Number(selectedWorkout.tss)) : null}
+    {@const modalActCls = selectedStrainVal === null ? 'text-text2' : workoutOutputTextClass(selectedStrainVal)}
     <div class="flex flex-col gap-6">
       <div class="flex items-center gap-4">
         <div class="w-14 h-14 rounded-2xl flex items-center justify-center text-[28px] {getWorkoutBg(selectedWorkout.sport)}">
           {getWorkoutIcon(selectedWorkout.sport)}
         </div>
         <div>
-          <h3 class="text-lg font-bold">{selectedWorkout.title || (getWorkoutLabel(selectedWorkout.sport) + ' Session')}</h3>
+          <h3 class="text-lg font-bold {modalActCls}">{selectedWorkout.title || (getWorkoutLabel(selectedWorkout.sport) + ' Session')}</h3>
           <p class="text-xs text-text2 font-mono uppercase">
             {format(new Date(selectedWorkout.started_at), 'MMMM d, yyyy')} · {format(new Date(selectedWorkout.started_at), (athleteStore.profile as any)?.time_format === '24h' ? 'HH:mm' : 'h:mm a')}
           </p>
@@ -526,7 +522,7 @@
         <div class="p-4 rounded-2xl bg-glass border border-border/50">
           <p class="text-[10px] text-text2 font-mono uppercase mb-1">Intensity</p>
           <div class="flex items-baseline gap-1">
-            <span class="text-[20px] font-bold {selectedStrainVal === null ? 'text-text2' : getBoundedScoreColor(selectedStrainVal, true)}">
+            <span class="text-[20px] font-bold {modalActCls}">
               {selectedStrainVal === null ? '--' : selectedStrainVal}
             </span>
             <span class="text-[10px] text-text2 font-mono">STRAIN</span>
@@ -551,8 +547,7 @@
         <div class="p-4 rounded-2xl bg-glass border border-border/50">
           <p class="text-[10px] text-text2 font-mono uppercase mb-1">Stress</p>
           <div class="flex items-baseline gap-1">
-            <!-- TSS is a raw absolute training-stress dose: never color-coded. -->
-            <span class="text-[20px] font-bold {selectedTssVal === null ? 'text-text2' : 'text-text0'}">
+            <span class="text-[20px] font-bold {selectedTssVal === null ? 'text-text2' : modalActCls}">
               {selectedTssVal === null ? '--' : selectedTssVal}
             </span>
             <span class="text-[10px] text-text2 font-mono">TSS</span>

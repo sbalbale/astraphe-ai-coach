@@ -14,11 +14,7 @@
   import DatePicker from '$lib/components/DatePicker.svelte';
   import TrendIndicator from '$lib/components/TrendIndicator.svelte';
   import DeviationTrack from '$lib/components/DeviationTrack.svelte';
-  import {
-    boundedScoreCssColor,
-    getBoundedScoreColor,
-    zScoreCssColor
-  } from '$lib/scoreColors';
+  import { boundedScoreCssColor, zScoreCssColor } from '$lib/scoreColors';
   import { analysisNavEpoch } from '$lib/analysisNavEpoch.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { api } from '$lib/api';
@@ -479,13 +475,25 @@
       <div class="grid grid-cols-3 gap-2">
         <Card style="padding: 8px 10px;">
           <div class="flex items-start justify-between gap-1">
-            <MetricBadge label="HRV" value={d.hrv} unit="ms" color="var(--text0)" sub="Avg" />
+            <MetricBadge
+              label="HRV"
+              value={d.hrv}
+              unit="ms"
+              color={hrvZ === null ? 'var(--text2)' : zScoreCssColor(hrvZ)}
+              sub="Avg"
+            />
             <TrendIndicator z={hrvZ} size={14} />
           </div>
         </Card>
         <Card style="padding: 8px 10px;">
           <div class="flex items-start justify-between gap-1">
-            <MetricBadge label="RHR" value={d.rhr} unit="bpm" color="var(--text0)" sub="Avg" />
+            <MetricBadge
+              label="RHR"
+              value={d.rhr}
+              unit="bpm"
+              color={rhrZ === null ? 'var(--text2)' : zScoreCssColor(rhrZ, true)}
+              sub="Avg"
+            />
             <TrendIndicator z={rhrZ} inverted size={14} />
           </div>
         </Card>
@@ -501,9 +509,9 @@
       </div>
       
       <!-- Contributing Factors — split by behavior.
-           Unbounded vitals (HRV, RHR, Body Temp, SpO2): raw value text is
-             neutral; the colored arrow + delta + center-anchored deviation
-             dot carry the z-score signal. Track center == 7-day EWMA
+           Unbounded vitals (HRV, RHR, Body Temp, SpO2): raw absolute text is
+             neutral (slate-200); the colored arrow + delta + center-anchored
+             deviation dot carry the z-score signal. Track center == 7-day EWMA
              baseline, and the highlighted band marks the ±0.5 SD "normal
              range".
            Bounded scores (Sleep Quality, Prior Load): raw value text is
@@ -515,30 +523,35 @@
       <Card style="padding: 14px;">
         <div class="flex items-center justify-between mb-3">
           <p class="text-[13px] font-semibold">Contributing Factors</p>
-          <span class="text-[10px] text-text2 font-mono uppercase tracking-[0.1em]">vs baseline</span>
+          <span class="text-[10px] uppercase tracking-wider text-slate-400">vs baseline</span>
         </div>
 
+        <div class="mx-auto w-full max-w-md space-y-0">
         <!-- ─── Vitals & Trends (unbounded, deviation tracks) ─── -->
-        <p class="text-[9px] text-text2 font-mono uppercase tracking-[0.14em] mb-2">Vitals &amp; Trends</p>
-        <div class="flex flex-col gap-3.5 mb-4">
+        <p class="mb-3 text-[10px] uppercase tracking-wider text-slate-400">Vitals &amp; Trends</p>
+        <div class="mb-6 flex w-full flex-col">
           <!-- HRV -->
-          <div class="flex flex-col gap-1.5">
-            <div class="flex items-start justify-between gap-3">
+          <div class="flex w-full flex-col gap-2 border-b border-white/[0.06] py-5">
+            <!-- Top row: label + arrow | Δ + neutral absolute -->
+            <div class="flex w-full items-center justify-between gap-4">
               <div class="min-w-0 flex items-center gap-1.5">
-                <p class="text-[10px] text-text2 font-mono uppercase tracking-[0.1em]">HRV</p>
+                <p class="text-[11px] font-semibold uppercase tracking-wide text-slate-200">HRV</p>
                 <TrendIndicator z={hrvZ} size={12} />
               </div>
               <div class="shrink-0 flex items-baseline gap-2 leading-tight">
-                <span class="text-[11px] font-mono" style="color: {hrvZ === null ? 'var(--text2)' : zScoreCssColor(hrvZ)}">
+                <span class="text-[11px] font-mono tabular-nums" style="color: {hrvZ === null ? 'var(--text2)' : zScoreCssColor(hrvZ)}">
                   {formatSignedInt(hrvDelta)}
                 </span>
-                <span class="text-[12px] font-semibold text-text0">
+                <span class={`text-[12px] font-semibold tabular-nums ${hrvToday === null ? 'text-slate-500' : 'text-slate-200'}`}>
                   {hrvToday === null ? '--' : `${hrvToday}ms`}
                 </span>
               </div>
             </div>
-            <DeviationTrack z={hrvZ} />
-            <p class="text-[11px] text-text2 leading-snug">
+            <!-- Full-width track -->
+            <div class="w-full">
+              <DeviationTrack z={hrvZ} />
+            </div>
+            <p class="text-[11px] leading-snug text-slate-400">
               {hrvToday === null
                 ? 'Not available for this day.'
                 : hrvBaseline === null
@@ -550,23 +563,25 @@
           </div>
 
           <!-- Resting HR (inverted: higher == worse) -->
-          <div class="flex flex-col gap-1.5">
-            <div class="flex items-start justify-between gap-3">
+          <div class="flex w-full flex-col gap-2 border-b border-white/[0.06] py-5">
+            <div class="flex w-full items-center justify-between gap-4">
               <div class="min-w-0 flex items-center gap-1.5">
-                <p class="text-[10px] text-text2 font-mono uppercase tracking-[0.1em]">Resting HR</p>
+                <p class="text-[11px] font-semibold uppercase tracking-wide text-slate-200">Resting HR</p>
                 <TrendIndicator z={rhrZ} inverted size={12} />
               </div>
               <div class="shrink-0 flex items-baseline gap-2 leading-tight">
-                <span class="text-[11px] font-mono" style="color: {rhrZ === null ? 'var(--text2)' : zScoreCssColor(rhrZ, true)}">
+                <span class="text-[11px] font-mono tabular-nums" style="color: {rhrZ === null ? 'var(--text2)' : zScoreCssColor(rhrZ, true)}">
                   {formatSignedInt(rhrDelta)}
                 </span>
-                <span class="text-[12px] font-semibold text-text0">
+                <span class={`text-[12px] font-semibold tabular-nums ${rhrToday === null ? 'text-slate-500' : 'text-slate-200'}`}>
                   {rhrToday === null ? '--' : `${rhrToday}bpm`}
                 </span>
               </div>
             </div>
-            <DeviationTrack z={rhrZ} inverted />
-            <p class="text-[11px] text-text2 leading-snug">
+            <div class="w-full">
+              <DeviationTrack z={rhrZ} inverted />
+            </div>
+            <p class="text-[11px] leading-snug text-slate-400">
               {rhrToday === null
                 ? 'Not available for this day.'
                 : rhrBaseline === null || rhrDelta === null
@@ -578,23 +593,25 @@
           </div>
 
           <!-- Body Temp (inverted: deviation higher == worse) -->
-          <div class="flex flex-col gap-1.5">
-            <div class="flex items-start justify-between gap-3">
+          <div class="flex w-full flex-col gap-2 border-b border-white/[0.06] py-5">
+            <div class="flex w-full items-center justify-between gap-4">
               <div class="min-w-0 flex items-center gap-1.5">
-                <p class="text-[10px] text-text2 font-mono uppercase tracking-[0.1em]">Body Temp</p>
+                <p class="text-[11px] font-semibold uppercase tracking-wide text-slate-200">Body Temp</p>
                 <TrendIndicator z={bodyTempZ} inverted size={12} />
               </div>
               <div class="shrink-0 flex items-baseline gap-2 leading-tight">
-                <span class="text-[11px] font-mono" style="color: {bodyTempZ === null ? 'var(--text2)' : zScoreCssColor(bodyTempZ, true)}">
+                <span class="text-[11px] font-mono tabular-nums" style="color: {bodyTempZ === null ? 'var(--text2)' : zScoreCssColor(bodyTempZ, true)}">
                   {bodyTempDeltaDisplay === null ? '--' : formatSigned1dp(bodyTempDeltaDisplay, isImperial ? '°F' : '°C')}
                 </span>
-                <span class="text-[12px] font-semibold text-text0">
+                <span class={`text-[12px] font-semibold tabular-nums ${bodyTempDisplay === null ? 'text-slate-500' : 'text-slate-200'}`}>
                   {bodyTempDisplay === null ? '--' : `${bodyTempDisplay}${isImperial ? '°F' : '°C'}`}
                 </span>
               </div>
             </div>
-            <DeviationTrack z={bodyTempZ} inverted />
-            <p class="text-[11px] text-text2 leading-snug">
+            <div class="w-full">
+              <DeviationTrack z={bodyTempZ} inverted />
+            </div>
+            <p class="text-[11px] leading-snug text-slate-400">
               {bodyTempCToday === null
                 ? 'Not available for this day.'
                 : bodyTempBaselineDisplay === null || bodyTempDeltaDisplay === null
@@ -606,23 +623,25 @@
           </div>
 
           <!-- SpO2 -->
-          <div class="flex flex-col gap-1.5">
-            <div class="flex items-start justify-between gap-3">
+          <div class="flex w-full flex-col gap-2 border-b border-white/[0.06] py-5 last:border-b-0">
+            <div class="flex w-full items-center justify-between gap-4">
               <div class="min-w-0 flex items-center gap-1.5">
-                <p class="text-[10px] text-text2 font-mono uppercase tracking-[0.1em]">SpO2</p>
+                <p class="text-[11px] font-semibold uppercase tracking-wide text-slate-200">SpO2</p>
                 <TrendIndicator z={spo2Z} size={12} />
               </div>
               <div class="shrink-0 flex items-baseline gap-2 leading-tight">
-                <span class="text-[11px] font-mono" style="color: {spo2Z === null ? 'var(--text2)' : zScoreCssColor(spo2Z)}">
+                <span class="text-[11px] font-mono tabular-nums" style="color: {spo2Z === null ? 'var(--text2)' : zScoreCssColor(spo2Z)}">
                   {formatSignedInt(spo2Delta)}
                 </span>
-                <span class="text-[12px] font-semibold text-text0">
+                <span class={`text-[12px] font-semibold tabular-nums ${spo2Pct === null ? 'text-slate-500' : 'text-slate-200'}`}>
                   {spo2Pct === null ? '--' : `${spo2Pct}%`}
                 </span>
               </div>
             </div>
-            <DeviationTrack z={spo2Z} />
-            <p class="text-[11px] text-text2 leading-snug">
+            <div class="w-full">
+              <DeviationTrack z={spo2Z} />
+            </div>
+            <p class="text-[11px] leading-snug text-slate-400">
               {spo2Pct === null
                 ? 'Not available for this day.'
                 : spo2Baseline === null || spo2Delta === null
@@ -637,28 +656,28 @@
         </div>
 
         <!-- ─── Performance Drivers (bounded scores, progress bars) ─── -->
-        <p class="text-[9px] text-text2 font-mono uppercase tracking-[0.14em] mb-2">Performance Drivers</p>
-        <div class="flex flex-col gap-3.5">
+        <p class="mb-3 text-[10px] uppercase tracking-wider text-slate-400">Performance Drivers</p>
+        <div class="flex w-full flex-col">
           <!-- Sleep Quality (rule of thirds, not inverted) -->
-          <div class="flex flex-col gap-1.5">
-            <div class="flex items-start justify-between gap-3">
-              <p class="text-[10px] text-text2 font-mono uppercase tracking-[0.1em]">Sleep Quality</p>
+          <div class="flex w-full flex-col gap-2 border-b border-white/[0.06] py-5">
+            <div class="flex w-full items-center justify-between gap-4">
+              <p class="text-[11px] font-semibold uppercase tracking-wide text-slate-200">Sleep Quality</p>
               <div class="shrink-0 flex items-baseline gap-2 leading-tight">
-                <span class="text-[11px] font-mono" style="color: {sleepScoreToday === null ? 'var(--text2)' : boundedScoreCssColor(sleepScoreToday)}">
+                <span class="text-[11px] font-mono tabular-nums" style="color: {sleepScoreToday === null ? 'var(--text2)' : boundedScoreCssColor(sleepScoreToday)}">
                   {formatSignedInt(sleepDelta)}
                 </span>
-                <span class="text-[12px] font-semibold text-text0">
+                <span class={`text-[12px] font-semibold tabular-nums ${sleepScoreToday === null ? 'text-slate-500' : 'text-slate-200'}`}>
                   {sleepScoreToday === null ? '--' : `${sleepScoreToday}%`}
                 </span>
               </div>
             </div>
-            <div class="h-[6px] rounded-full overflow-hidden bg-white/[0.04]">
+            <div class="h-[6px] w-full overflow-hidden rounded-full bg-slate-800/95 ring-1 ring-inset ring-white/[0.12]">
               <div
                 class="h-full rounded-full transition-[width] duration-300"
                 style="width: {sleepFillPct}%; background: {sleepScoreToday === null ? 'var(--text2)' : boundedScoreCssColor(sleepScoreToday)};"
               ></div>
             </div>
-            <p class="text-[11px] text-text2 leading-snug">
+            <p class="text-[11px] leading-snug text-slate-400">
               {sleepScoreToday === null
                 ? 'Not available for this day.'
                 : `${sleepDurationHM === null ? '--' : sleepDurationHM} asleep with ${sleepScoreToday}% quality.${sleepDeepPct === null ? '' : ` Deep sleep at ${sleepDeepPct}%.`}`}
@@ -666,25 +685,25 @@
           </div>
 
           <!-- Prior Load (strain score, INVERTED rule of thirds — high == bad) -->
-          <div class="flex flex-col gap-1.5">
-            <div class="flex items-start justify-between gap-3">
-              <p class="text-[10px] text-text2 font-mono uppercase tracking-[0.1em]">Prior Load</p>
+          <div class="flex w-full flex-col gap-2 py-5">
+            <div class="flex w-full items-center justify-between gap-4">
+              <p class="text-[11px] font-semibold uppercase tracking-wide text-slate-200">Prior Load</p>
               <div class="shrink-0 flex items-baseline gap-2 leading-tight">
-                <span class="text-[11px] font-mono" style="color: {priorStrainScore === null ? 'var(--text2)' : boundedScoreCssColor(priorStrainScore, true)}">
+                <span class="text-[11px] font-mono tabular-nums" style="color: {priorStrainScore === null ? 'var(--text2)' : boundedScoreCssColor(priorStrainScore, true)}">
                   {formatSignedInt(priorStrainDelta)}
                 </span>
-                <span class="text-[12px] font-semibold text-text0">
+                <span class={`text-[12px] font-semibold tabular-nums ${priorLoad?.dailyTss == null ? 'text-slate-500' : 'text-slate-200'}`}>
                   {priorLoad?.dailyTss == null ? '--' : `${priorLoad.dailyTss} TSS`}
                 </span>
               </div>
             </div>
-            <div class="h-[6px] rounded-full overflow-hidden bg-white/[0.04]">
+            <div class="h-[6px] w-full overflow-hidden rounded-full bg-slate-800/95 ring-1 ring-inset ring-white/[0.12]">
               <div
                 class="h-full rounded-full transition-[width] duration-300"
                 style="width: {priorFillPct}%; background: {priorStrainScore === null ? 'var(--text2)' : boundedScoreCssColor(priorStrainScore, true)};"
               ></div>
             </div>
-            <p class="text-[11px] text-text2 leading-snug">
+            <p class="text-[11px] leading-snug text-slate-400">
               {priorLoad === null
                 ? 'Not available for this day.'
                 : priorStrainScore === null
@@ -698,6 +717,7 @@
                         : `Yesterday's strain (${priorStrainScore}/100) tracked your 30-day average.`}
             </p>
           </div>
+        </div>
         </div>
       </Card>
 
