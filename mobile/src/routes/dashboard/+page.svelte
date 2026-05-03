@@ -42,7 +42,20 @@
   const todayBio = $derived(athleteStore.biometrics?.series?.find((s: any) => s.date === todayStr));
   const todayLoad = $derived(athleteStore.metrics?.trainingLoadData?.find((m: any) => isoDate(m?.date) === todayStr));
 
-  const todayReadiness = $derived(todayBio?.readiness_score ?? todayBio?.recovery_score ?? null);
+  const firstPositiveFiniteNumber = (...candidates: unknown[]): number | null => {
+    for (const v of candidates) {
+      if (typeof v === 'number' && Number.isFinite(v) && v > 0) return v;
+      // Allow numeric strings, but keep the same "missing/0 => null" behavior.
+      if (typeof v === 'string' && v.trim() !== '') {
+        const n = Number(v);
+        if (Number.isFinite(n) && n > 0) return n;
+      }
+    }
+    return null;
+  };
+
+  const todayReadiness = $derived(firstPositiveFiniteNumber(todayBio?.readiness_score, todayBio?.recovery_score));
+  const todayRecoveryScore = $derived(firstPositiveFiniteNumber(todayBio?.recovery_score, todayBio?.readiness_score));
   const todayHrv = $derived(todayBio?.hrv_rmssd ?? null);
   const todaySleepMin = $derived(todayBio?.sleep_duration_min ?? null);
   const todaySleepScore = $derived(todayBio?.sleep_score ?? null);
@@ -51,7 +64,11 @@
   const latestHrv = $derived(todayHrv ?? latestBio?.hrv_rmssd ?? null);
   const latestSleepMin = $derived(todaySleepMin ?? latestBio?.sleep_duration_min ?? null);
   const latestSleepScore = $derived(todaySleepScore ?? latestBio?.sleep_score ?? null);
-  const latestRecovery = $derived(todayReadiness ?? latestBio?.readiness_score ?? latestBio?.recovery_score ?? null);
+  // The dashboard has a separate "Readiness Score" card above. This panel is explicitly "Recovery trends",
+  // so prefer the raw `recovery_score` series when available.
+  const latestRecovery = $derived(
+    firstPositiveFiniteNumber(todayRecoveryScore, latestBio?.recovery_score, latestBio?.readiness_score)
+  );
 
   const todayCtl = $derived(todayLoad?.ctl ?? null);
   const todayAtl = $derived(todayLoad?.atl ?? null);
@@ -156,10 +173,10 @@
   const recoveryTrend = $derived.by(() => {
     const series = athleteStore.biometrics?.series || [];
     return series.slice(-28).map((s: any) => {
-      const v = Number(s?.readiness_score ?? s?.recovery_score);
+      const v = firstPositiveFiniteNumber(s?.recovery_score, s?.readiness_score);
       return {
         date: typeof s?.date === 'string' ? s.date : '',
-        value: Number.isFinite(v) && v > 0 ? v : null
+        value: v
       };
     });
   });
