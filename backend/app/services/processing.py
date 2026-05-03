@@ -333,6 +333,9 @@ def process_and_save_biometrics(payload: DailyBiometrics, athlete_id: str, db):
     # Time Asleep MUST equal Time in Bed minus Awake Time
     total_sleep_min = int(round(total_in_bed_min - total_awake_min))
 
+    rem_sleep_min = float(weighted_rem) / 100.0 if total_in_bed_min > 0 else 0.0
+    deep_sleep_min = float(weighted_deep) / 100.0 if total_in_bed_min > 0 else 0.0
+
     # 3. Fetch Previous Day's Biometrics (for sleep debt/strain)
     prev_date = payload.date - timedelta(days=1)
     prev_res = db.table("biometrics").select("sleep_debt_min, strain_score").eq("athlete_id", athlete_id).eq("date", prev_date.isoformat()).maybe_single().execute()
@@ -410,10 +413,8 @@ def process_and_save_biometrics(payload: DailyBiometrics, athlete_id: str, db):
             prior_day_atl_max_30d = max(atls) or 1.0
             prior_day_atl = atls[-1]
             
-    # 6. Process Sleep Architecture (Aggregated)
-    # New proprietary sleep need calculation logic should be integrated if different, 
-    # but for now we follow the user's provided compute_sleep_score.
-    # The sleep need still uses a baseline (e.g. 480) + strain/debt impact.
+    # 6. Process Sleep Architecture (Aggregated) — strict sleep score (minutes in / out of bed)
+    # Sleep need uses baseline + strain/debt impact.
     carried_debt = float(prev_debt or 0.0) * SLEEP_DEBT_DECAY_RATE
     sleep_need = compute_sleep_need(
         baseline_min=DEFAULT_BASELINE_SLEEP_MIN,
@@ -424,8 +425,9 @@ def process_and_save_biometrics(payload: DailyBiometrics, athlete_id: str, db):
     sleep_score = compute_sleep_score(
         actual_sleep_min=total_sleep_min,
         sleep_need_min=sleep_need,
-        rem_pct=agg_rem,
-        deep_pct=agg_deep
+        rem_min=rem_sleep_min,
+        deep_min=deep_sleep_min,
+        awake_min=total_awake_min,
     )
 
     next_night_debt = float(np.clip(float(sleep_need) - float(total_sleep_min), 0.0, MAX_SLEEP_DEBT_MIN))

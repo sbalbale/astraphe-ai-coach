@@ -165,12 +165,28 @@ def main():
                 current_debt_min=carried_debt,
             )
             
-            duration = row.get("sleep_duration_min") or 0
+            duration = float(row.get("sleep_duration_min") or 0)
+            in_bed_raw = row.get("sleep_in_bed_min")
+            in_bed = float(in_bed_raw) if in_bed_raw else 0.0
+            if in_bed <= 0 and duration > 0:
+                aw_pct = float(row.get("sleep_awake_pct") or 0)
+                if aw_pct < 100.0:
+                    in_bed = duration / (1.0 - aw_pct / 100.0)
+                else:
+                    in_bed = duration
+            rem_pct = float(row.get("sleep_rem_pct") or 0)
+            deep_pct = float(row.get("sleep_deep_pct") or 0)
+            awake_pct = float(row.get("sleep_awake_pct") or 0)
+            rem_min = (rem_pct / 100.0) * in_bed
+            deep_min = (deep_pct / 100.0) * in_bed
+            awake_min = (awake_pct / 100.0) * in_bed
+
             sleep_score = compute_sleep_score(
                 actual_sleep_min=duration,
                 sleep_need_min=sleep_need,
-                rem_pct=row.get("sleep_rem_pct"),
-                deep_pct=row.get("sleep_deep_pct")
+                rem_min=rem_min,
+                deep_min=deep_min,
+                awake_min=awake_min,
             )
             
             # Update debt for the next day (decay + strict physiological cap)
