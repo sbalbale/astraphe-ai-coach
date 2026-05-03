@@ -225,13 +225,15 @@ def get_coach_response(
     current_tss: float = 0.0,
     db: Client | None = None,
     conversation_id: str | None = None,
+    model_name: str | None = None,
 ) -> str:
     system_instruction = load_coach_instructions()
     context_block = _build_system_context(db, athlete_id, current_tss=current_tss, conversation_id=conversation_id) if db else (
         f"[SYSTEM CONTEXT - DO NOT SHOW TO USER]\nAthlete ID: {athlete_id}\nMost recent workout TSS: {current_tss}\n[END CONTEXT]"
     )
     final_prompt = f"{system_instruction}\n\n{context_block}\n\nAthlete Message: {message}"
-    model = genai.GenerativeModel(settings.GEMINI_MODEL)
+    effective_model = (model_name or settings.GEMINI_MODEL)
+    model = genai.GenerativeModel(effective_model)
     response = model.generate_content(final_prompt)
     return response.text
 
@@ -241,13 +243,15 @@ async def get_coach_response_stream(
     current_tss: float = 0.0,
     db: Client | None = None,
     conversation_id: str | None = None,
+    model_name: str | None = None,
 ):
     system_instruction = load_coach_instructions()
     context_block = _build_system_context(db, athlete_id, current_tss=current_tss, conversation_id=conversation_id) if db else (
         f"[SYSTEM CONTEXT - DO NOT SHOW TO USER]\nAthlete ID: {athlete_id}\nMost recent workout TSS: {current_tss}\n[END CONTEXT]"
     )
     final_prompt = f"{system_instruction}\n\n{context_block}\n\nAthlete Message: {message}"
-    model = genai.GenerativeModel(settings.GEMINI_MODEL)
+    effective_model = (model_name or settings.GEMINI_MODEL)
+    model = genai.GenerativeModel(effective_model)
     response = model.generate_content(final_prompt, stream=True)
     for chunk in response:
         if chunk.text:

@@ -54,7 +54,23 @@ async def get_current_athlete(
         print(f"Auth error: {str(e)}")
         if settings.APP_ENV == "development" and settings.TEST_ATHLETE_ID:
             print(f"WARNING: Falling back to TEST_ATHLETE_ID: {settings.TEST_ATHLETE_ID}")
-            return settings.TEST_ATHLETE_ID
+            # Only safe if the athlete row actually exists in this database.
+            try:
+                exists = (
+                    db.table("athletes")
+                    .select("id")
+                    .eq("id", settings.TEST_ATHLETE_ID)
+                    .maybe_single()
+                    .execute()
+                )
+                if exists and exists.data and exists.data.get("id"):
+                    return settings.TEST_ATHLETE_ID
+            except Exception:
+                pass
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid or stale auth token (local Supabase was likely reset). Please sign out and sign in again.",
+            )
         raise HTTPException(status_code=401, detail=f"Invalid or missing token: {str(e)}")
 
 

@@ -276,54 +276,52 @@ def compute_sleep_score(
 
 def compute_recovery_score(
     hrv_today: float,
-    hrv_baseline_30d: float,
-    resting_hr: int,
-    resting_hr_baseline_30d: float,
+    hrv_avg_30d: float,
+    hrv_std_30d: float,
+    rhr_today: int,
+    rhr_avg_30d: float,
+    rhr_std_30d: float,
     sleep_score: int,
     prior_day_atl: float,
     prior_day_atl_max_30d: float,
-    skin_temp_deviation: float,
-    spo2_pct: float,
 ) -> int:
     """
-    Compute the composite Recovery Score (0–100).
-    Uses linear deviation for HRV to correctly penalize physiological stress.
+    Computes a highly volatile Recovery Score (0-100) using Z-scores and a Sigmoid curve.
+    Mirrors professional algorithms by letting the Autonomic Nervous System dominate.
     """
-    scores = {}
-    
-    # 1. HRV component (weight: 35%) - Linear percentage deviation
-    if hrv_baseline_30d > 0 and hrv_today > 0:
-        hrv_delta_pct = (float(hrv_today) - float(hrv_baseline_30d)) / float(hrv_baseline_30d)
-        scores['hrv'] = np.clip(50 + (hrv_delta_pct * 100), 0, 100)
-    else:
-        scores['hrv'] = 50.0
 
-    # 2. Resting HR component (weight: 20%) - Linear penalty for elevated RHR
-    rhr_delta = resting_hr - resting_hr_baseline_30d
-    scores['rhr'] = np.clip(100 - (rhr_delta * 5), 0, 100)
-    
-    # 3. Sleep score component (weight: 30%) - Direct passthrough
-    scores['sleep'] = float(sleep_score)
-    
-    # 4. Prior load component (weight: 10%) - Freshness relative to peak ATL
+    # Prevent division by zero for incredibly stable athletes
+    hrv_std = max(float(hrv_std_30d or 0.0), 1.0)
+    rhr_std = max(float(rhr_std_30d or 0.0), 1.0)
+
+    # 1. Calculate Standard Deviations (Z-Scores)
+    z_hrv = (float(hrv_today) - float(hrv_avg_30d)) / hrv_std
+    # Inverted because lower RHR is better (positive means RHR dropped vs baseline)
+    z_rhr = (float(rhr_avg_30d) - float(rhr_today)) / rhr_std
+
+    # Combine into a primary Autonomic Nervous System (ANS) index
+    # HRV usually dictates slightly more physiological truth than RHR
+    ans_z = (z_hrv * 0.6) + (z_rhr * 0.4)
+
+    # 2. Sigmoid Mapping (WHOOP-like swing)
+    # Maps an average day (Z=0) to roughly a 60-65 (Blue/Teal boundary)
+    # Maps a terrible day (Z=-2) to < 20 (Red)
+    ans_score = 100.0 / (1.0 + math.exp(-1.5 * (ans_z - 0.4)))
+
+    # 3. Calculate Load Penalty (Freshness)
     safe_max_atl = max(prior_day_atl_max_30d, 1.0)
     load_ratio = prior_day_atl / safe_max_atl
-    scores['load'] = np.clip(100 - (load_ratio * 60), 0, 100)
-    
-    # 5. Illness/Vitals indicator (weight: 5%)
-    illness_penalty = 0.0
-    if skin_temp_deviation > 0.5:
-        illness_penalty += min((skin_temp_deviation - 0.5) * 40, 50.0)
-    if spo2_pct < 95.0:
-        illness_penalty += (95.0 - spo2_pct) * 10
-        
-    scores['vitals'] = np.clip(100 - illness_penalty, 0, 100)
-    
-    # Weighted composite sum
-    weights = {'hrv': 0.35, 'rhr': 0.20, 'sleep': 0.30, 'load': 0.10, 'vitals': 0.05}
-    composite = sum(scores[k] * weights[k] for k in scores)
-    
-    return int(round(np.clip(composite, 0, 100)))
+    load_score = np.clip(100 - (load_ratio * 60), 0, 100)
+
+    # 4. Dynamic Blending (ANS trump card)
+    if ans_score < 40:
+        final_score = (ans_score * 0.80) + (float(sleep_score) * 0.15) + (float(load_score) * 0.05)
+    elif ans_score > 70:
+        final_score = (ans_score * 0.50) + (float(sleep_score) * 0.35) + (float(load_score) * 0.15)
+    else:
+        final_score = (ans_score * 0.65) + (float(sleep_score) * 0.25) + (float(load_score) * 0.10)
+
+    return int(round(np.clip(final_score, 0, 100)))
 
 # ==========================================
 # SLEEP NEED & DEBT CALCULATIONS
@@ -379,6 +377,36 @@ def compute_sleep_debt_series(
 # ==========================================
 # TRENDING & UTILITY (HELPER FUNCTIONS)
 # ==========================================
+
+def compute_ewma_stats(series: np.ndarray, span: int = 30) -> tuple[float, float]:
+    """
+    Computes the Exponentially Weighted Moving Average (EWMA) and Standard Deviation (EWMSD)
+    for a 1D NumPy array.
+
+    Uses alpha = 2 / (span + 1), matching common EWMA conventions.
+    Returns (final_mean, final_std) for the last element of the EWMA curve.
+    """
+    if series is None or len(series) == 0:
+        return 0.0, 0.0
+    if len(series) == 1:
+        return float(series[0]), 0.0
+
+    alpha = 2.0 / (float(span) + 1.0)
+
+    ewma = np.zeros_like(series, dtype=float)
+    ewmvar = np.zeros_like(series, dtype=float)
+
+    ewma[0] = float(series[0])
+    ewmvar[0] = 0.0
+
+    for i in range(1, len(series)):
+        diff = float(series[i]) - float(ewma[i - 1])
+        ewma[i] = float(ewma[i - 1]) + alpha * diff
+        ewmvar[i] = (1.0 - alpha) * (float(ewmvar[i - 1]) + alpha * (diff ** 2))
+
+    final_mean = float(ewma[-1])
+    final_std = float(np.sqrt(ewmvar[-1]))
+    return final_mean, final_std
 
 def compute_hrv_trend(hrv_series: np.ndarray) -> Dict[str, Any]:
     """

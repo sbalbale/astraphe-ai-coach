@@ -22,6 +22,7 @@ from app.services.algorithms import (
     calculate_hrv_baseline,
     calculate_spo2_baseline,
     calculate_temp_baseline,
+    compute_ewma_stats,
     calculate_weekly_tss_target,
     calculate_threshold_hr_est
 )
@@ -152,9 +153,11 @@ def process_and_save_workout(payload: WorkoutPayload, athlete_id: str, db):
         except Exception:
             hr_zone_0_pct = None
 
-    # Map sport to internal enum conventions
-    mapped_sport = sport if sport in ('run', 'bike', 'swim', 'strength', 'rowing') else 'other'
-    if sport == 'cycling': mapped_sport = 'bike'
+    # Map sport to internal enum conventions.
+    # DB constraint for workouts.sport allows: run|bike|swim|strength|rowing|other.
+    mapped_sport = sport if sport in ("run", "bike", "swim", "strength", "row") else "other"
+    if sport == "cycling":
+        mapped_sport = "bike"
 
     # Load athlete anchors needed for HRSS / pace-based models
     athlete_res = db.table("athletes").select("max_hr,resting_hr,threshold_hr,threshold_pace,gender").eq("id", athlete_id).single().execute()
@@ -348,6 +351,10 @@ def process_and_save_biometrics(payload: DailyBiometrics, athlete_id: str, db):
     
     baseline_rhr = 50.0
     baseline_hrv = 65.0
+    hrv_avg_30d = baseline_hrv
+    hrv_std_30d = 1.0
+    rhr_avg_30d = baseline_rhr
+    rhr_std_30d = 1.0
     athlete_data = athlete_res.data if athlete_res else {}
     
     if history_res and history_res.data:
@@ -358,8 +365,16 @@ def process_and_save_biometrics(payload: DailyBiometrics, athlete_id: str, db):
         if payload.resting_hr is not None: rhrs.append(payload.resting_hr)
         if payload.hrv_rmssd is not None: hrvs.append(payload.hrv_rmssd)
         
-        if rhrs: baseline_rhr = calculate_rhr_baseline(rhrs)
-        if hrvs: baseline_hrv = calculate_hrv_baseline(hrvs)
+        if rhrs:
+            baseline_rhr = calculate_rhr_baseline(rhrs)
+            recent_rhrs = rhrs[-30:] if len(rhrs) >= 1 else []
+            if recent_rhrs:
+                rhr_avg_30d, rhr_std_30d = compute_ewma_stats(np.array(recent_rhrs, dtype=float), span=30)
+        if hrvs:
+            baseline_hrv = calculate_hrv_baseline(hrvs)
+            recent_hrvs = hrvs[-30:] if len(hrvs) >= 1 else []
+            if recent_hrvs:
+                hrv_avg_30d, hrv_std_30d = compute_ewma_stats(np.array(recent_hrvs, dtype=float), span=30)
 
     # 4.5 Update Athlete Profile with latest physiological state
     # Fetch current CTL for TSS target calculation
@@ -444,14 +459,14 @@ def process_and_save_biometrics(payload: DailyBiometrics, athlete_id: str, db):
     # 8. Process Recovery (Autonomic Repair)
     recovery_score = compute_recovery_score(
         hrv_today=final_hrv or 0.0,
-        hrv_baseline_30d=baseline_hrv,
-        resting_hr=final_rhr or 0,
-        resting_hr_baseline_30d=baseline_rhr,
+        hrv_avg_30d=hrv_avg_30d,
+        hrv_std_30d=hrv_std_30d,
+        rhr_today=final_rhr or 0,
+        rhr_avg_30d=rhr_avg_30d,
+        rhr_std_30d=rhr_std_30d,
         sleep_score=sleep_score,
         prior_day_atl=prior_day_atl,
         prior_day_atl_max_30d=prior_day_atl_max_30d,
-        skin_temp_deviation=final_temp or 0.0,
-        spo2_pct=final_spo2 or 100.0
     )
     
     # 9. Process Readiness (Capacity to Train)

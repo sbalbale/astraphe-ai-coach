@@ -3,6 +3,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional, List
 from app.services.ai_coach import get_coach_response, get_coach_response_stream
+from app.services.ai_model import resolve_gemini_model_for_athlete
 from app.dependencies import get_current_athlete, get_current_user_tier, get_user_db
 import json
 from datetime import datetime
@@ -178,12 +179,14 @@ async def chat_with_coach(
     try:
         conversation_id = payload.conversation_id or _create_conversation(db, athlete_id, title=None)
         _insert_message(db, athlete_id, conversation_id, role="user", content=payload.message, image_urls=payload.image_urls)
+        model_name = resolve_gemini_model_for_athlete(db, athlete_id)
         coach_reply = get_coach_response(
             athlete_id=athlete_id,
             message=payload.message,
             current_tss=payload.recent_tss,
             db=db,
             conversation_id=conversation_id,
+            model_name=model_name,
         )
         _insert_message(db, athlete_id, conversation_id, role="ai", content=coach_reply, image_urls=None)
         return {"status": "success", "conversation_id": conversation_id, "reply": coach_reply}
@@ -209,6 +212,7 @@ async def stream_chat_with_coach(
         _insert_message(db, athlete_id, conversation_id, role="user", content=payload.message, image_urls=payload.image_urls)
 
         ai_full = ""
+        model_name = resolve_gemini_model_for_athlete(db, athlete_id)
         try:
             async for chunk in get_coach_response_stream(
                 athlete_id=athlete_id,
@@ -216,6 +220,7 @@ async def stream_chat_with_coach(
                 current_tss=payload.recent_tss,
                 db=db,
                 conversation_id=conversation_id,
+                model_name=model_name,
             ):
                 ai_full += chunk
                 yield f"data: {json.dumps({'text': chunk})}\n\n"

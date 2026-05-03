@@ -62,8 +62,17 @@ async def backfill_historical_data(athlete_id: str, access_token: str, db: Any =
     print(f"[whoop.backfill] start={start_s} end={end_s} athlete_id={athlete_id}")
 
     # Fetch athlete timezone for correct date mapping
-    athlete_res = db.table("athletes").select("timezone_offset_min").eq("id", athlete_id).single().execute()
-    offset = (athlete_res.data.get("timezone_offset_min") or 0) if athlete_res.data else 0
+    try:
+        athlete_res = (
+            db.table("athletes")
+            .select("timezone_offset_min")
+            .eq("id", athlete_id)
+            .maybe_single()
+            .execute()
+        )
+        offset = (athlete_res.data.get("timezone_offset_min") or 0) if (athlete_res and athlete_res.data) else 0
+    except Exception:
+        offset = 0
 
     # 1) Cycles (Daily Strain)
     cycles = await whoop.fetch_collection(access_token, "cycle", start_s, end_s)
@@ -132,9 +141,18 @@ async def backfill_historical_data(athlete_id: str, access_token: str, db: Any =
 
         external_id = str(w.get("v1_id") or w.get("id"))
         display_name = (w.get("sport_name") or "Workout")
-        sport_name = (w.get("sport_name") or "other").lower()
+        sport_name_raw = (w.get("sport_name") or "other")
+        sport_name = str(sport_name_raw).strip().lower()
+        # Normalize common WHOOP sport names into our internal enums.
         if sport_name in ("weightlifting", "weight lifting", "strength training", "strength_training", "gym", "strength"):
             sport_name = "strength"
+        elif sport_name in ("cycling", "bike", "biking", "indoor cycling", "spin", "spinning", "stationary bike", "peloton"):
+            # processing.py will normalize cycling -> bike
+            sport_name = "cycling"
+        elif sport_name in ("running", "run", "treadmill run", "treadmill"):
+            sport_name = "run"
+        elif sport_name in ("rowing", "row", "rower", "erg", "ergometer"):
+            sport_name = "row"
 
         payload = WorkoutPayload(
             source="whoop",
@@ -154,7 +172,12 @@ async def backfill_historical_data(athlete_id: str, access_token: str, db: Any =
             hr_zone_4_pct=hr4,
             hr_zone_5_pct=hr5,
         )
-        process_and_save_workout(payload, athlete_id, db)
+        try:
+            process_and_save_workout(payload, athlete_id, db)
+        except Exception as e:
+            # Don't let a single bad record kill the whole backfill.
+            print(f"[whoop.backfill] workout_upsert_failed external_id={external_id} sport={sport_name}: {e}")
+            continue
     
     # Recalculate TSS history once after all workouts are in
     recalculate_tss_history(athlete_id, db)

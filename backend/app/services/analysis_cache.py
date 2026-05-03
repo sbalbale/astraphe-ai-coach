@@ -105,10 +105,10 @@ def upsert_analysis(
         return
 
 
-def generate_gemini_analysis(prompt: str) -> Tuple[str, str]:
-    model_name = settings.GEMINI_MODEL
-    model = genai.GenerativeModel(model_name)
+def generate_gemini_analysis(prompt: str, model_name: str) -> Tuple[str, str]:
+    effective_model = (model_name or settings.GEMINI_MODEL)
+    model = genai.GenerativeModel(effective_model)
     resp = model.generate_content(prompt)
     text = getattr(resp, "text", "") or ""
-    return clamp_to_two_sentences(text), model_name
+    return clamp_to_two_sentences(text), effective_model
 
