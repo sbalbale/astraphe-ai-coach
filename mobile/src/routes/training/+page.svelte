@@ -21,10 +21,10 @@
   import { api } from '$lib/api';
   import { page } from '$app/stores';
   import { addDays, endOfWeek, format, startOfWeek } from 'date-fns';
+  import { boundedScoreCssColor } from '$lib/colorSystem';
   import {
     formCssColor,
     getWeeklyLoadDeltaColor,
-    workoutOutputTextClass
   } from '$lib/scoreColors';
 
   const CTL_IDENTITY_HEX = '#3b82f6';
@@ -383,24 +383,26 @@
         <Card>
           {@const selectedStrainVal = Number.isFinite(Number(selectedWorkout?.strain_score)) ? Math.round(Number(selectedWorkout.strain_score)) : null}
           {@const selectedTssVal = Number.isFinite(Number(selectedWorkout?.tss)) ? Math.round(Number(selectedWorkout.tss)) : null}
-          {@const selActCls = selectedStrainVal === null ? 'text-text2' : workoutOutputTextClass(selectedStrainVal)}
           <div class="flex items-center gap-4 mb-4">
             <div class="w-12 h-12 rounded-2xl flex items-center justify-center text-2xl {getWorkoutBg(selectedWorkout.sport)}">
               {getWorkoutIcon(selectedWorkout.sport)}
             </div>
             <div class="flex-1">
-              <h2 class="text-lg font-bold leading-tight {selActCls}">{selectedWorkout.title || (getWorkoutLabel(selectedWorkout.sport) + ' Session')}</h2>
+              <h2 class="text-lg font-bold leading-tight text-text0">{selectedWorkout.title || (getWorkoutLabel(selectedWorkout.sport) + ' Session')}</h2>
               <p class="text-xs text-text2">{format(new Date(selectedWorkout.started_at), (athleteStore.profile as any)?.time_format === '24h' ? 'EEEE, MMM d · HH:mm' : 'EEEE, MMM d · h:mm a')}</p>
             </div>
             <div class="text-right flex flex-col gap-1">
               <div>
-                <p class="text-[18px] font-bold {selActCls}">
+                <p class="text-[18px] font-bold tabular-nums" style:color={boundedScoreCssColor(selectedStrainVal, true)}>
                   {selectedStrainVal === null ? '--' : selectedStrainVal}
                 </p>
                 <p class="text-[9px] text-text2 font-mono">STRAIN</p>
               </div>
               <div>
-                <p class="text-[18px] font-bold {selectedTssVal === null ? 'text-text2' : selActCls}">
+                <p
+                  class="text-[18px] font-bold tabular-nums"
+                  style:color={boundedScoreCssColor(selectedTssVal === null ? null : selectedStrainVal, true)}
+                >
                   {selectedTssVal === null ? '--' : selectedTssVal}
                 </p>
                 <p class="text-[9px] text-text2 font-mono">TSS</p>
@@ -525,7 +527,6 @@
           {#each weekWorkouts as w (w?.id ?? w?.started_at)}
             {@const strainVal = Number.isFinite(Number(w?.strain_score)) ? Math.round(Number(w.strain_score)) : null}
             {@const tssVal = Number.isFinite(Number(w?.tss)) ? Math.round(Number(w.tss)) : null}
-            {@const wActCls = strainVal === null ? 'text-text2' : workoutOutputTextClass(strainVal)}
             <button class="text-left bg-transparent border-none p-0 cursor-pointer w-full" onclick={() => selectedWorkout = w}>
               <Card style="padding: 12px 14px;">
                 <div class="flex items-center gap-3">
@@ -533,18 +534,23 @@
                     {getWorkoutIcon(w.sport)}
                   </div>
                   <div class="flex-1">
-                    <p class="text-[13px] font-semibold {wActCls}">{w.title || (getWorkoutLabel(w.sport) + ' Session')}</p>
+                    <p class="text-[13px] font-semibold text-text0">
+                      {w.title || (getWorkoutLabel(w.sport) + ' Session')}
+                    </p>
                     <p class="text-[11px] text-text2">{format(new Date(w.started_at), 'MMM d')} · {Math.floor(getDurationSecs(w) / 60)} min</p>
                   </div>
                   <div class="text-right flex flex-col gap-1">
                     <div>
-                      <p class="text-[14px] font-bold {wActCls}">
+                      <p class="text-[14px] font-bold tabular-nums" style:color={boundedScoreCssColor(strainVal, true)}>
                         {strainVal === null ? '--' : strainVal}
                       </p>
                       <p class="text-[9px] text-text2 font-mono">STRAIN</p>
                     </div>
                     <div>
-                      <p class="text-[14px] font-bold {tssVal === null ? 'text-text2' : wActCls}">
+                      <p
+                        class="text-[14px] font-bold tabular-nums"
+                        style:color={boundedScoreCssColor(tssVal === null ? null : strainVal, true)}
+                      >
                         {tssVal === null ? '--' : tssVal}
                       </p>
                       <p class="text-[9px] text-text2 font-mono">TSS</p>

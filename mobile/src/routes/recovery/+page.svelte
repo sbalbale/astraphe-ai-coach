@@ -507,6 +507,36 @@
           />
         </Card>
       </div>
+
+      <!-- 7-Day Trend -->
+      <Card>
+        <div class="flex justify-between items-center mb-3">
+          <p class="text-[13px] font-semibold">7-Day Trend</p>
+          <span class="text-[10px] text-text2 font-mono">
+            avg {avg7d === null ? '--' : `${avg7d}%`} · {score}% current
+          </span>
+        </div>
+        <div class="flex gap-2 items-end h-[50px] mb-1 px-1">
+          {#each days as day, i (day.date)}
+            {@const c = boundedScoreCssColor(day.score)}
+            <button
+              type="button"
+              class="flex-1 flex flex-col items-center gap-1 cursor-pointer"
+              onclick={() => {
+                endPickerValue = day.date;
+                dayIndex = 6;
+              }}
+              aria-label={`Select ${day.label}: ${day.score}/100`}
+            >
+              <div
+                class="w-full rounded-t-sm transition-all duration-300"
+                style="background: {c}; opacity: {i === dayIndex ? 1 : 0.35}; height: {Math.max(4, (day.score / 100) * 50)}px;"
+              ></div>
+              <span class="text-[9px] font-mono {i === dayIndex ? 'text-text0' : 'text-text2'}">{day.day}</span>
+            </button>
+          {/each}
+        </div>
+      </Card>
       
       <!-- Contributing Factors — split by behavior.
            Unbounded vitals (HRV, RHR, Body Temp, SpO2): raw absolute text is
@@ -718,36 +748,6 @@
             </p>
           </div>
         </div>
-        </div>
-      </Card>
-
-      <!-- 7-Day Trend -->
-      <Card>
-        <div class="flex justify-between items-center mb-3">
-          <p class="text-[13px] font-semibold">7-Day Trend</p>
-          <span class="text-[10px] text-text2 font-mono">
-            avg {avg7d === null ? '--' : `${avg7d}%`} · {score}% current
-          </span>
-        </div>
-        <div class="flex gap-2 items-end h-[50px] mb-1 px-1">
-          {#each days as day, i (day.date)}
-            {@const c = boundedScoreCssColor(day.score)}
-            <button
-              type="button"
-              class="flex-1 flex flex-col items-center gap-1 cursor-pointer"
-              onclick={() => {
-                endPickerValue = day.date;
-                dayIndex = 6;
-              }}
-              aria-label={`Select ${day.label}: ${day.score}/100`}
-            >
-              <div
-                class="w-full rounded-t-sm transition-all duration-300"
-                style="background: {c}; opacity: {i === dayIndex ? 1 : 0.35}; height: {Math.max(4, (day.score / 100) * 50)}px;"
-              ></div>
-              <span class="text-[9px] font-mono {i === dayIndex ? 'text-text0' : 'text-text2'}">{day.day}</span>
-            </button>
-          {/each}
         </div>
       </Card>
 
