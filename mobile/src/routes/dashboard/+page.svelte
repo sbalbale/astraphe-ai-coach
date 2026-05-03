@@ -21,7 +21,7 @@
   import { goto } from '$app/navigation';
   import { resolve } from '$app/paths';
   import { format } from 'date-fns';
-  import { getBoundedScoreColor, boundedScoreCssColor } from '$lib/colorSystem';
+  import { boundedScoreCssColor } from '$lib/colorSystem';
   import { formCssColor, getZScoreColor } from '$lib/scoreColors';
 
   const CTL_IDENTITY_HEX = '#3b82f6';
@@ -312,9 +312,9 @@
               >{todayHrv === null ? 'Data not found' : `${Math.round(todayHrv)}ms`}</span>
             · Sleep
             <span
-              class={latestSleepScore === null || latestSleepScore <= 0
-                ? 'text-text2'
-                : getBoundedScoreColor(latestSleepScore)}
+              style="color: {todaySleepMin === null || latestSleepScore === null || latestSleepScore <= 0
+                ? 'var(--text2)'
+                : boundedScoreCssColor(latestSleepScore)}"
               >{todaySleepMin === null ? 'Data not found' : sleepHM(todaySleepMin)}</span>
           </p>
           <p class="text-[11px] text-text2 mt-1">Data synced from your connected services.</p>
@@ -430,15 +430,29 @@
         </div>
         <div class="flex items-baseline gap-1.5">
           <span
-            class="text-[20px] font-bold {latestSleepScore === null || latestSleepScore <= 0 ? 'text-text2' : getBoundedScoreColor(latestSleepScore)}"
+            class="text-[20px] font-bold"
+            style="color: {latestSleepMin === null || latestSleepScore === null || latestSleepScore <= 0
+              ? 'var(--text2)'
+              : boundedScoreCssColor(latestSleepScore)}"
           >
             {latestSleepMin === null ? 'Data not found' : sleepHM(latestSleepMin)}
           </span>
         </div>
         <p class="text-[10px] text-text2 mt-1">
-          7d avg <span class="font-medium {avgSleepScore7d === null || avgSleepScore7d <= 0 ? 'text-text2' : getBoundedScoreColor(avgSleepScore7d)}">{avgSleep7dMin === null ? '--' : sleepHM(avgSleep7dMin)}</span>
+          7d avg
+          <span
+            class="font-medium"
+            style="color: {avgSleep7dMin === null || avgSleepScore7d === null || avgSleepScore7d <= 0
+              ? 'var(--text2)'
+              : boundedScoreCssColor(avgSleepScore7d)}"
+            >{avgSleep7dMin === null ? '--' : sleepHM(avgSleep7dMin)}</span>
           <span class="text-text2"> · </span>
-          <span class="font-medium {avgSleepScore7d === null ? 'text-text2' : getBoundedScoreColor(avgSleepScore7d)}">
+          <span
+            class="font-medium"
+            style="color: {avgSleepScore7d === null || avgSleepScore7d <= 0
+              ? 'var(--text2)'
+              : boundedScoreCssColor(avgSleepScore7d)}"
+          >
             {avgSleepScore7d === null ? '--' : `${avgSleepScore7d}%`}
           </span>
         </p>
