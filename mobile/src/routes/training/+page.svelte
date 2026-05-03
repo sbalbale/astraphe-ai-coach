@@ -21,7 +21,7 @@
   import { api } from '$lib/api';
   import { page } from '$app/stores';
   import { addDays, endOfWeek, format, startOfWeek } from 'date-fns';
-  import { strainTextClass, tssTextClass } from '$lib/scoreColors';
+  import { getBoundedScoreColor, formCssColor } from '$lib/scoreColors';
 
   let metric = $state('load');
   const tabs = ['load', 'history']; // Simplified tabs for now as pace/zones need complex processing
@@ -253,18 +253,25 @@
     </div>
 
     {#if metric === 'load'}
+      <!-- CTL/ATL/Weekly TSS are raw absolute training-load numbers and stay
+           neutral. Only Form (TSB) is colored, using the three-band rule. -->
       <div class="grid grid-cols-2 gap-2.5">
         <Card>
-          <MetricBadge label="Fitness (CTL)" value={Math.round(athleteStore.ctl)} color="var(--teal)" sub="Long-term load" />
+          <MetricBadge label="Fitness (CTL)" value={Math.round(athleteStore.ctl)} color="var(--text0)" sub="Long-term load" />
         </Card>
         <Card>
-          <MetricBadge label="Fatigue (ATL)" value={Math.round(athleteStore.atl)} color="var(--amber)" sub="Short-term load" />
+          <MetricBadge label="Fatigue (ATL)" value={Math.round(athleteStore.atl)} color="var(--text0)" sub="Short-term load" />
         </Card>
         <Card>
-          <MetricBadge label="Form (TSB)" value={athleteStore.tsb > 0 ? `+${Math.round(athleteStore.tsb)}` : Math.round(athleteStore.tsb)} color="#4621FF" sub="Training balance" />
+          <MetricBadge
+            label="Form (TSB)"
+            value={athleteStore.tsb > 0 ? `+${Math.round(athleteStore.tsb)}` : Math.round(athleteStore.tsb)}
+            color={formCssColor(athleteStore.tsb)}
+            sub="Training balance"
+          />
         </Card>
         <Card>
-          <MetricBadge label="Weekly TSS" value={Math.round(weeklyTss)} color="var(--red)" sub="Last 7 days" />
+          <MetricBadge label="Weekly TSS" value={Math.round(weeklyTss)} color="var(--text0)" sub="Last 7 days" />
         </Card>
       </div>
       
@@ -320,13 +327,14 @@
             </div>
             <div class="text-right flex flex-col gap-1">
               <div>
-                <p class="text-[18px] font-bold {selectedStrainVal === null ? 'text-text2' : strainTextClass(selectedStrainVal)}">
+                <p class="text-[18px] font-bold {selectedStrainVal === null ? 'text-text2' : getBoundedScoreColor(selectedStrainVal, true)}">
                   {selectedStrainVal === null ? '--' : selectedStrainVal}
                 </p>
                 <p class="text-[9px] text-text2 font-mono">STRAIN</p>
               </div>
               <div>
-                <p class="text-[18px] font-bold {selectedTssVal === null ? 'text-text2' : tssTextClass(selectedTssVal)}">
+                <!-- TSS is a raw absolute training-stress dose: never color-coded. -->
+                <p class="text-[18px] font-bold {selectedTssVal === null ? 'text-text2' : 'text-text0'}">
                   {selectedTssVal === null ? '--' : selectedTssVal}
                 </p>
                 <p class="text-[9px] text-text2 font-mono">TSS</p>
@@ -463,13 +471,14 @@
                   </div>
                   <div class="text-right flex flex-col gap-1">
                     <div>
-                      <p class="text-[14px] font-bold {strainVal === null ? 'text-text2' : strainTextClass(strainVal)}">
+                      <p class="text-[14px] font-bold {strainVal === null ? 'text-text2' : getBoundedScoreColor(strainVal, true)}">
                         {strainVal === null ? '--' : strainVal}
                       </p>
                       <p class="text-[9px] text-text2 font-mono">STRAIN</p>
                     </div>
                     <div>
-                      <p class="text-[14px] font-bold {tssVal === null ? 'text-text2' : tssTextClass(tssVal)}">
+                      <!-- TSS is a raw absolute training-stress dose: never color-coded. -->
+                      <p class="text-[14px] font-bold {tssVal === null ? 'text-text2' : 'text-text0'}">
                         {tssVal === null ? '--' : tssVal}
                       </p>
                       <p class="text-[9px] text-text2 font-mono">TSS</p>

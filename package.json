@@ -1,4 +1,9 @@
 {
+  "scripts": {
+    "supabase:migrate": "supabase migration up --local --yes",
+    "supabase:migrate:linked": "supabase migration up --linked --yes",
+    "supabase:db:push": "supabase db push --yes"
+  },
   "devDependencies": {
     "supabase": "^2.95.5"
   }

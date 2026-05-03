@@ -59,9 +59,9 @@
 
     const complete = profileComplete;
 
-    // Signed in but on an auth route: jump into the app flow.
+    // Signed in but on an auth route: onboarding until profile is complete, then home.
     if (isAuthRoute) {
-      goto('/dashboard', { replaceState: true });
+      goto(complete ? '/dashboard' : '/onboarding', { replaceState: true });
       return;
     }
 
@@ -109,6 +109,15 @@
       {#if ['/recovery', '/sleep', '/strain'].includes($page.url.pathname)}
         <div class="flex gap-1.5 px-4 pt-2.5 shrink-0">
           {#each [{id: '/recovery', label: 'Recovery'}, {id: '/sleep', label: 'Sleep'}, {id: '/strain', label: 'Strain'}] as t (t.id)}
+            <a href={t.id} class="px-3.5 py-1.5 rounded-full text-xs font-medium font-sans transition-all duration-200 border no-underline
+              {$page.url.pathname === t.id ? 'bg-blue text-white border-blue' : 'bg-glass text-text1 border-border'}">
+              {t.label}
+            </a>
+          {/each}
+        </div>
+      {:else if ['/dashboard', '/training', '/zones'].includes($page.url.pathname)}
+        <div class="flex gap-1.5 px-4 pt-2.5 shrink-0">
+          {#each [{id: '/dashboard', label: 'Home'}, {id: '/training', label: 'Training'}, {id: '/zones', label: 'Zones'}] as t (t.id)}
             <a href={t.id} class="px-3.5 py-1.5 rounded-full text-xs font-medium font-sans transition-all duration-200 border no-underline
               {$page.url.pathname === t.id ? 'bg-blue text-white border-blue' : 'bg-glass text-text1 border-border'}">
               {t.label}

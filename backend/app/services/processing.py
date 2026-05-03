@@ -1,4 +1,4 @@
-from datetime import date, timedelta, datetime
+from datetime import date, timedelta, datetime, timezone
 import numpy as np
 from app.models.workout import WorkoutPayload
 from app.models.biometrics import DailyBiometrics
@@ -69,6 +69,10 @@ def recalculate_tss_history(athlete_id: str, db):
     """
     Fetches all workouts for an athlete, aggregates TSS by date,
     and recalculates the entire PMC (CTL/ATL/TSB) history.
+
+    The PMC extends through the athlete's local calendar "today": days after the last
+    workout are filled with 0 TSS so CTL/ATL keep decaying and rows exist for today's
+    date (avoiding bogus CTL = 0 and collapsed readiness scores on rest days).
     """
     # 1. Fetch all workouts with TSS
     res = db.table("workouts").select("started_at, tss").eq("athlete_id", athlete_id).order("started_at").execute()
@@ -97,7 +101,10 @@ def recalculate_tss_history(athlete_id: str, db):
         return
 
     start_date, end_date = all_dates[0], all_dates[-1]
-    
+
+    today_local = (datetime.now(timezone.utc) + timedelta(minutes=offset)).date()
+    end_date = max(end_date, today_local)
+
     # Extract TSS series as numpy array for compute_ctl/atl
     # Fill in missing days with 0.0
     tss_list = []

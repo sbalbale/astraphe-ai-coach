@@ -333,10 +333,10 @@ def compute_recovery_score(
     # HRV usually dictates slightly more physiological truth than RHR
     ans_z = (z_hrv * 0.6) + (z_rhr * 0.4)
 
-    # 2. Sigmoid Mapping (WHOOP-like swing)
-    # Maps an average day (Z=0) to roughly a 60-65 (Blue/Teal boundary)
-    # Maps a terrible day (Z=-2) to < 20 (Red)
-    ans_score = 100.0 / (1.0 + math.exp(-1.5 * (ans_z - 0.4)))
+    # 2. Corrected Sigmoid Mapping
+    # Anchors Z=0 (average day) to 66/100. 
+    # Z=+1 hits ~88. Z=-1 hits ~33. Z=-1.5 drops to 20.
+    ans_score = 100.0 / (1.0 + math.exp(-1.36 * (ans_z + 0.485)))
 
     # 3. Calculate Load Penalty (Freshness)
     safe_max_atl = max(prior_day_atl_max_30d, 1.0)
@@ -437,6 +437,23 @@ def compute_ewma_stats(series: np.ndarray, span: int = 30) -> tuple[float, float
     final_mean = float(ewma[-1])
     final_std = float(np.sqrt(ewmvar[-1]))
     return final_mean, final_std
+
+def compute_z_score(latest: float, history: np.ndarray, span: int = 7) -> tuple[float, float, float]:
+    """
+    Returns (z_score, ewma_mean, ewma_std) for `latest` vs the EWMA baseline of `history`.
+
+    `history` should be the rolling history *up to and including* the latest reading
+    (or just prior, callers can choose). When the EWMA std is degenerate (<= 1e-9)
+    the z-score is reported as 0.0 to avoid divide-by-near-zero blowups.
+    """
+    if history is None or len(history) == 0:
+        return 0.0, float(latest) if latest is not None else 0.0, 0.0
+    mean, sd = compute_ewma_stats(history, span=span)
+    if sd <= 1e-9 or latest is None:
+        return 0.0, float(mean), float(sd)
+    z = (float(latest) - float(mean)) / float(sd)
+    return float(z), float(mean), float(sd)
+
 
 def compute_hrv_trend(hrv_series: np.ndarray) -> Dict[str, Any]:
     """
