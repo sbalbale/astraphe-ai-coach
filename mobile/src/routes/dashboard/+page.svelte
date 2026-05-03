@@ -14,6 +14,7 @@
   import EmptyState from '$lib/components/EmptyState.svelte';
   import CalibrationBadge from '$lib/components/CalibrationBadge.svelte';
   import { onMount } from 'svelte';
+  import { analysisNavEpoch } from '$lib/analysisNavEpoch.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { authStore } from '$lib/stores/authStore.svelte';
   import { api } from '$lib/api';
@@ -81,29 +82,35 @@
   let analysisText = $state<string | null>(null);
   let activeAnalysisKey: string | null = null;
   $effect(() => {
+    void analysisNavEpoch.epoch;
+    void athleteStore.initialLoadDone;
+    void athleteStore.loading;
+
     const endDay = todayStr;
 
     const cached = dashboardAiSummaryMemo.get(endDay);
-    if (cached !== undefined) {
+    if (cached !== undefined && cached !== null) {
       analysisText = cached;
       return;
     }
+
+    analysisText = null;
 
     const requestKey = `dashboard-ai-summary:${endDay}`;
     activeAnalysisKey = requestKey;
 
     (async () => {
       try {
-        const res = await api.getTrainingLoadAnalysis(endDay);
+        const res = await api.getDashboardSummary(endDay);
         const content = typeof res?.analysis?.content === 'string' ? res.analysis.content.trim() : '';
         const next = content ? content : null;
-        dashboardAiSummaryMemo.set(endDay, next);
+        // Only memoize successful content so transient 401s/network hiccups don't permanently lock us into null.
+        if (next) dashboardAiSummaryMemo.set(endDay, next);
 
         if (activeAnalysisKey !== requestKey) return;
         analysisText = next;
       } catch (e) {
         console.error(e);
-        dashboardAiSummaryMemo.set(endDay, null);
         if (activeAnalysisKey !== requestKey) return;
         // Keep previous text while loading/failing.
       }

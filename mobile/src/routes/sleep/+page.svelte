@@ -13,6 +13,7 @@
   import EmptyState from "$lib/components/EmptyState.svelte";
   import DatePicker from "$lib/components/DatePicker.svelte";
   import Modal from "$lib/components/Modal.svelte";
+  import { analysisNavEpoch } from "$lib/analysisNavEpoch.svelte";
   import { athleteStore } from "$lib/stores/athleteStore.svelte";
   import { api } from "$lib/api";
   import { addDays, format, parseISO, subDays } from "date-fns";
@@ -271,6 +272,11 @@
   let analysisText = $state<string | null>(null);
   let activeAnalysisKey: string | null = null;
   $effect(() => {
+    void analysisNavEpoch.epoch;
+    void athleteStore.initialLoadDone;
+    void athleteStore.loading;
+    void n?.score;
+
     const day = n?.rawDate;
     if (!day) {
       analysisText = null;
@@ -278,10 +284,12 @@
     }
 
     const cached = sleepAnalysisMemo.get(day);
-    if (cached !== undefined) {
+    if (cached !== undefined && cached !== null) {
       analysisText = cached;
       return;
     }
+
+    analysisText = null;
 
     const requestKey = `sleep:${day}`;
     activeAnalysisKey = requestKey;
@@ -290,7 +298,7 @@
       const res = await api.getSleepAnalysis(day);
       const content = typeof res?.analysis?.content === "string" ? res.analysis.content.trim() : "";
       const next = content ? content : null;
-      sleepAnalysisMemo.set(day, next);
+      if (next) sleepAnalysisMemo.set(day, next);
 
       if (activeAnalysisKey !== requestKey) return;
       analysisText = next;

@@ -6,12 +6,14 @@
 
 <script lang="ts">
   import Card from '$lib/components/Card.svelte';
+  import MetricBadge from '$lib/components/MetricBadge.svelte';
   import RadialProgress from '$lib/components/RadialProgress.svelte';
   import Tag from '$lib/components/Tag.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import Pill from '$lib/components/Pill.svelte';
   import DatePicker from '$lib/components/DatePicker.svelte';
   import Modal from '$lib/components/Modal.svelte';
+  import { analysisNavEpoch } from '$lib/analysisNavEpoch.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { api } from '$lib/api';
   import { addDays, format, subDays } from 'date-fns';
@@ -210,6 +212,13 @@
   let analysisText = $state<string | null>(null);
   let activeAnalysisKey: string | null = null;
   $effect(() => {
+    void analysisNavEpoch.epoch;
+    // Re-run when store finishes loading so an early unauthenticated/empty fetch can't strand us on null.
+    void athleteStore.initialLoadDone;
+    void athleteStore.loading;
+    void d?.tsb;
+    void d?.score;
+
     const day = d?.date;
     if (!day) {
       analysisText = null;
@@ -217,10 +226,12 @@
     }
 
     const cached = strainAnalysisMemo.get(day);
-    if (cached !== undefined) {
+    if (cached !== undefined && cached !== null) {
       analysisText = cached;
       return;
     }
+
+    analysisText = null;
 
     const requestKey = `strain:${day}`;
     activeAnalysisKey = requestKey;
@@ -229,7 +240,7 @@
       const res = await api.getStrainAnalysis(day);
       const content = typeof res?.analysis?.content === 'string' ? res.analysis.content.trim() : '';
       const next = content ? content : null;
-      strainAnalysisMemo.set(day, next);
+      if (next) strainAnalysisMemo.set(day, next);
 
       if (activeAnalysisKey !== requestKey) return;
       analysisText = next;
@@ -239,8 +250,8 @@
 
 <div class="flex flex-col gap-3">
   <div>
-    <p class="text-[10px] text-text2 font-mono uppercase tracking-[0.1em]">Physical Load</p>
-    <h1 class="text-[22px] font-bold tracking-tight">Strain</h1>
+    <p class="text-xs text-text2 font-mono uppercase tracking-[0.1em]">Physical Load</p>
+    <h1 class="text-[22px] font-bold tracking-[-0.02em]">Strain</h1>
   </div>
 
   {#if !isConnected}
@@ -327,7 +338,7 @@
     {:else}
       <!-- Hero Card (Sleep Page Style) -->
       <Card style="background: var(--glass); border-color: var(--border);">
-        <div class="flex items-center gap-5 py-1">
+        <div class="flex items-center gap-4">
           <RadialProgress 
             value={score} 
             max={100} 
@@ -338,7 +349,7 @@
           />
           <div class="flex-1">
             <div class="flex items-center gap-2 mb-1">
-              <span class="text-[18px] font-bold text-text0">{quality}</span>
+              <span class="text-[18px] font-bold">{quality}</span>
               <Tag color={scoreColor}>{score >= 67 ? 'HIGH' : score >= 34 ? 'PRODUCTIVE' : 'BASE'}</Tag>
             </div>
             <p class="text-xs text-text1 leading-relaxed">
@@ -352,32 +363,14 @@
 
       <!-- Metrics Grid -->
       <div class="grid grid-cols-3 gap-2">
-        <Card style="padding: 12px; height: 100%;">
-          <div class="flex flex-col">
-            <span class="text-[10px] text-text2 font-mono uppercase mb-1">Fatigue</span>
-            <div class="flex items-baseline gap-1">
-              <span class="text-[18px] font-bold text-text0">{Math.round(d.atl)}</span>
-            </div>
-            <span class="text-[9px] text-text2 mt-1">ATL</span>
-          </div>
+        <Card style="padding: 8px 10px;">
+          <MetricBadge label="Fatigue" value={Math.round(d.atl)} unit="" color="var(--amber)" sub="ATL" />
         </Card>
-        <Card style="padding: 12px; height: 100%;">
-          <div class="flex flex-col">
-            <span class="text-[10px] text-text2 font-mono uppercase mb-1">Fitness</span>
-            <div class="flex items-baseline gap-1">
-              <span class="text-[18px] font-bold text-text0">{Math.round(d.ctl)}</span>
-            </div>
-            <span class="text-[9px] text-text2 mt-1">CTL</span>
-          </div>
+        <Card style="padding: 8px 10px;">
+          <MetricBadge label="Fitness" value={Math.round(d.ctl)} unit="" color="var(--teal)" sub="CTL" />
         </Card>
-        <Card style="padding: 12px; height: 100%;">
-          <div class="flex flex-col">
-            <span class="text-[10px] text-text2 font-mono uppercase mb-1">Form</span>
-            <div class="flex items-baseline gap-1">
-              <span class="text-[18px] font-bold text-text0">{Math.round(d.tsb)}</span>
-            </div>
-            <span class="text-[9px] text-text2 mt-1">TSB</span>
-          </div>
+        <Card style="padding: 8px 10px;">
+          <MetricBadge label="Form" value={Math.round(d.tsb)} unit="" color="var(--blue)" sub="TSB" />
         </Card>
       </div>
 
@@ -385,7 +378,9 @@
       <Card>
         <div class="flex justify-between items-center mb-3">
           <p class="text-[13px] font-semibold">7-Day Trend</p>
-          <span class="text-[10px] text-text2 font-mono">avg {avg7d === null ? '--' : avg7d}</span>
+          <span class="text-[10px] text-text2 font-mono">
+            avg {avg7d === null ? '--' : `${avg7d}%`} · {score}% current
+          </span>
         </div>
         <div class="flex gap-2 items-end h-[50px] mb-1 px-1">
           {#each days as day, i (day.date)}
@@ -394,6 +389,7 @@
               type="button"
               class="flex-1 flex flex-col items-center gap-1 cursor-pointer"
               onclick={() => (dayIndex = i)}
+              aria-label={`Select ${day.label}: ${day.score}%`}
             >
               <div class="w-full rounded-t-sm transition-all duration-300" 
                    style="background: {i === dayIndex ? c : c + '44'}; height: {Math.max(4, (day.score / 100) * 50)}px;"></div>
@@ -486,9 +482,11 @@
       {/if}
 
       <!-- Analysis Card -->
-      <Card style="background: var(--glass2); border-color: transparent;">
-        <p class="text-[13px] font-semibold mb-1">Strain Analysis</p>
-        <p class="text-[12px] text-text2 leading-relaxed italic">
+      <Card
+        style="background: linear-gradient(135deg, rgba(70,33,255,0.12), transparent);"
+      >
+        <p class="text-[13px] font-semibold mb-1.5">Strain Analysis</p>
+        <p class="text-xs text-text1 leading-relaxed">
           {analysisText ??
             (d.tsb < -20
               ? 'Your training form is highly negative. Prioritize active recovery sessions.'

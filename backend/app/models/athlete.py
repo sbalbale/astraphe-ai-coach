@@ -33,7 +33,6 @@ class AthleteProfileUpdate(BaseModel):
     sport_focus: Optional[List[str]] = None
     notification_settings: Optional[dict] = None
     privacy_settings: Optional[dict] = None
-    ai_settings: Optional[dict] = None
     measurement_units: Optional[str] = None
     time_format: Optional[str] = None
     timezone_offset_min: Optional[int] = None
