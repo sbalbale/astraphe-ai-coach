@@ -21,13 +21,8 @@
   import { goto } from '$app/navigation';
   import { resolve } from '$app/paths';
   import { format } from 'date-fns';
-  import {
-    getBoundedScoreColor,
-    boundedScoreCssColor,
-    formCssColor,
-    getZScoreColor,
-    workoutOutputTextClass
-  } from '$lib/scoreColors';
+  import { getBoundedScoreColor, boundedScoreCssColor } from '$lib/colorSystem';
+  import { formCssColor, getZScoreColor } from '$lib/scoreColors';
 
   const CTL_IDENTITY_HEX = '#3b82f6';
   const ATL_IDENTITY_HEX = '#64748b';
@@ -484,7 +479,6 @@
             {@const type = w.sport?.toLowerCase()}
             {@const strainVal = Number.isFinite(Number(w?.strain_score)) ? Math.round(Number(w.strain_score)) : null}
             {@const tssVal = Number.isFinite(Number(w?.tss)) ? Math.round(Number(w.tss)) : null}
-            {@const actClass = strainVal === null ? 'text-text2' : workoutOutputTextClass(strainVal)}
             <button
               type="button"
               class="text-left bg-transparent border-none p-0 cursor-pointer w-full"
@@ -500,18 +494,21 @@
                   {type === 'run' ? '🏃' : (type === 'bike' || type === 'cycling') ? '🚴' : type === 'rowing' ? '🚣' : '💪'}
                 </div>
                 <div class="flex-1">
-                  <p class="text-[13px] font-medium {actClass}">{w.title || (w.sport?.toUpperCase() + ' Session')}</p>
+                  <p class="text-[13px] font-medium text-text0">{w.title || (w.sport?.toUpperCase() + ' Session')}</p>
                   <p class="text-[11px] text-text2">{format(new Date(w.started_at), 'MMM d')} · {Math.floor(w.duration_secs / 60)} min</p>
                 </div>
                 <div class="text-right flex flex-col gap-1">
                   <div>
-                    <p class="text-[13px] font-semibold {actClass}">
+                    <p class="text-[13px] font-semibold tabular-nums" style:color={boundedScoreCssColor(strainVal, true)}>
                       {strainVal === null ? '--' : strainVal}
                     </p>
                     <p class="text-[9px] text-text2 font-mono">STRAIN</p>
                   </div>
                   <div>
-                    <p class="text-[13px] font-semibold {tssVal === null ? 'text-text2' : actClass}">
+                    <p
+                      class="text-[13px] font-semibold tabular-nums"
+                      style:color={boundedScoreCssColor(tssVal === null ? null : strainVal, true)}
+                    >
                       {tssVal === null ? '--' : tssVal}
                     </p>
                     <p class="text-[9px] text-text2 font-mono">TSS</p>
