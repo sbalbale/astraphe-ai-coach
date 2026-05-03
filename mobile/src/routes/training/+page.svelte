@@ -16,6 +16,7 @@
   import EmptyState from '$lib/components/EmptyState.svelte';
   import { confirm } from '$lib/confirm';
   import DatePicker from '$lib/components/DatePicker.svelte';
+  import { analysisNavEpoch } from '$lib/analysisNavEpoch.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { api } from '$lib/api';
   import { page } from '$app/stores';
@@ -191,6 +192,10 @@
   let analysisText = $state<string | null>(null);
   let activeAnalysisKey: string | null = null;
   $effect(() => {
+    void analysisNavEpoch.epoch;
+    void athleteStore.initialLoadDone;
+    void athleteStore.loading;
+
     const endDay = selectedWeekEndStr;
     if (!endDay) {
       analysisText = null;
@@ -198,10 +203,12 @@
     }
 
     const cached = trainingLoadAnalysisMemo.get(endDay);
-    if (cached !== undefined) {
+    if (cached !== undefined && cached !== null) {
       analysisText = cached;
       return;
     }
+
+    analysisText = null;
 
     const requestKey = `training-load:${endDay}`;
     activeAnalysisKey = requestKey;
@@ -210,7 +217,7 @@
       const res = await api.getTrainingLoadAnalysis(endDay);
       const content = typeof res?.analysis?.content === 'string' ? res.analysis.content.trim() : '';
       const next = content ? content : null;
-      trainingLoadAnalysisMemo.set(endDay, next);
+      if (next) trainingLoadAnalysisMemo.set(endDay, next);
 
       if (activeAnalysisKey !== requestKey) return;
       analysisText = next;

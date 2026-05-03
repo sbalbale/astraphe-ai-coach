@@ -3,8 +3,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional, List
 from app.services.ai_coach import get_coach_response, get_coach_response_stream
-from app.services.ai_model import resolve_gemini_model_for_athlete
-from app.dependencies import get_current_athlete, get_current_user_tier, get_user_db
+from app.dependencies import get_current_athlete, get_current_gemini_model, get_current_user_tier, get_user_db
 import json
 from datetime import datetime
 
@@ -173,13 +172,13 @@ async def chat_with_coach(
     payload: ChatMessage,
     athlete_id: str = Depends(get_current_athlete),
     tier: str = Depends(get_current_user_tier),
+    model_name: str = Depends(get_current_gemini_model),
     db = Depends(get_user_db),
 ):
     _require_premium(tier)
     try:
         conversation_id = payload.conversation_id or _create_conversation(db, athlete_id, title=None)
         _insert_message(db, athlete_id, conversation_id, role="user", content=payload.message, image_urls=payload.image_urls)
-        model_name = resolve_gemini_model_for_athlete(db, athlete_id)
         coach_reply = get_coach_response(
             athlete_id=athlete_id,
             message=payload.message,
@@ -198,6 +197,7 @@ async def stream_chat_with_coach(
     payload: ChatMessage,
     athlete_id: str = Depends(get_current_athlete),
     tier: str = Depends(get_current_user_tier),
+    model_name: str = Depends(get_current_gemini_model),
     db = Depends(get_user_db),
 ):
     _require_premium(tier)
@@ -212,7 +212,6 @@ async def stream_chat_with_coach(
         _insert_message(db, athlete_id, conversation_id, role="user", content=payload.message, image_urls=payload.image_urls)
 
         ai_full = ""
-        model_name = resolve_gemini_model_for_athlete(db, athlete_id)
         try:
             async for chunk in get_coach_response_stream(
                 athlete_id=athlete_id,

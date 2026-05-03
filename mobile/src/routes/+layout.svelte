@@ -1,12 +1,17 @@
 <script lang="ts">
   import '../app.css';
   import { page } from '$app/stores';
-  import { goto } from '$app/navigation';
+  import { afterNavigate, goto } from '$app/navigation';
   import Sidebar from '$lib/components/Sidebar.svelte';
   import BottomNav from '$lib/components/BottomNav.svelte';
   import ConfirmHost from '$lib/components/ConfirmHost.svelte';
+  import { analysisNavEpoch } from '$lib/analysisNavEpoch.svelte';
   import { authStore } from '$lib/stores/authStore.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
+
+  afterNavigate(() => {
+    analysisNavEpoch.bump();
+  });
 
   const props = $props();
   
@@ -56,15 +61,11 @@
 
     // Signed in but on an auth route: jump into the app flow.
     if (isAuthRoute) {
-      goto(complete ? '/dashboard' : '/onboarding', { replaceState: true });
+      goto('/dashboard', { replaceState: true });
       return;
     }
 
-    // Enforce onboarding completion (avoid loops while loading by checking initialLoadDone above).
-    if (!complete && !isOnboardingRoute) {
-      goto('/onboarding', { replaceState: true });
-      return;
-    }
+    // Onboarding is optional; if the profile is complete, leave the onboarding screen.
     if (complete && isOnboardingRoute) {
       goto('/dashboard', { replaceState: true });
       return;

@@ -6,13 +6,13 @@ import re
 from datetime import datetime
 from typing import Any, Dict, Optional, Tuple
 
-import google.generativeai as genai
+from google import genai
 from supabase import Client
 
 from app.config import settings
 
 
-genai.configure(api_key=settings.GEMINI_API_KEY)
+_client = genai.Client(api_key=settings.GEMINI_API_KEY)
 
 
 AnalysisRow = Dict[str, Any]
@@ -27,8 +27,23 @@ def canonical_json(obj: Any) -> str:
     return json.dumps(obj, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
+def _snap_floats_for_fingerprint(obj: Any) -> Any:
+    """
+    PostgREST / driver float noise (e.g. 12.3000000001 vs 12.3) should not invalidate cache.
+    """
+    if isinstance(obj, float):
+        return round(obj, 4)
+    if obj is None or isinstance(obj, (str, bool, int)):
+        return obj
+    if isinstance(obj, dict):
+        return {k: _snap_floats_for_fingerprint(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_snap_floats_for_fingerprint(v) for v in obj]
+    return obj
+
+
 def fingerprint_context(context: Any) -> str:
-    s = canonical_json(context)
+    s = canonical_json(_snap_floats_for_fingerprint(context))
     return hashlib.sha256(s.encode("utf-8")).hexdigest()
 
 
@@ -107,8 +122,7 @@ def upsert_analysis(
 
 def generate_gemini_analysis(prompt: str, model_name: str) -> Tuple[str, str]:
     effective_model = (model_name or settings.GEMINI_MODEL)
-    model = genai.GenerativeModel(effective_model)
-    resp = model.generate_content(prompt)
+    resp = _client.models.generate_content(model=effective_model, contents=prompt)
     text = getattr(resp, "text", "") or ""
     return clamp_to_two_sentences(text), effective_model
 

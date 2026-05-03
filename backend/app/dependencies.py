@@ -96,3 +96,33 @@ async def get_current_user_tier(
     except Exception:
         # Tier should never block core flows; treat as free on any auth lookup issues.
         return "free"
+
+
+async def get_current_gemini_model(
+    credentials: HTTPAuthorizationCredentials = Security(security),
+    athlete_id: str = Depends(get_current_athlete),
+    db: Client = Depends(get_user_db),
+) -> str:
+    """
+    Returns the Gemini model name to use for this request.
+
+    Primary: Supabase Auth JWT app_metadata.gemini_model (admin-controlled).
+    Fallback: backend .env GEMINI_MODEL.
+    """
+    fallback = (settings.GEMINI_MODEL or "").strip() or "gemini-flash-lite-latest"
+    token = credentials.credentials
+
+    try:
+        user_res = db.auth.get_user(token)
+        u = user_res.user
+        app_meta = getattr(u, "app_metadata", None) or {}
+        raw = app_meta.get("gemini_model") or app_meta.get("ai_model")
+        if isinstance(raw, str):
+            m = raw.strip()
+            if m:
+                return m
+    except Exception:
+        # Continue to fallback below.
+        pass
+
+    return fallback

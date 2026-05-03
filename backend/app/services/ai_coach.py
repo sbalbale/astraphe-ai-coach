@@ -1,10 +1,11 @@
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from app.config import settings
 import json
 from datetime import date
 from supabase import Client
 
-genai.configure(api_key=settings.GEMINI_API_KEY)
+_client = genai.Client(api_key=settings.GEMINI_API_KEY)
 
 def get_embedding_model_name() -> str:
     embedding_model = settings.GEMINI_EMBEDDING_MODEL
@@ -19,12 +20,29 @@ def load_coach_instructions() -> str:
         return "You are ASTRAPE, an elite, data-driven performance coach."
 
 async def retrieve_relevant_memories(athlete_id: str, query: str, db: Client, top_k: int = 5) -> list[dict]:
-    embedding_model = genai.embed_content(
+    resp = _client.models.embed_content(
         model=get_embedding_model_name(),
-        content=query,
-        task_type="retrieval_query",
+        contents=query,
     )
-    query_embedding = embedding_model["embedding"]
+    # Best-effort extraction across SDK versions.
+    query_embedding = None
+    emb = getattr(resp, "embedding", None)
+    if emb is None:
+        emb = getattr(resp, "embeddings", None)
+    if emb is not None:
+        if isinstance(emb, dict):
+            query_embedding = emb.get("values") or emb.get("embedding") or emb.get("vector")
+        elif isinstance(emb, (list, tuple)) and emb:
+            first = emb[0]
+            query_embedding = getattr(first, "values", None) or getattr(first, "embedding", None)
+        else:
+            query_embedding = getattr(emb, "values", None)
+    if query_embedding is None:
+        # Fall back to dict-like behavior if the response supports it.
+        try:
+            query_embedding = resp["embedding"]  # type: ignore[index]
+        except Exception:
+            query_embedding = []
     result = db.rpc("match_coach_memories", {
         "athlete_id": athlete_id, "query_embedding": query_embedding, "match_threshold": 0.75, "match_count": top_k
     }).execute()
@@ -233,9 +251,8 @@ def get_coach_response(
     )
     final_prompt = f"{system_instruction}\n\n{context_block}\n\nAthlete Message: {message}"
     effective_model = (model_name or settings.GEMINI_MODEL)
-    model = genai.GenerativeModel(effective_model)
-    response = model.generate_content(final_prompt)
-    return response.text
+    response = _client.models.generate_content(model=effective_model, contents=final_prompt)
+    return getattr(response, "text", "") or ""
 
 async def get_coach_response_stream(
     athlete_id: str,
@@ -251,8 +268,7 @@ async def get_coach_response_stream(
     )
     final_prompt = f"{system_instruction}\n\n{context_block}\n\nAthlete Message: {message}"
     effective_model = (model_name or settings.GEMINI_MODEL)
-    model = genai.GenerativeModel(effective_model)
-    response = model.generate_content(final_prompt, stream=True)
-    for chunk in response:
-        if chunk.text:
-            yield chunk.text
+    for chunk in _client.models.generate_content_stream(model=effective_model, contents=final_prompt):
+        t = getattr(chunk, "text", None)
+        if t:
+            yield t

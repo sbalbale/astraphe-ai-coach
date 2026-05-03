@@ -61,8 +61,14 @@
   }
 
   async function handleSignOut() {
-    await authStore.signOut();
-    goto('/auth/signin');
+    try {
+      await authStore.signOut({ timeoutMs: 4000 });
+    } catch (e) {
+      // Defensive: AuthState.signOut is intended not to throw, but never block navigation.
+      console.warn('[profile] signOut threw unexpectedly', e);
+    } finally {
+      goto('/auth/signin', { replaceState: true });
+    }
   }
 </script>
 
@@ -155,7 +161,7 @@
   <Card>
     <p class="text-[13px] font-semibold mb-3">Account</p>
     <div class="flex flex-col gap-1">
-      {#each menu as item}
+      {#each menu as item (item.href)}
         <a href={item.href} class="w-full flex justify-between items-center py-2.5 bg-transparent border-none text-text1 text-[13px] cursor-pointer hover:text-text0 transition-colors">
           <span>{item.label}</span>
           <span class="text-text2">→</span>
@@ -164,7 +170,11 @@
     </div>
   </Card>
   
-  <button onclick={handleSignOut} class="w-full p-3 rounded-xl bg-glass border border-border text-[13px] font-medium text-red mt-2 transition-colors hover:bg-red/10 cursor-pointer">
+  <button
+    type="button"
+    onclick={handleSignOut}
+    class="w-full p-3 rounded-xl bg-glass border border-border text-[13px] font-medium text-red mt-2 transition-colors hover:bg-red/10 cursor-pointer"
+  >
     Sign Out
   </button>
 </div>

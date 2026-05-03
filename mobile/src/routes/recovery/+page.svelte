@@ -6,11 +6,13 @@
 
 <script lang="ts">
   import Card from '$lib/components/Card.svelte';
+  import MetricBadge from '$lib/components/MetricBadge.svelte';
   import RadialProgress from '$lib/components/RadialProgress.svelte';
   import Tag from '$lib/components/Tag.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import Pill from '$lib/components/Pill.svelte';
   import DatePicker from '$lib/components/DatePicker.svelte';
+  import { analysisNavEpoch } from '$lib/analysisNavEpoch.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { api } from '$lib/api';
   import { normalizeUnits, type Units } from '$lib/utils/units';
@@ -79,11 +81,11 @@
 
   const FACTOR_COLORS = {
     hrv: '#00C8A8',
-    rhr: '#7C3AED',
+    rhr: '#4621FF',
     sleep: '#FFCB88',
     load: '#F07178',
     temp: '#00C8A8',
-    spo2: '#7C3AED'
+    spo2: '#4621FF'
   } as const;
   
   function baselineAvg30d(series: BiometricsRecord[] | undefined, endDateStr: string, field: string): number | null {
@@ -291,6 +293,11 @@
   let analysisText = $state<string | null>(null);
   let activeAnalysisKey: string | null = null;
   $effect(() => {
+    void analysisNavEpoch.epoch;
+    void athleteStore.initialLoadDone;
+    void athleteStore.loading;
+    void d?.score;
+
     const day = d?.date;
     if (!day) {
       analysisText = null;
@@ -298,10 +305,12 @@
     }
 
     const cached = recoveryAnalysisMemo.get(day);
-    if (cached !== undefined) {
+    if (cached !== undefined && cached !== null) {
       analysisText = cached;
       return;
     }
+
+    analysisText = null;
 
     const requestKey = `recovery:${day}`;
     activeAnalysisKey = requestKey;
@@ -310,7 +319,7 @@
       const res = await api.getRecoveryAnalysis(day);
       const content = typeof res?.analysis?.content === 'string' ? res.analysis.content.trim() : '';
       const next = content ? content : null;
-      recoveryAnalysisMemo.set(day, next);
+      if (next) recoveryAnalysisMemo.set(day, next);
 
       if (activeAnalysisKey !== requestKey) return;
       analysisText = next;
@@ -320,8 +329,8 @@
 
 <div class="flex flex-col gap-3">
   <div>
-    <p class="text-[10px] text-text2 font-mono uppercase tracking-[0.1em]">Daily Readiness</p>
-    <h1 class="text-[22px] font-bold tracking-tight">Recovery</h1>
+    <p class="text-xs text-text2 font-mono uppercase tracking-[0.1em]">Daily Readiness</p>
+    <h1 class="text-[22px] font-bold tracking-[-0.02em]">Recovery</h1>
   </div>
 
   {#if !isConnected}
@@ -409,7 +418,7 @@
     {:else}
       <!-- Hero Card (Sleep Page Style) -->
       <Card style="background: var(--glass); border-color: var(--border);">
-        <div class="flex items-center gap-5 py-1">
+        <div class="flex items-center gap-4">
           <RadialProgress 
             value={score} 
             max={100} 
@@ -420,7 +429,7 @@
           />
           <div class="flex-1">
             <div class="flex items-center gap-2 mb-1">
-              <span class="text-[18px] font-bold text-text0">{quality}</span>
+              <span class="text-[18px] font-bold">{quality}</span>
               <Tag color={scoreColor}>{score >= 67 ? 'OPTIMAL' : score >= 34 ? 'MODERATE' : 'FATIGUED'}</Tag>
             </div>
             <p class="text-xs text-text1 leading-relaxed">
@@ -434,35 +443,14 @@
 
       <!-- Metrics Grid -->
       <div class="grid grid-cols-3 gap-2">
-        <Card style="padding: 12px; height: 100%;">
-          <div class="flex flex-col">
-            <span class="text-[10px] text-text2 font-mono uppercase mb-1">HRV</span>
-            <div class="flex items-baseline gap-1">
-              <span class="text-[18px] font-bold text-text0">{d.hrv}</span>
-              <span class="text-[10px] text-text2">ms</span>
-            </div>
-            <span class="text-[9px] text-text2 mt-1">Avg</span>
-          </div>
+        <Card style="padding: 8px 10px;">
+          <MetricBadge label="HRV" value={d.hrv} unit="ms" color="var(--teal)" sub="Avg" />
         </Card>
-        <Card style="padding: 12px; height: 100%;">
-          <div class="flex flex-col">
-            <span class="text-[10px] text-text2 font-mono uppercase mb-1">RHR</span>
-            <div class="flex items-baseline gap-1">
-              <span class="text-[18px] font-bold text-text0">{d.rhr}</span>
-              <span class="text-[10px] text-text2">bpm</span>
-            </div>
-            <span class="text-[9px] text-text2 mt-1">Avg</span>
-          </div>
+        <Card style="padding: 8px 10px;">
+          <MetricBadge label="RHR" value={d.rhr} unit="bpm" color="var(--blue)" sub="Avg" />
         </Card>
-        <Card style="padding: 12px; height: 100%;">
-          <div class="flex flex-col">
-            <span class="text-[10px] text-text2 font-mono uppercase mb-1">Sleep</span>
-            <div class="flex items-baseline gap-1">
-              <span class="text-[18px] font-bold text-text0">{d.sleepScore}</span>
-              <span class="text-[10px] text-text2">%</span>
-            </div>
-            <span class="text-[9px] text-text2 mt-1">Score</span>
-          </div>
+        <Card style="padding: 8px 10px;">
+          <MetricBadge label="Sleep" value={d.sleepScore} unit="%" color="var(--amber)" sub="Score" />
         </Card>
       </div>
       
@@ -650,15 +638,15 @@
         </div>
       </Card>
 
-      <!-- 28-Day Trend -->
+      <!-- 7-Day Trend -->
       <Card>
         <div class="flex justify-between items-center mb-3">
-          <p class="text-[13px] font-semibold">Recovery trends</p>
+          <p class="text-[13px] font-semibold">7-Day Trend</p>
           <span class="text-[10px] text-text2 font-mono">
-            avg {avg7d === null ? '--' : `${avg7d}/100`} · {score}/100 current
+            avg {avg7d === null ? '--' : `${avg7d}%`} · {score}% current
           </span>
         </div>
-        <div class="flex gap-2 items-end h-[50px] mb-1 px-1 pb-2">
+        <div class="flex gap-2 items-end h-[50px] mb-1 px-1">
           {#each days as day, i (day.date)}
             {@const c = day.score >= 67 ? '#00C8A8' : day.score >= 34 ? '#FFCB88' : '#F07178'}
             <button
@@ -678,9 +666,11 @@
       </Card>
 
       <!-- Analysis Card -->
-      <Card style="background: var(--glass2); border-color: transparent;">
-        <p class="text-[13px] font-semibold mb-1">Recovery Analysis</p>
-        <p class="text-[12px] text-text2 leading-relaxed italic">
+      <Card
+        style="background: linear-gradient(135deg, rgba(70,33,255,0.12), transparent);"
+      >
+        <p class="text-[13px] font-semibold mb-1.5">Recovery Analysis</p>
+        <p class="text-xs text-text1 leading-relaxed">
           {analysisText ??
             (score >= 67
               ? 'Your recovery architecture looks balanced. Systemic fatigue is low.'
