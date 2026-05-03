@@ -24,8 +24,13 @@
   import {
     getBoundedScoreColor,
     boundedScoreCssColor,
-    formCssColor
+    formCssColor,
+    getZScoreColor,
+    workoutOutputTextClass
   } from '$lib/scoreColors';
+
+  const CTL_IDENTITY_HEX = '#3b82f6';
+  const ATL_IDENTITY_HEX = '#64748b';
 
   const props = $props();
 
@@ -69,6 +74,21 @@
   const latestHrv = $derived(todayHrv ?? latestBio?.hrv_rmssd ?? null);
   const latestSleepMin = $derived(todaySleepMin ?? latestBio?.sleep_duration_min ?? null);
   const latestSleepScore = $derived(todaySleepScore ?? latestBio?.sleep_score ?? null);
+
+  const todayHrvZ = $derived(
+    typeof todayBio?.hrv_z === 'number' && Number.isFinite(todayBio.hrv_z) ? Number(todayBio.hrv_z) : null
+  );
+  const todayRhrZ = $derived(
+    typeof todayBio?.rhr_z === 'number' && Number.isFinite(todayBio.rhr_z) ? Number(todayBio.rhr_z) : null
+  );
+  const latestHrvZ = $derived(
+    todayHrvZ ??
+      (typeof latestBio?.hrv_z === 'number' && Number.isFinite(latestBio.hrv_z) ? Number(latestBio.hrv_z) : null)
+  );
+  const latestRhrZ = $derived(
+    todayRhrZ ??
+      (typeof latestBio?.rhr_z === 'number' && Number.isFinite(latestBio.rhr_z) ? Number(latestBio.rhr_z) : null)
+  );
   // The dashboard has a separate "Readiness Score" card above. This panel is explicitly "Recovery trends",
   // so prefer the raw `recovery_score` series when available.
   const latestRecovery = $derived(
@@ -291,27 +311,34 @@
             {/if}
           </div>
           <p class="text-xs text-text1 leading-relaxed">
-            HRV <span class="text-text0">{todayHrv === null ? 'Data not found' : `${Math.round(todayHrv)}ms`}</span> · Sleep <span class="text-text0">{todaySleepMin === null ? 'Data not found' : sleepHM(todaySleepMin)}</span>
+            HRV
+            <span
+              class={todayHrv === null ? 'text-text2' : getZScoreColor(latestHrvZ)}
+              >{todayHrv === null ? 'Data not found' : `${Math.round(todayHrv)}ms`}</span>
+            · Sleep
+            <span
+              class={latestSleepScore === null || latestSleepScore <= 0
+                ? 'text-text2'
+                : getBoundedScoreColor(latestSleepScore)}
+              >{todaySleepMin === null ? 'Data not found' : sleepHM(todaySleepMin)}</span>
           </p>
           <p class="text-[11px] text-text2 mt-1">Data synced from your connected services.</p>
         </div>
       </div>
     </Card>
 
-    <!-- Metric Row.
-         CTL/ATL are raw absolute fitness/fatigue numbers — they MUST stay neutral.
-         Only TSB (Form) is colored, using the three-band rule from formCssColor. -->
+    <!-- Metric Row: CTL/ATL use chart identity colors; TSB uses form/status bands -->
     <div class="grid grid-cols-3 gap-2.5">
       <Card style="padding: 12px 14px;">
         <div class="flex justify-between items-start">
-          <MetricBadge label="CTL" value={todayCtl === null ? 'Data not found' : Math.round(todayCtl)} unit="" color="var(--text0)" sub="Fitness" />
+          <MetricBadge label="CTL" value={todayCtl === null ? 'Data not found' : Math.round(todayCtl)} unit="" color={CTL_IDENTITY_HEX} sub="Fitness" />
           {#if isCalibrating}
             <CalibrationBadge />
           {/if}
         </div>
       </Card>
       <Card style="padding: 12px 14px;">
-        <MetricBadge label="ATL" value={todayAtl === null ? 'Data not found' : Math.round(todayAtl)} unit="" color="var(--text0)" sub="Fatigue" />
+        <MetricBadge label="ATL" value={todayAtl === null ? 'Data not found' : Math.round(todayAtl)} unit="" color={ATL_IDENTITY_HEX} sub="Fatigue" />
       </Card>
       <Card style="padding: 12px 14px;">
         <div class="flex justify-between items-start">
@@ -340,20 +367,16 @@
       </p>
     </Card>
 
-    <!-- Training Load Chart.
-         Legend swatches are neutral because CTL and ATL are raw absolutes. The
-         chart itself paints CTL/ATL in muted neutrals and reserves color for
-         TSB (Form), which IS actionable. -->
     {#if athleteStore.metrics?.trainingLoadData?.length > 0}
       <Card>
         <div class="flex justify-between items-center mb-3">
           <span class="text-[13px] font-semibold">Training Load</span>
           <div class="flex gap-3">
-            <span class="text-[10px] text-text1 font-mono flex items-center gap-1">
-              <span class="w-4 h-0.5 bg-text1 inline-block rounded-[1px]"></span> CTL
+            <span class="text-[10px] font-mono flex items-center gap-1 text-chartCtl">
+              <span class="w-4 h-0.5 bg-chartCtl inline-block rounded-[1px]"></span> CTL
             </span>
-            <span class="text-[10px] text-text2 font-mono flex items-center gap-1">
-              <span class="w-2.5 h-2.5 bg-text2/40 inline-block rounded-sm"></span> ATL
+            <span class="text-[10px] font-mono flex items-center gap-1 text-[#94a3b8]">
+              <span class="w-2.5 h-2.5 bg-chartAtl/80 inline-block rounded-sm"></span> ATL
             </span>
           </div>
         </div>
@@ -410,15 +433,15 @@
             <span class="text-[8px] bg-white/5 px-1 rounded text-text2 border border-white/5 uppercase">Latest</span>
           {/if}
         </div>
-        <!-- Sleep duration is a raw absolute and stays neutral. The colored
-             7-day score badge below carries the actionable signal. -->
         <div class="flex items-baseline gap-1.5">
-          <span class="text-[20px] font-bold text-text0">
+          <span
+            class="text-[20px] font-bold {latestSleepScore === null || latestSleepScore <= 0 ? 'text-text2' : getBoundedScoreColor(latestSleepScore)}"
+          >
             {latestSleepMin === null ? 'Data not found' : sleepHM(latestSleepMin)}
           </span>
         </div>
         <p class="text-[10px] text-text2 mt-1">
-          7d avg <span class="text-text0 font-medium">{avgSleep7dMin === null ? '--' : sleepHM(avgSleep7dMin)}</span>
+          7d avg <span class="font-medium {avgSleepScore7d === null || avgSleepScore7d <= 0 ? 'text-text2' : getBoundedScoreColor(avgSleepScore7d)}">{avgSleep7dMin === null ? '--' : sleepHM(avgSleep7dMin)}</span>
           <span class="text-text2"> · </span>
           <span class="font-medium {avgSleepScore7d === null ? 'text-text2' : getBoundedScoreColor(avgSleepScore7d)}">
             {avgSleepScore7d === null ? '--' : `${avgSleepScore7d}%`}
@@ -461,6 +484,7 @@
             {@const type = w.sport?.toLowerCase()}
             {@const strainVal = Number.isFinite(Number(w?.strain_score)) ? Math.round(Number(w.strain_score)) : null}
             {@const tssVal = Number.isFinite(Number(w?.tss)) ? Math.round(Number(w.tss)) : null}
+            {@const actClass = strainVal === null ? 'text-text2' : workoutOutputTextClass(strainVal)}
             <button
               type="button"
               class="text-left bg-transparent border-none p-0 cursor-pointer w-full"
@@ -476,19 +500,18 @@
                   {type === 'run' ? '🏃' : (type === 'bike' || type === 'cycling') ? '🚴' : type === 'rowing' ? '🚣' : '💪'}
                 </div>
                 <div class="flex-1">
-                  <p class="text-[13px] font-medium">{w.title || (w.sport?.toUpperCase() + ' Session')}</p>
+                  <p class="text-[13px] font-medium {actClass}">{w.title || (w.sport?.toUpperCase() + ' Session')}</p>
                   <p class="text-[11px] text-text2">{format(new Date(w.started_at), 'MMM d')} · {Math.floor(w.duration_secs / 60)} min</p>
                 </div>
                 <div class="text-right flex flex-col gap-1">
                   <div>
-                    <p class="text-[13px] font-semibold {strainVal === null ? 'text-text2' : getBoundedScoreColor(strainVal, true)}">
+                    <p class="text-[13px] font-semibold {actClass}">
                       {strainVal === null ? '--' : strainVal}
                     </p>
                     <p class="text-[9px] text-text2 font-mono">STRAIN</p>
                   </div>
                   <div>
-                    <!-- TSS is a raw absolute training-stress dose: never color-coded. -->
-                    <p class="text-[13px] font-semibold {tssVal === null ? 'text-text2' : 'text-text0'}">
+                    <p class="text-[13px] font-semibold {tssVal === null ? 'text-text2' : actClass}">
                       {tssVal === null ? '--' : tssVal}
                     </p>
                     <p class="text-[9px] text-text2 font-mono">TSS</p>

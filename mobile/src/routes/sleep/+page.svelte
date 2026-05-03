@@ -16,7 +16,9 @@
   import TrendIndicator from "$lib/components/TrendIndicator.svelte";
   import {
     boundedScoreCssColor,
-    sleepDebtCssColor
+    sleepDebtCssColor,
+    getBoundedScoreColor,
+    zScoreCssColor
   } from "$lib/scoreColors";
   import { analysisNavEpoch } from "$lib/analysisNavEpoch.svelte";
   import { athleteStore } from "$lib/stores/athleteStore.svelte";
@@ -414,10 +416,8 @@
               >
             </div>
             <p class="text-xs text-text1">{nightData.bedtime} → {nightData.wakeup}</p>
-            <!-- Sleep duration is a raw absolute -> neutral text. The colored
-                 ring + tag above carry the actionable sleep-score signal. -->
             <div class="mt-1">
-              <p class="text-[18px] font-bold text-text0">
+              <p class={`text-[18px] font-bold ${getBoundedScoreColor(nightData.score)}`}>
                 {nightData.duration}
                 <span class="text-[11px] font-normal text-text2 uppercase tracking-wide ml-1">asleep</span>
               </p>
@@ -449,13 +449,25 @@
       <div class="grid grid-cols-3 gap-2">
         <Card style="padding: 8px 10px;">
           <div class="flex items-start justify-between gap-1">
-            <MetricBadge label="HRV" value={nightData.hrv} unit="ms" color="var(--text0)" sub="Avg" />
+            <MetricBadge
+              label="HRV"
+              value={nightData.hrv}
+              unit="ms"
+              color={nightData.hrvZ === null ? 'var(--text2)' : zScoreCssColor(nightData.hrvZ)}
+              sub="Avg"
+            />
             <TrendIndicator z={nightData.hrvZ} size={14} />
           </div>
         </Card>
         <Card style="padding: 8px 10px;">
           <div class="flex items-start justify-between gap-1">
-            <MetricBadge label="RHR" value={nightData.hr} unit="bpm" color="var(--text0)" sub="Avg" />
+            <MetricBadge
+              label="RHR"
+              value={nightData.hr}
+              unit="bpm"
+              color={nightData.rhrZ === null ? 'var(--text2)' : zScoreCssColor(nightData.rhrZ, true)}
+              sub="Avg"
+            />
             <TrendIndicator z={nightData.rhrZ} inverted size={14} />
           </div>
         </Card>

@@ -39,6 +39,9 @@ export default {
           red: '#F07178',
           blue: '#4621FF',
         },
+        /** Training-load chart identities (canonical Tailwind blue-500 / slate-700) */
+        chartCtl: '#3b82f6',
+        chartAtl: '#334155',
       },
       fontFamily: {
         sans: ['"Space Grotesk"', 'sans-serif'],

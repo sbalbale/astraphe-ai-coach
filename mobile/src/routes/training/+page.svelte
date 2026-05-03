@@ -21,7 +21,14 @@
   import { api } from '$lib/api';
   import { page } from '$app/stores';
   import { addDays, endOfWeek, format, startOfWeek } from 'date-fns';
-  import { getBoundedScoreColor, formCssColor } from '$lib/scoreColors';
+  import {
+    formCssColor,
+    getWeeklyLoadDeltaColor,
+    workoutOutputTextClass
+  } from '$lib/scoreColors';
+
+  const CTL_IDENTITY_HEX = '#3b82f6';
+  const ATL_IDENTITY_HEX = '#64748b';
 
   let metric = $state('load');
   const tabs = ['load', 'history']; // Simplified tabs for now as pace/zones need complex processing
@@ -122,6 +129,53 @@
   }
 
   const weeklyTss = $derived(athleteStore.workouts?.slice(0, 7).reduce((acc, w) => acc + (w.tss || 0), 0) || 0);
+
+  /** Oldest→newest daily rows for baseline math */
+  const trainingLoadSorted = $derived.by(() =>
+    [...(athleteStore.metrics?.trainingLoadData ?? [])]
+      .filter((r: any) => r?.date)
+      .sort((a: any, b: any) => String(a.date).localeCompare(String(b.date)))
+  );
+
+  /** Rolling 7-day TSS vs mean of prior (up to six) trailing 7-day windows */
+  const weeklyRollingContext = $derived.by(() => {
+    const rows = trainingLoadSorted;
+    const n = rows.length;
+    const sumWindowEnding = (endEx: number) => {
+      if (endEx < 7) return null as number | null;
+      let s = 0;
+      for (let i = endEx - 7; i < endEx; i++) s += Number((rows[i] as any)?.daily_tss ?? 0);
+      return s;
+    };
+
+    if (n >= 7) {
+      const current = sumWindowEnding(n)!;
+      const historics: number[] = [];
+      for (let end = n - 7; end >= 14 && historics.length < 8; end -= 7) {
+        const v = sumWindowEnding(end);
+        if (v != null) historics.push(v);
+      }
+      if (historics.length > 0) {
+        const baseline = historics.reduce((a, b) => a + b, 0) / historics.length;
+        const delta = current - baseline;
+        const pct = delta / Math.max(baseline, 1e-6);
+        return {
+          weekSum: Math.round(current),
+          baseline: Math.round(baseline),
+          delta: Math.round(delta),
+          pct
+        };
+      }
+      return { weekSum: Math.round(current), baseline: null, delta: null, pct: null as number | null };
+    }
+
+    return {
+      weekSum: Math.round(weeklyTss),
+      baseline: null,
+      delta: null,
+      pct: null as number | null
+    };
+  });
 
   function getDurationSecs(w: any): number {
     const direct = w?.duration_secs ?? w?.duration_seconds;
@@ -253,14 +307,12 @@
     </div>
 
     {#if metric === 'load'}
-      <!-- CTL/ATL/Weekly TSS are raw absolute training-load numbers and stay
-           neutral. Only Form (TSB) is colored, using the three-band rule. -->
       <div class="grid grid-cols-2 gap-2.5">
         <Card>
-          <MetricBadge label="Fitness (CTL)" value={Math.round(athleteStore.ctl)} color="var(--text0)" sub="Long-term load" />
+          <MetricBadge label="Fitness (CTL)" value={Math.round(athleteStore.ctl)} color={CTL_IDENTITY_HEX} sub="Long-term load" />
         </Card>
         <Card>
-          <MetricBadge label="Fatigue (ATL)" value={Math.round(athleteStore.atl)} color="var(--text0)" sub="Short-term load" />
+          <MetricBadge label="Fatigue (ATL)" value={Math.round(athleteStore.atl)} color={ATL_IDENTITY_HEX} sub="Short-term load" />
         </Card>
         <Card>
           <MetricBadge
@@ -271,7 +323,21 @@
           />
         </Card>
         <Card>
-          <MetricBadge label="Weekly TSS" value={Math.round(weeklyTss)} color="var(--text0)" sub="Last 7 days" />
+          <MetricBadge
+            label="Weekly TSS"
+            value={weeklyRollingContext.weekSum}
+            color="var(--text0)"
+            sub="Rolling 7d (daily TSS)"
+          />
+          {#if weeklyRollingContext.baseline !== null && weeklyRollingContext.delta !== null && weeklyRollingContext.pct !== null}
+            <p class="text-[10px] text-text2 font-mono mt-2 leading-snug border-t border-border/60 pt-2">
+              Baseline ø {weeklyRollingContext.baseline}&nbsp;&nbsp;
+              <span class="text-text2">Δ</span>
+              <span class={getWeeklyLoadDeltaColor(weeklyRollingContext.pct)}>
+                {weeklyRollingContext.delta >= 0 ? '+' : ''}{weeklyRollingContext.delta}
+              </span>
+            </p>
+          {/if}
         </Card>
       </div>
       
@@ -317,24 +383,24 @@
         <Card>
           {@const selectedStrainVal = Number.isFinite(Number(selectedWorkout?.strain_score)) ? Math.round(Number(selectedWorkout.strain_score)) : null}
           {@const selectedTssVal = Number.isFinite(Number(selectedWorkout?.tss)) ? Math.round(Number(selectedWorkout.tss)) : null}
+          {@const selActCls = selectedStrainVal === null ? 'text-text2' : workoutOutputTextClass(selectedStrainVal)}
           <div class="flex items-center gap-4 mb-4">
             <div class="w-12 h-12 rounded-2xl flex items-center justify-center text-2xl {getWorkoutBg(selectedWorkout.sport)}">
               {getWorkoutIcon(selectedWorkout.sport)}
             </div>
             <div class="flex-1">
-              <h2 class="text-lg font-bold leading-tight">{selectedWorkout.title || (getWorkoutLabel(selectedWorkout.sport) + ' Session')}</h2>
+              <h2 class="text-lg font-bold leading-tight {selActCls}">{selectedWorkout.title || (getWorkoutLabel(selectedWorkout.sport) + ' Session')}</h2>
               <p class="text-xs text-text2">{format(new Date(selectedWorkout.started_at), (athleteStore.profile as any)?.time_format === '24h' ? 'EEEE, MMM d · HH:mm' : 'EEEE, MMM d · h:mm a')}</p>
             </div>
             <div class="text-right flex flex-col gap-1">
               <div>
-                <p class="text-[18px] font-bold {selectedStrainVal === null ? 'text-text2' : getBoundedScoreColor(selectedStrainVal, true)}">
+                <p class="text-[18px] font-bold {selActCls}">
                   {selectedStrainVal === null ? '--' : selectedStrainVal}
                 </p>
                 <p class="text-[9px] text-text2 font-mono">STRAIN</p>
               </div>
               <div>
-                <!-- TSS is a raw absolute training-stress dose: never color-coded. -->
-                <p class="text-[18px] font-bold {selectedTssVal === null ? 'text-text2' : 'text-text0'}">
+                <p class="text-[18px] font-bold {selectedTssVal === null ? 'text-text2' : selActCls}">
                   {selectedTssVal === null ? '--' : selectedTssVal}
                 </p>
                 <p class="text-[9px] text-text2 font-mono">TSS</p>
@@ -459,6 +525,7 @@
           {#each weekWorkouts as w (w?.id ?? w?.started_at)}
             {@const strainVal = Number.isFinite(Number(w?.strain_score)) ? Math.round(Number(w.strain_score)) : null}
             {@const tssVal = Number.isFinite(Number(w?.tss)) ? Math.round(Number(w.tss)) : null}
+            {@const wActCls = strainVal === null ? 'text-text2' : workoutOutputTextClass(strainVal)}
             <button class="text-left bg-transparent border-none p-0 cursor-pointer w-full" onclick={() => selectedWorkout = w}>
               <Card style="padding: 12px 14px;">
                 <div class="flex items-center gap-3">
@@ -466,19 +533,18 @@
                     {getWorkoutIcon(w.sport)}
                   </div>
                   <div class="flex-1">
-                    <p class="text-[13px] font-semibold">{w.title || (getWorkoutLabel(w.sport) + ' Session')}</p>
+                    <p class="text-[13px] font-semibold {wActCls}">{w.title || (getWorkoutLabel(w.sport) + ' Session')}</p>
                     <p class="text-[11px] text-text2">{format(new Date(w.started_at), 'MMM d')} · {Math.floor(getDurationSecs(w) / 60)} min</p>
                   </div>
                   <div class="text-right flex flex-col gap-1">
                     <div>
-                      <p class="text-[14px] font-bold {strainVal === null ? 'text-text2' : getBoundedScoreColor(strainVal, true)}">
+                      <p class="text-[14px] font-bold {wActCls}">
                         {strainVal === null ? '--' : strainVal}
                       </p>
                       <p class="text-[9px] text-text2 font-mono">STRAIN</p>
                     </div>
                     <div>
-                      <!-- TSS is a raw absolute training-stress dose: never color-coded. -->
-                      <p class="text-[14px] font-bold {tssVal === null ? 'text-text2' : 'text-text0'}">
+                      <p class="text-[14px] font-bold {tssVal === null ? 'text-text2' : wActCls}">
                         {tssVal === null ? '--' : tssVal}
                       </p>
                       <p class="text-[9px] text-text2 font-mono">TSS</p>
