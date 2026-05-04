@@ -2,6 +2,7 @@
   import EmptyState from '$lib/components/EmptyState.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { authStore } from '$lib/stores/authStore.svelte';
+  import { trainingStore } from '$lib/stores/trainingStore.svelte';
   import {
     addDays,
     endOfMonth,
@@ -12,6 +13,7 @@
     startOfMonth,
     startOfWeek
   } from 'date-fns';
+  import type { Workout } from '$lib/types/training';
 
   type AgendaView = 'day' | 'week';
 
@@ -38,16 +40,29 @@
 
   const dow = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
-  let selectedDate = $state<Date>(new Date());
   let agendaView = $state<AgendaView>('day');
   let selectedWorkout = $state<PlannedWorkout | null>(null);
 
   // Current month shown in the calendar (can be navigated independently).
   let viewMonth = $state<Date>(startOfMonth(new Date()));
 
+  function parseIsoLocal(value: string): Date {
+    // Local noon avoids timezone/DST edges shifting the date.
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+    if (!m) return new Date(NaN);
+    const year = Number(m[1]);
+    const monthIndex = Number(m[2]) - 1;
+    const day = Number(m[3]);
+    return new Date(year, monthIndex, day, 12, 0, 0, 0);
+  }
+
+  const selectedDate = $derived.by(() =>
+    parseIsoLocal(trainingStore.selectedDate || format(new Date(), 'yyyy-MM-dd'))
+  );
+
   const planObj = $derived.by(() => athleteStore.plan?.plan as Record<string, RawPlanItem> | undefined);
 
-  const plannedWorkouts = $derived.by<PlannedWorkout[]>(() => {
+  const legacyPlannedWorkouts = $derived.by<PlannedWorkout[]>(() => {
     const p = planObj;
     if (!p) return [];
 
@@ -77,6 +92,55 @@
     return out;
   });
 
+  const aiPlannedWorkouts = $derived.by<PlannedWorkout[]>(() => {
+    const mapSport = (sport: Workout['sport']): string => {
+      switch (sport) {
+        case 'cycling':
+          return 'bike';
+        case 'running':
+          return 'run';
+        case 'swimming':
+          return 'swim';
+        case 'rowing':
+          return 'row';
+        case 'strength':
+          return 'strength';
+        default:
+          return 'workout';
+      }
+    };
+
+    const intervalTarget = (i: Workout['structure'][number]): string | undefined => {
+      const parts: string[] = [];
+      if (typeof i.target_hr_zone === 'number') parts.push(`HR Z${i.target_hr_zone}`);
+      if (typeof i.target_power_percent_ftp === 'number') parts.push(`${i.target_power_percent_ftp}% FTP`);
+      return parts.length ? parts.join(' • ') : undefined;
+    };
+
+    return trainingStore.workouts.map((w) => ({
+      id: `ai:${w.id}`,
+      isoDate: w.date,
+      date: parseIsoLocal(w.date),
+      title: w.title,
+      type: mapSport(w.sport),
+      duration: `${w.duration_minutes} min`,
+      tss: w.projected_tss,
+      context: w.description,
+      structure: (w.structure ?? []).map((i) => ({
+        title: i.name,
+        duration: `${i.duration_minutes} min`,
+        target: intervalTarget(i),
+        note: i.description
+      }))
+    }));
+  });
+
+  const plannedWorkouts = $derived.by<PlannedWorkout[]>(() => {
+    const merged = [...legacyPlannedWorkouts, ...aiPlannedWorkouts];
+    merged.sort((a, b) => a.date.getTime() - b.date.getTime());
+    return merged;
+  });
+
   const workoutsByIso = $derived.by(() => {
     const map: Record<string, PlannedWorkout[]> = {};
     for (const w of plannedWorkouts) {
@@ -87,7 +151,7 @@
     return map;
   });
 
-  const selectedIso = $derived(format(selectedDate, 'yyyy-MM-dd'));
+  const selectedIso = $derived(trainingStore.selectedDate);
   const selectedRange = $derived.by(() => {
     if (agendaView === 'day') {
       const start = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate());
@@ -145,12 +209,22 @@
   const surfacePill =
     'inline-flex items-center gap-1 rounded-full border border-border bg-glass2 px-1 py-1 text-[12px] font-mono';
 
+  const viewMonthRange = $derived.by(() => ({
+    startIso: format(startOfMonth(viewMonth), 'yyyy-MM-dd'),
+    endIso: format(endOfMonth(viewMonth), 'yyyy-MM-dd')
+  }));
+
+  $effect(() => {
+    if (authStore.tier !== 'premium') return;
+    trainingStore.fetchWorkouts(viewMonthRange.startIso, viewMonthRange.endIso);
+  });
+
   function toggleView(v: AgendaView) {
     agendaView = v;
   }
 
   function selectDate(d: Date) {
-    selectedDate = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    trainingStore.selectedDate = format(d, 'yyyy-MM-dd');
     if (d.getFullYear() !== viewMonth.getFullYear() || d.getMonth() !== viewMonth.getMonth()) {
       viewMonth = startOfMonth(d);
     }
@@ -188,13 +262,6 @@
       title="Premium required"
       message="You must be a premium member to access the Training Plan feature."
       icon="🔒"
-    />
-  {:else if plannedWorkouts.length === 0}
-    <EmptyState
-      title="No Active Plan"
-      message="Ask the AI Coach to generate a training plan based on your goals and current fitness."
-      actionLabel="Go to Chat"
-      icon="📋"
     />
   {:else}
     <div class="md:grid md:grid-cols-12 md:gap-6 flex flex-col gap-4">
@@ -241,36 +308,30 @@
               <button
                 type="button"
                 class={[
-                  'h-[64px] rounded-2xl border transition-colors text-left px-2.5 py-2 relative overflow-hidden',
+                  'h-14 sm:h-16 md:h-[64px] rounded-2xl border transition-colors relative overflow-hidden flex flex-col items-center justify-start pt-1.5',
                   inMonth ? 'border-border bg-glass2/30 hover:bg-glass2' : 'border-border/40 bg-transparent opacity-60 hover:opacity-80',
                   isSelected ? 'border-blue bg-[linear-gradient(135deg,rgba(70,33,255,0.18),transparent)]' : ''
                 ].join(' ')}
                 aria-label={format(d, 'yyyy-MM-dd')}
                 onclick={() => selectDate(d)}
               >
-                <div class="flex items-start justify-between">
-                  <div class={['text-[12px] font-mono', isSelected ? 'text-text0' : 'text-text1'].join(' ')}>
-                    {format(d, 'd')}
-                  </div>
-                  {#if items.length > 0}
-                    <div class="flex items-center gap-1.5">
-                      {#each items.slice(0, 3) as w (w.id)}
-                        <span class={['w-2 h-2 rounded-full', indicatorClass(w)].join(' ')}></span>
-                      {/each}
-                      {#if items.length > 3}
-                        <span class="text-[10px] text-slate-400 font-mono">+{items.length - 3}</span>
-                      {/if}
-                    </div>
-                  {/if}
+                <div class={['text-sm font-medium', isSelected ? 'text-text0' : 'text-text1'].join(' ')}>
+                  {format(d, 'd')}
                 </div>
 
                 {#if items.length > 0}
+                  <div class="mt-0.5 flex items-center gap-1">
+                    {#each items.slice(0, 3) as w (w.id)}
+                      <span class={['w-1.5 h-1.5 rounded-full', indicatorClass(w)].join(' ')}></span>
+                    {/each}
+                    {#if items.length > 3}
+                      <span class="text-[9px] sm:text-[10px] leading-none text-slate-400 font-mono">+{items.length - 3}</span>
+                    {/if}
+                  </div>
+
                   {@const tss = Number(items[0]?.tss)}
-                  <div class="absolute bottom-1.5 left-2.5 right-2.5 flex items-end justify-between">
-                    <div class="text-[10px] text-slate-400 truncate">{items[0]?.title ?? items[0]?.type ?? 'Session'}</div>
-                    <div class={['text-[10px] font-mono', Number.isFinite(tss) ? 'text-text0' : 'text-slate-400'].join(' ')}>
-                      {Number.isFinite(tss) ? `${tss} TSS` : ''}
-                    </div>
+                  <div class="mt-auto pb-1 text-[9px] sm:text-[10px] leading-none text-text2 font-mono">
+                    <span class="hidden sm:inline">{Number.isFinite(tss) ? `${tss} TSS` : ''}</span>
                   </div>
                 {/if}
               </button>
@@ -322,7 +383,16 @@
             </div>
           </div>
 
-          {#if agendaItems.length === 0}
+          {#if trainingStore.isLoading}
+            <div class="bg-glass2 border border-border rounded-xl p-4">
+              <div class="animate-pulse grid gap-3">
+                <div class="h-4 w-40 rounded bg-border/50"></div>
+                <div class="h-3 w-full rounded bg-border/40"></div>
+                <div class="h-3 w-11/12 rounded bg-border/40"></div>
+                <div class="h-3 w-10/12 rounded bg-border/40"></div>
+              </div>
+            </div>
+          {:else if agendaItems.length === 0}
             <div class="bg-glass2 border border-border rounded-xl p-4">
               <div class="text-[13px] font-semibold">Nothing scheduled</div>
               <div class="text-[12px] text-slate-400 mt-1">
@@ -378,19 +448,21 @@
 {#if selectedWorkout}
   <!-- Modal / Drawer (simple centered overlay) -->
   <div
-    class="fixed inset-0 z-50 flex items-center justify-center p-4"
+    class="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-4 pt-16 sm:pt-4"
     role="dialog"
     aria-modal="true"
     aria-label="Session details"
   >
     <button
       type="button"
-      class="absolute inset-0 bg-black/60"
+      class="absolute inset-0 bg-black/80 backdrop-blur-sm"
       aria-label="Close"
       onclick={closeWorkout}
     ></button>
 
-    <div class="relative w-full max-w-[720px] bg-glass border border-border rounded-2xl p-5 shadow-[0_20px_60px_rgba(0,0,0,0.6)]">
+    <div
+      class="relative w-full max-w-[720px] max-h-[85vh] overflow-auto bg-[rgba(10,12,18,0.96)] border border-border rounded-2xl p-5 shadow-[0_20px_60px_rgba(0,0,0,0.75)]"
+    >
       <div class="flex items-start justify-between gap-4 mb-4">
         <div class="min-w-0">
           <div class="text-[12px] text-slate-400 font-mono">
