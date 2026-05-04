@@ -2,10 +2,16 @@ from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional, List
-from app.services.ai_coach import get_coach_response, get_coach_response_stream
-from app.dependencies import get_current_athlete, get_current_gemini_model, get_current_user_tier, get_user_db
+import asyncio
 import json
 from datetime import datetime
+
+from app.services.ai_coach import (
+    generate_coach_conversation_title,
+    get_coach_response,
+    get_coach_response_stream,
+)
+from app.dependencies import get_current_athlete, get_current_gemini_model, get_current_user_tier, get_user_db
 
 class ChatMessage(BaseModel):
     conversation_id: Optional[str] = None
@@ -74,6 +80,19 @@ def _maybe_set_conversation_title(db, athlete_id: str, conversation_id: str, tit
         db.table("coach_conversations").update({"title": title, "updated_at": _now_iso()}).eq("id", conversation_id).eq("athlete_id", athlete_id).execute()
     except Exception:
         return
+
+
+def _force_set_conversation_title(db, athlete_id: str, conversation_id: str, title: str):
+    """Always overwrite sidebar title (used after each coach reply)."""
+    t = (title or "").strip()
+    if not t:
+        return
+    t = t[:80]
+    try:
+        db.table("coach_conversations").update({"title": t, "updated_at": _now_iso()}).eq("id", conversation_id).eq("athlete_id", athlete_id).execute()
+    except Exception:
+        return
+
 
 def _insert_message(db, athlete_id: str, conversation_id: str, role: str, content: str, image_urls: Optional[List[str]] = None):
     db.table("coach_messages").insert({
@@ -188,6 +207,13 @@ async def chat_with_coach(
             model_name=model_name,
         )
         _insert_message(db, athlete_id, conversation_id, role="ai", content=coach_reply, image_urls=None)
+        try:
+            new_title = generate_coach_conversation_title(
+                db, athlete_id, conversation_id, model_name=model_name
+            )
+            _force_set_conversation_title(db, athlete_id, conversation_id, new_title)
+        except Exception:
+            pass
         return {"status": "success", "conversation_id": conversation_id, "reply": coach_reply}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -229,6 +255,17 @@ async def stream_chat_with_coach(
             # Persist assistant message once streaming completes
             if ai_full.strip():
                 _insert_message(db, athlete_id, conversation_id, role="ai", content=ai_full, image_urls=None)
+                try:
+                    new_title = await asyncio.to_thread(
+                        generate_coach_conversation_title,
+                        db,
+                        athlete_id,
+                        conversation_id,
+                        model_name,
+                    )
+                    _force_set_conversation_title(db, athlete_id, conversation_id, new_title)
+                except Exception:
+                    pass
         yield "data: [DONE]\n\n"
         
     return StreamingResponse(event_generator(), media_type="text/event-stream")

@@ -1,7 +1,9 @@
 from google import genai
+from google.genai import types
 from app.config import settings
 import asyncio
 import json
+import re
 from datetime import date
 from supabase import Client
 
@@ -318,3 +320,79 @@ async def get_coach_response_stream(
         t = getattr(chunk, "text", None)
         if t:
             yield t
+
+
+_TITLE_SYSTEM = """You label coaching chat threads for a mobile sidebar.
+Output exactly one short title: maximum 8 words, no quotation marks, no trailing punctuation, no emojis.
+Describe the concrete training topic (race, CTL/TSB, recovery, intervals, nutrition, etc.), not meta phrases like "Chat" or "Discussion"."""
+
+
+def _format_transcript_for_title(rows: list[dict], max_turns: int = 16, max_chars: int = 520) -> str:
+    lines: list[str] = []
+    for r in rows[-max_turns:]:
+        role = (r.get("role") or "").strip()
+        content = (r.get("content") or "").strip()
+        content = re.sub(r"\s+", " ", content)
+        if len(content) > max_chars:
+            content = content[: max_chars - 1] + "…"
+        label = "Athlete" if role == "user" else "Coach"
+        if content:
+            lines.append(f"{label}: {content}")
+    return "\n".join(lines)
+
+
+def _sanitize_generated_title(raw: str) -> str:
+    t = (raw or "").strip().splitlines()[0] if (raw or "").strip() else ""
+    t = t.strip(" \t\"'“”`•-—:")
+    t = re.sub(r"^title:\s*", "", t, flags=re.I)
+    t = re.sub(r"\s+", " ", t).strip()
+    if len(t) > 72:
+        t = t[:72].rsplit(" ", 1)[0] if " " in t[:72] else t[:72]
+    return t[:60]
+
+
+def _fallback_title_from_history(rows: list[dict]) -> str:
+    for r in reversed(rows):
+        if (r.get("role") or "").strip() != "user":
+            continue
+        content = (r.get("content") or "").strip()
+        if not content:
+            continue
+        base = " ".join(content.replace("\n", " ").split())
+        words = base.split(" ")
+        title = " ".join(words[:8])
+        if len(words) > 8:
+            title += "…"
+        return title[:60]
+    return "New chat"
+
+
+def generate_coach_conversation_title(
+    db: Client,
+    athlete_id: str,
+    conversation_id: str,
+    model_name: str | None = None,
+) -> str:
+    """
+    Builds a short sidebar title from recent coach/athlete messages (sync; call via asyncio.to_thread from async routes).
+    """
+    rows = _load_conversation_history(db, athlete_id, conversation_id, limit=24)
+    transcript = _format_transcript_for_title(rows)
+    if not transcript.strip():
+        return "New chat"
+
+    effective_model = model_name or settings.GEMINI_MODEL
+    prompt = f"{_TITLE_SYSTEM}\n\n---\n{transcript}\n---\nTitle:"
+    try:
+        response = _client.models.generate_content(
+            model=effective_model,
+            contents=prompt,
+            config=types.GenerateContentConfig(max_output_tokens=48, temperature=0.25),
+        )
+        text = (getattr(response, "text", None) or "").strip()
+        title = _sanitize_generated_title(text)
+        if len(title) < 4:
+            return _fallback_title_from_history(rows)
+        return title
+    except Exception:
+        return _fallback_title_from_history(rows)
