@@ -127,7 +127,13 @@
       {/if}
     {/if}
     
-    <div class="flex-1 overflow-y-auto flex flex-col relative {wide ? 'p-6 px-7' : $page.url.pathname === '/chat' ? 'p-3 px-4 pb-4' : 'p-3 px-4'}">
+    <div
+      class="flex-1 flex flex-col relative min-h-0 {$page.url.pathname === '/chat'
+        ? 'overflow-hidden p-0'
+        : wide
+          ? 'overflow-y-auto p-6 px-7'
+          : 'overflow-y-auto p-3 px-4'}"
+    >
       {@render props.children()}
     </div>
     

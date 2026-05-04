@@ -1,10 +1,12 @@
 <script lang="ts">
   import { api } from '$lib/api';
+  import { buildMergedCoachPromptSuggestions } from '$lib/coachPromptSuggestions';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { authStore } from '$lib/stores/authStore.svelte';
   import { confirm } from '$lib/confirm';
   import DOMPurify from 'dompurify';
   import { marked } from 'marked';
+  import { format } from 'date-fns';
   import { tick } from 'svelte';
 
   type Conversation = { id: string; title?: string | null; created_at?: string; updated_at?: string };
@@ -227,6 +229,61 @@
     }
   }
 
+  const todayStr = $derived(format(new Date(), 'yyyy-MM-dd'));
+  const biometricSeries = $derived(athleteStore.biometrics?.series ?? []);
+  const todayBio = $derived(biometricSeries.find((s: { date?: string }) => s.date === todayStr));
+  const latestBio = $derived(
+    biometricSeries.length ? biometricSeries[biometricSeries.length - 1] : undefined
+  );
+  const contextSleepScore = $derived<number | null>(
+    typeof todayBio?.sleep_score === 'number' && Number.isFinite(todayBio.sleep_score)
+      ? Number(todayBio.sleep_score)
+      : typeof latestBio?.sleep_score === 'number' && Number.isFinite(latestBio.sleep_score)
+        ? Number(latestBio.sleep_score)
+        : null
+  );
+  const todayHrvZ = $derived(
+    typeof todayBio?.hrv_z === 'number' && Number.isFinite(todayBio.hrv_z) ? Number(todayBio.hrv_z) : null
+  );
+  const contextHrvZ = $derived(
+    todayHrvZ ??
+      (typeof latestBio?.hrv_z === 'number' && Number.isFinite(latestBio.hrv_z)
+        ? Number(latestBio.hrv_z)
+        : null)
+  );
+
+  const recentTurnsForSuggestions = $derived(
+    messages
+      .filter((m) => !(m.streaming && !m.text.trim()))
+      .filter((m) => m.text.trim())
+      .map((m) => ({ role: m.role, text: m.text }))
+  );
+
+  const promptSuggestions = $derived(
+    buildMergedCoachPromptSuggestions({
+      ctl: athleteStore.ctl,
+      tsb: athleteStore.tsb,
+      sleepScore: contextSleepScore,
+      hrvZScore: contextHrvZ,
+      recentMessages: recentTurnsForSuggestions
+    })
+  );
+
+  const userInitials = $derived.by(() => {
+    const meta = authStore.user?.user_metadata as Record<string, unknown> | undefined;
+    const name = typeof meta?.full_name === 'string' ? meta.full_name.trim() : '';
+    if (name) {
+      const parts = name.split(/\s+/).filter(Boolean);
+      if (parts.length >= 2) {
+        return `${parts[0]![0]!}${parts[parts.length - 1]![0]!}`.toUpperCase();
+      }
+      return parts[0]!.slice(0, 2).toUpperCase();
+    }
+    const email = authStore.user?.email?.trim();
+    if (email) return email.slice(0, 2).toUpperCase();
+    return 'Me';
+  });
+
   $effect(() => {
     const onDocDown = (e: MouseEvent) => {
       if (!convoMenuOpen) return;
@@ -301,168 +358,236 @@
     }
   }
 
-  const suggestions = ['Plan this week', 'Am I overtrained?', 'Race day strategy', 'Improve VO2max'];
 </script>
 
-<div class="flex flex-col h-full p-4 box-border">
-  <div class="pb-3 shrink-0">
-    <div class="flex items-center gap-3">
-      <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-[#4621FF] to-[#00C8A8] flex items-center justify-center shrink-0">
-        <img src="/astrape-logo.svg" alt="Astrape" class="w-6 h-6 object-contain" />
+<div class="flex flex-col h-full min-h-0 w-full box-border">
+  <div
+    class="w-full h-full flex flex-col flex-1 min-h-0 rounded-none border-0 bg-slate-900/35 overflow-hidden"
+  >
+    <!-- Mockup header -->
+    <div class="shrink-0 px-4 pt-4 pb-3 flex items-center justify-between gap-3 border-b border-slate-800/80">
+      <span class="text-[11px] sm:text-xs tracking-wide font-semibold text-slate-400">Astrape AI Coach Chat</span>
+      <div class="flex items-center gap-1.5 shrink-0">
+        <span
+          class="inline-flex h-2 w-2 rounded-full bg-teal animate-pulse shadow-[0_0_10px_rgba(0,200,168,0.55)]"
+          aria-hidden="true"
+        ></span>
+        <span class="text-[11px] uppercase tracking-wider font-semibold text-astrape-teal">Live</span>
       </div>
-      <div class="flex-1 min-w-0">
-        <p class="font-semibold text-[15px] truncate">ASTRAPE Coach</p>
-        <p class="text-[11px] text-teal">● Online · analyzing your data</p>
-      </div>
+    </div>
 
-      <div class="flex items-center gap-2">
-        {#if conversations.length > 0}
-          <div class="relative" bind:this={convoMenuEl}>
-            <button
-              type="button"
-              class="bg-glass2 border border-border rounded-xl text-[11px] text-text0 pl-3 pr-8 py-2 outline-none max-w-[190px] truncate shadow-[0_0_0_1px_rgba(255,255,255,0.04)] cursor-pointer text-left"
-              onclick={() => { convoMenuOpen = !convoMenuOpen; }}
-              aria-label="Select chat"
+    <!-- History controls -->
+    <div class="shrink-0 px-4 py-2 flex items-center justify-end gap-2 border-b border-slate-800/60 bg-slate-950/25">
+      {#if conversations.length > 0}
+        <div class="relative flex-1 min-w-0 max-w-[220px]" bind:this={convoMenuEl}>
+          <button
+            type="button"
+            class="w-full bg-slate-800/40 border border-slate-700 rounded-xl text-[11px] text-slate-200 pl-3 pr-8 py-2 outline-none truncate text-left hover:bg-slate-800/60 transition-colors"
+            onclick={() => { convoMenuOpen = !convoMenuOpen; }}
+            aria-label="Select chat"
+          >
+            {currentConversationTitle()}
+          </button>
+          <div class="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 text-[10px]">▼</div>
+
+          {#if convoMenuOpen}
+            <div
+              class="absolute left-0 right-0 mt-2 max-w-[min(100vw-2rem,320px)] bg-slate-900/95 backdrop-blur border border-slate-700 rounded-2xl shadow-2xl overflow-hidden z-20"
             >
-              {currentConversationTitle()}
-            </button>
-            <div class="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-text2 text-[10px]">
-              ▼
-            </div>
-
-            {#if convoMenuOpen}
-              <div class="absolute right-0 mt-2 w-[260px] max-w-[75vw] bg-bg1/90 backdrop-blur border border-border rounded-2xl shadow-2xl overflow-hidden z-20">
-                <div class="max-h-[320px] overflow-y-auto">
-                  {#each conversations as c (c.id)}
-                    <div
-                      class="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-glass2 transition-colors cursor-pointer {c.id === conversationId ? 'bg-glass2' : ''}"
-                      role="button"
-                      tabindex="0"
-                      onclick={() => selectConversation(c.id)}
-                      onkeydown={(e) => e.key === 'Enter' && selectConversation(c.id)}
-                    >
-                      <div class="flex-1 min-w-0">
-                        <div class="text-[12px] text-text0 truncate">{c.title || 'New chat'}</div>
-                        <div class="text-[10px] text-text2 truncate">{c.updated_at || c.created_at || ''}</div>
-                      </div>
-                      <button
-                        type="button"
-                        class="w-8 h-8 rounded-xl bg-glass border border-border text-text1 hover:text-red-400 transition-colors flex items-center justify-center shrink-0"
-                        onclick={(e) => { e.stopPropagation(); deleteConversation(c.id); }}
-                        aria-label="Delete chat"
-                        title="Delete"
-                      >
-                        🗑
-                      </button>
+              <div class="max-h-[320px] overflow-y-auto">
+                {#each conversations as c (c.id)}
+                  <div
+                    class="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-slate-800/50 transition-colors cursor-pointer {c.id === conversationId ? 'bg-slate-800/35' : ''}"
+                    role="button"
+                    tabindex="0"
+                    onclick={() => selectConversation(c.id)}
+                    onkeydown={(e) => e.key === 'Enter' && selectConversation(c.id)}
+                  >
+                    <div class="flex-1 min-w-0">
+                      <div class="text-[12px] text-slate-200 truncate">{c.title || 'New chat'}</div>
+                      <div class="text-[10px] text-slate-500 truncate">{c.updated_at || c.created_at || ''}</div>
                     </div>
+                    <button
+                      type="button"
+                      class="w-8 h-8 rounded-lg bg-slate-800/70 border border-slate-600 text-slate-300 hover:text-red-400 transition-colors flex items-center justify-center shrink-0"
+                      onclick={(e) => { e.stopPropagation(); deleteConversation(c.id); }}
+                      aria-label="Delete chat"
+                      title="Delete"
+                    >
+                      🗑
+                    </button>
+                  </div>
+                {/each}
+              </div>
+            </div>
+          {/if}
+        </div>
+      {/if}
+      <button
+        type="button"
+        class="px-3 py-1.5 rounded-lg text-[11px] bg-slate-800/40 border border-slate-700 text-slate-300 hover:bg-slate-800/65 transition-colors shrink-0"
+        onclick={newChat}
+      >
+        New
+      </button>
+    </div>
+
+    <div
+      class="flex-1 overflow-y-auto flex flex-col gap-3 px-4 py-3 min-h-0"
+      bind:this={chatContainer}
+    >
+      {#each messages as msg (msg.id)}
+        {#if msg.role === 'ai'}
+          <div class="flex gap-2.5 items-end justify-start">
+            <div
+              class="w-8 h-8 shrink-0 rounded-full bg-slate-800 border border-slate-600 flex items-center justify-center text-[9px] font-bold tracking-wide text-teal select-none"
+              aria-hidden="true"
+            >
+              AI
+            </div>
+            <div
+              class="max-w-[min(92%,28rem)] px-[14px] py-[10px] text-[13px] leading-[1.55] text-slate-100 rounded-2xl rounded-bl-md border border-slate-700/80 bg-slate-800/60"
+            >
+              {#if msg.image_urls && msg.image_urls.length > 0}
+                <div class="flex gap-2 flex-wrap mb-2">
+                  {#each msg.image_urls as u (u)}
+                    <a href={u} target="_blank" rel="noreferrer noopener" class="block">
+                      <img
+                        src={u}
+                        alt="upload"
+                        class="w-24 h-24 object-cover rounded-lg border border-slate-600/80"
+                      />
+                    </a>
                   {/each}
                 </div>
-              </div>
-            {/if}
+              {/if}
+              {#if msg.streaming && !msg.text.trim()}
+                <div class="flex items-center gap-2 text-slate-400">
+                  <div class="flex gap-1">
+                    <div class="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce"></div>
+                    <div class="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce [animation-delay:150ms]"></div>
+                    <div class="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce [animation-delay:300ms]"></div>
+                  </div>
+                  <span class="text-[12px]">Thinking…</span>
+                </div>
+              {:else}
+                <div class="chat-md">{@html renderAiMarkdown(msg.text)}</div>
+              {/if}
+              {#if msg.streaming && msg.text.trim()}
+                <span class="animate-[blink_1s_step-end_infinite] text-slate-400">▋</span>
+              {/if}
+            </div>
+          </div>
+        {:else}
+          <div class="flex gap-2.5 items-end justify-end">
+            <div
+              class="max-w-[min(92%,28rem)] px-[14px] py-[10px] text-[13px] leading-[1.55] text-slate-100 rounded-2xl rounded-br-md border border-indigo-500/30 bg-indigo-900/40"
+            >
+              {#if msg.image_urls && msg.image_urls.length > 0}
+                <div class="flex gap-2 flex-wrap mb-2 justify-end">
+                  {#each msg.image_urls as u (u)}
+                    <a href={u} target="_blank" rel="noreferrer noopener" class="block">
+                      <img
+                        src={u}
+                        alt="upload"
+                        class="w-24 h-24 object-cover rounded-lg border border-indigo-500/25"
+                      />
+                    </a>
+                  {/each}
+                </div>
+              {/if}
+              {msg.text}
+            </div>
+            <div
+              class="w-8 h-8 shrink-0 rounded-full bg-slate-950 border border-slate-700 flex items-center justify-center text-[10px] font-semibold text-slate-400 select-none uppercase"
+              aria-hidden="true"
+            >
+              {userInitials}
+            </div>
           </div>
         {/if}
+      {/each}
+    </div>
+
+    <div class="shrink-0 px-4 pt-2 pb-1 border-t border-slate-800/60 bg-slate-950/20">
+      <div class="flex gap-2 overflow-x-auto pb-2 scrollbar-thin">
+        {#each promptSuggestions as s, i (s + String(i))}
+          <button
+            type="button"
+            class="whitespace-nowrap shrink-0 px-3 py-2 rounded-xl text-sm text-slate-300 bg-slate-800/50 hover:bg-slate-700/80 border border-slate-700 transition-colors text-left cursor-pointer font-sans"
+            onclick={() => { input = s; }}
+          >
+            {s}
+          </button>
+        {/each}
+      </div>
+
+      {#if pendingImageUrls.length > 0}
+        <div class="flex gap-2 flex-wrap pb-2">
+          {#each pendingImageUrls as u (u)}
+            <div class="relative">
+              <img
+                src={u}
+                alt="pending upload"
+                class="w-16 h-16 object-cover rounded-lg border border-slate-700"
+              />
+              <button
+                class="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-slate-900 border border-slate-600 text-slate-300 text-[12px] flex items-center justify-center hover:border-slate-500"
+                onclick={() => { pendingImageUrls = pendingImageUrls.filter(x => x !== u); }}
+                aria-label="Remove image"
+                type="button"
+              >
+                ✕
+              </button>
+            </div>
+          {/each}
+        </div>
+      {/if}
+
+      <div class="flex gap-2 items-center pb-4">
+        <input
+          bind:this={fileInput}
+          type="file"
+          accept="image/*"
+          multiple
+          class="hidden"
+          onchange={onFilesSelected}
+        />
         <button
-          class="px-3 py-1 rounded-lg text-[11px] bg-glass border border-border text-text1 cursor-pointer"
-          onclick={newChat}
+          type="button"
+          class="w-10 h-10 rounded-xl shrink-0 text-slate-300 text-[17px] flex items-center justify-center transition-colors border border-slate-700 bg-slate-900 hover:bg-slate-800 disabled:opacity-40"
+          disabled={loading}
+          onclick={pickImage}
+          aria-label="Attach image"
         >
-          New
+          ＋
+        </button>
+        <input
+          bind:value={input}
+          onkeydown={(e) => e.key === 'Enter' && !loading && send()}
+          placeholder="Ask your coach..."
+          class="flex-1 min-w-0 px-4 py-3 rounded-xl text-[13px] bg-slate-900 border border-slate-700 text-slate-100 placeholder:text-slate-500 font-sans outline-none focus:border-slate-500 focus:ring-1 focus:ring-slate-600/80"
+        />
+        <button
+          type="button"
+          class="w-11 h-11 shrink-0 rounded-xl flex items-center justify-center transition-all bg-indigo-600 hover:bg-indigo-500 disabled:opacity-35 disabled:pointer-events-none text-white shadow-[0_8px_24px_-12px_rgba(79,70,229,0.9)]"
+          disabled={loading || (!input.trim() && pendingImageUrls.length === 0)}
+          onclick={send}
+          aria-label="Send message"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path
+              d="M5 12h14m0 0l-6-6m6 6l-6 6"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
         </button>
       </div>
     </div>
   </div>
-
-  <div class="flex-1 overflow-y-auto flex flex-col gap-3 pb-2" bind:this={chatContainer}>
-    {#each messages as msg (msg.id)}
-      <div class="flex flex-col items-start {msg.role === 'user' ? 'items-end' : ''}">
-        {#if msg.role === 'ai'}
-          <div class="w-6 h-6 rounded-lg bg-gradient-to-br from-[#4621FF] to-[#00C8A8] flex items-center justify-center mb-1">
-            <img src="/astrape-logo.svg" alt="Astrape" class="w-3.5 h-3.5 object-contain" />
-          </div>
-        {/if}
-        <div class="max-w-[82%] px-[14px] py-[10px] text-[13px] leading-[1.55] text-text0 border {msg.role === 'user' ? 'bg-blue rounded-[18px_18px_4px_18px] border-[rgba(70,33,255,0.5)]' : 'bg-glass2 rounded-[4px_18px_18px_18px] border-border'}">
-          {#if msg.image_urls && msg.image_urls.length > 0}
-            <div class="flex gap-2 flex-wrap mb-2">
-              {#each msg.image_urls as u (u)}
-                <a href={u} target="_blank" rel="noreferrer noopener" class="block">
-                  <img src={u} alt="upload" class="w-24 h-24 object-cover rounded-lg border border-[rgba(255,255,255,0.12)]" />
-                </a>
-              {/each}
-            </div>
-          {/if}
-          {#if msg.role === 'ai'}
-            {#if msg.streaming && !msg.text.trim()}
-              <div class="flex items-center gap-2 text-text1">
-                <div class="flex gap-1">
-                  <div class="w-1.5 h-1.5 bg-blue rounded-full animate-bounce"></div>
-                  <div class="w-1.5 h-1.5 bg-blue rounded-full animate-bounce delay-150"></div>
-                  <div class="w-1.5 h-1.5 bg-blue rounded-full animate-bounce delay-300"></div>
-                </div>
-                <span class="text-[12px]">Thinking…</span>
-              </div>
-            {:else}
-              <div class="chat-md">{@html renderAiMarkdown(msg.text)}</div>
-            {/if}
-            {#if msg.streaming && msg.text.trim()}
-              <span class="animate-[blink_1s_step-end_infinite]">▋</span>
-            {/if}
-          {:else}
-            {msg.text}
-          {/if}
-        </div>
-      </div>
-    {/each}
-  </div>
-
-  <div class="flex gap-1.5 overflow-x-auto pb-2 shrink-0">
-    {#each suggestions as s (s)}
-      <button class="whitespace-nowrap px-3 py-1 rounded-full text-[11px] bg-glass border border-border text-text1 cursor-pointer font-sans" onclick={() => { input = s; }}>{s}</button>
-    {/each}
-  </div>
-
-  <div class="flex gap-2 shrink-0 items-end">
-    <input
-      bind:this={fileInput}
-      type="file"
-      accept="image/*"
-      multiple
-      class="hidden"
-      onchange={onFilesSelected}
-    />
-    <button
-      class="w-11 h-11 rounded-xl shrink-0 text-white text-[16px] flex items-center justify-center transition-all duration-200 border border-border bg-glass"
-      disabled={loading}
-      onclick={pickImage}
-      aria-label="Attach image"
-      type="button"
-    >
-      ＋
-    </button>
-    <input 
-      bind:value={input} 
-      onkeydown={(e) => e.key === 'Enter' && !loading && send()} 
-      placeholder="Ask your coach..." 
-      class="flex-1 px-4 py-[11px] rounded-xl text-[13px] bg-glass2 border border-border text-text0 font-sans outline-none"
-    />
-    <button class="w-11 h-11 rounded-xl shrink-0 text-white text-[18px] flex items-center justify-center transition-all duration-200 border border-border {(input.trim() || pendingImageUrls.length > 0) ? 'bg-blue border-blue' : 'bg-glass'}" disabled={loading || (!input.trim() && pendingImageUrls.length === 0)} onclick={send}>↑</button>
-  </div>
-
-  {#if pendingImageUrls.length > 0}
-    <div class="mt-2 flex gap-2 flex-wrap">
-      {#each pendingImageUrls as u (u)}
-        <div class="relative">
-          <img src={u} alt="pending upload" class="w-16 h-16 object-cover rounded-lg border border-[rgba(255,255,255,0.12)]" />
-          <button
-            class="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-bg1 border border-border text-text1 text-[12px] flex items-center justify-center"
-            onclick={() => { pendingImageUrls = pendingImageUrls.filter(x => x !== u); }}
-            aria-label="Remove image"
-            type="button"
-          >
-            ✕
-          </button>
-        </div>
-      {/each}
-    </div>
-  {/if}
 </div>
 
 <style>
