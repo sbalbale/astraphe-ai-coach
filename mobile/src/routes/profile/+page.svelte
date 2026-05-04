@@ -1,5 +1,6 @@
 <script lang="ts">
   import Card from '$lib/components/Card.svelte';
+  import RacePredictor from '$lib/components/RacePredictor.svelte';
   import Tag from '$lib/components/Tag.svelte';
   import { authStore } from '$lib/stores/authStore.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
@@ -81,6 +82,8 @@
       </div>
     </div>
   </Card>
+
+  <RacePredictor ctl={Math.round(athleteStore.ctl) || 68} />
 
   <Card>
     <p class="text-[13px] font-semibold mb-3">Account</p>
