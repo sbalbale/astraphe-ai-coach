@@ -151,9 +151,16 @@ def test_schedule_workout_vo2max_inserts_training_plan():
     row = db.inserts[0][1]
     assert row["duration_min"] == 45
     assert row["status"] == "planned"
+    assert row["primary_zone"] == "VO2Max"
+    assert isinstance(row.get("structure"), list)
     assert out["garmin_push"]["status"] == "stubbed"
     # 45 min * 1.1^2 * (45/60) * 100 ≈ 90.75 TSS
     assert 85 <= float(out["target_tss_estimate"]) <= 95
+    strict = out.get("workout_strict") or {}
+    assert strict.get("id") == "mock-plan-id"
+    assert strict.get("date") == planned
+    assert strict.get("sport") == "cycling"
+    assert strict.get("primary_zone") == "VO2Max"
 
 
 def test_detect_anomalies_hrv_suppressed():
