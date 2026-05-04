@@ -3,6 +3,7 @@ import secrets
 import asyncio
 from fastapi import APIRouter, Request, Response, HTTPException, Depends, BackgroundTasks
 from fastapi.responses import RedirectResponse, HTMLResponse
+from starlette.requests import ClientDisconnect
 from app.dependencies import get_current_athlete, get_user_db, get_admin_db
 from app.services import whoop
 from app.services.whoop_backfill import backfill_historical_data
@@ -81,7 +82,11 @@ async def whoop_webhook(request: Request, background_tasks: BackgroundTasks, db=
         # raise HTTPException(status_code=401, detail="Missing WHOOP signature")
         pass
         
-    body = await request.body()
+    try:
+        body = await request.body()
+    except ClientDisconnect:
+        # WHOOP (or a proxy) disconnected mid-stream. This is not actionable.
+        return Response(status_code=200)
     # if not whoop.verify_webhook_signature(body, signature):
     #     raise HTTPException(status_code=401, detail="Invalid WHOOP signature")
 
@@ -93,7 +98,13 @@ async def whoop_webhook(request: Request, background_tasks: BackgroundTasks, db=
         except Exception as e:
             print(f"[whoop.webhook.raw] <failed to decode body>: {repr(e)}")
         
-    payload = await request.json()
+    try:
+        payload = await request.json()
+    except ClientDisconnect:
+        return Response(status_code=200)
+    except Exception:
+        # Bad payload should not trigger retries if the sender is flaky.
+        return Response(status_code=200)
     event_type = payload.get("type")
     user_id = payload.get("user_id")
     data = payload.get("data") if isinstance(payload.get("data"), dict) else {}

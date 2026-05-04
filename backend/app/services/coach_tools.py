@@ -306,8 +306,9 @@ def handle_schedule_workout(
         duration_minutes = int(args.get("duration_minutes", 45))
     except (TypeError, ValueError):
         return {"error": "duration_minutes must be an integer"}
-    if duration_minutes < 10 or duration_minutes > 600:
-        return {"error": "duration_minutes must be between 10 and 600"}
+    # Allow 0-min entries for rest days / guideline notes that must persist in the plan.
+    if duration_minutes < 0 or duration_minutes > 600:
+        return {"error": "duration_minutes must be between 0 and 600"}
 
     try:
         planned_date = _parse_iso_date(str(args.get("date", "")))
@@ -349,15 +350,18 @@ def handle_schedule_workout(
     max_hr = _safe_int(row.get("max_hr"))
     resting_hr = _safe_int(row.get("resting_hr"))
 
-    if_ = ZONE_IF[focus_zone]
-    dur_h = duration_minutes / 60.0
-    est_tss = round(dur_h * (if_**2) * 100.0, 1)
-
-    workout_json = _workout_structure(
-        focus_zone, duration_minutes, ftp, thr_hr, max_hr, resting_hr, sport
-    )
-
-    title = f"{sport} — {focus_zone} ({duration_minutes}m)"
+    if duration_minutes == 0:
+        est_tss = 0.0
+        workout_json = {"sport": sport, "focus_zone": focus_zone, "duration_minutes": 0, "structure": []}
+        title = f"{sport} — Guidelines/Rest"
+    else:
+        if_ = ZONE_IF[focus_zone]
+        dur_h = duration_minutes / 60.0
+        est_tss = round(dur_h * (if_**2) * 100.0, 1)
+        workout_json = _workout_structure(
+            focus_zone, duration_minutes, ftp, thr_hr, max_hr, resting_hr, sport
+        )
+        title = f"{sport} — {focus_zone} ({duration_minutes}m)"
     # Keep legacy `description` as a compact JSON string for backwards compatibility.
     description = json.dumps(workout_json, ensure_ascii=False)
 
@@ -376,6 +380,7 @@ def handle_schedule_workout(
                     "primary_zone": focus_zone,
                     "structure": workout_json.get("structure") or [],
                     "status": "planned",
+                    "generated_by": "astrape_ai",
                 }
             )
             .execute()
@@ -487,6 +492,42 @@ def handle_calculate_nutrition(
     }
 
 
+def handle_clear_training_plans(
+    args: dict[str, Any],
+    *,
+    athlete_id: str,
+    db: Client,
+) -> dict[str, Any]:
+    """
+    Delete training_plans rows for this athlete within a date range (inclusive).
+    This prevents duplicate workouts when regenerating a week.
+    """
+    try:
+        start_date = _parse_iso_date(str(args.get("start_date", "")))
+    except ValueError as e:
+        return {"error": f"invalid start_date: {e}"}
+    try:
+        end_date = _parse_iso_date(str(args.get("end_date", "")))
+    except ValueError as e:
+        return {"error": f"invalid end_date: {e}"}
+    if end_date < start_date:
+        return {"error": "end_date must be >= start_date"}
+
+    try:
+        res = (
+            db.table("training_plans")
+            .delete()
+            .eq("athlete_id", athlete_id)
+            .gte("planned_date", start_date.isoformat())
+            .lte("planned_date", end_date.isoformat())
+            .execute()
+        )
+        deleted = len(res.data or [])
+        return {"status": "success", "deleted": deleted, "start_date": start_date.isoformat(), "end_date": end_date.isoformat()}
+    except Exception as e:
+        return {"error": f"training_plans_delete_failed: {e}"}
+
+
 # --- Gemini tool declarations ---
 
 _simulate_decl = types.FunctionDeclaration(
@@ -549,8 +590,24 @@ _nutrition_decl = types.FunctionDeclaration(
     ),
 )
 
+_clear_training_plans_decl = types.FunctionDeclaration(
+    name="clear_training_plans",
+    description=(
+        "Delete planned workouts (training_plans) in a date range for the current athlete. "
+        "Use this before scheduling a replacement week to prevent duplicates."
+    ),
+    parameters=types.Schema(
+        type=types.Type.OBJECT,
+        properties={
+            "start_date": types.Schema(type=types.Type.STRING, description="ISO date YYYY-MM-DD (inclusive)"),
+            "end_date": types.Schema(type=types.Type.STRING, description="ISO date YYYY-MM-DD (inclusive)"),
+        },
+        required=["start_date", "end_date"],
+    ),
+)
+
 TOOLS: list[types.Tool] = [
-    types.Tool(function_declarations=[_simulate_decl, _schedule_decl, _nutrition_decl]),
+    types.Tool(function_declarations=[_simulate_decl, _schedule_decl, _nutrition_decl, _clear_training_plans_decl]),
 ]
 
 ToolHandler = Callable[[dict[str, Any], str, Client], dict[str, Any]]
@@ -559,6 +616,7 @@ TOOL_HANDLERS: dict[str, ToolHandler] = {
     "simulate_training_impact": lambda args, aid, db: handle_simulate_training_impact(args, athlete_id=aid, db=db),
     "schedule_workout": lambda args, aid, db: handle_schedule_workout(args, athlete_id=aid, db=db),
     "calculate_nutrition": lambda args, aid, db: handle_calculate_nutrition(args, athlete_id=aid, db=db),
+    "clear_training_plans": lambda args, aid, db: handle_clear_training_plans(args, athlete_id=aid, db=db),
 }
 
 

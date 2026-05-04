@@ -159,3 +159,31 @@ async def update_training_plan(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to update training plan: {str(e)}")
 
+
+@router.delete("")
+async def delete_training_plans(
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    athlete_id: str = Depends(get_current_athlete),
+    db=Depends(get_user_db),
+):
+    """
+    Delete training plan rows in a date range for the current athlete.
+    This is the safe way to \"remove next week's plan\" before re-scheduling.
+    """
+    if not start_date and not end_date:
+        raise HTTPException(status_code=400, detail="start_date or end_date required")
+
+    q = db.table("training_plans").delete().eq("athlete_id", athlete_id)
+    if start_date:
+        q = q.gte("planned_date", start_date.isoformat())
+    if end_date:
+        q = q.lte("planned_date", end_date.isoformat())
+
+    try:
+        res = q.execute()
+        deleted = len(res.data or [])
+        return {"status": "success", "deleted": deleted}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete training plans: {str(e)}")
+

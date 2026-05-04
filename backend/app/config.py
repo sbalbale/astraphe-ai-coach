@@ -14,12 +14,14 @@ class Settings(BaseSettings):
     MOBILE_DEEP_LINK_SCHEME: str = "astrape"
 
     # --- Supabase ---
-    SUPABASE_URL: str
-    SUPABASE_KEY: str
+    # Defaults allow unit tests to import the app without a real .env.
+    # Runtime deployments should always provide real values via environment variables.
+    SUPABASE_URL: str = "http://localhost:54321"
+    SUPABASE_KEY: str = "test-anon-key"
     SUPABASE_SERVICE_ROLE_KEY: Optional[str] = None
 
     # --- Gemini AI ---
-    GEMINI_API_KEY: str
+    GEMINI_API_KEY: str = "test-gemini-key"
     GEMINI_MODEL: str = "gemini-flash-lite-latest"
     GEMINI_EMBEDDING_MODEL: str = "gemini-embedding-2"
 
