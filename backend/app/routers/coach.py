@@ -257,35 +257,44 @@ async def stream_chat_with_coach(
         # Persist user message immediately
         _insert_message(db, athlete_id, conversation_id, role="user", content=payload.message, image_urls=payload.image_urls)
 
+        # v1 streaming: run the same agentic tool loop as /message, then stream the final text.
+        # (Tool-call events are intentionally not streamed in this iteration.)
         ai_full = ""
         try:
-            async for chunk in get_coach_response_stream(
-                athlete_id=athlete_id,
-                message=payload.message,
-                current_tss=payload.recent_tss,
-                db=db,
-                conversation_id=conversation_id,
-                model_name=model_name,
-            ):
-                ai_full += chunk
+            ai_full = await asyncio.to_thread(
+                get_coach_response,
+                athlete_id,
+                payload.message,
+                payload.recent_tss,
+                db,
+                conversation_id,
+                model_name,
+            )
+            ai_full = (ai_full or "").strip()
+            if not ai_full:
+                raise RuntimeError("Model returned an empty response.")
+
+            # Stream in moderately sized chunks so the client UI updates smoothly.
+            chunk_size = 600
+            for i in range(0, len(ai_full), chunk_size):
+                chunk = ai_full[i : i + chunk_size]
                 yield f"data: {json.dumps({'text': chunk})}\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
         else:
-            # Persist assistant message once streaming completes
-            if ai_full.strip():
-                _insert_message(db, athlete_id, conversation_id, role="ai", content=ai_full, image_urls=None)
-                try:
-                    new_title = await asyncio.to_thread(
-                        generate_coach_conversation_title,
-                        db,
-                        athlete_id,
-                        conversation_id,
-                        model_name,
-                    )
-                    _force_set_conversation_title(db, athlete_id, conversation_id, new_title)
-                except Exception:
-                    pass
+            # Persist assistant message once response completes
+            _insert_message(db, athlete_id, conversation_id, role="ai", content=ai_full, image_urls=None)
+            try:
+                new_title = await asyncio.to_thread(
+                    generate_coach_conversation_title,
+                    db,
+                    athlete_id,
+                    conversation_id,
+                    model_name,
+                )
+                _force_set_conversation_title(db, athlete_id, conversation_id, new_title)
+            except Exception:
+                pass
         yield "data: [DONE]\n\n"
         
     return StreamingResponse(event_generator(), media_type="text/event-stream")

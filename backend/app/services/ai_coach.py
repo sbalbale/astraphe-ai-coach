@@ -1,5 +1,6 @@
 from google import genai
 from google.genai import types
+from pydantic import BaseModel, Field
 from app.config import settings
 from app.services import coach_tools
 from app.services.algorithms import compute_z_score
@@ -11,6 +12,20 @@ from typing import Any
 
 import numpy as np
 from supabase import Client
+from datetime import timedelta
+
+
+class CoachResponse(BaseModel):
+    internal_reasoning: str = Field(
+        description=(
+            "Your private scratchpad. Do all your math, physiological constraint checking, "
+            "and tool-call planning here. The user will never see this."
+        )
+    )
+    athlete_message: str = Field(
+        description="The final, clinical, objective response intended for the athlete. No fluff."
+    )
+
 
 _client = genai.Client(api_key=settings.GEMINI_API_KEY)
 
@@ -382,9 +397,14 @@ def build_initialization_message(
         response = _client.models.generate_content(
             model=effective_model,
             contents=prompt,
-            config=types.GenerateContentConfig(max_output_tokens=256, temperature=0.35),
+            config=types.GenerateContentConfig(
+                max_output_tokens=256,
+                temperature=0.35,
+                response_mime_type="application/json",
+                response_schema=CoachResponse,
+            ),
         )
-        text = (getattr(response, "text", None) or "").strip()
+        text = _extract_athlete_message_from_model_output(response)
     except Exception as e:
         text = f"Initialization failed: {e}"
     return text, bool(anomalies)
@@ -403,6 +423,117 @@ def _history_to_gemini_contents(history: list[dict]) -> list[types.Content]:
         grole = "user" if raw_role == "user" else "model"
         out.append(types.Content(role=grole, parts=[types.Part.from_text(text=content)]))
     return out
+
+
+def _extract_athlete_message_from_model_output(response: Any) -> str:
+    """
+    Parse structured JSON output from Gemini and return only the user-facing message.
+    """
+    raw_text = (getattr(response, "text", None) or "").strip()
+    if not raw_text:
+        parsed = getattr(response, "parsed", None)
+        if parsed is not None and hasattr(parsed, "athlete_message"):
+            am = getattr(parsed, "athlete_message", None)
+            if isinstance(am, str) and am.strip():
+                return am.strip()
+    return _extract_athlete_message_from_text(raw_text)
+
+
+def _extract_athlete_message_from_text(raw_text: str) -> str:
+    """
+    Parse CoachResponse JSON from model text; fall back to legacy sanitizer on failure.
+    """
+    raw = (raw_text or "").strip()
+    if not raw:
+        return ""
+    try:
+        return CoachResponse.model_validate_json(raw).athlete_message.strip()
+    except Exception as e:
+        try:
+            data = json.loads(raw)
+            if isinstance(data, dict):
+                msg = data.get("athlete_message")
+                if isinstance(msg, str) and msg.strip():
+                    return msg.strip()
+        except Exception:
+            pass
+        print(f"Error parsing AI response: {e}")
+        stripped = _strip_internal_reasoning(raw)
+        return stripped if stripped else "I encountered an error processing your request."
+
+
+def _strip_internal_reasoning(text: str) -> str:
+    """
+    Backstop sanitizer: if the model emits chain-of-thought style scaffolding, drop it.
+    We keep this conservative to avoid harming normal coaching output.
+    """
+    t = (text or "").strip()
+    if not t:
+        return ""
+
+    # Common "thinking dump" patterns we never want to show.
+    bad_prefixes = (
+        "user goal:",
+        "user wants to",
+        "current date",
+        "constraint check",
+        "role:",
+        "wait,",
+        "actually,",
+        "self-correction",
+        "drafting final response",
+        "response structure:",
+        "final check",
+        "final response construction",
+    )
+
+    lines = [ln.rstrip() for ln in t.splitlines()]
+
+    def is_meta_line(ln: str) -> bool:
+        low = ln.strip().lower()
+        if not low:
+            return False
+        if any(low.startswith(p) for p in bad_prefixes):
+            return True
+        # Heuristic: lines that look like internal planning fields.
+        if low.startswith(("current metrics:", "target date:", "timeframe:", "persona:", "rule:", "action requested:")):
+            return True
+        return False
+
+    # Strip leading meta blocks.
+    i = 0
+    while i < len(lines) and (not lines[i].strip() or is_meta_line(lines[i])):
+        i += 1
+
+    # If we still have a long meta paragraph (common in dumps), keep advancing until we hit
+    # something that looks like a real coach reply (table header or a sentence with metrics).
+    def looks_like_reply(ln: str) -> bool:
+        s = ln.strip()
+        if not s:
+            return False
+        if s.startswith("Day | Discipline | Duration | Intensity/Zone"):
+            return True
+        if s.startswith("Day\tDiscipline") or s.startswith("Day |"):
+            return True
+        # Metric anchored sentence: contains CTL/ATL/TSB/HRV and punctuation.
+        low = s.lower()
+        if any(k in low for k in ("ctl", "atl", "tsb", "hrv", "rmssd", "sleep score")) and (("." in s) or (":" in s)):
+            return True
+        return False
+
+    while i < len(lines) and not looks_like_reply(lines[i]):
+        # If it keeps being meta, advance.
+        if is_meta_line(lines[i]) or lines[i].strip().lower().startswith(("wait", "actually", "final", "draft")):
+            i += 1
+            continue
+        # If we hit something not meta but also not reply, stop (avoid eating legit content).
+        break
+
+    out = "\n".join(ln for ln in lines[i:] if ln.strip()).strip()
+    if out:
+        return out
+
+    return t
 
 
 def get_coach_response_agentic(
@@ -428,8 +559,17 @@ def get_coach_response_agentic(
     if not db:
         final_prompt = f"{system_with_ctx}\n\nAthlete Message: {message}"
         effective_model = model_name or settings.GEMINI_MODEL
-        response = _client.models.generate_content(model=effective_model, contents=final_prompt)
-        return getattr(response, "text", "") or ""
+        response = _client.models.generate_content(
+            model=effective_model,
+            contents=final_prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=CoachResponse,
+                thinking_config=types.ThinkingConfig(include_thoughts=False),
+                temperature=0.35,
+            ),
+        )
+        return _extract_athlete_message_from_model_output(response)
 
     history = (
         _load_conversation_history(db, athlete_id, conversation_id, limit=24)
@@ -437,15 +577,54 @@ def get_coach_response_agentic(
         else []
     )
     contents = _history_to_gemini_contents(history)
-    if not contents:
-        contents = [types.Content(role="user", parts=[types.Part.from_text(text=message)])]
+    # Always append the current user message (history alone is not sufficient).
+    contents.append(types.Content(role="user", parts=[types.Part.from_text(text=message)]))
+    # If there was no history, `contents` is now a 1-item list with the current message.
+
+    # Deterministic backstop: if the user requests clearing a plan, do it even if the model doesn't call tools.
+    msg_l = (message or "").lower()
+    wants_clear = any(k in msg_l for k in ("delete", "remove", "clear")) and ("plan" in msg_l or "calendar" in msg_l)
+    if wants_clear:
+        today = date.today()
+        monday = today - timedelta(days=today.weekday())
+        if "next week" in msg_l:
+            start = monday + timedelta(days=7)
+            end = monday + timedelta(days=13)
+        elif "this week" in msg_l:
+            start = monday
+            end = monday + timedelta(days=6)
+        else:
+            start = None
+            end = None
+
+        if start and end:
+            res = coach_tools.handle_clear_training_plans(
+                {"start_date": start.isoformat(), "end_date": end.isoformat()},
+                athlete_id=athlete_id,
+                db=db,
+            )
+            # Feed tool output into the conversation so the model can acknowledge it.
+            contents.append(
+                types.Content(
+                    role="user",
+                    parts=[
+                        types.Part.from_function_response(
+                            name="clear_training_plans",
+                            response=res,
+                        )
+                    ],
+                )
+            )
 
     effective_model = model_name or settings.GEMINI_MODEL
     config = types.GenerateContentConfig(
         system_instruction=system_with_ctx,
         tools=coach_tools.TOOLS,
         automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+        thinking_config=types.ThinkingConfig(include_thoughts=False),
         temperature=0.35,
+        response_mime_type="application/json",
+        response_schema=CoachResponse,
     )
 
     last_response = None
@@ -495,14 +674,15 @@ def get_coach_response_agentic(
 
         joined = "".join(t for t in texts if t)
         if joined.strip():
-            return joined.strip()
+            return _extract_athlete_message_from_text(joined)
         fallback = getattr(last_response, "text", None) or ""
         if fallback.strip():
-            return fallback.strip()
+            return _extract_athlete_message_from_text(fallback)
         break
 
     fallback = getattr(last_response, "text", None) or "" if last_response else ""
-    return fallback.strip() or "Unable to complete coach response."
+    final = _extract_athlete_message_from_text(fallback)
+    return final or "Unable to complete coach response."
 
 
 async def _build_system_context_string_async(
@@ -581,10 +761,26 @@ async def get_coach_response_stream(
         )
     final_prompt = f"{system_instruction}\n\n{context_block}\n\nAthlete Message: {message}"
     effective_model = (model_name or settings.GEMINI_MODEL)
-    for chunk in _client.models.generate_content_stream(model=effective_model, contents=final_prompt):
+    collected: list[str] = []
+    for chunk in _client.models.generate_content_stream(
+        model=effective_model,
+        contents=final_prompt,
+        config=types.GenerateContentConfig(
+            response_mime_type="application/json",
+            response_schema=CoachResponse,
+            thinking_config=types.ThinkingConfig(include_thoughts=False),
+            temperature=0.35,
+        ),
+    ):
         t = getattr(chunk, "text", None)
         if t:
-            yield t
+            collected.append(t)
+    full_text = "".join(collected)
+    athlete_msg = _extract_athlete_message_from_text(full_text)
+    if athlete_msg:
+        chunk_size = 600
+        for i in range(0, len(athlete_msg), chunk_size):
+            yield athlete_msg[i : i + chunk_size]
 
 
 _TITLE_SYSTEM = """You label coaching chat threads for a mobile sidebar.

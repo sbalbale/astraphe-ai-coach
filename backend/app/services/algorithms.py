@@ -54,6 +54,14 @@ def compute_tss_power(duration_sec: int, np_watts: float, ftp: int) -> float:
     intensity_factor = np_watts / ftp
     return (duration_sec * np_watts * intensity_factor) / (ftp * 3600) * 100
 
+
+def calculate_cycling_tss(duration_sec: int, np_watts: float, ftp: int) -> float:
+    """
+    Backwards-compatible alias used by unit tests and older call sites.
+    Returns a 2-decimal TSS value.
+    """
+    return round(float(compute_tss_power(duration_sec, np_watts, ftp)), 2)
+
 # ==========================================
 # CONTINUOUS HEART RATE STRESS (HRSS)
 # ==========================================
