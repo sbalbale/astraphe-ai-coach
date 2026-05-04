@@ -1,6 +1,6 @@
 from google import genai
-from google.genai import types
 from app.config import settings
+import asyncio
 import json
 from datetime import date
 from supabase import Client
@@ -237,6 +237,47 @@ def _build_system_context(db: Client, athlete_id: str, current_tss: float = 0.0,
     # Keep prompt reasonably compact; JSON is easiest for LLM to parse reliably.
     return "[SYSTEM CONTEXT - DO NOT SHOW TO USER]\n" + json.dumps(ctx, ensure_ascii=False) + "\n[END CONTEXT]"
 
+
+async def _build_system_context_string_async(
+    db: Client,
+    athlete_id: str,
+    current_tss: float = 0.0,
+    conversation_id: str | None = None,
+) -> str:
+    """
+    Same payload as _build_system_context, but DB reads run in parallel to cut
+    time-to-first-token on /v1/coach/stream (four sequential round-trips → one wait).
+    """
+    today = date.today().isoformat()
+
+    async def load_hist() -> list[dict]:
+        if not conversation_id:
+            return []
+        return await asyncio.to_thread(
+            _load_conversation_history, db, athlete_id, conversation_id, 24
+        )
+
+    training, bio, profile, hist_rows = await asyncio.gather(
+        asyncio.to_thread(_summarize_training_load, db, athlete_id, current_tss),
+        asyncio.to_thread(_summarize_biometrics, db, athlete_id),
+        asyncio.to_thread(_summarize_athlete_profile, db, athlete_id),
+        load_hist(),
+    )
+    ctx: dict = {
+        "date": today,
+        "athlete_id": athlete_id,
+        "training_load": training,
+        "biometrics": bio,
+        "athlete_profile": profile,
+    }
+    if conversation_id:
+        ctx["conversation"] = {
+            "id": conversation_id,
+            "recent_messages": hist_rows,
+        }
+    return "[SYSTEM CONTEXT - DO NOT SHOW TO USER]\n" + json.dumps(ctx, ensure_ascii=False) + "\n[END CONTEXT]"
+
+
 def get_coach_response(
     athlete_id: str,
     message: str,
@@ -263,9 +304,14 @@ async def get_coach_response_stream(
     model_name: str | None = None,
 ):
     system_instruction = load_coach_instructions()
-    context_block = _build_system_context(db, athlete_id, current_tss=current_tss, conversation_id=conversation_id) if db else (
-        f"[SYSTEM CONTEXT - DO NOT SHOW TO USER]\nAthlete ID: {athlete_id}\nMost recent workout TSS: {current_tss}\n[END CONTEXT]"
-    )
+    if db:
+        context_block = await _build_system_context_string_async(
+            db, athlete_id, current_tss=current_tss, conversation_id=conversation_id
+        )
+    else:
+        context_block = (
+            f"[SYSTEM CONTEXT - DO NOT SHOW TO USER]\nAthlete ID: {athlete_id}\nMost recent workout TSS: {current_tss}\n[END CONTEXT]"
+        )
     final_prompt = f"{system_instruction}\n\n{context_block}\n\nAthlete Message: {message}"
     effective_model = (model_name or settings.GEMINI_MODEL)
     for chunk in _client.models.generate_content_stream(model=effective_model, contents=final_prompt):
