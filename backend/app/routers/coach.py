@@ -7,6 +7,7 @@ import json
 from datetime import datetime
 
 from app.services.ai_coach import (
+    build_initialization_message,
     generate_coach_conversation_title,
     get_coach_response,
     get_coach_response_stream,
@@ -185,6 +186,25 @@ async def delete_conversation(
     # Cascades to messages.
     db.table("coach_conversations").delete().eq("id", conversation_id).eq("athlete_id", athlete_id).execute()
     return {"status": "success"}
+
+@router.post("/initialize")
+async def initialize_coach(
+    athlete_id: str = Depends(get_current_athlete),
+    tier: str = Depends(get_current_user_tier),
+    model_name: str = Depends(get_current_gemini_model),
+    db = Depends(get_user_db),
+):
+    """
+    Called when the chat UI mounts. Returns a proactive warning if biometrics/load
+    anomalies are severe; otherwise a short context-aware greeting.
+    """
+    _require_premium(tier)
+    try:
+        message, is_proactive = build_initialization_message(athlete_id, db, model_name)
+        return {"status": "success", "message": message, "is_proactive": is_proactive}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.post("/message")
 async def chat_with_coach(
