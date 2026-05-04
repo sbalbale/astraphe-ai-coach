@@ -1,10 +1,15 @@
 from google import genai
 from google.genai import types
 from app.config import settings
+from app.services import coach_tools
+from app.services.algorithms import compute_z_score
 import asyncio
 import json
 import re
 from datetime import date
+from typing import Any
+
+import numpy as np
 from supabase import Client
 
 _client = genai.Client(api_key=settings.GEMINI_API_KEY)
@@ -240,6 +245,266 @@ def _build_system_context(db: Client, athlete_id: str, current_tss: float = 0.0,
     return "[SYSTEM CONTEXT - DO NOT SHOW TO USER]\n" + json.dumps(ctx, ensure_ascii=False) + "\n[END CONTEXT]"
 
 
+def detect_anomalies(db: Client, athlete_id: str) -> dict[str, Any] | None:
+    """
+    Returns a dict with triggered signals if any severe rule fires; otherwise None.
+    Thresholds: HRV z < -1.5, sleep_debt > 90 min, RHR > 7d avg + 5, TSB < -30, skin_temp > 0.6°C.
+    """
+    signals: list[dict[str, Any]] = []
+
+    # --- HRV z (30-row window, 7d EWMA baseline on prior readings; match /v1/athlete/state) ---
+    try:
+        bio_window_res = (
+            db.table("biometrics")
+            .select("date,hrv_rmssd,resting_hr,sleep_duration_min,sleep_debt_min,skin_temp_deviation")
+            .eq("athlete_id", athlete_id)
+            .order("date", desc=True)
+            .limit(30)
+            .execute()
+        )
+        window_rows = list(reversed(bio_window_res.data or []))
+    except Exception:
+        window_rows = []
+
+    def _series(field: str) -> np.ndarray:
+        vals: list[float] = []
+        for r in window_rows:
+            v = r.get(field)
+            try:
+                if v is None:
+                    continue
+                fv = float(v)
+                if fv == 0 and field == "hrv_rmssd":
+                    continue
+                vals.append(fv)
+            except (TypeError, ValueError):
+                continue
+        return np.array(vals, dtype=float) if vals else np.array([], dtype=float)
+
+    hrv_series = _series("hrv_rmssd")
+    latest_row = window_rows[-1] if window_rows else {}
+    hrv_latest = latest_row.get("hrv_rmssd")
+    if hrv_latest is not None and len(hrv_series) > 0:
+        hrv_z, hrv_base, hrv_sd = compute_z_score(
+            float(hrv_latest),
+            hrv_series[:-1] if len(hrv_series) > 1 else hrv_series,
+            span=7,
+        )
+        if hrv_z < -1.5:
+            signals.append({
+                "metric": "hrv_z",
+                "value": round(hrv_z, 3),
+                "threshold": -1.5,
+                "hrv_rmssd": float(hrv_latest),
+                "baseline_ewma": round(hrv_base, 2) if hrv_base is not None else None,
+            })
+
+    # --- Sleep debt ---
+    sleep_debt_min = latest_row.get("sleep_debt_min")
+    if sleep_debt_min is None:
+        sdur = _safe_int(latest_row.get("sleep_duration_min"))
+        if sdur is not None:
+            sleep_debt_min = max(0, 480 - sdur)
+    if sleep_debt_min is not None and float(sleep_debt_min) > 90:
+        signals.append({
+            "metric": "sleep_debt_min",
+            "value": float(sleep_debt_min),
+            "threshold": 90,
+        })
+
+    # --- RHR vs 7d average ---
+    bio_summary = _summarize_biometrics(db, athlete_id)
+    if bio_summary.get("available"):
+        lr = _safe_int(bio_summary["latest"].get("resting_hr"))
+        av = _safe_float(bio_summary["avg_7d"].get("resting_hr"))
+        if lr is not None and av is not None and lr > av + 5:
+            signals.append({
+                "metric": "resting_hr_delta",
+                "resting_hr": lr,
+                "avg_7d_rhr": round(av, 1),
+                "threshold_bpm_above_avg": 5,
+            })
+        st = _safe_float(bio_summary["latest"].get("skin_temp_deviation"))
+        if st is not None and st > 0.6:
+            signals.append({
+                "metric": "skin_temp_deviation_c",
+                "value": round(st, 3),
+                "threshold": 0.6,
+            })
+
+    # --- TSB ---
+    tl = _summarize_training_load(db, athlete_id, 0.0)
+    pmc = tl.get("latest_pmc") or {}
+    tsb_val = _safe_float(pmc.get("tsb"))
+    if tsb_val is not None and tsb_val < -30:
+        signals.append({
+            "metric": "tsb",
+            "value": tsb_val,
+            "threshold": -30,
+        })
+
+    if not signals:
+        return None
+    return {"triggered": True, "signals": signals}
+
+
+def build_initialization_message(
+    athlete_id: str,
+    db: Client,
+    model_name: str | None = None,
+) -> tuple[str, bool]:
+    """
+    Proactive first message when chat mounts, or a standard greeting.
+    Returns (message_text, is_proactive).
+    """
+    anomalies = detect_anomalies(db, athlete_id)
+    instructions = load_coach_instructions()
+    context_block = _build_system_context(db, athlete_id, current_tss=0.0, conversation_id=None)
+    effective_model = model_name or settings.GEMINI_MODEL
+
+    if anomalies:
+        directive = (
+            "[PROACTIVE CHECK]\nThe following severe anomalies were detected (JSON):\n"
+            + json.dumps(anomalies, ensure_ascii=False)
+            + "\n\nWrite exactly 2–3 sentences. Name the triggering metric(s) with concrete values. "
+            "Recommend a decisive action (e.g. cancel threshold work, swap for recovery). "
+            "ASTRAPE voice: clinical, no emojis."
+        )
+    else:
+        directive = (
+            "[INITIAL GREETING]\nNo severe anomaly triggers fired. "
+            "Write at most 2 sentences, context-aware, and cite TSB or HRV from the context. "
+            "ASTRAPE voice: clinical, no emojis."
+        )
+
+    prompt = f"{instructions}\n\n{context_block}\n\n{directive}"
+    try:
+        response = _client.models.generate_content(
+            model=effective_model,
+            contents=prompt,
+            config=types.GenerateContentConfig(max_output_tokens=256, temperature=0.35),
+        )
+        text = (getattr(response, "text", None) or "").strip()
+    except Exception as e:
+        text = f"Initialization failed: {e}"
+    return text, bool(anomalies)
+
+
+def _history_to_gemini_contents(history: list[dict]) -> list[types.Content]:
+    """Map coach_messages rows to Gemini Content (user / model)."""
+    out: list[types.Content] = []
+    for r in history:
+        raw_role = (r.get("role") or "").strip()
+        content = (r.get("content") or "").strip()
+        if not content:
+            continue
+        if raw_role not in ("user", "ai"):
+            continue
+        grole = "user" if raw_role == "user" else "model"
+        out.append(types.Content(role=grole, parts=[types.Part.from_text(text=content)]))
+    return out
+
+
+def get_coach_response_agentic(
+    athlete_id: str,
+    message: str,
+    current_tss: float = 0.0,
+    db: Client | None = None,
+    conversation_id: str | None = None,
+    model_name: str | None = None,
+    max_tool_hops: int = 4,
+) -> str:
+    """
+    Non-streaming coach reply with manual Gemini function calling (tool loop).
+    """
+    system_instruction = load_coach_instructions()
+    context_block = (
+        _build_system_context(db, athlete_id, current_tss=current_tss, conversation_id=conversation_id)
+        if db
+        else f"[SYSTEM CONTEXT - DO NOT SHOW TO USER]\nAthlete ID: {athlete_id}\nMost recent workout TSS: {current_tss}\n[END CONTEXT]"
+    )
+    system_with_ctx = f"{system_instruction}\n\n{context_block}"
+
+    if not db:
+        final_prompt = f"{system_with_ctx}\n\nAthlete Message: {message}"
+        effective_model = model_name or settings.GEMINI_MODEL
+        response = _client.models.generate_content(model=effective_model, contents=final_prompt)
+        return getattr(response, "text", "") or ""
+
+    history = (
+        _load_conversation_history(db, athlete_id, conversation_id, limit=24)
+        if conversation_id
+        else []
+    )
+    contents = _history_to_gemini_contents(history)
+    if not contents:
+        contents = [types.Content(role="user", parts=[types.Part.from_text(text=message)])]
+
+    effective_model = model_name or settings.GEMINI_MODEL
+    config = types.GenerateContentConfig(
+        system_instruction=system_with_ctx,
+        tools=coach_tools.TOOLS,
+        automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+        temperature=0.35,
+    )
+
+    last_response = None
+    for _hop in range(max_tool_hops + 1):
+        last_response = _client.models.generate_content(
+            model=effective_model,
+            contents=contents,
+            config=config,
+        )
+        if not last_response.candidates:
+            break
+        cand = last_response.candidates[0]
+        if not cand.content or not cand.content.parts:
+            break
+
+        parts = list(cand.content.parts)
+        fcs = [p.function_call for p in parts if p.function_call]
+        texts = [p.text for p in parts if p.text]
+
+        if fcs:
+            fc_parts: list[types.Part] = []
+            for fc in fcs:
+                if fc is None:
+                    continue
+                fc_parts.append(types.Part(function_call=fc))
+            if not fc_parts:
+                break
+            contents.append(types.Content(role="model", parts=fc_parts))
+
+            fr_parts: list[types.Part] = []
+            for fc in fcs:
+                if fc is None or not fc.name:
+                    continue
+                name = fc.name
+                args = coach_tools.parse_function_args(fc)
+                handler = coach_tools.TOOL_HANDLERS.get(name)
+                try:
+                    result: dict[str, Any] = (
+                        handler(args, athlete_id, db) if handler else {"error": f"unknown_tool:{name}"}
+                    )
+                except Exception as e:
+                    result = {"error": str(e)}
+                fr_parts.append(types.Part.from_function_response(name=name, response=result))
+            if fr_parts:
+                contents.append(types.Content(role="user", parts=fr_parts))
+            continue
+
+        joined = "".join(t for t in texts if t)
+        if joined.strip():
+            return joined.strip()
+        fallback = getattr(last_response, "text", None) or ""
+        if fallback.strip():
+            return fallback.strip()
+        break
+
+    fallback = getattr(last_response, "text", None) or "" if last_response else ""
+    return fallback.strip() or "Unable to complete coach response."
+
+
 async def _build_system_context_string_async(
     db: Client,
     athlete_id: str,
@@ -288,14 +553,14 @@ def get_coach_response(
     conversation_id: str | None = None,
     model_name: str | None = None,
 ) -> str:
-    system_instruction = load_coach_instructions()
-    context_block = _build_system_context(db, athlete_id, current_tss=current_tss, conversation_id=conversation_id) if db else (
-        f"[SYSTEM CONTEXT - DO NOT SHOW TO USER]\nAthlete ID: {athlete_id}\nMost recent workout TSS: {current_tss}\n[END CONTEXT]"
+    return get_coach_response_agentic(
+        athlete_id=athlete_id,
+        message=message,
+        current_tss=current_tss,
+        db=db,
+        conversation_id=conversation_id,
+        model_name=model_name,
     )
-    final_prompt = f"{system_instruction}\n\n{context_block}\n\nAthlete Message: {message}"
-    effective_model = (model_name or settings.GEMINI_MODEL)
-    response = _client.models.generate_content(model=effective_model, contents=final_prompt)
-    return getattr(response, "text", "") or ""
 
 async def get_coach_response_stream(
     athlete_id: str,

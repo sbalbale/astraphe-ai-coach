@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     # --- Gemini AI ---
     GEMINI_API_KEY: str
     GEMINI_MODEL: str = "gemini-flash-lite-latest"
+    GEMINI_EMBEDDING_MODEL: str = "gemini-embedding-002"
 
     # --- Google Cloud ---
     GCP_PROJECT_ID: Optional[str] = None
