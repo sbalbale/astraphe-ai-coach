@@ -29,6 +29,23 @@
   let pendingImageUrls = $state<string[]>([]);
   let chatContainer: HTMLElement;
   let fileInput: HTMLInputElement | null = null;
+  let chatInputEl = $state<HTMLTextAreaElement | null>(null);
+
+  const CHAT_INPUT_MAX_PX = 200;
+
+  function resizeChatInput() {
+    const el = chatInputEl;
+    if (!el) return;
+    el.style.height = '0px';
+    const next = Math.min(el.scrollHeight, CHAT_INPUT_MAX_PX);
+    el.style.height = `${next}px`;
+    el.style.overflowY = el.scrollHeight > CHAT_INPUT_MAX_PX ? 'auto' : 'hidden';
+  }
+
+  $effect(() => {
+    void input;
+    tick().then(() => resizeChatInput());
+  });
   let convoMenuOpen = $state(false);
   let convoMenuEl = $state<HTMLElement | null>(null);
   let historyLoaded = $state(false);
@@ -269,6 +286,8 @@
     if (!text && pendingImageUrls.length === 0) return;
     
     input = '';
+    await tick();
+    resizeChatInput();
     const cid = await ensureConversation();
     const image_urls = pendingImageUrls;
     pendingImageUrls = [];
@@ -505,7 +524,7 @@
         </div>
       {/if}
 
-      <div class="flex gap-2 items-center pb-4">
+      <div class="flex gap-2 items-end pb-4">
         <input
           bind:this={fileInput}
           type="file"
@@ -523,12 +542,22 @@
         >
           ＋
         </button>
-        <input
+        <textarea
+          bind:this={chatInputEl}
           bind:value={input}
-          onkeydown={(e) => e.key === 'Enter' && !loading && send()}
-          placeholder="Ask your coach..."
-          class="flex-1 min-w-0 px-4 py-3 rounded-xl text-[13px] bg-slate-900 border border-slate-700 text-slate-100 placeholder:text-slate-500 font-sans outline-none focus:border-slate-500 focus:ring-1 focus:ring-slate-600/80"
-        />
+          rows="1"
+          maxlength="8000"
+          aria-label="Message"
+          oninput={resizeChatInput}
+          onkeydown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              if (!loading) void send();
+            }
+          }}
+          placeholder="Ask your coach... (Shift+Enter for new line)"
+          class="flex-1 min-w-0 min-h-[2.75rem] max-h-[200px] px-4 py-3 rounded-xl text-[13px] leading-snug bg-slate-900 border border-slate-700 text-slate-100 placeholder:text-slate-500 font-sans outline-none focus:border-slate-500 focus:ring-1 focus:ring-slate-600/80 resize-none overflow-hidden"
+        ></textarea>
         <button
           type="button"
           class="w-11 h-11 shrink-0 rounded-xl flex items-center justify-center transition-all bg-indigo-600 hover:bg-indigo-500 disabled:opacity-35 disabled:pointer-events-none text-white shadow-[0_8px_24px_-12px_rgba(79,70,229,0.9)]"
