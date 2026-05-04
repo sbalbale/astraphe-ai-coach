@@ -1,11 +1,10 @@
 <script lang="ts">
   import { api } from '$lib/api';
+  import { renderCoachMarkdownToSafeHtml } from '$lib/coachMarkdown';
   import { buildMergedCoachPromptSuggestions } from '$lib/coachPromptSuggestions';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { authStore } from '$lib/stores/authStore.svelte';
   import { confirm } from '$lib/confirm';
-  import DOMPurify from 'dompurify';
-  import { marked } from 'marked';
   import { format } from 'date-fns';
   import { tick } from 'svelte';
 
@@ -34,44 +33,6 @@
   let convoMenuEl = $state<HTMLElement | null>(null);
   let historyLoaded = $state(false);
   let historyLoading = $state(false);
-
-  const mdRenderer = new marked.Renderer();
-  mdRenderer.link = (...args: any[]) => {
-    // Marked's renderer signatures vary by version; support both positional and token-object forms.
-    const token = args[0] && typeof args[0] === 'object' ? args[0] : null;
-    const href = token?.href ?? args[0];
-    const title = token?.title ?? args[1];
-    const text = token?.text ?? args[2];
-
-    const safeHref = typeof href === 'string' ? href : '';
-    const safeTitle = typeof title === 'string' ? title : undefined;
-    const safeText = typeof text === 'string' ? escapeHtmlText(text) : escapeHtmlText(safeHref);
-    const titleAttr = safeTitle ? ` title="${escapeHtmlAttr(safeTitle)}"` : '';
-    return `<a href="${escapeHtmlAttr(safeHref)}"${titleAttr} target="_blank" rel="noreferrer noopener">${safeText}</a>`;
-  };
-
-  marked.setOptions({
-    gfm: true,
-    breaks: true,
-    renderer: mdRenderer
-  });
-
-  function escapeHtmlAttr(value: string) {
-    return value.replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
-  }
-
-  function escapeHtmlText(value: string) {
-    return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
-  }
-
-  function renderAiMarkdown(text: string) {
-    // Render markdown → sanitize → render via {@html}.
-    const html = marked.parse(text ?? '', { async: false }) as string;
-    return DOMPurify.sanitize(html, {
-      USE_PROFILES: { html: true },
-      ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel):|\/)/i
-    });
-  }
 
   async function loadConversationMessages(cid: string) {
     const res = await api.getCoachMessages(cid);
@@ -471,7 +432,7 @@
                   <span class="text-[12px]">Thinking…</span>
                 </div>
               {:else}
-                <div class="chat-md">{@html renderAiMarkdown(msg.text)}</div>
+                <div class="chat-md">{@html renderCoachMarkdownToSafeHtml(msg.text)}</div>
               {/if}
               {#if msg.streaming && msg.text.trim()}
                 <span class="animate-[blink_1s_step-end_infinite] text-slate-400">▋</span>
@@ -627,6 +588,17 @@
     padding: 0;
     border: 0;
     background: transparent;
+  }
+
+  /* KaTeX (inline + display) inherits bubble text color */
+  :global(.chat-md .katex) {
+    color: inherit;
+    font-size: 1em;
+  }
+  :global(.chat-md .katex-display) {
+    margin: 0.5rem 0;
+    overflow-x: auto;
+    overflow-y: hidden;
   }
 
   @keyframes blink {
