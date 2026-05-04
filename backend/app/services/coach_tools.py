@@ -314,7 +314,23 @@ def handle_schedule_workout(
     except ValueError as e:
         return {"error": f"invalid date: {e}"}
 
-    sport = str(args.get("sport", DEFAULT_SPORT)).strip() or DEFAULT_SPORT
+    raw_sport = str(args.get("sport", DEFAULT_SPORT)).strip() or DEFAULT_SPORT
+    sport_norm = raw_sport.strip().lower()
+    # Normalize to frontend conventions (Workout.sport):
+    # running|cycling|swimming|rowing|strength
+    if sport_norm in ("bike", "biking", "cycling", "ride"):
+        sport = "cycling"
+    elif sport_norm in ("run", "running"):
+        sport = "running"
+    elif sport_norm in ("swim", "swimming"):
+        sport = "swimming"
+    elif sport_norm in ("row", "rowing"):
+        sport = "rowing"
+    elif sport_norm in ("strength", "gym", "lifting", "weights"):
+        sport = "strength"
+    else:
+        # Default to cycling (most common) to keep downstream UI stable.
+        sport = "cycling"
 
     try:
         res = (
@@ -342,6 +358,7 @@ def handle_schedule_workout(
     )
 
     title = f"{sport} — {focus_zone} ({duration_minutes}m)"
+    # Keep legacy `description` as a compact JSON string for backwards compatibility.
     description = json.dumps(workout_json, ensure_ascii=False)
 
     try:
@@ -356,6 +373,8 @@ def handle_schedule_workout(
                     "description": description,
                     "duration_min": duration_minutes,
                     "target_tss": int(round(est_tss)),
+                    "primary_zone": focus_zone,
+                    "structure": workout_json.get("structure") or [],
                     "status": "planned",
                 }
             )
@@ -365,12 +384,26 @@ def handle_schedule_workout(
     except Exception as e:
         return {"error": f"training_plans_insert_failed: {e}"}
 
+    workout_strict = {
+        "id": row_id,
+        "date": planned_date.isoformat(),
+        "title": title,
+        "sport": sport,
+        "primary_zone": focus_zone,
+        "duration_minutes": duration_minutes,
+        "projected_tss": int(round(est_tss)),
+        "description": (workout_json.get("notes") or "") if isinstance(workout_json, dict) else "",
+        "structure": workout_json.get("structure") or [],
+        "completed": False,
+    }
+
     return {
         "training_plan_id": row_id,
         "planned_date": planned_date.isoformat(),
         "title": title,
         "target_tss_estimate": est_tss,
         "workout": workout_json,
+        "workout_strict": workout_strict,
         "garmin_push": {
             "status": "stubbed",
             "reason": "Garmin Training API integration not yet wired",
