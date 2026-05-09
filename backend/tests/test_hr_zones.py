@@ -16,8 +16,9 @@ def test_manual_lthr_tier():
     )
     assert zr is not None
     assert zr.method == "lthr"
-    assert len(zr.zones) == 6
-    assert zr.zones[5].max_bpm == 999
+    assert len(zr.zones) == 5
+    assert zr.zones[4].zone == 5
+    assert zr.zones[4].max_bpm == 999
 
 
 def test_estimated_threshold_uses_hrr_when_max_rhr():
@@ -62,8 +63,9 @@ def test_profile_payload_empty():
     assert p["zones"] == []
 
 
-def test_zone6_unbounded_not_in_midpoint_list():
-    """Sanity: Coggan Z6 uses max_bpm sentinel 999."""
+def test_lthr_vo2max_plus_zone_unbounded_sentinel():
+    """Open-ended LTHR Z5 (VO2max+) uses max_bpm sentinel 999 for chart/midpoint handling."""
     zr = compute_hr_zones(200, 48, 165, "manual")
     assert zr is not None
+    assert zr.zones[-1].zone == 5
     assert zr.zones[-1].max_bpm >= 999

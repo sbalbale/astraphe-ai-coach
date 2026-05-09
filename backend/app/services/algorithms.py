@@ -149,8 +149,9 @@ def compute_hrss_from_zones(
     zone_midpoint_hr: Dict[int, int] = {0: resting_hr}
     for z in zone_result.zones:
         if z.max_bpm >= 999:
+            # Merged LTHR Z5 (VO2max+): open-ended upper bound — fixed % anchor for TRIMP midpoint
             zone_midpoint_hr[z.zone] = (
-                int(threshold_hr * 1.10) if threshold_hr > resting_hr else resting_hr
+                int(threshold_hr * 1.08) if threshold_hr > resting_hr else resting_hr
             )
         else:
             zone_midpoint_hr[z.zone] = (z.min_bpm + z.max_bpm) // 2

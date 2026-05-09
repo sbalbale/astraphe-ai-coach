@@ -53,3 +53,19 @@ def test_compute_hrss_manual_lthr_vs_estimated_midpoints_differ():
     hrss_est = compute_hrss_from_zones(threshold_hr_source="estimated", **base)
     hrss_man = compute_hrss_from_zones(threshold_hr_source="manual", **base)
     assert hrss_est != hrss_man
+
+
+def test_compute_hrss_from_zones_manual_lthr_zone5_midpoint():
+    """Manual LTHR uses merged open-ended Z5; HRSS stays finite and positive with Z5 time."""
+    zone_minutes = {1: 10.0, 2: 10.0, 3: 0.0, 4: 0.0, 5: 20.0}
+    v = compute_hrss_from_zones(
+        zone_minutes=zone_minutes,
+        max_hr=190,
+        resting_hr=50,
+        threshold_hr=165,
+        sport="run",
+        gender="male",
+        threshold_hr_source="manual",
+    )
+    assert v > 0
+    assert v == round(v, 2)
