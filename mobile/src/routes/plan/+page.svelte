@@ -13,7 +13,10 @@
     startOfMonth,
     startOfWeek
   } from 'date-fns';
-  import { renderCoachMarkdownToSafeHtml } from '$lib/coachMarkdown';
+  import {
+    extractFirstGfmPipeTable,
+    renderCoachMarkdownToSafeHtml
+  } from '$lib/coachMarkdown';
   import type { Workout } from '$lib/types/training';
 
   type AgendaView = 'day' | 'week';
@@ -242,17 +245,43 @@
 
   const SESSION_CONTEXT_FALLBACK = 'No additional context provided for this session yet.';
 
-  function isMarkdownTable(text?: string) {
-    return Boolean(text?.trim().startsWith('|'));
-  }
+  /** Prescription table typography; assumes Duration/Target are columns 2–3 for alignment. */
+  const prescriptionProseClass =
+    [
+      'prose prose-invert max-w-none prose-table:my-0 prose-th:text-blue prose-th:font-mono',
+      'text-[13px] leading-relaxed text-text0 [&_table]:my-0 [&_table]:w-full [&_table]:border-collapse',
+      '[&_table]:rounded-none [&_table]:border [&_table]:border-border/50',
+      '[&_thead]:border-b [&_thead]:border-border/50 [&_thead]:bg-blue/10',
+      '[&_thead_th]:border-border/40 [&_thead_th]:px-3 [&_thead_th]:py-2 [&_thead_th]:text-left',
+      '[&_tbody_td]:border-t [&_tbody_td]:border-border/35 [&_tbody_td]:px-3 [&_tbody_td]:py-2',
+      '[&_tbody_tr:nth-child(even)]:bg-white/5',
+      '[&_th:nth-child(2)]:text-center [&_td:nth-child(2)]:text-center [&_th:nth-child(2)]:font-mono',
+      '[&_td:nth-child(2)]:font-mono',
+      '[&_th:nth-child(3)]:text-center [&_td:nth-child(3)]:text-center [&_th:nth-child(3)]:font-mono',
+      '[&_td:nth-child(3)]:font-mono'
+    ].join(' ');
+
+  const coachNotesMarkdownProseClass =
+    'prose prose-invert max-w-none text-[14px] leading-relaxed text-text0 prose-p:my-2 prose-ul:my-2';
 
   const sessionDetailContext = $derived.by(() => {
     const w = selectedWorkout;
-    if (!w) return { displayContext: '', contextIsMarkdownTable: false };
-    const displayContext = w.note ?? w.goal ?? w.context ?? SESSION_CONTEXT_FALLBACK;
+    if (!w) {
+      return {
+        coachNotes: '',
+        prescriptionMarkdown: '',
+        hasPrescriptionTable: false,
+        contextIsMarkdownTable: false
+      };
+    }
+    const rawContext = w.note ?? w.goal ?? w.context ?? SESSION_CONTEXT_FALLBACK;
+    const { tableMarkdown, remainder } = extractFirstGfmPipeTable(rawContext);
+    const hasPrescriptionTable = Boolean(tableMarkdown?.length);
     return {
-      displayContext,
-      contextIsMarkdownTable: isMarkdownTable(displayContext)
+      coachNotes: remainder,
+      prescriptionMarkdown: tableMarkdown ?? '',
+      hasPrescriptionTable,
+      contextIsMarkdownTable: hasPrescriptionTable
     };
   });
 
@@ -481,7 +510,7 @@
     <div
       class="relative w-full max-w-[720px] max-h-[85vh] overflow-auto bg-[rgba(10,12,18,0.96)] border border-border rounded-2xl p-5 shadow-[0_20px_60px_rgba(0,0,0,0.75)]"
     >
-      <div class="flex items-start justify-between gap-4 mb-4">
+      <div class="flex items-start justify-between gap-4 mb-7">
         <div class="min-w-0">
           <div class="text-[12px] text-slate-400 font-mono">
             {format(selectedWorkout.date, 'EEE, MMM d')} • {selectedWorkout.duration ?? '—'}
@@ -499,54 +528,67 @@
         </button>
       </div>
 
-      <div class="grid gap-4">
-        <div class="bg-glass2 border border-border rounded-xl p-4">
-          <div class="text-[12px] text-slate-400 font-mono mb-1">AI context</div>
-          {#if sessionDetailContext.contextIsMarkdownTable}
-            <div
-              class="prose prose-invert max-w-none text-[13px] leading-relaxed text-text0 [&_table]:text-[13px]"
-            >
-              {@html renderCoachMarkdownToSafeHtml(sessionDetailContext.displayContext)}
+      <div class="grid gap-6">
+        {#if sessionDetailContext.hasPrescriptionTable}
+          <div class="space-y-3">
+            <h3 class="text-[12px] text-slate-400 font-mono uppercase tracking-widest">Prescription</h3>
+            <div class="overflow-x-auto -mx-1 px-1 sm:mx-0 sm:px-0">
+              <div
+                class="rounded-xl overflow-hidden bg-glass2 border border-border/50 px-3 py-2 sm:px-4 sm:py-3 {prescriptionProseClass}"
+              >
+                {@html renderCoachMarkdownToSafeHtml(sessionDetailContext.prescriptionMarkdown)}
+              </div>
             </div>
-          {:else}
-            <div class="text-[13px] text-text0 leading-relaxed">
-              {sessionDetailContext.displayContext}
+          </div>
+          {#if sessionDetailContext.coachNotes.length > 0}
+            <div class="bg-glass2 border border-border rounded-xl p-4">
+              <h3 class="text-[12px] text-slate-400 font-mono mb-1">Coach's Notes</h3>
+              <div class={coachNotesMarkdownProseClass}>
+                {@html renderCoachMarkdownToSafeHtml(sessionDetailContext.coachNotes)}
+              </div>
             </div>
           {/if}
-        </div>
-
-        {#if !sessionDetailContext.contextIsMarkdownTable}
+        {:else}
           <div class="bg-glass2 border border-border rounded-xl p-4">
-            <div class="text-[12px] text-slate-400 font-mono mb-2">Structure</div>
-            <ol class="list-decimal pl-5 grid gap-2">
-              {#each stepsFor(selectedWorkout) as step, i (i)}
-                <li class="text-[13px] text-text0">
-                  {#if typeof step === 'string'}
-                    <span>{step}</span>
-                  {:else}
-                    <div class="grid gap-0.5">
-                      <div class="font-semibold">{step.title ?? 'Step'}</div>
-                      <div class="text-[12px] text-slate-400">
-                        {#if step.duration}
-                          <span class="font-mono text-text0">{step.duration}</span>
-                        {/if}
-                        {#if step.target}
-                          <span class="font-mono text-text0">{step.target}</span>
-                        {/if}
-                        {#if step.note}
-                          <span>{step.note}</span>
-                        {/if}
+            <h3 class="text-[12px] text-slate-400 font-mono mb-1">Coach's Notes</h3>
+            <p class="text-[14px] leading-relaxed text-text0">{sessionDetailContext.coachNotes}</p>
+          </div>
+        {/if}
+
+        {#if !sessionDetailContext.contextIsMarkdownTable && stepsFor(selectedWorkout).length > 0}
+          <div class="space-y-3">
+            <h3 class="text-[12px] text-slate-400 font-mono uppercase tracking-widest">Technical Blocks</h3>
+            <div class="bg-glass2 border border-border rounded-xl p-4">
+              <ol class="list-decimal pl-5 grid gap-2">
+                {#each stepsFor(selectedWorkout) as step, i (i)}
+                  <li class="text-[13px] text-text0">
+                    {#if typeof step === 'string'}
+                      <span>{step}</span>
+                    {:else}
+                      <div class="grid gap-0.5">
+                        <div class="font-semibold">{step.title ?? 'Step'}</div>
+                        <div class="text-[12px] text-slate-400">
+                          {#if step.duration}
+                            <span class="font-mono text-text0">{step.duration}</span>
+                          {/if}
+                          {#if step.target}
+                            <span class="font-mono text-text0">{step.target}</span>
+                          {/if}
+                          {#if step.note}
+                            <span>{step.note}</span>
+                          {/if}
+                        </div>
                       </div>
-                    </div>
-                  {/if}
-                </li>
-              {/each}
-            </ol>
-            {#if !(selectedWorkout.blocks?.length || selectedWorkout.structure?.length)}
-              <div class="text-[11px] text-slate-400 mt-3">
-                Scaffolded outline (replace with real blocks when available).
-              </div>
-            {/if}
+                    {/if}
+                  </li>
+                {/each}
+              </ol>
+              {#if !(selectedWorkout.blocks?.length || selectedWorkout.structure?.length)}
+                <div class="text-[11px] text-slate-400 mt-3">
+                  Scaffolded outline (replace with real blocks when available).
+                </div>
+              {/if}
+            </div>
           </div>
         {/if}
       </div>
