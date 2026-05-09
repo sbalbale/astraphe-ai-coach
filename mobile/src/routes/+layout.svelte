@@ -107,19 +107,19 @@
       
       <!-- Subtabs for Body screens -->
       {#if ['/recovery', '/sleep', '/strain'].includes($page.url.pathname)}
-        <div class="flex gap-1.5 px-4 pt-2.5 pb-2 shrink-0">
+        <div class="flex gap-5 px-4 pt-2.5 border-b border-border shrink-0">
           {#each [{id: '/recovery', label: 'Recovery'}, {id: '/sleep', label: 'Sleep'}, {id: '/strain', label: 'Strain'}] as t (t.id)}
-            <a href={t.id} class="px-3.5 py-1.5 rounded-full text-xs font-medium font-sans transition-all duration-200 border no-underline
-              {$page.url.pathname === t.id ? 'bg-blue text-white border-blue' : 'bg-glass text-text1 border-border'}">
+            <a href={t.id} class="pb-2 text-xs font-medium font-mono tracking-wide border-b-2 -mb-px no-underline transition-all duration-200
+              {$page.url.pathname === t.id ? 'border-blue text-text0' : 'border-transparent text-text2'}">
               {t.label}
             </a>
           {/each}
         </div>
       {:else if ['/dashboard', '/training', '/zones'].includes($page.url.pathname)}
-        <div class="flex gap-1.5 px-4 pt-2.5 pb-2 shrink-0">
+        <div class="flex gap-5 px-4 pt-2.5 border-b border-border shrink-0">
           {#each [{id: '/dashboard', label: 'Home'}, {id: '/training', label: 'Training'}, {id: '/zones', label: 'Zones'}] as t (t.id)}
-            <a href={t.id} class="px-3.5 py-1.5 rounded-full text-xs font-medium font-sans transition-all duration-200 border no-underline
-              {$page.url.pathname === t.id ? 'bg-blue text-white border-blue' : 'bg-glass text-text1 border-border'}">
+            <a href={t.id} class="pb-2 text-xs font-medium font-mono tracking-wide border-b-2 -mb-px no-underline transition-all duration-200
+              {$page.url.pathname === t.id ? 'border-blue text-text0' : 'border-transparent text-text2'}">
               {t.label}
             </a>
           {/each}

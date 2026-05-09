@@ -372,7 +372,7 @@
     {/if}
 
     <!-- Sport toggle -->
-    <div class="flex gap-1.5 overflow-x-auto pb-1 no-scrollbar shrink-0">
+    <div class="flex gap-1.5 overflow-x-auto pb-2 no-scrollbar shrink-0">
       {#each sportOptions as s (s.id)}
         <Pill active={sport === s.id} onclick={() => sport = s.id}>
           {s.label}
