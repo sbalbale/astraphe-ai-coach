@@ -2,6 +2,8 @@ import math
 import numpy as np
 from typing import Dict, Any, List, Optional
 
+from app.services.hr_zones import compute_hr_zones
+
 # ==========================================
 # CONSTANTS
 # ==========================================
@@ -116,10 +118,13 @@ def compute_hrss_from_zones(
     threshold_hr: int,
     sport: str = "other",
     gender: str = "male",
+    threshold_hr_source: Optional[str] = None,
 ) -> float:
     """
     Estimates HRSS for historical workouts where only aggregated time-in-zone is available.
-    Calculates Banister TRIMP using the mathematical midpoint of each zone.
+    Calculates Banister TRIMP using zone midpoints from the same tiered model as the UI
+    (see app.services.hr_zones.compute_hr_zones). Banister normalization still uses numeric
+    threshold_hr regardless of threshold_hr_source.
     """
     if max_hr <= resting_hr or threshold_hr <= resting_hr:
         return 0.0
@@ -132,23 +137,35 @@ def compute_hrss_from_zones(
     if lthr_trimp_1hr <= 0:
         return 0.0
 
-    # Mathematical midpoints for standard 5-zone models based on max HR percentages
-    zone_midpoint_hr = {
-        0: resting_hr,
-        1: resting_hr + 0.60 * (max_hr - resting_hr),
-        2: resting_hr + 0.70 * (max_hr - resting_hr),
-        3: resting_hr + 0.80 * (max_hr - resting_hr),
-        4: resting_hr + 0.90 * (max_hr - resting_hr),
-        5: resting_hr + 0.95 * (max_hr - resting_hr),
-    }
+    zone_result = compute_hr_zones(
+        max_hr if max_hr > 0 else None,
+        resting_hr if resting_hr > 0 else None,
+        threshold_hr if threshold_hr > 0 else None,
+        threshold_hr_source,
+    )
+    if zone_result is None:
+        return 0.0
+
+    zone_midpoint_hr: Dict[int, int] = {0: resting_hr}
+    for z in zone_result.zones:
+        if z.max_bpm >= 999:
+            zone_midpoint_hr[z.zone] = (
+                int(threshold_hr * 1.10) if threshold_hr > resting_hr else resting_hr
+            )
+        else:
+            zone_midpoint_hr[z.zone] = (z.min_bpm + z.max_bpm) // 2
+
+    hrr_denom = float(max_hr - resting_hr)
+    if hrr_denom <= 0:
+        return 0.0
 
     total_trimp = 0.0
     for zone, minutes in (zone_minutes or {}).items():
         if not minutes or minutes <= 0:
             continue
 
-        mid_hr = zone_midpoint_hr.get(int(zone), resting_hr)
-        hrr = (mid_hr - resting_hr) / (max_hr - resting_hr)
+        mid_hr = float(zone_midpoint_hr.get(int(zone), resting_hr))
+        hrr = (mid_hr - float(resting_hr)) / hrr_denom
 
         # Exponential TRIMP for this block of time
         zone_trimp = float(minutes) * float(hrr) * 0.64 * math.exp(k * float(hrr))
@@ -527,6 +544,5 @@ def calculate_threshold_hr_est(max_hr: int, resting_hr: int) -> int:
     return int(round((hrr * 0.83) + resting_hr))
 
 def normalize_rowing_watts(rowing_watts: float) -> float:
-    """Converts average rowing watts to normalized equivalent."""
-    # return round(rowing_watts * 1.12, 2)
-    return rowing_watts
+    """Converts average rowing watts to cycling-equivalent watts (~12% metabolic cost uplift)."""
+    return round(float(rowing_watts) * 1.12, 2)

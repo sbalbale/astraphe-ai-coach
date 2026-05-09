@@ -6,6 +6,7 @@ import numpy as np
 
 from app.models.athlete import AthleteState, AthleteProfileUpdate
 from app.services.algorithms import compute_z_score
+from app.services.hr_zones import athlete_dict_with_hr_zones
 from app.dependencies import get_current_athlete, get_user_db, get_admin_db
 
 router = APIRouter(prefix="/v1/athlete", tags=["Athlete"])
@@ -249,7 +250,7 @@ async def get_athlete_profile(
         raise HTTPException(status_code=500, detail="Failed to load athlete profile")
     if not res or not res.data:
         raise HTTPException(status_code=404, detail="Athlete not found")
-    return res.data
+    return athlete_dict_with_hr_zones(res.data)
 
 @router.patch("/profile")
 async def update_athlete_profile(
@@ -264,6 +265,13 @@ async def update_athlete_profile(
     update_data = payload.model_dump(exclude_unset=True)
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields provided for update")
+
+    if "threshold_hr" in update_data and update_data.get("threshold_hr") is not None:
+        try:
+            if int(update_data["threshold_hr"]) > 0:
+                update_data["threshold_hr_source"] = "manual"
+        except (TypeError, ValueError):
+            pass
 
     # Supabase client JSON-encodes request bodies; normalize non-JSON types.
     for k, v in list(update_data.items()):
@@ -332,7 +340,7 @@ async def update_athlete_profile(
         "status": "success",
         "message": "Profile updated successfully",
         "updated_fields": update_data,
-        "profile": fresh.data,
+        "profile": athlete_dict_with_hr_zones(fresh.data),
     }
 @router.delete("")
 async def delete_athlete_account(

@@ -5,6 +5,7 @@
   import DatePicker from '$lib/components/DatePicker.svelte';
   import MonthPicker from '$lib/components/MonthPicker.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
+  import { goto } from '$app/navigation';
   import {
     addDays,
     addMonths,
@@ -81,22 +82,70 @@
   );
   const canGoForward = $derived(windowMode === 'week' ? canGoForwardWeek : canGoForwardMonth);
 
-  const hasProfile = $derived(!!athleteStore.profile);
-  
-  // Fallbacks if profile not loaded
-  const maxHR = $derived(athleteStore.profile?.max_hr || 190);
-  const restingHR = $derived(athleteStore.profile?.resting_hr || 50);
-  const hrr = $derived(maxHR - restingHR);
+  const METHOD_LABEL: Record<string, string> = {
+    lthr: 'Coggan LTHR',
+    hrr: 'Karvonen HRR',
+    max_hr: 'Max HR %'
+  };
 
-  const hrZones = $derived([
-    { zone: 0, name: 'Resting', lo: 0, hi: Math.max(0, Math.round(restingHR + hrr * 0.5) - 1), color: '#AAB3BF', desc: 'Very easy. Below Zone 1.' },
-    { zone: 1, name: 'Recovery', lo: Math.round(restingHR + hrr * 0.5), hi: Math.round(restingHR + hrr * 0.6), color: '#4621FF', desc: 'Active recovery. Minimal stress.' },
-    { zone: 2, name: 'Aerobic', lo: Math.round(restingHR + hrr * 0.6) + 1, hi: Math.round(restingHR + hrr * 0.7), color: '#00C8A8', desc: 'Endurance. Optimized for fat metabolism.' },
-    { zone: 3, name: 'Tempo', lo: Math.round(restingHR + hrr * 0.7) + 1, hi: Math.round(restingHR + hrr * 0.8), color: '#FFCB88', desc: 'Moderate. Improving aerobic capacity.' },
-    { zone: 4, name: 'Threshold', lo: Math.round(restingHR + hrr * 0.8) + 1, hi: Math.round(restingHR + hrr * 0.9), color: '#F07178', desc: 'Hard. Lactate threshold development.' },
-    { zone: 5, name: 'VO2max', lo: Math.round(restingHR + hrr * 0.9) + 1, hi: maxHR, color: '#FF4791', desc: 'Max effort. Building peak power.' },
-  ]);
-  
+  /** Colors by zone number — supports 5- and 6-zone models from API */
+  const ZONE_COLORS: Record<number, string> = {
+    1: '#4621FF',
+    2: '#00C8A8',
+    3: '#FFCB88',
+    4: '#F07178',
+    5: '#FF4791',
+    6: '#E01E5A'
+  };
+
+  const ZONE_DESCRIPTIONS: Record<number, string> = {
+    1: 'Easier aerobic work. Active recovery and base.',
+    2: 'Steady endurance. Aerobic base and fat metabolism.',
+    3: 'Moderate-hard. Tempo and sustainable hard efforts.',
+    4: 'Threshold. Race-pace sustainable intensity.',
+    5: 'VO2max. Short high-intensity intervals.',
+    6: 'Anaerobic. Very short maximal efforts.'
+  };
+
+  const hasProfile = $derived(!!athleteStore.profile);
+
+  const zoneMethod = $derived(athleteStore.profile?.hr_zones?.method ?? null);
+  const zoneAnchorLabel = $derived(athleteStore.profile?.hr_zones?.anchor_label ?? '');
+
+  const hrZones = $derived(
+    (athleteStore.profile?.hr_zones?.zones ?? []).map((z: { zone: number; name: string; min: number; max: number }) => ({
+      zone: z.zone,
+      name: z.name,
+      lo: z.min,
+      hi: z.max,
+      color: ZONE_COLORS[z.zone] ?? '#AAB3BF',
+      desc: ZONE_DESCRIPTIONS[z.zone] ?? ''
+    }))
+  );
+
+  const hasZoneDefinitions = $derived(hrZones.length > 0);
+
+  /** Scale zone bars (avoids Coggan Z6 sentinel max 999) */
+  const displayCeiling = $derived.by(() => {
+    const profileMax = athleteStore.profile?.max_hr;
+    let cap = typeof profileMax === 'number' ? profileMax : 0;
+    for (const z of hrZones) {
+      if (z.hi < 500) cap = Math.max(cap, z.hi);
+      if (z.lo < 500) cap = Math.max(cap, z.lo);
+    }
+    return cap > 0 ? cap : 1;
+  });
+
+  const maxHRKnown = $derived(
+    typeof athleteStore.profile?.max_hr === 'number' ? athleteStore.profile.max_hr : null
+  );
+  const restingHRKnown = $derived(
+    typeof athleteStore.profile?.resting_hr === 'number' ? athleteStore.profile.resting_hr : null
+  );
+  const hrrKnown = $derived(
+    maxHRKnown != null && restingHRKnown != null ? maxHRKnown - restingHRKnown : null
+  );
+
   let zones = $derived(hrZones);
 
   
@@ -225,6 +274,11 @@
   <div>
     <p class="text-xs text-text2 font-mono uppercase tracking-[0.1em]">Heart Rate & Power</p>
     <h1 class="text-[22px] font-bold tracking-[-0.02em]">Training Zones</h1>
+    {#if zoneMethod && zoneAnchorLabel}
+      <p class="text-text2 font-mono text-xs mt-1">
+        {METHOD_LABEL[zoneMethod] ?? zoneMethod} · {zoneAnchorLabel}
+      </p>
+    {/if}
   </div>
 
   {#if athleteStore.loading && !athleteStore.initialLoadDone}
@@ -239,7 +293,32 @@
       actionLabel="Go to Profile"
       icon="👤"
     />
+  {:else if !hasZoneDefinitions}
+    <EmptyState
+      title="Incomplete HR Data"
+      message="Add at least a max heart rate (or a manual lactate threshold HR) in training settings to display zones."
+      actionLabel="Training settings"
+      icon="📈"
+    />
   {:else}
+    {#if zoneMethod === 'max_hr'}
+      <button
+        type="button"
+        class="text-left text-[11px] text-text2 font-mono"
+        onclick={() => goto('/profile/training-settings')}
+      >
+        Add your resting heart rate to get more personalized zones →
+      </button>
+    {:else if zoneMethod === 'hrr'}
+      <button
+        type="button"
+        class="text-left text-[11px] text-text2 font-mono"
+        onclick={() => goto('/profile/training-settings')}
+      >
+        Run a threshold test to unlock Coggan zones →
+      </button>
+    {/if}
+
     <!-- Sport toggle -->
     <div class="flex gap-1.5 overflow-x-auto pb-1 no-scrollbar shrink-0">
       {#each sportOptions as s (s.id)}
@@ -254,18 +333,28 @@
       <Card style="background: linear-gradient(135deg, rgba(240,113,120,0.12), transparent);">
         <p class="text-[9px] text-text2 font-mono uppercase tracking-[0.08em] mb-1">Max Heart Rate</p>
         <p class="text-[26px] font-bold text-red tracking-[-0.02em] leading-tight">
-          {maxHR}
-          <span class="text-[13px] font-normal text-text2 ml-1">bpm</span>
+          {maxHRKnown ?? '—'}
+          {#if maxHRKnown != null}
+            <span class="text-[13px] font-normal text-text2 ml-1">bpm</span>
+          {/if}
         </p>
         <p class="text-[10px] text-text2 mt-0.5">Profile Baseline</p>
       </Card>
       <Card style="background: linear-gradient(135deg, rgba(70,33,255,0.12), transparent);">
         <p class="text-[9px] text-text2 font-mono uppercase tracking-[0.08em] mb-1">Resting Heart Rate</p>
         <p class="text-[26px] font-bold text-[#4621FF] tracking-[-0.02em] leading-tight">
-          {restingHR}
-          <span class="text-[13px] font-normal text-text2 ml-1">bpm</span>
+          {restingHRKnown ?? '—'}
+          {#if restingHRKnown != null}
+            <span class="text-[13px] font-normal text-text2 ml-1">bpm</span>
+          {/if}
         </p>
-        <p class="text-[10px] text-text2 mt-0.5">HRR: {hrr} bpm</p>
+        <p class="text-[10px] text-text2 mt-0.5">
+          {#if hrrKnown != null}
+            HRR: {hrrKnown} bpm
+          {:else}
+            Needed for Karvonen zones
+          {/if}
+        </p>
       </Card>
     </div>
 
@@ -274,6 +363,8 @@
       <p class="text-[13px] font-semibold mb-3.5">Zone Definitions</p>
       <div class="flex flex-col gap-2.5">
         {#each zones as z, i (z.zone)}
+          {@const barHi = z.hi >= 500 ? displayCeiling : z.hi}
+          {@const barLo = Math.min(z.lo, barHi)}
           <button 
             class="flex flex-col text-left bg-transparent border-none p-0 cursor-pointer w-full text-text0"
             onclick={() => editZone = editZone === i ? null : i}
@@ -286,11 +377,13 @@
               <div class="flex-1">
                 <div class="flex justify-between items-center mb-1">
                   <span class="text-[12px] font-semibold">{z.name}</span>
-                  <span class="text-[11px] font-mono" style="color: {z.color}">{z.lo}–{z.hi} bpm</span>
+                  <span class="text-[11px] font-mono" style="color: {z.color}">
+                    {z.hi >= 500 ? `${z.lo}+` : `${z.lo}–${z.hi}`} bpm
+                  </span>
                 </div>
                 <div class="h-1.25 bg-glass2 rounded overflow-hidden">
                   <div class="h-full rounded" 
-                       style="width: {((z.hi - z.lo) / maxHR) * 100}%; margin-left: {(z.lo / maxHR) * 100}%; background: {z.color};"></div>
+                       style="width: {(displayCeiling > 0 ? (barHi - barLo) / displayCeiling : 0) * 100}%; margin-left: {(displayCeiling > 0 ? barLo / displayCeiling : 0) * 100}%; background: {z.color};"></div>
                 </div>
               </div>
             </div>

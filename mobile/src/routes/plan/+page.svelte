@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Action } from 'svelte/action';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { authStore } from '$lib/stores/authStore.svelte';
@@ -243,22 +244,51 @@
     selectedWorkout = null;
   }
 
+  /** Copy header labels onto tbody cells for the stacked mobile layout (`::before { content: attr(data-label) }`). */
+  const enhancePrescriptionTable: Action<HTMLElement> = (node) => {
+    const run = () => {
+      const table = node.querySelector('table');
+      if (!table) return;
+      const headers = [...table.querySelectorAll('thead th')].map(
+        (th) => th.textContent?.trim() ?? ''
+      );
+      for (const tr of table.querySelectorAll('tbody tr')) {
+        tr.querySelectorAll('td').forEach((td, i) => {
+          td.setAttribute('data-label', headers[i] ?? `Column ${i + 1}`);
+        });
+      }
+    };
+    queueMicrotask(run);
+    return { update: run };
+  };
+
   const SESSION_CONTEXT_FALLBACK = 'No additional context provided for this session yet.';
 
-  /** Prescription table typography; assumes Duration/Target are columns 2–3 for alignment. */
+  /**
+   * Desktop (sm+): fixed table + column weights. Mobile: thead hidden, one card per tbody row,
+   * each cell is label-above-value (needs `enhancePrescriptionTable` for `data-label`).
+   */
   const prescriptionProseClass =
     [
       'prose prose-invert max-w-none prose-table:my-0 prose-th:text-blue prose-th:font-mono',
       'text-[13px] leading-relaxed text-text0 [&_table]:my-0 [&_table]:w-full [&_table]:border-collapse',
-      '[&_table]:rounded-none [&_table]:border [&_table]:border-border/50',
-      '[&_thead]:border-b [&_thead]:border-border/50 [&_thead]:bg-blue/10',
-      '[&_thead_th]:border-border/40 [&_thead_th]:px-3 [&_thead_th]:py-2 [&_thead_th]:text-left',
-      '[&_tbody_td]:border-t [&_tbody_td]:border-border/35 [&_tbody_td]:px-3 [&_tbody_td]:py-2',
-      '[&_tbody_tr:nth-child(even)]:bg-white/5',
-      '[&_th:nth-child(2)]:text-center [&_td:nth-child(2)]:text-center [&_th:nth-child(2)]:font-mono',
-      '[&_td:nth-child(2)]:font-mono',
-      '[&_th:nth-child(3)]:text-center [&_td:nth-child(3)]:text-center [&_th:nth-child(3)]:font-mono',
-      '[&_td:nth-child(3)]:font-mono'
+      /* Mobile: stack — no squeezed fixed columns */
+      'max-sm:[&_table]:block max-sm:[&_thead]:hidden max-sm:[&_tbody]:block max-sm:[&_table]:border-0',
+      'max-sm:[&_tbody_tr]:block max-sm:[&_tbody_tr]:mb-3 max-sm:[&_tbody_tr]:last:mb-0 max-sm:[&_tbody_tr]:rounded-lg max-sm:[&_tbody_tr]:border max-sm:[&_tbody_tr]:border-border/45 max-sm:[&_tbody_tr]:bg-white/[0.04] max-sm:[&_tbody_tr]:p-3',
+      'max-sm:[&_tbody_td]:flex max-sm:[&_tbody_td]:min-w-0 max-sm:[&_tbody_td]:flex-col max-sm:[&_tbody_td]:items-stretch max-sm:[&_tbody_td]:gap-1 max-sm:[&_tbody_td]:border-0 max-sm:[&_tbody_td]:py-2.5 max-sm:[&_tbody_td]:px-0 max-sm:[&_tbody_td]:first:pt-0 max-sm:[&_tbody_td]:last:pb-0',
+      'max-sm:[&_tbody_td]:[word-break:normal] max-sm:[&_tbody_td]:before:font-mono max-sm:[&_tbody_td]:before:text-[11px] max-sm:[&_tbody_td]:before:uppercase max-sm:[&_tbody_td]:before:tracking-wide max-sm:[&_tbody_td]:before:text-slate-400 max-sm:[&_tbody_td]:before:leading-snug max-sm:[&_tbody_td]:before:content-[attr(data-label)] max-sm:[&_tbody_td]:before:text-left',
+      'max-sm:[&_tbody_td]:not(:last-child):border-b max-sm:[&_tbody_td]:not(:last-child):border-border/30',
+      /* Desktop table */
+      'sm:[&_table]:table-fixed sm:[&_table]:min-w-0',
+      'sm:[&_th]:align-top sm:[&_td]:align-top sm:[&_th]:[word-break:normal] sm:[&_td]:[word-break:normal]',
+      'sm:[&_th:nth-child(1)]:w-[16%] sm:[&_th:nth-child(2)]:w-[14%] sm:[&_th:nth-child(3)]:w-[22%] sm:[&_th:nth-child(4)]:min-w-0 sm:[&_th:nth-child(4)]:w-[48%]',
+      'sm:[&_table]:rounded-none sm:[&_table]:border sm:[&_table]:border-border/50',
+      'sm:[&_thead]:border-b sm:[&_thead]:border-border/50 sm:[&_thead]:bg-blue/10',
+      'sm:[&_thead_th]:border-border/40 sm:[&_thead_th]:px-3 sm:[&_thead_th]:py-2 sm:[&_thead_th]:text-left',
+      'sm:[&_tbody_td]:border-t sm:[&_tbody_td]:border-border/35 sm:[&_tbody_td]:px-3 sm:[&_tbody_td]:py-2',
+      'sm:[&_tbody_tr:nth-child(even)]:bg-white/5',
+      'sm:[&_th:nth-child(2)]:text-center sm:[&_td:nth-child(2)]:text-center sm:[&_th:nth-child(2)]:font-mono sm:[&_td:nth-child(2)]:font-mono',
+      'sm:[&_th:nth-child(3)]:text-center sm:[&_td:nth-child(3)]:text-center sm:[&_th:nth-child(3)]:font-mono sm:[&_td:nth-child(3)]:font-mono'
     ].join(' ');
 
   const coachNotesMarkdownProseClass =
@@ -508,7 +538,7 @@
     ></button>
 
     <div
-      class="relative w-full max-w-[720px] max-h-[85vh] overflow-auto bg-[rgba(10,12,18,0.96)] border border-border rounded-2xl p-5 shadow-[0_20px_60px_rgba(0,0,0,0.75)]"
+      class="relative w-full min-w-0 max-w-[720px] max-h-[85vh] overflow-y-auto bg-[rgba(10,12,18,0.96)] border border-border rounded-2xl p-4 sm:p-5 shadow-[0_20px_60px_rgba(0,0,0,0.75)]"
     >
       <div class="flex items-start justify-between gap-4 mb-7">
         <div class="min-w-0">
@@ -532,12 +562,15 @@
         {#if sessionDetailContext.hasPrescriptionTable}
           <div class="space-y-3">
             <h3 class="text-[12px] text-slate-400 font-mono uppercase tracking-widest">Prescription</h3>
-            <div class="overflow-x-auto -mx-1 px-1 sm:mx-0 sm:px-0">
-              <div
-                class="rounded-xl overflow-hidden bg-glass2 border border-border/50 px-3 py-2 sm:px-4 sm:py-3 {prescriptionProseClass}"
-              >
-                {@html renderCoachMarkdownToSafeHtml(sessionDetailContext.prescriptionMarkdown)}
-              </div>
+            <div class="min-w-0 w-full">
+              {#key sessionDetailContext.prescriptionMarkdown}
+                <div
+                  use:enhancePrescriptionTable
+                  class="rounded-xl overflow-hidden bg-glass2 border border-border/50 px-2 py-2 sm:px-4 sm:py-3 {prescriptionProseClass}"
+                >
+                  {@html renderCoachMarkdownToSafeHtml(sessionDetailContext.prescriptionMarkdown)}
+                </div>
+              {/key}
             </div>
           </div>
           {#if sessionDetailContext.coachNotes.length > 0}
