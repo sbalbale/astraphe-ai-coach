@@ -481,7 +481,7 @@
     </div>
 
     <div class="shrink-0 px-4 pt-2 pb-1 border-t border-slate-800/60 bg-slate-950/20">
-      <div class="flex gap-2 overflow-x-auto pb-2 scrollbar-thin">
+      <div class="flex gap-2 overflow-x-auto pb-3 mb-2 scrollbar-thin">
         {#each promptSuggestions as s, i (s + String(i))}
           <button
             type="button"
@@ -639,12 +639,23 @@
     padding: 0.35rem 0.65rem;
     border: 1px solid rgba(255, 255, 255, 0.08);
     white-space: normal; /* allow wrapping */
-    word-break: break-word;
+    overflow-wrap: break-word;
+    word-break: normal;
     vertical-align: top;
     max-width: 14rem; /* single cell can't blow out the table */
   }
+  :global(.chat-md :where(td:first-child, th:first-child)) {
+    min-width: 6.5rem;
+  }
   :global(.chat-md :where(tbody tr:nth-child(even))) {
     background: rgba(255, 255, 255, 0.03);
+  }
+
+  :global(.chat-md .chat-table-note) {
+    margin-top: 0.6rem;
+    font-size: 0.82em;
+    color: rgb(148 163 184);
+    line-height: 1.5;
   }
 
   /* KaTeX (inline + display) inherits bubble text color */
