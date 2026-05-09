@@ -1,4 +1,7 @@
+import asyncio
 from datetime import date, timedelta, datetime, timezone
+from typing import Any
+
 import numpy as np
 from app.models.workout import WorkoutPayload
 from app.models.biometrics import DailyBiometrics
@@ -26,6 +29,223 @@ from app.services.algorithms import (
     calculate_weekly_tss_target,
     calculate_threshold_hr_est
 )
+
+SPORT_CANONICAL = {
+    # Rowing
+    "Rowing": "rowing",
+    "VirtualRow": "rowing",
+    # Running
+    "Run": "run",
+    "TrailRun": "run",
+    "VirtualRun": "run",
+    # Cycling
+    "Ride": "cycling",
+    "VirtualRide": "cycling",
+    "EBikeRide": "cycling",
+    # Strength
+    "WeightTraining": "strength",
+    "Workout": "strength",
+    # Other
+    "Swim": "swim",
+    "OpenWaterSwim": "swim",
+    "Walk": "walk",
+    "Hike": "hike",
+    # WHOOP sport names (normalize to same canonical values)
+    "rowing": "rowing",
+    "running": "run",
+    "cycling": "cycling",
+    "functional_fitness": "strength",
+    "swimming": "swim",
+}
+
+SOURCE_PRIORITY = ["strava", "garmin", "healthkit", "whoop", "manual"]
+
+
+def normalize_sport(raw_sport: str) -> str:
+    """Normalize any source's sport string to a canonical value (not DB CHECK values)."""
+    if not raw_sport:
+        return "other"
+    return SPORT_CANONICAL.get(raw_sport, raw_sport.lower().replace(" ", "_"))
+
+
+def _sport_for_db(canonical: str) -> str:
+    """Map canonical sport from ``normalize_sport`` to ``workouts.sport`` CHECK-safe values."""
+    c = (canonical or "").lower()
+    if c == "rowing":
+        return "row"
+    if c == "cycling":
+        return "bike"
+    if c in ("walk", "hike"):
+        return "other"
+    if c in ("run", "bike", "swim", "strength", "row", "mobility", "other"):
+        return c
+    return "other"
+
+
+def _strip_none_update_values(d: dict[str, Any]) -> dict[str, Any]:
+    """PostgREST PATCH semantics: omit keys with value None so we do not wipe existing DB fields."""
+    return {k: v for k, v in d.items() if v is not None}
+
+
+def _find_or_create_canonical_workout_sync(
+    db: Any,
+    athlete_id: str,
+    source: str,
+    sport_type: str,
+    started_at: datetime,
+    elapsed_time_seconds: int,
+    external_id: str | None = None,
+    strava_activity_id: int | None = None,
+) -> tuple[dict, bool]:
+    """
+    Find an existing canonical workout that matches this session, or create a new one.
+    ``sport_type`` must already be canonical (see ``normalize_sport``); DB queries use
+    ``_sport_for_db(sport_type)``.
+
+    Match criteria:
+      1. Exact: strava_activity_id matches (Strava fast path)
+      2. Fuzzy: same athlete + sport + started_at within ±10min + duration within 20%
+
+    On merge: updates source_ids, elevates primary_source by SOURCE_PRIORITY order.
+    On create: inserts a minimal row; caller should UPDATE full workout fields afterward.
+    """
+    DEDUP_WINDOW_SECONDS = 600
+    DURATION_TOLERANCE = 0.20
+
+    if started_at.tzinfo is None:
+        started_at = started_at.replace(tzinfo=timezone.utc)
+
+    db_sport = _sport_for_db(sport_type)
+    dur_i = max(0, int(elapsed_time_seconds or 0))
+    ended_at = started_at + timedelta(seconds=dur_i)
+
+    if strava_activity_id is not None:
+        exact = (
+            db.table("workouts")
+            .select("*")
+            .eq("athlete_id", athlete_id)
+            .eq("strava_activity_id", strava_activity_id)
+            .maybe_single()
+            .execute()
+        )
+        if exact and exact.data:
+            return (exact.data, False)
+
+    from_ts = started_at.timestamp() - DEDUP_WINDOW_SECONDS
+    to_ts = started_at.timestamp() + DEDUP_WINDOW_SECONDS
+    from_iso = datetime.fromtimestamp(from_ts, tz=timezone.utc).isoformat()
+    to_iso = datetime.fromtimestamp(to_ts, tz=timezone.utc).isoformat()
+
+    candidates = (
+        db.table("workouts")
+        .select("*")
+        .eq("athlete_id", athlete_id)
+        .eq("sport", db_sport)
+        .gte("started_at", from_iso)
+        .lte("started_at", to_iso)
+        .execute()
+    )
+    rows = candidates.data or []
+
+    matched = None
+    for row in rows:
+        existing_duration = row.get("duration_seconds") or 0
+        if existing_duration > 0 and dur_i > 0:
+            ratio = abs(existing_duration - dur_i) / max(existing_duration, dur_i)
+            if ratio <= DURATION_TOLERANCE:
+                matched = row
+                break
+        elif existing_duration == 0 or dur_i == 0:
+            matched = row
+            break
+
+    if matched:
+        workout_id = matched["id"]
+        existing_source_ids = dict(matched.get("source_ids") or {})
+        if external_id:
+            existing_source_ids[source] = external_id
+        current_primary = matched.get("primary_source") or "manual"
+        new_primary = current_primary
+        if current_primary in SOURCE_PRIORITY:
+            if SOURCE_PRIORITY.index(source) < SOURCE_PRIORITY.index(current_primary):
+                new_primary = source
+        else:
+            new_primary = source
+
+        merge_update: dict[str, Any] = {
+            "source_ids": existing_source_ids,
+            "primary_source": new_primary,
+        }
+        if strava_activity_id is not None and not matched.get("strava_activity_id"):
+            merge_update["strava_activity_id"] = strava_activity_id
+
+        merge_payload = _strip_none_update_values(merge_update)
+        if merge_payload:
+            updated = db.table("workouts").update(merge_payload).eq("id", workout_id).execute()
+            merged_row = (updated.data or [matched])[0]
+        else:
+            merged_row = matched
+        return (merged_row, False)
+
+    insert_row: dict[str, Any] = {
+        "athlete_id": athlete_id,
+        "source": source,
+        "primary_source": source,
+        "sport": db_sport,
+        "started_at": started_at.isoformat(),
+        "ended_at": ended_at.isoformat(),
+        "duration_seconds": dur_i,
+        "source_ids": {source: external_id} if external_id else {},
+    }
+    if external_id is not None:
+        insert_row["external_id"] = external_id
+    if strava_activity_id is not None:
+        insert_row["strava_activity_id"] = strava_activity_id
+
+    created = db.table("workouts").insert(insert_row).execute()
+    new_row = (created.data or [{}])[0]
+    return (new_row, True)
+
+
+async def find_or_create_canonical_workout(
+    db: Any,
+    athlete_id: str,
+    source: str,
+    sport_type: str,
+    started_at: datetime,
+    elapsed_time_seconds: int,
+    external_id: str | None = None,
+    strava_activity_id: int | None = None,
+) -> tuple[dict, bool]:
+    return await asyncio.to_thread(
+        _find_or_create_canonical_workout_sync,
+        db,
+        athlete_id,
+        source,
+        sport_type,
+        started_at,
+        elapsed_time_seconds,
+        external_id,
+        strava_activity_id,
+    )
+
+
+def _fetch_athlete_for_workout_sync(db: Any, athlete_id: str) -> dict[str, Any]:
+    athlete_res = (
+        db.table("athletes")
+        .select("max_hr,resting_hr,threshold_hr,threshold_hr_source,threshold_pace,gender")
+        .eq("id", athlete_id)
+        .single()
+        .execute()
+    )
+    return athlete_res.data if (athlete_res and athlete_res.data) else {}
+
+
+def _workouts_update_by_id_sync(db: Any, workout_id: str, update_data: dict[str, Any]) -> None:
+    payload = _strip_none_update_values(update_data)
+    if payload:
+        db.table("workouts").update(payload).eq("id", workout_id).execute()
+
 
 def _parse_pace_to_sec_per_km(pace: object) -> float:
     """
@@ -137,21 +357,46 @@ def recalculate_tss_history(athlete_id: str, db):
         # PostgREST upsert handles batches well
         db.table("tss_history").upsert(records, on_conflict="athlete_id,date").execute()
 
-def process_and_save_workout(payload: WorkoutPayload, athlete_id: str, db):
-    # 1. Evaluate Data Sources
+async def process_and_save_workout(payload: WorkoutPayload, athlete_id: str, db: Any) -> None:
     tss = 0.0
-    sport = payload.workout_type.lower()
-    if sport in ("gym", "strength_training"):
-        sport = "strength"
-    elif sport in ("mobility", "yoga", "stretching", "stretch", "pilates"):
-        sport = "mobility"
+    wt_raw = (payload.workout_type or "").strip()
+    low = wt_raw.lower()
+    if low in ("gym", "strength_training"):
+        wt_raw = "strength"
+    elif low in ("mobility", "yoga", "stretching", "stretch", "pilates"):
+        wt_raw = "mobility"
+    canonical = normalize_sport(wt_raw)
+    mapped_sport = _sport_for_db(canonical)
+
+    start_utc = getattr(payload, "started_at", None) or payload.start_time
+    if start_utc.tzinfo is None:
+        start_utc = start_utc.replace(tzinfo=timezone.utc)
+
+    dedupe_dur = int(
+        max(0, (payload.duration_seconds or getattr(payload, "elapsed_time", None) or 0))
+    )
+    source = payload.source or "manual"
+    external_id = str(payload.external_id) if payload.external_id else None
+    strava_int = int(payload.strava_activity_id) if payload.strava_activity_id is not None else None
+
+    row, _ = await find_or_create_canonical_workout(
+        db,
+        athlete_id,
+        source,
+        canonical,
+        start_utc,
+        dedupe_dur,
+        external_id,
+        strava_int,
+    )
+    workout_id = row["id"]
 
     hr_zones = {
         1: payload.hr_zone_1_pct,
         2: payload.hr_zone_2_pct,
         3: payload.hr_zone_3_pct,
         4: payload.hr_zone_4_pct,
-        5: payload.hr_zone_5_pct
+        5: payload.hr_zone_5_pct,
     }
     has_hr_zones = any(v is not None for v in hr_zones.values())
     hr_zone_0_pct = getattr(payload, "hr_zone_0_pct", None)
@@ -162,17 +407,7 @@ def process_and_save_workout(payload: WorkoutPayload, athlete_id: str, db):
         except Exception:
             hr_zone_0_pct = None
 
-    # Map sport to internal enum conventions (see workouts_sport_check migration).
-    mapped_sport = sport if sport in ("run", "bike", "swim", "strength", "row", "mobility") else "other"
-    if sport == "cycling":
-        mapped_sport = "bike"
-
-    # Load athlete anchors needed for HRSS / pace-based models
-    # threshold_hr_source: required for tiered zone midpoints in compute_hrss_from_zones
-    athlete_res = db.table("athletes").select(
-        "max_hr,resting_hr,threshold_hr,threshold_hr_source,threshold_pace,gender"
-    ).eq("id", athlete_id).single().execute()
-    athlete = athlete_res.data if (athlete_res and athlete_res.data) else {}
+    athlete = await asyncio.to_thread(_fetch_athlete_for_workout_sync, db, athlete_id)
 
     anchor_max_hr = athlete.get("max_hr") or payload.max_hr
     anchor_resting_hr = athlete.get("resting_hr")
@@ -181,23 +416,29 @@ def process_and_save_workout(payload: WorkoutPayload, athlete_id: str, db):
     anchor_gender = athlete.get("gender") or "male"
     threshold_pace_sec_km = _parse_pace_to_sec_per_km(athlete.get("threshold_pace"))
 
-    # 2. Calculate Training Stress Score (TSS)
-    if sport == "cycling" and payload.normalized_power:
-        tss = compute_tss_power(payload.duration_seconds, payload.normalized_power, payload.ftp_at_time)
-    elif mapped_sport == "run" and payload.duration_seconds and payload.avg_pace_sec_km and threshold_pace_sec_km > 0:
-        # Use pace-based load when threshold pace is available (speed-based tracking)
+    if canonical == "cycling" and payload.normalized_power:
+        tss = compute_tss_power(
+            payload.duration_seconds, payload.normalized_power, payload.ftp_at_time
+        )
+    elif (
+        mapped_sport == "run"
+        and payload.duration_seconds
+        and payload.avg_pace_sec_km
+        and threshold_pace_sec_km > 0
+    ):
         tss = compute_trss_pace(
             duration_sec=payload.duration_seconds,
             avg_pace_sec_km=float(payload.avg_pace_sec_km),
             threshold_pace_sec_km=float(threshold_pace_sec_km),
         )
     elif has_hr_zones and payload.duration_seconds:
-        # Use Banister TRIMP HRSS estimated from time-in-zone (historical aggregate)
         safe_hr_zones = {k: float(v or 0.0) for k, v in hr_zones.items()}
         if hr_zone_0_pct is not None:
             safe_hr_zones[0] = float(hr_zone_0_pct or 0.0)
 
-        zone_minutes = {k: (v / 100.0) * (payload.duration_seconds / 60.0) for k, v in safe_hr_zones.items()}
+        zone_minutes = {
+            k: (v / 100.0) * (payload.duration_seconds / 60.0) for k, v in safe_hr_zones.items()
+        }
         tss = compute_hrss_from_zones(
             zone_minutes=zone_minutes,
             max_hr=int(anchor_max_hr or 0),
@@ -207,38 +448,35 @@ def process_and_save_workout(payload: WorkoutPayload, athlete_id: str, db):
             gender=str(anchor_gender),
             threshold_hr_source=anchor_threshold_hr_source,
         )
-    elif sport == "rowing" and hasattr(payload, 'avg_power') and payload.avg_power:
-        # Fallback for rowing
+    elif canonical == "rowing" and hasattr(payload, "avg_power") and payload.avg_power:
         norm_watts = normalize_rowing_watts(payload.avg_power)
         tss = compute_tss_power(payload.duration_seconds, int(norm_watts), payload.ftp_at_time)
     elif getattr(payload, "tss", None):
         tss = getattr(payload, "tss")
-    
-    # Duration / end time alignment
+
     duration_seconds = payload.duration_seconds
     ended_at = payload.ended_at
-    if ended_at is None and payload.start_time and duration_seconds:
-        ended_at = payload.start_time + timedelta(seconds=duration_seconds)
-    if duration_seconds is None and payload.start_time and ended_at:
-        duration_seconds = int(max(0, (ended_at - payload.start_time).total_seconds()))
+    if ended_at is None and start_utc and duration_seconds:
+        ended_at = start_utc + timedelta(seconds=duration_seconds)
+    if duration_seconds is None and start_utc and ended_at:
+        duration_seconds = int(max(0, (ended_at - start_utc).total_seconds()))
 
-    # 3. Calculate Physiological Cardiovascular Strain (0-100 scale)
+    dedupe_dur_final = int(max(0, duration_seconds or 0))
+    if ended_at is None:
+        ended_at = start_utc + timedelta(seconds=dedupe_dur_final)
+
     strain_score = 0
     if has_hr_zones and duration_seconds:
-        # Convert the None values to 0.0 for safety
         safe_hr_zones = {k: (v or 0.0) for k, v in hr_zones.items()}
-        # Get duration in minutes for the specific zones
-        zone_minutes = {k: (v / 100.0) * (duration_seconds / 60.0) for k, v in safe_hr_zones.items()}
+        zone_minutes = {
+            k: (v / 100.0) * (duration_seconds / 60.0) for k, v in safe_hr_zones.items()
+        }
         strain_score = compute_strain_score(zone_minutes)
 
-    # 4. Save the workout to Supabase
-    db.table("workouts").upsert({
-        "athlete_id": athlete_id,
-        "source": payload.source,
-        "external_id": payload.external_id,
+    update_data: dict[str, Any] = {
         "sport": mapped_sport,
         "title": getattr(payload, "title", None),
-        "started_at": payload.start_time.isoformat(),
+        "started_at": start_utc.isoformat(),
         "ended_at": ended_at.isoformat() if ended_at else None,
         "duration_seconds": duration_seconds,
         "distance_m": payload.distance_m,
@@ -253,11 +491,11 @@ def process_and_save_workout(payload: WorkoutPayload, athlete_id: str, db):
         "hr_zone_2_pct": payload.hr_zone_2_pct,
         "hr_zone_3_pct": payload.hr_zone_3_pct,
         "hr_zone_4_pct": payload.hr_zone_4_pct,
-        "hr_zone_5_pct": payload.hr_zone_5_pct
-    }, on_conflict="source,external_id").execute()
+        "hr_zone_5_pct": payload.hr_zone_5_pct,
+    }
 
-    # 5. Trigger Full Load Recalculation (PMC)
-    recalculate_tss_history(athlete_id, db)
+    await asyncio.to_thread(_workouts_update_by_id_sync, db, workout_id, update_data)
+    await asyncio.to_thread(recalculate_tss_history, athlete_id, db)
 
 
 def process_and_save_biometrics(payload: DailyBiometrics, athlete_id: str, db):

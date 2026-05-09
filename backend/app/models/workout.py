@@ -5,6 +5,7 @@ from datetime import datetime
 class WorkoutPayload(BaseModel):
     source: str = Field(..., description="e.g., garmin, apple_health")
     external_id: Optional[str] = None
+    strava_activity_id: Optional[int] = None
     workout_type: str = Field(alias="sport", description="e.g., cycling, running")
     start_time: datetime = Field(alias="started_at")
     ended_at: Optional[datetime] = None

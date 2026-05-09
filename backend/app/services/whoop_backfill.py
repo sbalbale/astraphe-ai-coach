@@ -185,7 +185,7 @@ async def backfill_historical_data(athlete_id: str, access_token: str, db: Any =
             hr_zone_5_pct=hr5,
         )
         try:
-            process_and_save_workout(payload, athlete_id, db)
+            await process_and_save_workout(payload, athlete_id, db)
         except Exception as e:
             # Don't let a single bad record kill the whole backfill.
             print(f"[whoop.backfill] workout_upsert_failed external_id={external_id} sport={sport_name}: {e}")

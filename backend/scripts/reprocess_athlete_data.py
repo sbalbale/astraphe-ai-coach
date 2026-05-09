@@ -1,5 +1,6 @@
 import sys
 import os
+import asyncio
 from datetime import datetime, date
 
 # Add the parent directory to sys.path so we can import from 'app'
@@ -13,7 +14,7 @@ from app.models.workout import WorkoutPayload
 from app.models.biometrics import DailyBiometrics
 from app.services.processing import process_and_save_workout, process_and_save_biometrics, recalculate_tss_history
 
-def reprocess_athlete(athlete_id: str):
+async def reprocess_athlete(athlete_id: str):
     db = get_admin_db()
     print(f"--- Starting Reprocessing for Athlete: {athlete_id} ---")
 
@@ -46,7 +47,7 @@ def reprocess_athlete(athlete_id: str):
             )
             # Note: process_and_save_workout internally calls recalculate_tss_history
             # We'll let it do that for simplicity, though it's less efficient.
-            process_and_save_workout(payload, athlete_id, db)
+            await process_and_save_workout(payload, athlete_id, db)
         print("Workouts reprocessed.")
     else:
         print("No workouts found.")
@@ -94,4 +95,4 @@ if __name__ == "__main__":
         sys.exit(1)
     
     target_id = sys.argv[1]
-    reprocess_athlete(target_id)
+    asyncio.run(reprocess_athlete(target_id))
