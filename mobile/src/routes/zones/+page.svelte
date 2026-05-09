@@ -1,11 +1,20 @@
+<script module lang="ts">
+  import { SvelteMap } from 'svelte/reactivity';
+  const zonesAnalysisMemo = new SvelteMap<string, string | null>();
+</script>
+
 <script lang="ts">
   import Card from '$lib/components/Card.svelte';
   import Pill from '$lib/components/Pill.svelte';
+  import Tag from '$lib/components/Tag.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import DatePicker from '$lib/components/DatePicker.svelte';
   import MonthPicker from '$lib/components/MonthPicker.svelte';
+  import { analysisNavEpoch } from '$lib/analysisNavEpoch.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
+  import { authStore } from '$lib/stores/authStore.svelte';
   import { goto } from '$app/navigation';
+  import { api } from '$lib/api';
   import {
     addDays,
     addMonths,
@@ -221,6 +230,49 @@
   });
 
   const hasWorkouts = $derived(timeAndSportFilteredWorkouts.length > 0);
+
+  let zonesAnalysisText = $state<string | null>(null);
+  let zonesAnalysisLoading = $state(false);
+  let activeZonesAnalysisKey: string | null = null;
+  $effect(() => {
+    void analysisNavEpoch.epoch;
+    void windowMode;
+    void selectedDay;
+    void selectedMonth;
+    void sport;
+
+    const scopeKey = `${windowMode}:${windowMode === 'week' ? selectedDay : selectedMonth}:${sport}`;
+    const cached = zonesAnalysisMemo.get(scopeKey);
+    if (cached !== undefined) {
+      zonesAnalysisText = cached;
+      return;
+    }
+
+    zonesAnalysisText = null;
+    const requestKey = `zones-analysis:${scopeKey}`;
+    activeZonesAnalysisKey = requestKey;
+
+    (async () => {
+      try {
+        zonesAnalysisLoading = true;
+        const windowStartStr = format(windowStart, 'yyyy-MM-dd');
+        const windowEndStr = format(windowEnd, 'yyyy-MM-dd');
+        const res = await api.get<{ analysis: { content: string } }>(
+          `/v1/analysis/time-in-zones?window_start=${windowStartStr}&window_end=${windowEndStr}&sport=${sport}`
+        );
+        const content = typeof res?.analysis?.content === 'string' ? res.analysis.content.trim() : '';
+        if (activeZonesAnalysisKey !== requestKey) return;
+        const next = content || null;
+        zonesAnalysisMemo.set(scopeKey, next);
+        zonesAnalysisText = next;
+      } catch {
+        if (activeZonesAnalysisKey !== requestKey) return;
+        zonesAnalysisMemo.set(scopeKey, null);
+      } finally {
+        if (activeZonesAnalysisKey === requestKey) zonesAnalysisLoading = false;
+      }
+    })();
+  });
 
   // Memoize distribution calculation
   const distribution = $derived.by(() => {
@@ -519,5 +571,21 @@
         </div>
       {/if}
     </Card>
+
+    {#if authStore.tier === 'premium' && hasWorkouts}
+      <Card style="background: linear-gradient(135deg, rgba(70,33,255,0.08), transparent); border-color: rgba(70,33,255,0.2);">
+        <div class="flex items-center gap-1.5 mb-2">
+          <span class="text-[11px] font-mono uppercase tracking-[0.08em] text-blue">Zone Insight</span>
+          <Tag color="var(--blue)">ASTRAPE</Tag>
+        </div>
+        {#if zonesAnalysisLoading && zonesAnalysisText === null}
+          <p class="text-xs text-text2 animate-pulse">Analyzing zone distribution...</p>
+        {:else}
+          <p class="text-xs text-text1 leading-relaxed">
+            {zonesAnalysisText ?? 'Zone insight unavailable — sync more workouts with HR zone data.'}
+          </p>
+        {/if}
+      </Card>
+    {/if}
   {/if}
 </div>

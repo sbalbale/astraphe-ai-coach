@@ -1,13 +1,18 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, Optional
 
 import numpy as np
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from supabase import Client
 
-from app.dependencies import get_current_athlete, get_current_gemini_model, get_current_user_tier, get_user_db
+from app.dependencies import (
+    get_current_athlete,
+    get_current_gemini_analysis_model,
+    get_current_user_tier,
+    get_user_db,
+)
 from app.services.algorithms import compute_z_score
 from app.services.analysis_cache import (
     fingerprint_context,
@@ -239,9 +244,138 @@ def _load_dashboard_context(db: Client, athlete_id: str, day: date) -> Dict[str,
     }
 
 
+def _load_zones_context(db: Client, athlete_id: str, window_start: str, window_end: str, sport: str) -> Dict[str, Any]:
+    def _parse_dt(val: Any) -> Optional[datetime]:
+        if not val:
+            return None
+        try:
+            s = str(val)
+            # Supabase often returns `...Z` timestamps.
+            if s.endswith("Z"):
+                s = s[:-1] + "+00:00"
+            return datetime.fromisoformat(s)
+        except Exception:
+            return None
+
+    sport_norm = (sport or "all").strip().lower()
+    sport_aliases: dict[str, set[str]] = {
+        "run": {"run", "running"},
+        "bike": {"bike", "cycling", "ride"},
+        "strength": {"strength", "strength_training", "gym"},
+    }
+    allowed_sports = sport_aliases.get(sport_norm, {sport_norm}) if sport_norm != "all" else None
+
+    # Treat window as inclusive day bounds.
+    start_ts = f"{str(window_start)[:10]}T00:00:00"
+    end_ts = f"{str(window_end)[:10]}T23:59:59.999999"
+
+    res = (
+        db.table("workouts")
+        .select(
+            "started_at,ended_at,sport,hr_zone_1_pct,hr_zone_2_pct,hr_zone_3_pct,hr_zone_4_pct,hr_zone_5_pct"
+        )
+        .eq("athlete_id", athlete_id)
+        .gte("started_at", start_ts)
+        .lte("started_at", end_ts)
+        .order("started_at")
+        .execute()
+    )
+    rows = (res.data if res else None) or []
+
+    if allowed_sports is not None:
+        filtered: list[dict] = []
+        for r in rows:
+            s = (r.get("sport") or "").strip().lower()
+            if s and s in allowed_sports:
+                filtered.append(r)
+        rows = filtered
+
+    total_workouts = len(rows)
+    workouts_with_zone_data = 0
+
+    zone_weighted_sum = {"z1": 0.0, "z2": 0.0, "z3": 0.0, "z4": 0.0, "z5": 0.0}
+    zone_weight_total = 0.0
+    total_duration_min = 0.0
+
+    for r in rows:
+        started = _parse_dt(r.get("started_at"))
+        ended = _parse_dt(r.get("ended_at"))
+        dur_min = 0.0
+        if started and ended:
+            ms = (ended - started).total_seconds() * 1000.0
+            if ms > 0:
+                dur_min = ms / 60000.0
+        total_duration_min += dur_min
+
+        z1 = _n(r.get("hr_zone_1_pct"))
+        if z1 is None:
+            continue
+        workouts_with_zone_data += 1
+
+        z2 = _n(r.get("hr_zone_2_pct")) or 0.0
+        z3 = _n(r.get("hr_zone_3_pct")) or 0.0
+        z4 = _n(r.get("hr_zone_4_pct")) or 0.0
+        z5 = _n(r.get("hr_zone_5_pct")) or 0.0
+
+        # Weighted across workouts by workout duration (fallback weight=1 if duration missing).
+        w = dur_min if dur_min > 0 else 1.0
+        zone_weight_total += w
+        zone_weighted_sum["z1"] += w * float(z1)
+        zone_weighted_sum["z2"] += w * float(z2)
+        zone_weighted_sum["z3"] += w * float(z3)
+        zone_weighted_sum["z4"] += w * float(z4)
+        zone_weighted_sum["z5"] += w * float(z5)
+
+    if zone_weight_total <= 0:
+        zone_distribution: dict[str, Optional[float]] = {"z1": None, "z2": None, "z3": None, "z4": None, "z5": None}
+    else:
+        zone_distribution = {
+            k: round(v / zone_weight_total, 1)
+            for k, v in zone_weighted_sum.items()
+        }
+
+    return {
+        "window_start": str(window_start)[:10],
+        "window_end": str(window_end)[:10],
+        "sport": sport_norm,
+        "total_workouts": total_workouts,
+        "workouts_with_zone_data": workouts_with_zone_data,
+        "zone_distribution": zone_distribution,
+        "total_duration_min": round(float(total_duration_min), 1),
+    }
+
+
 def _prompt(analysis_type: str, context: Dict[str, Any]) -> str:
     # Tight output rules: 1–2 sentences, no lists, cite at least one metric from context.
     # We embed JSON so the model can quote exact numbers.
+    if analysis_type == "workout":
+        return (
+            "You are ASTRAPE, a clinical performance analyst.\n"
+            "Task: Write a concise 1–2 sentence analysis for this specific workout that includes a takeaway and a next-step.\n"
+            "Rules:\n"
+            "- Output 1–2 sentences only. No bullets, no headings, no emojis.\n"
+            "- If you mention duration, convert duration_secs to minutes or hours+minutes (e.g., 45 min, 1h 15m). Do not quote raw seconds.\n"
+            "- Mention at least one specific metric value from the JSON (TSS, strain_score, avg_hr/max_hr, avg_power/max_power, duration_secs, distance_meters, elevation_gain_meters).\n"
+            "- Interpret the effort (easy/moderate/hard) using the metrics, not generic praise.\n"
+            "- Include one actionable next step (e.g., keep it easy tomorrow, add carbs/hydration, include strides, schedule a recovery day) that matches the inferred effort.\n"
+            "- If key workout metrics are missing (TSS or strain_score and either HR or duration), say what is missing in one sentence.\n\n"
+            f"AnalysisType: {analysis_type}\n"
+            f"ContextJSON: {context}\n"
+        )
+
+    if analysis_type == "time_in_zones":
+        return (
+            "You are ASTRAPE, a clinical performance analyst.\n"
+            "Task: Write a concise 1–2 sentence analysis of the athlete's time-in-zones distribution for the selected window.\n"
+            "Rules:\n"
+            "- Output 1–2 sentences only. No bullets, no headings, no emojis.\n"
+            "- Cite at least one zone percentage from the JSON (e.g., z2 48%).\n"
+            "- Comment on aerobic base vs intensity ratio (e.g., polarized, pyramidal, threshold-heavy).\n"
+            "- If zone data is missing, say what is missing in one sentence.\n\n"
+            f"AnalysisType: {analysis_type}\n"
+            f"ContextJSON: {context}\n"
+        )
+
     return (
         "You are ASTRAPE, a clinical performance analyst.\n"
         "Task: Write a concise 1–2 sentence analysis for the athlete.\n"
@@ -270,6 +404,115 @@ def _fallback_content(analysis_type: str, context: Dict[str, Any]) -> str:
     Must be 1–2 sentences, no lists.
     """
     ctx = context or {}
+
+    if analysis_type == "time_in_zones":
+        dist = (ctx.get("zone_distribution") or {}) if isinstance(ctx, dict) else {}
+        z1 = _n(dist.get("z1"))
+        z2 = _n(dist.get("z2"))
+        z3 = _n(dist.get("z3"))
+        z4 = _n(dist.get("z4"))
+        z5 = _n(dist.get("z5"))
+
+        with_data = ctx.get("workouts_with_zone_data")
+        total = ctx.get("total_workouts")
+        if z1 is None or z2 is None or z3 is None or z4 is None or z5 is None:
+            return (
+                "Zone insight is limited because your workouts are missing heart-rate zone distribution data "
+                f"({with_data or 0} of {total or 0} sessions have zone data)."
+            )
+
+        low = float(z1) + float(z2)
+        high = float(z4) + float(z5)
+        if low > 75:
+            return f"Your training is predominantly aerobic (Z1+Z2 {round(low)}%), which supports base development with limited high-intensity exposure."
+        if high > 30:
+            return f"Your week is carrying a high intensity load (Z4+Z5 {round(high)}%), so manage recovery and avoid stacking too many hard days."
+        return f"Your zone balance is fairly mixed (Z2 {round(z2)}%, Z4 {round(z4)}%), suggesting a moderate distribution of aerobic and harder work."
+
+    if analysis_type == "workout":
+        def _i(v: Any) -> Optional[int]:
+            try:
+                if v is None:
+                    return None
+                return int(v)
+            except Exception:
+                return None
+
+        sport = ctx.get("sport")
+        title = ctx.get("title")
+        duration_secs = _i(ctx.get("duration_secs"))
+        tss = _n(ctx.get("tss"))
+        strain = _n(ctx.get("strain_score"))
+        avg_hr = _n(ctx.get("avg_hr"))
+        max_hr = _n(ctx.get("max_hr"))
+        avg_power = _n(ctx.get("avg_power"))
+        max_power = _n(ctx.get("max_power"))
+        dist_m = _n(ctx.get("distance_meters"))
+
+        key_present = any(v is not None for v in (duration_secs, tss, strain, avg_hr, avg_power))
+        if not key_present:
+            return "Workout insight is limited because key metrics (duration, TSS/strain, HR, or power) are missing for this activity."
+
+        label = title or sport or "workout"
+        if isinstance(label, str):
+            label = label.strip()
+        if not label:
+            label = "workout"
+
+        def _duration_phrase(secs: Optional[int]) -> Optional[str]:
+            if secs is None:
+                return None
+            s = max(0, int(secs))
+            h = s // 3600
+            m = (s % 3600) // 60
+            if h > 0:
+                return f"{h}h {m}m"
+            return f"{max(0, m)} min"
+
+        dur_phrase = _duration_phrase(duration_secs)
+        tss_i = round(float(tss)) if tss is not None else None
+        strain_i = round(float(strain)) if strain is not None else None
+        avg_hr_i = round(float(avg_hr)) if avg_hr is not None else None
+        max_hr_i = round(float(max_hr)) if max_hr is not None else None
+
+        # Simple deterministic effort heuristic (bounded 0-100 scores).
+        effort = None
+        if strain_i is not None:
+            effort = "easy" if strain_i < 34 else "moderate" if strain_i < 67 else "hard"
+        elif tss_i is not None:
+            effort = "easy" if tss_i < 40 else "moderate" if tss_i < 80 else "hard"
+
+        metric_bits: list[str] = []
+        if dur_phrase:
+            metric_bits.append(dur_phrase)
+        if strain_i is not None:
+            metric_bits.append(f"strain {strain_i}")
+        if tss_i is not None:
+            metric_bits.append(f"TSS {tss_i}")
+        if avg_hr_i is not None and max_hr_i is not None:
+            metric_bits.append(f"HR {avg_hr_i}/{max_hr_i} bpm")
+        elif avg_hr_i is not None:
+            metric_bits.append(f"avg HR {avg_hr_i} bpm")
+        if avg_power is not None:
+            metric_bits.append(f"avg power {round(float(avg_power))} W")
+        if dist_m is not None:
+            km = float(dist_m) / 1000.0
+            metric_bits.append(f"{round(km, 1)} km" if km >= 1 else f"{round(float(dist_m))} m")
+
+        summary = ", ".join(metric_bits[:3]) if metric_bits else "available workout metrics"
+
+        if effort == "easy":
+            next_step = "Keep the next session easy or take a recovery day to consolidate the work."
+        elif effort == "hard":
+            next_step = "Prioritize carbs, hydration, and sleep, and keep tomorrow low intensity."
+        elif effort == "moderate":
+            next_step = "You can follow with easy aerobic volume; avoid stacking another hard day back-to-back."
+        else:
+            next_step = "Use how you feel to guide intensity next; more complete HR/power data will sharpen this insight."
+
+        s1 = f"Your {label} looks like an {effort or 'steady'} session ({summary})."
+        s2 = next_step
+        return f"{s1} {s2}".strip()
 
     if analysis_type == "dashboard_summary":
         biom_block = (ctx.get("biometrics") or {}) if isinstance(ctx, dict) else {}
@@ -457,7 +700,11 @@ def _get_or_compute(
 
     try:
         text, used_model = generate_gemini_analysis(_prompt(analysis_type, context), model_name=model_name)
-    except Exception:
+    except Exception as e:
+        try:
+            print(f"[analysis] gemini_error type={analysis_type} scope={scope_key} err={e}")
+        except Exception:
+            pass
         fb = _fallback_content(analysis_type, context)
         upsert_analysis(
             db=db,
@@ -513,7 +760,7 @@ async def recovery_analysis(
     day: Optional[str] = Query(None, description="YYYY-MM-DD"),
     athlete_id: str = Depends(get_current_athlete),
     tier: str = Depends(get_current_user_tier),
-    model_name: str = Depends(get_current_gemini_model),
+    model_name: str = Depends(get_current_gemini_analysis_model),
     db: Client = Depends(get_user_db),
 ):
     d = _parse_day(day)
@@ -526,7 +773,7 @@ async def sleep_analysis(
     day: Optional[str] = Query(None, description="YYYY-MM-DD"),
     athlete_id: str = Depends(get_current_athlete),
     tier: str = Depends(get_current_user_tier),
-    model_name: str = Depends(get_current_gemini_model),
+    model_name: str = Depends(get_current_gemini_analysis_model),
     db: Client = Depends(get_user_db),
 ):
     d = _parse_day(day)
@@ -539,7 +786,7 @@ async def strain_analysis(
     day: Optional[str] = Query(None, description="YYYY-MM-DD"),
     athlete_id: str = Depends(get_current_athlete),
     tier: str = Depends(get_current_user_tier),
-    model_name: str = Depends(get_current_gemini_model),
+    model_name: str = Depends(get_current_gemini_analysis_model),
     db: Client = Depends(get_user_db),
 ):
     d = _parse_day(day)
@@ -552,7 +799,7 @@ async def training_load_analysis(
     end_day: Optional[str] = Query(None, description="YYYY-MM-DD"),
     athlete_id: str = Depends(get_current_athlete),
     tier: str = Depends(get_current_user_tier),
-    model_name: str = Depends(get_current_gemini_model),
+    model_name: str = Depends(get_current_gemini_analysis_model),
     db: Client = Depends(get_user_db),
 ):
     d = _parse_day(end_day)
@@ -565,7 +812,7 @@ async def dashboard_summary_analysis(
     day: Optional[str] = Query(None, description="YYYY-MM-DD"),
     athlete_id: str = Depends(get_current_athlete),
     tier: str = Depends(get_current_user_tier),
-    model_name: str = Depends(get_current_gemini_model),
+    model_name: str = Depends(get_current_gemini_analysis_model),
     db: Client = Depends(get_user_db),
 ):
     d = _parse_day(day)
@@ -573,5 +820,75 @@ async def dashboard_summary_analysis(
     return {
         "status": "success",
         "analysis": _get_or_compute(db, athlete_id, tier, "dashboard_summary", d.isoformat(), ctx, model_name=model_name),
+    }
+
+
+@router.get("/workout/{workout_id}")
+async def workout_analysis(
+    workout_id: str,
+    athlete_id: str = Depends(get_current_athlete),
+    tier: str = Depends(get_current_user_tier),
+    model_name: str = Depends(get_current_gemini_analysis_model),
+    db: Client = Depends(get_user_db),
+):
+    res = (
+        db.table("workouts")
+        .select("*")
+        .eq("id", workout_id)
+        .eq("athlete_id", athlete_id)
+        .maybe_single()
+        .execute()
+    )
+    row = res.data if res else None
+    if not row:
+        raise HTTPException(status_code=404, detail="Workout not found")
+
+    # Build compact context: include only non-null fields.
+    ctx: Dict[str, Any] = {"workout_id": workout_id}
+
+    def _put(key: str, val: Any) -> None:
+        if val is None:
+            return
+        if isinstance(val, str) and not val.strip():
+            return
+        ctx[key] = val
+
+    _put("sport", row.get("sport") or row.get("workout_type"))
+    _put("title", row.get("title"))
+    _put("started_at", row.get("started_at") or row.get("start_time"))
+    _put("duration_secs", row.get("duration_secs") or row.get("duration_seconds"))
+    _put("tss", row.get("tss"))
+    _put("strain_score", row.get("strain_score"))
+    _put("avg_hr", row.get("avg_hr") or row.get("average_hr"))
+    _put("max_hr", row.get("max_hr"))
+    _put("avg_power", row.get("avg_power") or row.get("average_power"))
+    _put("max_power", row.get("max_power"))
+    _put("distance_meters", row.get("distance_meters") or row.get("distance_m") or row.get("distance"))
+    _put("elevation_gain_meters", row.get("elevation_gain_meters") or row.get("elevation_gain"))
+    _put("notes", row.get("notes"))
+
+    return {
+        "status": "success",
+        "analysis": _get_or_compute(db, athlete_id, tier, "workout", workout_id, ctx, model_name=model_name),
+    }
+
+
+@router.get("/time-in-zones")
+async def time_in_zones_analysis(
+    window_start: Optional[str] = Query(None, description="YYYY-MM-DD"),
+    window_end: Optional[str] = Query(None, description="YYYY-MM-DD"),
+    sport: str = Query("all"),
+    athlete_id: str = Depends(get_current_athlete),
+    tier: str = Depends(get_current_user_tier),
+    model_name: str = Depends(get_current_gemini_analysis_model),
+    db: Client = Depends(get_user_db),
+):
+    end_d = _parse_day(window_end)
+    start_d = _parse_day(window_start) if window_start else (end_d - timedelta(days=7))
+    scope_key = f"{start_d.isoformat()}:{end_d.isoformat()}:{sport}"
+    ctx = _load_zones_context(db, athlete_id, start_d.isoformat(), end_d.isoformat(), sport)
+    return {
+        "status": "success",
+        "analysis": _get_or_compute(db, athlete_id, tier, "time_in_zones", scope_key, ctx, model_name=model_name),
     }
 

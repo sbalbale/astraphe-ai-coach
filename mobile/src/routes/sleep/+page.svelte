@@ -282,38 +282,41 @@
   }
 
   let analysisText = $state<string | null>(null);
+  let analysisLoading = $state(false);
   let activeAnalysisKey: string | null = null;
   $effect(() => {
     void analysisNavEpoch.epoch;
-    void athleteStore.initialLoadDone;
-    void athleteStore.loading;
-    void n?.score;
-
-    const day = n?.rawDate;
-    if (!day) {
+    const scopeKey = n?.rawDate;
+    if (!scopeKey) {
       analysisText = null;
       return;
     }
 
-    const cached = sleepAnalysisMemo.get(day);
-    if (cached !== undefined && cached !== null) {
+    const cached = sleepAnalysisMemo.get(scopeKey);
+    if (cached !== undefined) {
       analysisText = cached;
       return;
     }
 
     analysisText = null;
-
-    const requestKey = `sleep:${day}`;
+    const requestKey = `sleep-analysis:${scopeKey}`;
     activeAnalysisKey = requestKey;
 
     (async () => {
-      const res = await api.getSleepAnalysis(day);
-      const content = typeof res?.analysis?.content === "string" ? res.analysis.content.trim() : "";
-      const next = content ? content : null;
-      if (next) sleepAnalysisMemo.set(day, next);
-
-      if (activeAnalysisKey !== requestKey) return;
-      analysisText = next;
+      try {
+        analysisLoading = true;
+        const res = await api.get<{ analysis: { content: string } }>(`/v1/analysis/sleep?day=${scopeKey}`);
+        const content = typeof res?.analysis?.content === "string" ? res.analysis.content.trim() : "";
+        if (activeAnalysisKey !== requestKey) return;
+        const next = content || null;
+        sleepAnalysisMemo.set(scopeKey, next);
+        analysisText = next;
+      } catch {
+        if (activeAnalysisKey !== requestKey) return;
+        sleepAnalysisMemo.set(scopeKey, null);
+      } finally {
+        if (activeAnalysisKey === requestKey) analysisLoading = false;
+      }
     })();
   });
 </script>
@@ -593,14 +596,18 @@
         style="background: linear-gradient(135deg, rgba(70,33,255,0.12), transparent);"
       >
         <p class="text-[13px] font-semibold mb-1.5">Sleep Analysis</p>
-        <p class="text-xs text-text1 leading-relaxed">
-          {analysisText ??
-            (nightData.deep < 15
-              ? "Your deep sleep is below your baseline. Focus on reducing screen time and cooling your room tonight."
-              : nightData.rem < 20
-                ? "REM sleep is slightly low. This might affect cognitive performance today."
-                : "Your sleep architecture looks balanced. Recovery is on track.")}
-        </p>
+        {#if analysisLoading && analysisText === null}
+          <p class="text-xs text-text2 animate-pulse">Analyzing...</p>
+        {:else}
+          <p class="text-xs text-text1 leading-relaxed">
+            {analysisText ??
+              (nightData.deep < 15
+                ? "Your deep sleep is below your baseline. Focus on reducing screen time and cooling your room tonight."
+                : nightData.rem < 20
+                  ? "REM sleep is slightly low. This might affect cognitive performance today."
+                  : "Your sleep architecture looks balanced. Recovery is on track.")}
+          </p>
+        {/if}
       </Card>
     {/if}
   {/if}
