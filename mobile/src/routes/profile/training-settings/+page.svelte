@@ -7,6 +7,7 @@
   import { onMount } from 'svelte';
 
   let maxHR = $state(185);
+  let thresholdHR = $state(Math.round(185 * 0.875));
   let ftp = $state(280);
   let pace = $state('5:00');
   const LEGACY_SPORT_FOCUS: Record<string, string> = {
@@ -50,6 +51,8 @@
 
     if (initialized) return;
     maxHR = athleteStore.profile?.max_hr ?? 185;
+    thresholdHR =
+      athleteStore.profile?.threshold_hr ?? Math.round(maxHR * 0.875);
     ftp = athleteStore.profile?.ftp_watts ?? 280;
     pace = athleteStore.profile?.threshold_pace || '5:00';
     sport = coerceSportFocus(String(athleteStore.profile?.sport_focus?.[0] || 'run'));
@@ -75,6 +78,7 @@
     saveError = null;
     const success = await athleteStore.updateProfile({
       max_hr: maxHR,
+      threshold_hr: thresholdHR,
       ftp_watts: ftp,
       threshold_pace: pace,
       sport_focus: [sport.toLowerCase()],
@@ -148,12 +152,16 @@
     <Card>
       <p class="text-[13px] font-semibold mb-3">Thresholds</p>
       <div class="flex flex-col gap-4">
-        <div class="flex items-center justify-between gap-3">
-          <div class="flex-1">
+        <div class="flex items-center justify-between gap-3 flex-wrap">
+          <div class="flex-1 min-w-[120px]">
             <label for="maxhr" class="block text-[11px] text-text2 mb-1">Max HR (bpm)</label>
             <input id="maxhr" type="number" bind:value={maxHR} class="w-full p-2 bg-glass2 border border-border rounded-lg text-sm text-text0 font-mono outline-none focus:border-red" />
           </div>
-          <div class="flex-1">
+          <div class="flex-1 min-w-[120px]">
+            <label for="thresholdhr" class="block text-[11px] text-text2 mb-1">Threshold HR (bpm)</label>
+            <input id="thresholdhr" type="number" bind:value={thresholdHR} class="w-full p-2 bg-glass2 border border-border rounded-lg text-sm text-text0 font-mono outline-none focus:border-red" />
+          </div>
+          <div class="flex-1 min-w-[120px]">
             <label for="ftp" class="block text-[11px] text-text2 mb-1">Cycling FTP (W)</label>
             <input id="ftp" type="number" bind:value={ftp} class="w-full p-2 bg-glass2 border border-border rounded-lg text-sm text-text0 font-mono outline-none focus:border-[#4621FF]" />
           </div>

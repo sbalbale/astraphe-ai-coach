@@ -168,12 +168,16 @@ def process_and_save_workout(payload: WorkoutPayload, athlete_id: str, db):
         mapped_sport = "bike"
 
     # Load athlete anchors needed for HRSS / pace-based models
-    athlete_res = db.table("athletes").select("max_hr,resting_hr,threshold_hr,threshold_pace,gender").eq("id", athlete_id).single().execute()
+    # threshold_hr_source: required for tiered zone midpoints in compute_hrss_from_zones
+    athlete_res = db.table("athletes").select(
+        "max_hr,resting_hr,threshold_hr,threshold_hr_source,threshold_pace,gender"
+    ).eq("id", athlete_id).single().execute()
     athlete = athlete_res.data if (athlete_res and athlete_res.data) else {}
 
     anchor_max_hr = athlete.get("max_hr") or payload.max_hr
     anchor_resting_hr = athlete.get("resting_hr")
     anchor_threshold_hr = athlete.get("threshold_hr")
+    anchor_threshold_hr_source = athlete.get("threshold_hr_source")
     anchor_gender = athlete.get("gender") or "male"
     threshold_pace_sec_km = _parse_pace_to_sec_per_km(athlete.get("threshold_pace"))
 
@@ -201,6 +205,7 @@ def process_and_save_workout(payload: WorkoutPayload, athlete_id: str, db):
             threshold_hr=int(anchor_threshold_hr or 0),
             sport=mapped_sport,
             gender=str(anchor_gender),
+            threshold_hr_source=anchor_threshold_hr_source,
         )
     elif sport == "rowing" and hasattr(payload, 'avg_power') and payload.avg_power:
         # Fallback for rowing
@@ -405,6 +410,7 @@ def process_and_save_biometrics(payload: DailyBiometrics, athlete_id: str, db):
             max_hr=athlete_data["max_hr"],
             resting_hr=int(round(baseline_rhr))
         )
+        profile_updates["threshold_hr_source"] = "estimated"
     
     db.table("athletes").update(profile_updates).eq("id", athlete_id).execute()
     
