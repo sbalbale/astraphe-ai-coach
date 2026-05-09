@@ -83,7 +83,12 @@ def _sport_for_db(canonical: str) -> str:
 
 
 def _strip_none_update_values(d: dict[str, Any]) -> dict[str, Any]:
-    """PostgREST PATCH semantics: omit keys with value None so we do not wipe existing DB fields."""
+    """
+    PostgREST PATCH semantics: omit keys whose value is None so we do not wipe existing DB fields.
+
+    Use ``v is not None`` only — never truthiness (``if v``), or valid numeric zeros are dropped
+    (e.g. ``tss=0``, ``strain_score=0`` on rest days or very short sessions).
+    """
     return {k: v for k, v in d.items() if v is not None}
 
 
@@ -473,6 +478,7 @@ async def process_and_save_workout(payload: WorkoutPayload, athlete_id: str, db:
         }
         strain_score = compute_strain_score(zone_minutes)
 
+    # Strip Nones only (_strip_none_update_values); keep tss/strain_score when they are 0.
     update_data: dict[str, Any] = {
         "sport": mapped_sport,
         "title": getattr(payload, "title", None),
