@@ -105,6 +105,12 @@ htmlcov/
 # If you use the Supabase CLI for local DB development
 supabase/.temp/
 supabase/.branches/
+supabase/.env.keys
+supabase/.env.local
+supabase/.env.*.local
+supabase/.env.*.keys
+supabase/.env.*.local
+supabase/backups/*
 
 # ------------------------------------------
 # 6. OS & Editor Files
