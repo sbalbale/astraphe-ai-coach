@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Action } from 'svelte/action';
   import EmptyState from '$lib/components/EmptyState.svelte';
+  import { confirm } from '$lib/confirm';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { authStore } from '$lib/stores/authStore.svelte';
   import { trainingStore } from '$lib/stores/trainingStore.svelte';
@@ -47,6 +48,14 @@
 
   let agendaView = $state<AgendaView>('day');
   let selectedWorkout = $state<PlannedWorkout | null>(null);
+  let removingPlanWorkout = $state(false);
+
+  /** Real `training_plans.id` when this row comes from `/v1/training-plans` (`ai:<uuid>` display ids). */
+  function backendTrainingPlanId(w: PlannedWorkout | null): string | null {
+    const id = w?.id ?? '';
+    if (!id.startsWith('ai:')) return null;
+    return id.slice(3);
+  }
 
   // Current month shown in the calendar (can be navigated independently).
   let viewMonth = $state<Date>(startOfMonth(new Date()));
@@ -242,6 +251,32 @@
 
   function closeWorkout() {
     selectedWorkout = null;
+    removingPlanWorkout = false;
+  }
+
+  async function removeSelectedTrainingPlan() {
+    const planId = backendTrainingPlanId(selectedWorkout);
+    if (!planId) return;
+    const ok = await confirm({
+      title: 'Remove from plan?',
+      message:
+        'This session will be removed from your calendar. You can add or schedule workouts again anytime.',
+      confirmText: 'Remove',
+      cancelText: 'Cancel',
+      confirmTone: 'danger'
+    });
+    if (!ok) return;
+    removingPlanWorkout = true;
+    try {
+      const deleted = await trainingStore.deleteTrainingPlan(
+        planId,
+        viewMonthRange.startIso,
+        viewMonthRange.endIso
+      );
+      if (deleted) closeWorkout();
+    } finally {
+      removingPlanWorkout = false;
+    }
   }
 
   /** Copy header labels onto tbody cells for the stacked mobile layout (`::before { content: attr(data-label) }`). */
@@ -548,14 +583,26 @@
           <div class="text-[18px] font-semibold truncate">{selectedWorkout.title ?? selectedWorkout.type ?? 'Session'}</div>
         </div>
 
-        <button
-          type="button"
-          class="w-10 h-10 rounded-xl bg-glass2 border border-border/60 hover:bg-glass transition-colors"
-          aria-label="Close modal"
-          onclick={closeWorkout}
-        >
-          ✕
-        </button>
+        <div class="flex items-center gap-2 shrink-0">
+          {#if backendTrainingPlanId(selectedWorkout)}
+            <button
+              type="button"
+              class="rounded-xl border px-3 py-2 text-[13px] font-medium transition-colors border-red-400/55 text-red-300 hover:bg-red-500/15 disabled:opacity-50 disabled:pointer-events-none"
+              disabled={removingPlanWorkout}
+              onclick={removeSelectedTrainingPlan}
+            >
+              {removingPlanWorkout ? 'Removing…' : 'Remove from plan'}
+            </button>
+          {/if}
+          <button
+            type="button"
+            class="w-10 h-10 rounded-xl bg-glass2 border border-border/60 hover:bg-glass transition-colors"
+            aria-label="Close modal"
+            onclick={closeWorkout}
+          >
+            ✕
+          </button>
+        </div>
       </div>
 
       <div class="grid gap-6">

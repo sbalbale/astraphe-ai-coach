@@ -1,0 +1,281 @@
+---
+description: Astrape AI frontend design system and UI engineering standards. Apply when creating or editing Svelte components, layouts, screens, or any UI code. Enforces the "Spectral" glassmorphism aesthetic, design tokens, Svelte 5 rune patterns, and Tailwind conventions for the mobile-first Capacitor app.
+globs:
+  - "mobile/src/**/*.svelte"
+  - "mobile/src/**/*.ts"
+  - "mobile/src/**/*.css"
+alwaysApply: false
+---
+
+# Astrape AI — Frontend Design System
+
+## Design Language: "Spectral" Glassmorphism
+
+Astrape uses a **dark-first, translucent aesthetic** — layered depth, continuous gradient meshes, surgical accent colors. Every screen should feel like a data terminal floating in deep space. Never produce generic, flat, or "light-mode-ported-dark" UI.
+
+### Core Principles
+
+- **Elevation via opacity** — higher cards use higher background opacity. Never use blur except on modal overlays (performance constraint on 60 Hz mobile panels).
+- **Surgical illumination** — accent glows are applied to at most ONE primary element per screen. Overuse destroys hierarchy.
+- **Data density with breathing room** — pack metrics tightly but always preserve clear visual rhythm through consistent spacing.
+- **Mono for data, Grotesk for prose** — all numeric/metric values use `font-mono`; labels, headings, and body copy use `font-sans` (Space Grotesk).
+
+---
+
+## Design Tokens
+
+### Colors (CSS Variables → Tailwind)
+
+```css
+/* Base backgrounds — layered depth */
+--bg0: #08080F   → bg-bg0         /* deepest layer, page background */
+--bg1: #0F0F1A   → bg-bg1         /* section backgrounds */
+--bg2: #141424   → bg-bg2         /* card backgrounds */
+--bg3: #1C1C30   → bg-bg3         /* elevated cards, code blocks */
+
+/* Glassmorphism surfaces */
+--glass:  rgba(255,255,255,0.04)  → bg-glass
+--glass2: rgba(255,255,255,0.08)  → bg-glass2
+--border: rgba(255,255,255,0.07)  → border-border
+
+/* Accent palette — use sparingly */
+--blue:  #4621FF  → text-blue  / bg-blue  / border-blue   /* primary CTA, active states */
+--teal:  #00C8A8  → text-teal  / bg-teal  / border-teal   /* success, HRV, recovery */
+--amber: #FFCB88  → text-amber / bg-amber / border-amber  /* warnings, TSB, effort */
+--red:   #F07178  → text-red   / bg-red   / border-red    /* alerts, max HR, danger */
+
+/* Semantic accent dims (15% opacity backgrounds) */
+--blue-dim:  rgba(70,33,255,0.15)   → bg-blue-dim
+--teal-dim:  rgba(0,200,168,0.15)   → bg-teal-dim
+--amber-dim: rgba(255,203,136,0.15) → bg-amber-dim
+--red-dim:   rgba(240,113,120,0.15) → bg-red-dim
+
+/* Text hierarchy */
+--text0: #F0F0FF                    → text-text0   /* primary text */
+--text1: rgba(240,240,255,0.65)     → text-text1   /* secondary text */
+--text2: rgba(240,240,255,0.35)     → text-text2   /* labels, placeholders */
+```
+
+### Typography
+
+```
+Display / Headings  → font-sans    (Space Grotesk, loaded via Google Fonts)
+Labels / Data / Code → font-mono  (Space Mono, loaded via Google Fonts)
+```
+
+**Rules:**
+- All numeric metric values → `font-mono` (scores, HR, watts, paces, counts)
+- Section labels and uppercase tags → `font-mono text-[10px] tracking-widest uppercase`
+- Body copy and descriptions → `font-sans`
+- Never use Inter, Roboto, or system-ui as a primary font
+
+---
+
+## Component Patterns
+
+### Card
+
+```svelte
+<!-- Standard glassmorphic card -->
+<div class="bg-glass border border-border rounded-2xl p-4">
+  ...
+</div>
+
+<!-- Elevated card with accent highlight -->
+<div class="bg-bg2 border border-border rounded-2xl p-4
+            shadow-[0_0_40px_-10px_rgba(70,33,255,0.3)]">
+  ...
+</div>
+
+<!-- Active / selected card -->
+<div class="bg-blue-dim border border-blue/30 rounded-2xl p-4">
+  ...
+</div>
+```
+
+### Metric Display
+
+```svelte
+<!-- Large metric value -->
+<div class="flex flex-col gap-0.5">
+  <span class="text-[10px] font-mono text-text2 uppercase tracking-widest">
+    {label}
+  </span>
+  <span class="text-3xl font-mono font-bold text-text0 leading-none">
+    {value}
+  </span>
+  <span class="text-[11px] font-mono text-text1">{unit}</span>
+</div>
+```
+
+### Status / Tag Badge
+
+```svelte
+<!-- Color-coded tag badges -->
+<span class="inline-flex items-center px-2 py-0.5 rounded text-[10px]
+             font-mono uppercase tracking-wide
+             bg-teal-dim text-teal border border-teal/30">
+  Good
+</span>
+<!-- Swap teal → blue / amber / red for other states -->
+```
+
+### Section Header
+
+```svelte
+<div class="flex items-center justify-between mb-3">
+  <p class="text-[10px] font-mono text-text2 uppercase tracking-widest">
+    {sectionLabel}
+  </p>
+  <!-- optional right action -->
+</div>
+```
+
+### Input
+
+```svelte
+<input
+  class="w-full p-2.5 bg-glass2 border border-border rounded-lg
+         text-sm text-text0 font-mono outline-none
+         focus:border-blue focus:ring-0
+         placeholder:text-text2"
+/>
+```
+
+### Primary Button
+
+```svelte
+<button
+  class="w-full py-3 rounded-xl font-semibold text-sm text-white
+         bg-blue hover:bg-blue/90 active:bg-blue/80
+         transition-colors disabled:opacity-40 disabled:pointer-events-none
+         shadow-[0_8px_24px_-12px_rgba(70,33,255,0.7)]"
+>
+  {label}
+</button>
+```
+
+### Divider
+
+```svelte
+<div class="border-t border-border my-4" />
+```
+
+---
+
+## Svelte 5 Patterns
+
+Always use **Svelte 5 runes**. Never use the legacy `$:`, `writable()`, or `export let` reactive patterns.
+
+```svelte
+<script lang="ts">
+  // Props
+  let { value = 0, label = '' }: { value: number; label: string } = $props();
+
+  // Local state
+  let loading = $state(false);
+  let items = $state<string[]>([]);
+
+  // Derived values
+  let displayValue = $derived(value > 0 ? value.toFixed(1) : '—');
+
+  // Side effects
+  $effect(() => {
+    // runs reactively; clean up with returned function
+    return () => {};
+  });
+</script>
+```
+
+### Event handling
+
+Use `onclick`, `oninput`, `onkeydown` (lowercase, no `on:` prefix — Svelte 5 syntax).
+
+```svelte
+<button onclick={() => handleClick()}>Click</button>
+<input oninput={(e) => (value = e.currentTarget.value)} />
+```
+
+### Stores (rune-based)
+
+```ts
+// lib/stores/example.svelte.ts
+function createStore() {
+  let _value = $state(0);
+  return {
+    get value() { return _value; },
+    set(v: number) { _value = v; }
+  };
+}
+export const exampleStore = createStore();
+```
+
+---
+
+## Layout & Spacing
+
+The app is a **mobile-first Capacitor app**. All screens use:
+
+```svelte
+<!-- Standard page shell -->
+<div class="flex flex-col h-full bg-bg0 text-text0 overflow-y-auto">
+  <!-- content -->
+</div>
+```
+
+- Base spacing unit: `4px` (Tailwind `gap-1`, `p-1`, etc.)
+- Cards inside a page: `p-4` internal padding, `gap-3` between cards
+- Section-level spacing: `mb-6` between major sections
+- Safe area: use `pb-safe` / `pt-safe` on root containers for notch/home-bar clearance
+
+---
+
+## Chart / Data Visualization
+
+Using **LayerChart** (D3-backed SVG). Key conventions:
+
+- Area charts: gradient fill using `LinearGradient` with accent color at `opacity: 0.25` → `0`
+- Line strokes: `strokeWidth={2}`, accent color
+- Axis ticks: `font-mono`, `text-text2`, `text-[10px]`
+- Always DPR-scale canvas elements manually (`devicePixelRatio`)
+- Metric-to-color mapping:
+  - HRV / Recovery → `--teal`
+  - CTL (fitness) → `--blue`
+  - ATL (fatigue) → `--amber`
+  - TSB (form) → dynamic: positive → `--teal`, negative → `--red`
+  - HR / effort → `--red`
+
+---
+
+## Accent Glow Reference
+
+```css
+/* Active card glow */
+box-shadow: 0 0 40px -10px <accent>33
+
+/* CTA button glow */
+box-shadow: 0 8px 24px -12px rgba(70,33,255,0.7)
+
+/* Focus ring */
+outline: 2px solid <accent>; outline-offset: 2px;
+```
+
+In Tailwind:
+```
+shadow-[0_0_40px_-10px_rgba(70,33,255,0.3)]    /* blue card glow */
+shadow-[0_0_40px_-10px_rgba(0,200,168,0.3)]    /* teal card glow */
+shadow-[0_8px_24px_-12px_rgba(70,33,255,0.7)]  /* blue button glow */
+```
+
+---
+
+## Hard Rules
+
+1. **Never** use `blur()` on non-modal elements — mobile 60 Hz performance.
+2. **Never** use light-mode color values (`white`, `gray-100`, etc.) as backgrounds.
+3. **Never** use more than one accent glow per screen section.
+4. **Never** use Inter, Roboto, or system-ui as primary fonts.
+5. **Always** use `font-mono` for numeric/metric values.
+6. **Always** use Svelte 5 rune syntax (`$state`, `$derived`, `$effect`, `$props`).
+7. **Always** keep glassmorphic surfaces as layered opacity — not solid fills — for card surfaces.
+8. Buttons are never `<form>` submit elements in Svelte — use `onclick` handlers directly.

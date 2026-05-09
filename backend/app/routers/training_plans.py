@@ -192,6 +192,33 @@ async def update_training_plan(
         raise HTTPException(status_code=500, detail=f"Failed to update training plan: {str(e)}")
 
 
+@router.delete("/{training_plan_id}")
+async def delete_training_plan(
+    training_plan_id: str,
+    athlete_id: str = Depends(get_current_athlete),
+    db=Depends(get_user_db),
+):
+    """
+    Delete one planned workout (training_plans row) belonging to this athlete.
+    """
+    try:
+        res = (
+            db.table("training_plans")
+            .delete()
+            .eq("id", training_plan_id)
+            .eq("athlete_id", athlete_id)
+            .execute()
+        )
+        deleted = len(res.data or [])
+        if deleted < 1:
+            raise HTTPException(status_code=404, detail="Training plan not found")
+        return {"status": "success", "id": training_plan_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete training plan: {str(e)}")
+
+
 @router.delete("")
 async def delete_training_plans(
     start_date: Optional[date] = None,
