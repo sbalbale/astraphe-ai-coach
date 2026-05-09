@@ -109,20 +109,36 @@ async def get_current_gemini_model(
     Primary: Supabase Auth JWT app_metadata.gemini_model (admin-controlled).
     Fallback: backend .env GEMINI_MODEL.
     """
-    fallback = (settings.GEMINI_MODEL or "").strip() or "gemini-flash-lite-latest"
+    # Force a known-good model name. Some older app_metadata values may reference
+    # model IDs that no longer exist (e.g. "gemini-3-flash-lite"), which causes
+    # generateContent to 404 and silently degrades all premium analysis to fallback.
+    return (settings.GEMINI_MODEL or "").strip() or "gemini-flash-lite-latest"
+
+
+async def get_current_gemini_analysis_model(
+    credentials: HTTPAuthorizationCredentials = Security(security),
+    athlete_id: str = Depends(get_current_athlete),
+    db: Client = Depends(get_user_db),
+) -> str:
+    """
+    Returns the Gemini model name to use for analysis requests (/v1/analysis/*).
+
+    Primary: Supabase Auth JWT app_metadata.gemini_analysis_model (admin-controlled).
+    Fallback: backend .env GEMINI_ANALYSIS_MODEL (defaults to a fast, no-reasoning model).
+    """
+    fallback = (settings.GEMINI_ANALYSIS_MODEL or "").strip() or "gemini-flash-lite-latest"
     token = credentials.credentials
 
     try:
         user_res = db.auth.get_user(token)
         u = user_res.user
         app_meta = getattr(u, "app_metadata", None) or {}
-        raw = app_meta.get("gemini_model") or app_meta.get("ai_model")
+        raw = app_meta.get("gemini_analysis_model")
         if isinstance(raw, str):
             m = raw.strip()
             if m:
                 return m
     except Exception:
-        # Continue to fallback below.
         pass
 
     return fallback

@@ -2,6 +2,7 @@
   import { SvelteMap } from 'svelte/reactivity';
 
   const strainAnalysisMemo = new SvelteMap<string, string | null>();
+  const workoutAnalysisMemo = new SvelteMap<string, string | null>();
 </script>
 
 <script lang="ts">
@@ -15,6 +16,7 @@
   import Modal from '$lib/components/Modal.svelte';
   import { analysisNavEpoch } from '$lib/analysisNavEpoch.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
+  import { authStore } from '$lib/stores/authStore.svelte';
   import { api } from '$lib/api';
   import { addDays, format, subDays } from 'date-fns';
   import { boundedScoreCssColor } from '$lib/colorSystem';
@@ -215,6 +217,27 @@
     showWorkoutModal = true;
   }
 
+  let workoutAnalysisLoading = $state(false);
+  async function loadWorkoutAnalysis(workoutId: string) {
+    if (authStore.tier !== 'premium') return;
+    if (workoutAnalysisMemo.has(workoutId)) return;
+    workoutAnalysisLoading = true;
+    try {
+      const res = await api.get(`/v1/analysis/workout/${workoutId}`);
+      workoutAnalysisMemo.set(workoutId, res?.analysis?.content ?? null);
+    } finally {
+      workoutAnalysisLoading = false;
+    }
+  }
+
+  $effect(() => {
+    const workoutId = selectedWorkout?.id;
+    if (!showWorkoutModal || !workoutId) {
+      return;
+    }
+    void loadWorkoutAnalysis(workoutId);
+  });
+
   const dayZones = $derived.by(() => computeZoneBreakdown(d?.workouts || []));
 
   const formatMinutes = (secs: number) => {
@@ -223,40 +246,42 @@
   };
 
   let analysisText = $state<string | null>(null);
+  let analysisLoading = $state(false);
   let activeAnalysisKey: string | null = null;
   $effect(() => {
     void analysisNavEpoch.epoch;
-    // Re-run when store finishes loading so an early unauthenticated/empty fetch can't strand us on null.
-    void athleteStore.initialLoadDone;
-    void athleteStore.loading;
-    void d?.tsb;
-    void d?.score;
-
-    const day = d?.date;
-    if (!day) {
+    const scopeKey = d?.date;
+    if (!scopeKey) {
       analysisText = null;
       return;
     }
 
-    const cached = strainAnalysisMemo.get(day);
-    if (cached !== undefined && cached !== null) {
+    const cached = strainAnalysisMemo.get(scopeKey);
+    if (cached !== undefined) {
       analysisText = cached;
       return;
     }
 
     analysisText = null;
 
-    const requestKey = `strain:${day}`;
+    const requestKey = `strain-analysis:${scopeKey}`;
     activeAnalysisKey = requestKey;
 
     (async () => {
-      const res = await api.getStrainAnalysis(day);
-      const content = typeof res?.analysis?.content === 'string' ? res.analysis.content.trim() : '';
-      const next = content ? content : null;
-      if (next) strainAnalysisMemo.set(day, next);
-
-      if (activeAnalysisKey !== requestKey) return;
-      analysisText = next;
+      try {
+        analysisLoading = true;
+        const res = await api.get<{ analysis: { content: string } }>(`/v1/analysis/strain?day=${scopeKey}`);
+        const content = typeof res?.analysis?.content === 'string' ? res.analysis.content.trim() : '';
+        if (activeAnalysisKey !== requestKey) return;
+        const next = content || null;
+        strainAnalysisMemo.set(scopeKey, next);
+        analysisText = next;
+      } catch {
+        if (activeAnalysisKey !== requestKey) return;
+        strainAnalysisMemo.set(scopeKey, null);
+      } finally {
+        if (activeAnalysisKey === requestKey) analysisLoading = false;
+      }
     })();
   });
 </script>
@@ -498,14 +523,18 @@
         style="background: linear-gradient(135deg, rgba(70,33,255,0.12), transparent);"
       >
         <p class="text-[13px] font-semibold mb-1.5">Strain Analysis</p>
-        <p class="text-xs text-text1 leading-relaxed">
-          {analysisText ??
-            (d.tsb < -20
-              ? 'Your training form is highly negative. Prioritize active recovery sessions.'
-              : d.tsb > 10
-                ? 'Your body is fresh and primed for a high-intensity block. CTL is stable.'
-                : 'Your training volume is well-balanced with your current fitness level.')}
-        </p>
+        {#if analysisLoading && analysisText === null}
+          <p class="text-xs text-text2 animate-pulse">Analyzing...</p>
+        {:else}
+          <p class="text-xs text-text1 leading-relaxed">
+            {analysisText ??
+              (d.tsb < -20
+                ? 'Your training form is highly negative. Prioritize active recovery sessions.'
+                : d.tsb > 10
+                  ? 'Your body is fresh and primed for a high-intensity block. CTL is stable.'
+                  : 'Your training volume is well-balanced with your current fitness level.')}
+          </p>
+        {/if}
       </Card>
     {/if}
   {/if}
@@ -580,6 +609,23 @@
           </div>
         {/if}
       </div>
+
+      {#if authStore.tier === 'premium'}
+        <div class="mt-4 pt-4 border-t border-border/40"
+             style="background: linear-gradient(135deg, rgba(70,33,255,0.08), transparent); border-radius: 12px; padding: 12px;">
+          <div class="flex items-center gap-1.5 mb-2">
+            <span class="text-[11px] font-mono uppercase tracking-[0.08em] text-blue">AI Insight</span>
+            <Tag color="var(--blue)">ASTRAPE</Tag>
+          </div>
+          {#if workoutAnalysisLoading && !workoutAnalysisMemo.has(selectedWorkout.id)}
+            <p class="text-xs text-text2 animate-pulse">Analyzing workout...</p>
+          {:else}
+            <p class="text-xs text-text1 leading-relaxed">
+              {workoutAnalysisMemo.get(selectedWorkout.id) ?? 'Insight unavailable.'}
+            </p>
+          {/if}
+        </div>
+      {/if}
 
       {#if selectedWorkout.hr_zone_0_pct !== undefined || selectedWorkout.hr_zone_1_pct !== undefined || selectedWorkout.hr_zone_2_pct !== undefined}
         <div class="flex flex-col gap-4">

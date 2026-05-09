@@ -610,6 +610,43 @@
     background: transparent;
   }
 
+  /* Responsive tables in AI messages */
+  :global(.chat-md :where(table)) {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    max-width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8em;
+    margin: 0.5rem 0;
+    border-radius: 0.5rem;
+  }
+  :global(.chat-md :where(thead)) {
+    background: rgba(70, 33, 255, 0.12);
+  }
+  :global(.chat-md :where(th)) {
+    padding: 0.35rem 0.65rem;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    white-space: nowrap; /* header labels stay on one line */
+    vertical-align: top;
+    text-align: left;
+    color: rgb(0 200 168);
+    font-size: 0.9em;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  :global(.chat-md :where(td)) {
+    padding: 0.35rem 0.65rem;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    white-space: normal; /* allow wrapping */
+    word-break: break-word;
+    vertical-align: top;
+    max-width: 14rem; /* single cell can't blow out the table */
+  }
+  :global(.chat-md :where(tbody tr:nth-child(even))) {
+    background: rgba(255, 255, 255, 0.03);
+  }
+
   /* KaTeX (inline + display) inherits bubble text color */
   :global(.chat-md .katex) {
     color: inherit;

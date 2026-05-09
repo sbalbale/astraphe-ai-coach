@@ -2,6 +2,7 @@
   import { SvelteMap } from 'svelte/reactivity';
 
   const trainingLoadAnalysisMemo = new SvelteMap<string, string | null>();
+  const workoutAnalysisMemo = new SvelteMap<string, string | null>();
 </script>
 
 <script lang="ts">
@@ -18,6 +19,7 @@
   import DatePicker from '$lib/components/DatePicker.svelte';
   import { analysisNavEpoch } from '$lib/analysisNavEpoch.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
+  import { authStore } from '$lib/stores/authStore.svelte';
   import { api } from '$lib/api';
   import { page } from '$app/stores';
   import { addDays, endOfWeek, format, startOfWeek } from 'date-fns';
@@ -41,6 +43,8 @@
   const showNoTrainingData = $derived(athleteStore.initialLoadDone && !athleteStore.loading && !isConnected && !hasWorkouts);
 
   let selectedWorkout = $state<any>(null);
+  let workoutAnalysisText = $state<string | null>(null);
+  let workoutAnalysisLoading = $state(false);
 
   const zoneColors = ['#AAB3BF', '#4621FF', '#00C8A8', '#FFCB88', '#F07178', '#FF4791'];
 
@@ -248,38 +252,71 @@
     }
   }
 
+  async function loadWorkoutAnalysis(workoutId: string) {
+    if (authStore.tier !== 'premium') return;
+
+    if (workoutAnalysisMemo.has(workoutId)) {
+      workoutAnalysisText = workoutAnalysisMemo.get(workoutId) ?? null;
+      return;
+    }
+
+    workoutAnalysisLoading = true;
+    try {
+      const res = await api.get(`/v1/analysis/workout/${workoutId}`);
+      const content = typeof res?.analysis?.content === 'string' ? res.analysis.content.trim() : null;
+      workoutAnalysisMemo.set(workoutId, content);
+      if (selectedWorkout?.id === workoutId) workoutAnalysisText = workoutAnalysisMemo.get(workoutId) ?? null;
+    } finally {
+      workoutAnalysisLoading = false;
+    }
+  }
+
+  $effect(() => {
+    const workoutId = selectedWorkout?.id;
+    if (!workoutId) {
+      workoutAnalysisText = null;
+      return;
+    }
+    void loadWorkoutAnalysis(workoutId);
+  });
+
   let analysisText = $state<string | null>(null);
+  let analysisLoading = $state(false);
   let activeAnalysisKey: string | null = null;
   $effect(() => {
     void analysisNavEpoch.epoch;
-    void athleteStore.initialLoadDone;
-    void athleteStore.loading;
-
-    const endDay = selectedWeekEndStr;
-    if (!endDay) {
+    const scopeKey = selectedWeekEndStr;
+    if (!scopeKey) {
       analysisText = null;
       return;
     }
 
-    const cached = trainingLoadAnalysisMemo.get(endDay);
-    if (cached !== undefined && cached !== null) {
+    const cached = trainingLoadAnalysisMemo.get(scopeKey);
+    if (cached !== undefined) {
       analysisText = cached;
       return;
     }
 
     analysisText = null;
 
-    const requestKey = `training-load:${endDay}`;
+    const requestKey = `training-analysis:${scopeKey}`;
     activeAnalysisKey = requestKey;
 
     (async () => {
-      const res = await api.getTrainingLoadAnalysis(endDay);
-      const content = typeof res?.analysis?.content === 'string' ? res.analysis.content.trim() : '';
-      const next = content ? content : null;
-      if (next) trainingLoadAnalysisMemo.set(endDay, next);
-
-      if (activeAnalysisKey !== requestKey) return;
-      analysisText = next;
+      try {
+        analysisLoading = true;
+        const res = await api.get<{ analysis: { content: string } }>(`/v1/analysis/training-load?end_day=${scopeKey}`);
+        const content = typeof res?.analysis?.content === 'string' ? res.analysis.content.trim() : '';
+        if (activeAnalysisKey !== requestKey) return;
+        const next = content || null;
+        trainingLoadAnalysisMemo.set(scopeKey, next);
+        analysisText = next;
+      } catch {
+        if (activeAnalysisKey !== requestKey) return;
+        trainingLoadAnalysisMemo.set(scopeKey, null);
+      } finally {
+        if (activeAnalysisKey === requestKey) analysisLoading = false;
+      }
     })();
   });
 </script>
@@ -396,14 +433,18 @@
           <Lightbulb class="w-4 h-4 shrink-0 text-slate-500 mt-0.5" strokeWidth={1.5} aria-hidden="true" />
           <div class="flex-1 min-w-0">
             <p class="text-[13px] font-semibold mb-1.5 text-slate-400">Load Insight</p>
-            <p class="text-xs text-slate-300 leading-relaxed">
-              {analysisText ??
-                (athleteStore.tsb > 10
-                  ? `You have significant freshness (TSB +${Math.round(athleteStore.tsb)}). Excellent time for a peak performance or hard test.`
-                  : athleteStore.tsb < -20
-                    ? 'High fatigue detected. Consider a deload week to allow CTL to catch up to ATL safely.'
-                    : 'Your training load is stable. Continue with your planned progression.')}
-            </p>
+            {#if analysisLoading && analysisText === null}
+              <p class="text-xs text-text2 animate-pulse">Analyzing...</p>
+            {:else}
+              <p class="text-xs text-slate-300 leading-relaxed">
+                {analysisText ??
+                  (athleteStore.tsb > 10
+                    ? `You have significant freshness (TSB +${Math.round(athleteStore.tsb)}). Excellent time for a peak performance or hard test.`
+                    : athleteStore.tsb < -20
+                      ? 'High fatigue detected. Consider a deload week to allow CTL to catch up to ATL safely.'
+                      : 'Your training load is stable. Continue with your planned progression.')}
+              </p>
+            {/if}
           </div>
         </div>
       </Card>
@@ -510,12 +551,29 @@
             {/if}
           </div>
 
-          <div class="p-3 bg-blue-dim rounded-xl border-l-2 border-blue">
-            <p class="text-[11px] font-semibold text-blue mb-1">Analysis</p>
-            <p class="text-[11px] text-text1 leading-relaxed">
-              This session contributed {Math.round(selectedWorkout.tss || 0)} points to your acute load. {selectedWorkout.tss > 80 ? 'Ensure proper recovery tonight.' : 'Good aerobic contribution.'}
-            </p>
-          </div>
+          {#if authStore.tier === 'premium'}
+            <div class="mt-4 pt-4 border-t border-border/40"
+                 style="background: linear-gradient(135deg, rgba(70,33,255,0.08), transparent); border-radius: 12px; padding: 12px;">
+              <div class="flex items-center gap-1.5 mb-2">
+                <span class="text-[11px] font-mono uppercase tracking-[0.08em] text-blue">AI Insight</span>
+                <Tag color="var(--blue)">ASTRAPE</Tag>
+              </div>
+              {#if workoutAnalysisLoading && !workoutAnalysisMemo.has(selectedWorkout.id)}
+                <p class="text-xs text-text2 animate-pulse">Analyzing workout...</p>
+              {:else}
+                <p class="text-xs text-text1 leading-relaxed">
+                  {workoutAnalysisMemo.get(selectedWorkout.id) ?? 'Insight unavailable.'}
+                </p>
+              {/if}
+            </div>
+          {:else}
+            <div class="p-3 bg-blue-dim rounded-xl border-l-2 border-blue">
+              <p class="text-[11px] font-semibold text-blue mb-1">Analysis</p>
+              <p class="text-[11px] text-text1 leading-relaxed">
+                This session contributed {Math.round(selectedWorkout.tss || 0)} points to your acute load. {selectedWorkout.tss > 80 ? 'Ensure proper recovery tonight.' : 'Good aerobic contribution.'}
+              </p>
+            </div>
+          {/if}
         </Card>
       {:else}
         <div class="flex flex-col gap-2.5">
