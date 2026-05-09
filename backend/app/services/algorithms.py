@@ -528,4 +528,5 @@ def calculate_threshold_hr_est(max_hr: int, resting_hr: int) -> int:
 
 def normalize_rowing_watts(rowing_watts: float) -> float:
     """Converts average rowing watts to normalized equivalent."""
-    return round(rowing_watts * 1.12, 2)
+    # return round(rowing_watts * 1.12, 2)
+    return rowing_watts
