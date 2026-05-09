@@ -7,7 +7,7 @@
   import { onMount } from 'svelte';
 
   let maxHR = $state(185);
-  let thresholdHR = $state(Math.round(185 * 0.875));
+  let thresholdHR = $state<number | null>(null);
   let ftp = $state(280);
   let pace = $state('5:00');
   const LEGACY_SPORT_FOCUS: Record<string, string> = {
@@ -51,8 +51,7 @@
 
     if (initialized) return;
     maxHR = athleteStore.profile?.max_hr ?? 185;
-    thresholdHR =
-      athleteStore.profile?.threshold_hr ?? Math.round(maxHR * 0.875);
+    thresholdHR = athleteStore.profile?.threshold_hr ?? null;
     ftp = athleteStore.profile?.ftp_watts ?? 280;
     pace = athleteStore.profile?.threshold_pace || '5:00';
     sport = coerceSportFocus(String(athleteStore.profile?.sport_focus?.[0] || 'run'));
@@ -76,15 +75,20 @@
     saving = true;
     saved = false;
     saveError = null;
-    const success = await athleteStore.updateProfile({
+    const updates: Record<string, unknown> = {
       max_hr: maxHR,
-      threshold_hr: thresholdHR,
       ftp_watts: ftp,
       threshold_pace: pace,
       sport_focus: [sport.toLowerCase()],
       measurement_units: units,
       time_format: timeFormat
-    });
+    };
+
+    if (thresholdHR != null && thresholdHR > 0) {
+      updates.threshold_hr = thresholdHR;
+    }
+
+    const success = await athleteStore.updateProfile(updates);
     saving = false;
     if (success) {
       saved = true;
@@ -150,16 +154,12 @@
     </Card>
 
     <Card>
-      <p class="text-[13px] font-semibold mb-3">Thresholds</p>
+      <p class="text-[13px] font-semibold mb-3">Performance Anchors</p>
       <div class="flex flex-col gap-4">
         <div class="flex items-center justify-between gap-3 flex-wrap">
           <div class="flex-1 min-w-[120px]">
             <label for="maxhr" class="block text-[11px] text-text2 mb-1">Max HR (bpm)</label>
             <input id="maxhr" type="number" bind:value={maxHR} class="w-full p-2 bg-glass2 border border-border rounded-lg text-sm text-text0 font-mono outline-none focus:border-red" />
-          </div>
-          <div class="flex-1 min-w-[120px]">
-            <label for="thresholdhr" class="block text-[11px] text-text2 mb-1">Threshold HR (bpm)</label>
-            <input id="thresholdhr" type="number" bind:value={thresholdHR} class="w-full p-2 bg-glass2 border border-border rounded-lg text-sm text-text0 font-mono outline-none focus:border-red" />
           </div>
           <div class="flex-1 min-w-[120px]">
             <label for="ftp" class="block text-[11px] text-text2 mb-1">Cycling FTP (W)</label>
@@ -170,6 +170,37 @@
           <label for="pace" class="block text-[11px] text-text2 mb-1">Threshold Pace ({units === 'metric' ? '/km' : '/mile'})</label>
           <input id="pace" type="text" bind:value={pace} class="w-full p-2.5 bg-glass2 border border-border rounded-lg text-sm text-text0 font-mono outline-none focus:border-teal" />
         </div>
+      </div>
+    </Card>
+
+    <Card>
+      <p class="text-[13px] font-semibold mb-3">Threshold</p>
+      <div id="threshold-hr" class="flex flex-col gap-1">
+        <label for="lthr" class="inline-flex flex-wrap items-center text-[11px] text-text2 mb-1">
+          <span>Lactate Threshold HR</span>
+          {#if athleteStore.profile?.threshold_hr_source === 'manual'}
+            <span class="text-[9px] font-mono bg-teal/10 text-teal border border-teal/20 rounded px-1.5 py-0.5 ml-1.5">CONFIRMED</span>
+          {:else if athleteStore.profile?.threshold_hr_source === 'estimated' || athleteStore.profile?.threshold_hr_source == null}
+            <span class="text-[9px] font-mono bg-amber/10 text-amber border border-amber/20 rounded px-1.5 py-0.5 ml-1.5">ESTIMATED</span>
+          {/if}
+        </label>
+        <div class="bg-glass2 border border-border rounded-xl p-3">
+          <div class="relative">
+            <input
+              id="lthr"
+              type="number"
+              min="100"
+              max="220"
+              step="1"
+              bind:value={thresholdHR}
+              class="w-full bg-transparent border-none p-0 pr-10 text-sm text-text0 font-mono outline-none focus:ring-0"
+            />
+            <span class="pointer-events-none absolute right-0 top-1/2 -translate-y-1/2 text-[11px] text-text2 font-mono">bpm</span>
+          </div>
+        </div>
+        <p class="text-[10px] text-text2 mt-1">
+          Best measured from the avg HR of the final 20 min of a 30-min all-out effort.
+        </p>
       </div>
     </Card>
 

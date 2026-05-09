@@ -313,7 +313,7 @@
       <button
         type="button"
         class="text-left text-[11px] text-text2 font-mono"
-        onclick={() => goto('/profile/training-settings')}
+        onclick={() => goto('/profile/training-settings#threshold-hr')}
       >
         Run a threshold test to unlock Coggan zones →
       </button>
