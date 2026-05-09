@@ -301,24 +301,18 @@
     messages.push({ id: aiMsgId, role: 'ai', text: '', streaming: true });
     
     try {
-      const stream = api.streamCoachChat({
+      const data = await api.sendCoachMessage({
         message: text || '(image)',
         recent_tss: athleteStore.recent_tss,
         conversation_id: cid,
         image_urls
       });
-
-      for await (const evt of stream) {
-        if (evt.type === 'conversation_id') {
-          conversationId = evt.conversation_id;
-          continue;
-        }
-        const msgIndex = messages.findIndex(m => m.id === aiMsgId);
-        if (msgIndex !== -1) {
-          messages[msgIndex].text += evt.text;
-        }
-        scrollToBottom();
+      if (data.conversation_id) conversationId = data.conversation_id;
+      const msgIndex = messages.findIndex((m) => m.id === aiMsgId);
+      if (msgIndex !== -1) {
+        messages[msgIndex].text = data.reply ?? '';
       }
+      scrollToBottom();
     } catch (e) {
       const msgIndex = messages.findIndex(m => m.id === aiMsgId);
       if (msgIndex !== -1) {
@@ -452,9 +446,6 @@
                 </div>
               {:else}
                 <div class="chat-md">{@html renderCoachMarkdownToSafeHtml(msg.text)}</div>
-              {/if}
-              {#if msg.streaming && msg.text.trim()}
-                <span class="animate-[blink_1s_step-end_infinite] text-slate-400">▋</span>
               {/if}
             </div>
           </div>
@@ -628,11 +619,5 @@
     margin: 0.5rem 0;
     overflow-x: auto;
     overflow-y: hidden;
-  }
-
-  @keyframes blink {
-    50% {
-      opacity: 0;
-    }
   }
 </style>

@@ -13,6 +13,7 @@
     startOfMonth,
     startOfWeek
   } from 'date-fns';
+  import { renderCoachMarkdownToSafeHtml } from '$lib/coachMarkdown';
   import type { Workout } from '$lib/types/training';
 
   type AgendaView = 'day' | 'week';
@@ -92,24 +93,14 @@
     return out;
   });
 
-  const aiPlannedWorkouts = $derived.by<PlannedWorkout[]>(() => {
-    const mapSport = (sport: Workout['sport']): string => {
-      switch (sport) {
-        case 'cycling':
-          return 'bike';
-        case 'running':
-          return 'run';
-        case 'swimming':
-          return 'swim';
-        case 'rowing':
-          return 'row';
-        case 'strength':
-          return 'strength';
-        default:
-          return 'workout';
-      }
-    };
+  /** Collapse legacy `/v1/plan` rows vs `/v1/training-plans` rows that describe the same session. */
+  function planDisplayDedupeKey(w: PlannedWorkout): string {
+    const title = (w.title ?? w.type ?? '').trim().toLowerCase();
+    const type = (w.type ?? '').trim().toLowerCase();
+    return `${w.isoDate}\u0000${title}\u0000${type}`;
+  }
 
+  const aiPlannedWorkouts = $derived.by<PlannedWorkout[]>(() => {
     const intervalTarget = (i: Workout['structure'][number]): string | undefined => {
       const parts: string[] = [];
       if (typeof i.target_hr_zone === 'number') parts.push(`HR Z${i.target_hr_zone}`);
@@ -117,18 +108,20 @@
       return parts.length ? parts.join(' • ') : undefined;
     };
 
-    return trainingStore.workouts.map((w) => ({
+    const byId = Array.from(new Map(trainingStore.workouts.map((w) => [w.id, w])).values());
+
+    return byId.map((w) => ({
       id: `ai:${w.id}`,
       isoDate: w.date,
       date: parseIsoLocal(w.date),
       title: w.title,
-      type: mapSport(w.sport),
-      duration: `${w.duration_minutes} min`,
+      type: w.sport,
+      duration: w.duration_minutes != null ? `${w.duration_minutes} min` : undefined,
       tss: w.projected_tss,
       context: w.description,
       structure: (w.structure ?? []).map((i) => ({
         title: i.name,
-        duration: `${i.duration_minutes} min`,
+        duration: i.duration_minutes != null ? `${i.duration_minutes} min` : undefined,
         target: intervalTarget(i),
         note: i.description
       }))
@@ -136,7 +129,14 @@
   });
 
   const plannedWorkouts = $derived.by<PlannedWorkout[]>(() => {
-    const merged = [...legacyPlannedWorkouts, ...aiPlannedWorkouts];
+    const map = new Map<string, PlannedWorkout>();
+    for (const w of legacyPlannedWorkouts) {
+      map.set(planDisplayDedupeKey(w), w);
+    }
+    for (const w of aiPlannedWorkouts) {
+      map.set(planDisplayDedupeKey(w), w);
+    }
+    const merged = Array.from(map.values());
     merged.sort((a, b) => a.date.getTime() - b.date.getTime());
     return merged;
   });
@@ -189,7 +189,9 @@
     if (t.includes('swim')) return '🏊';
     if (t.includes('rest') || t.includes('off')) return '💤';
     if (t.includes('strength') || t.includes('gym')) return '💪';
-    return '🎯';
+    if (t === 'mobility' || t.includes('mobil') || t.includes('yoga') || t.includes('stretch'))
+      return '🧘';
+    return '⭐';
   };
 
   const indicatorClass = (w: RawPlanItem) => {
@@ -237,6 +239,22 @@
   function closeWorkout() {
     selectedWorkout = null;
   }
+
+  const SESSION_CONTEXT_FALLBACK = 'No additional context provided for this session yet.';
+
+  function isMarkdownTable(text?: string) {
+    return Boolean(text?.trim().startsWith('|'));
+  }
+
+  const sessionDetailContext = $derived.by(() => {
+    const w = selectedWorkout;
+    if (!w) return { displayContext: '', contextIsMarkdownTable: false };
+    const displayContext = w.note ?? w.goal ?? w.context ?? SESSION_CONTEXT_FALLBACK;
+    return {
+      displayContext,
+      contextIsMarkdownTable: isMarkdownTable(displayContext)
+    };
+  });
 
   const stepsFor = (w: PlannedWorkout) => {
     const arr = (w.blocks ?? w.structure) as PlannedWorkout['blocks'] | undefined;
@@ -484,43 +502,53 @@
       <div class="grid gap-4">
         <div class="bg-glass2 border border-border rounded-xl p-4">
           <div class="text-[12px] text-slate-400 font-mono mb-1">AI context</div>
-          <div class="text-[13px] text-text0 leading-relaxed">
-            {selectedWorkout.note ?? selectedWorkout.goal ?? selectedWorkout.context ?? 'No additional context provided for this session yet.'}
-          </div>
-        </div>
-
-        <div class="bg-glass2 border border-border rounded-xl p-4">
-          <div class="text-[12px] text-slate-400 font-mono mb-2">Structure</div>
-          <ol class="list-decimal pl-5 grid gap-2">
-            {#each stepsFor(selectedWorkout) as step, i (i)}
-              <li class="text-[13px] text-text0">
-                {#if typeof step === 'string'}
-                  <span>{step}</span>
-                {:else}
-                  <div class="grid gap-0.5">
-                    <div class="font-semibold">{step.title ?? 'Step'}</div>
-                    <div class="text-[12px] text-slate-400">
-                      {#if step.duration}
-                        <span class="font-mono text-text0">{step.duration}</span>
-                      {/if}
-                      {#if step.target}
-                        <span class="font-mono text-text0">{step.target}</span>
-                      {/if}
-                      {#if step.note}
-                        <span>{step.note}</span>
-                      {/if}
-                    </div>
-                  </div>
-                {/if}
-              </li>
-            {/each}
-          </ol>
-          {#if !(selectedWorkout.blocks?.length || selectedWorkout.structure?.length)}
-            <div class="text-[11px] text-slate-400 mt-3">
-              Scaffolded outline (replace with real blocks when available).
+          {#if sessionDetailContext.contextIsMarkdownTable}
+            <div
+              class="prose prose-invert max-w-none text-[13px] leading-relaxed text-text0 [&_table]:text-[13px]"
+            >
+              {@html renderCoachMarkdownToSafeHtml(sessionDetailContext.displayContext)}
+            </div>
+          {:else}
+            <div class="text-[13px] text-text0 leading-relaxed">
+              {sessionDetailContext.displayContext}
             </div>
           {/if}
         </div>
+
+        {#if !sessionDetailContext.contextIsMarkdownTable}
+          <div class="bg-glass2 border border-border rounded-xl p-4">
+            <div class="text-[12px] text-slate-400 font-mono mb-2">Structure</div>
+            <ol class="list-decimal pl-5 grid gap-2">
+              {#each stepsFor(selectedWorkout) as step, i (i)}
+                <li class="text-[13px] text-text0">
+                  {#if typeof step === 'string'}
+                    <span>{step}</span>
+                  {:else}
+                    <div class="grid gap-0.5">
+                      <div class="font-semibold">{step.title ?? 'Step'}</div>
+                      <div class="text-[12px] text-slate-400">
+                        {#if step.duration}
+                          <span class="font-mono text-text0">{step.duration}</span>
+                        {/if}
+                        {#if step.target}
+                          <span class="font-mono text-text0">{step.target}</span>
+                        {/if}
+                        {#if step.note}
+                          <span>{step.note}</span>
+                        {/if}
+                      </div>
+                    </div>
+                  {/if}
+                </li>
+              {/each}
+            </ol>
+            {#if !(selectedWorkout.blocks?.length || selectedWorkout.structure?.length)}
+              <div class="text-[11px] text-slate-400 mt-3">
+                Scaffolded outline (replace with real blocks when available).
+              </div>
+            {/if}
+          </div>
+        {/if}
       </div>
     </div>
   </div>

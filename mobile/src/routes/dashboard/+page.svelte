@@ -501,11 +501,14 @@
             >
               <div class="flex items-center gap-3 py-2.5 {i < 2 ? 'border-b border-border' : ''}">
                 <div class="w-9 h-9 rounded-xl shrink-0 flex items-center justify-center text-[15px]
-                  {type === 'run' ? 'bg-blue-dim border border-[rgba(70,33,255,0.3)]' : 
+                  {type === 'run' || type === 'running' ? 'bg-blue-dim border border-[rgba(70,33,255,0.3)]' : 
                    type === 'bike' || type === 'cycling' ? 'bg-teal-dim border border-[rgba(0,200,168,0.3)]' : 
-                   type === 'rowing' ? 'bg-amber-dim border border-[rgba(255,203,136,0.3)]' :
+                   type === 'row' || type === 'rowing' ? 'bg-amber-dim border border-[rgba(255,203,136,0.3)]' :
+                   type === 'swim' || type === 'swimming' ? 'bg-glass border border-border' :
+                   type === 'mobility' ? 'bg-glass border border-[rgba(168,85,247,0.35)]' :
+                   type === 'other' ? 'bg-glass border border-[rgba(234,179,8,0.35)]' :
                    'bg-glass border border-border'}">
-                  {type === 'run' ? '🏃' : (type === 'bike' || type === 'cycling') ? '🚴' : type === 'rowing' ? '🚣' : '💪'}
+                  {type === 'run' || type === 'running' ? '🏃' : (type === 'bike' || type === 'cycling') ? '🚴' : type === 'row' || type === 'rowing' ? '🚣' : type === 'swim' || type === 'swimming' ? '🏊' : type === 'mobility' ? '🧘' : '⭐'}
                 </div>
                 <div class="flex-1">
                   <p class="text-[13px] font-medium text-text0">{w.title || (w.sport?.toUpperCase() + ' Session')}</p>

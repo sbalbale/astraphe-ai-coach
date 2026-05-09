@@ -1,18 +1,44 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Any, Literal, Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.dependencies import get_current_athlete, get_user_db
 
 
 router = APIRouter(prefix="/v1/training-plans", tags=["Training Plans"])
 
+# Canonical values match mobile Workout.sport (see mobile/src/lib/types/training.ts).
+_CANONICAL_SPORTS = frozenset(
+    {"run", "bike", "swim", "row", "strength", "mobility", "other"}
+)
+_LEGACY_SPORT = {
+    "running": "run",
+    "cycling": "bike",
+    "swimming": "swim",
+    "rowing": "row",
+}
 
-Sport = Literal["running", "cycling", "swimming", "rowing", "strength"]
+
+def _normalize_plan_sport(raw: object) -> str:
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        return "other"
+    s = str(raw).strip().lower()
+    s = _LEGACY_SPORT.get(s, s)
+    if s not in _CANONICAL_SPORTS:
+        return "other"
+    return s
+
+
+class SubIntervalPayload(BaseModel):
+    name: str = Field(description="'Work', 'Recovery', etc.")
+    duration_minutes: int
+    target_power_percent_ftp: Optional[int] = None
+    target_hr_zone: Optional[int] = None
+    description: Optional[str] = None
 
 
 class IntervalPayload(BaseModel):
@@ -21,19 +47,25 @@ class IntervalPayload(BaseModel):
     target_power_percent_ftp: Optional[int] = Field(default=None, ge=0, le=300)
     target_hr_zone: Optional[int] = Field(default=None, ge=0, le=8)
     description: Optional[str] = None
+    sub_intervals: list[SubIntervalPayload] = Field(default_factory=list)
 
 
 class WorkoutPayload(BaseModel):
     id: Optional[str] = None
     date: str  # ISO YYYY-MM-DD
     title: str
-    sport: Sport
+    sport: str
     primary_zone: str
-    duration_minutes: int = Field(..., ge=1, le=600)
+    duration_minutes: int = Field(..., ge=0, le=600)
     projected_tss: int = Field(..., ge=0, le=2000)
     description: str = ""
     structure: list[IntervalPayload] = Field(default_factory=list)
     completed: bool = False
+
+    @field_validator("sport", mode="before")
+    @classmethod
+    def coerce_sport(cls, v: object) -> str:
+        return _normalize_plan_sport(v)
 
 
 def _to_workout_row(row: dict[str, Any]) -> dict[str, Any]:
@@ -50,7 +82,7 @@ def _to_workout_row(row: dict[str, Any]) -> dict[str, Any]:
         "id": row.get("id"),
         "date": d,
         "title": row.get("title") or "",
-        "sport": (row.get("sport") or "cycling"),
+        "sport": _normalize_plan_sport(row.get("sport")),
         "primary_zone": row.get("primary_zone") or "Endurance",
         "duration_minutes": int(row.get("duration_min") or 0),
         "projected_tss": int(row.get("target_tss") or 0),

@@ -9,7 +9,21 @@
   let maxHR = $state(185);
   let ftp = $state(280);
   let pace = $state('5:00');
-  let sport = $state('running');
+  const LEGACY_SPORT_FOCUS: Record<string, string> = {
+    running: 'run',
+    cycling: 'bike',
+    swimming: 'swim',
+    rowing: 'row',
+    strength: 'strength',
+    mobility: 'mobility'
+  };
+
+  function coerceSportFocus(raw: string): string {
+    const t = raw.toLowerCase();
+    return LEGACY_SPORT_FOCUS[t] ?? t;
+  }
+
+  let sport = $state('run');
   let units = $state<Units>('metric');
   let timeFormat = $state('12h');
   let initialized = $state(false);
@@ -19,9 +33,12 @@
 
   const sportOptions = [
     { value: 'triathlon', label: 'Triathlon' },
-    { value: 'running', label: 'Running' },
-    { value: 'cycling', label: 'Cycling' },
-    { value: 'rowing', label: 'Rowing' }
+    { value: 'run', label: 'Run' },
+    { value: 'bike', label: 'Bike' },
+    { value: 'swim', label: 'Swim' },
+    { value: 'row', label: 'Row' },
+    { value: 'strength', label: 'Strength' },
+    { value: 'mobility', label: 'Mobility' }
   ];
 
   onMount(async () => {
@@ -35,7 +52,7 @@
     maxHR = athleteStore.profile?.max_hr ?? 185;
     ftp = athleteStore.profile?.ftp_watts ?? 280;
     pace = athleteStore.profile?.threshold_pace || '5:00';
-    sport = (athleteStore.profile?.sport_focus?.[0] || 'running').toLowerCase();
+    sport = coerceSportFocus(String(athleteStore.profile?.sport_focus?.[0] || 'run'));
     units = normalizeUnits((athleteStore.profile as any)?.measurement_units);
     timeFormat = (athleteStore.profile as any)?.time_format || '12h';
     initialized = true;

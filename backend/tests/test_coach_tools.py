@@ -1,6 +1,7 @@
 """Unit tests for agentic coach tools and anomaly detection."""
 from __future__ import annotations
 
+import json
 from datetime import date, timedelta
 from typing import Any
 
@@ -153,14 +154,170 @@ def test_schedule_workout_vo2max_inserts_training_plan():
     assert row["status"] == "planned"
     assert row["primary_zone"] == "VO2Max"
     assert isinstance(row.get("structure"), list)
+    struct = row["structure"]
+    assert len(struct) >= 3
+    assert "name" in struct[0] and struct[0]["name"]
+    assert "duration_minutes" in struct[0]
+    assert "sub_intervals" in struct[0]
+    assert isinstance(struct[0]["sub_intervals"], list)
+    assert "phase" not in struct[0]
+    main = struct[1]
+    assert main["name"].lower() == "main"
+    assert len(main["sub_intervals"]) >= 2
     assert out["garmin_push"]["status"] == "stubbed"
     # 45 min * 1.1^2 * (45/60) * 100 ≈ 90.75 TSS
     assert 85 <= float(out["target_tss_estimate"]) <= 95
     strict = out.get("workout_strict") or {}
     assert strict.get("id") == "mock-plan-id"
     assert strict.get("date") == planned
-    assert strict.get("sport") == "cycling"
+    assert strict.get("sport") == "bike"
     assert strict.get("primary_zone") == "VO2Max"
+
+
+def test_schedule_workout_mobility_uses_bodyweight_structure():
+    db = MockCoachDB()
+    planned = (date.today() + timedelta(days=2)).isoformat()
+    out = coach_tools.handle_schedule_workout(
+        {
+            "duration_minutes": 30,
+            "focus_zone": "Recovery",
+            "date": planned,
+            "sport": "yoga",
+        },
+        athlete_id="ath-1",
+        db=db,  # type: ignore[arg-type]
+    )
+    assert "error" not in out
+    assert db.inserts and db.inserts[0][0] == "training_plans"
+    row = db.inserts[0][1]
+    assert row["sport"] == "mobility"
+    struct = row.get("structure") or []
+    assert isinstance(struct, list) and len(struct) >= 1
+    assert "target_watts" not in struct[0]
+    assert "name" in struct[0]
+    assert "phase" not in struct[0]
+
+
+def test_sanitize_workout_structure_maps_hallucinated_keys():
+    raw = [
+        {"phase": "warmup", "duration_min": 10, "description": "Easy spin"},
+        {
+            "name": "Main set",
+            "duration": 30,
+            "intervals": [{"type": "work", "duration_min": 3, "target_hr_zone": 5}],
+        },
+    ]
+    out = coach_tools._sanitize_workout_structure(raw)
+    assert out[0]["name"] == "Warmup"
+    assert out[0]["duration_minutes"] == 10
+    assert "phase" not in out[0]
+    assert out[1]["name"] == "Main set"
+    assert out[1]["duration_minutes"] == 30
+    assert len(out[1]["sub_intervals"]) == 1
+    sub = out[1]["sub_intervals"][0]
+    assert sub["name"] == "Work"
+    assert sub["duration_minutes"] == 3
+    assert sub["target_hr_zone"] == 5
+
+
+def test_schedule_workout_optional_ai_structure_override():
+    db = MockCoachDB()
+    planned = (date.today() + timedelta(days=3)).isoformat()
+    custom = [
+        {
+            "phase": "main",
+            "duration_min": 40,
+            "description": "Custom main",
+            "intervals": [
+                {"type": "work", "duration_min": 5, "target_power_percent_ftp": 95},
+                {"type": "recovery", "duration_min": 2},
+            ],
+        }
+    ]
+    out = coach_tools.handle_schedule_workout(
+        {
+            "duration_minutes": 45,
+            "focus_zone": "Endurance",
+            "date": planned,
+            "sport": "bike",
+            "structure": custom,
+        },
+        athlete_id="ath-1",
+        db=db,  # type: ignore[arg-type]
+    )
+    assert "error" not in out
+    row = db.inserts[0][1]
+    struct = row["structure"]
+    assert len(struct) == 1
+    b = struct[0]
+    assert b["name"] == "Main"
+    assert b["duration_minutes"] == 40
+    assert b["description"] == "Custom main"
+    assert len(b["sub_intervals"]) == 2
+    assert b["sub_intervals"][0]["name"] == "Work"
+    assert b["sub_intervals"][0]["target_power_percent_ftp"] == 95
+    assert b["sub_intervals"][1]["name"] == "Recovery"
+
+
+def test_schedule_workout_empty_structure_list_keeps_generated():
+    db = MockCoachDB()
+    planned = (date.today() + timedelta(days=4)).isoformat()
+    out = coach_tools.handle_schedule_workout(
+        {
+            "duration_minutes": 45,
+            "focus_zone": "VO2Max",
+            "date": planned,
+            "sport": "Bike",
+            "structure": [],
+        },
+        athlete_id="ath-1",
+        db=db,  # type: ignore[arg-type]
+    )
+    assert "error" not in out
+    row = db.inserts[0][1]
+    assert len(row["structure"]) >= 3
+
+
+def test_schedule_workout_markdown_notes_stores_description():
+    db = MockCoachDB()
+    planned = (date.today() + timedelta(days=5)).isoformat()
+    md = "| Interval | Watts |\n|----------|-------|\n| Warmup | 150 |"
+    out = coach_tools.handle_schedule_workout(
+        {
+            "duration_minutes": 45,
+            "focus_zone": "Endurance",
+            "date": planned,
+            "sport": "bike",
+            "markdown_notes": md,
+        },
+        athlete_id="ath-1",
+        db=db,  # type: ignore[arg-type]
+    )
+    assert "error" not in out
+    row = db.inserts[0][1]
+    assert row["description"] == md
+
+
+def test_schedule_workout_without_markdown_notes_keeps_json_description():
+    db = MockCoachDB()
+    planned = (date.today() + timedelta(days=6)).isoformat()
+    out = coach_tools.handle_schedule_workout(
+        {
+            "duration_minutes": 45,
+            "focus_zone": "VO2Max",
+            "date": planned,
+            "sport": "Bike",
+            "markdown_notes": "   ",
+        },
+        athlete_id="ath-1",
+        db=db,  # type: ignore[arg-type]
+    )
+    assert "error" not in out
+    row = db.inserts[0][1]
+    parsed = json.loads(row["description"])
+    assert parsed["sport"] == "bike"
+    assert parsed["focus_zone"] == "VO2Max"
+    assert isinstance(parsed["structure"], list)
 
 
 def test_detect_anomalies_hrv_suppressed():

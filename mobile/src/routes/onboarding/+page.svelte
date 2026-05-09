@@ -11,7 +11,21 @@
   let saving = $state(false);
   let saveError = $state<string | null>(null);
 
-  let sport = $state('running');
+  const LEGACY_SPORT_FOCUS: Record<string, string> = {
+    running: 'run',
+    cycling: 'bike',
+    swimming: 'swim',
+    rowing: 'row',
+    strength: 'strength',
+    mobility: 'mobility'
+  };
+
+  function coerceSportFocus(raw: string): string {
+    const t = raw.toLowerCase();
+    return LEGACY_SPORT_FOCUS[t] ?? t;
+  }
+
+  let sport = $state('run');
   let units = $state<Units>('metric');
   let timeFormat = $state<'12h' | '24h'>('12h');
 
@@ -33,9 +47,12 @@
   let pace = $state(''); // mm:ss
 
   const sportOptions = [
-    { value: 'rowing', label: 'Rowing' },
-    { value: 'cycling', label: 'Cycling' },
-    { value: 'running', label: 'Running' },
+    { value: 'row', label: 'Row' },
+    { value: 'bike', label: 'Bike' },
+    { value: 'swim', label: 'Swim' },
+    { value: 'run', label: 'Run' },
+    { value: 'strength', label: 'Strength' },
+    { value: 'mobility', label: 'Mobility' },
     { value: 'triathlon', label: 'Triathlon' }
   ];
 
@@ -82,7 +99,7 @@
     if (initialized) return;
     const p = athleteStore.profile;
 
-    sport = String(p?.sport_focus?.[0] || 'running').toLowerCase();
+    sport = coerceSportFocus(String(p?.sport_focus?.[0] || 'run'));
     units = normalizeUnits(p?.measurement_units);
     timeFormat = (p?.time_format === '24h' ? '24h' : '12h') as any;
     dob = p?.date_of_birth || '1990-05-15';

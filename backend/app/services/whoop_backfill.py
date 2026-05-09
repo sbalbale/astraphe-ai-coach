@@ -153,6 +153,18 @@ async def backfill_historical_data(athlete_id: str, access_token: str, db: Any =
             sport_name = "run"
         elif sport_name in ("rowing", "row", "rower", "erg", "ergometer"):
             sport_name = "row"
+        elif sport_name in (
+            "yoga",
+            "mobility",
+            "stretching",
+            "stretch",
+            "pilates",
+            "barre",
+            "tai chi",
+            "tai_chi",
+            "meditation",
+        ):
+            sport_name = "mobility"
 
         payload = WorkoutPayload(
             source="whoop",
