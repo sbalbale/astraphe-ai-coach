@@ -209,6 +209,127 @@ async def get_activity_streams(
     return {s["type"]: s for s in streams if isinstance(s, dict) and "type" in s}
 
 
+def compute_500m_splits_from_streams(streams: dict) -> list[dict]:
+    """
+    Derives 500m intervals from raw stream arrays when device laps are unreliable.
+    Returns a list of dicts, each representing one 500m piece.
+    streams: the key_by_type=true response from Strava streams API.
+    """
+    dist = (streams.get("distance") or {}).get("data", [])
+    time_s = (streams.get("time") or {}).get("data", [])
+    hr = (streams.get("heartrate") or {}).get("data", [])
+    watts = (streams.get("watts") or {}).get("data", [])
+    cadence = (streams.get("cadence") or {}).get("data", [])
+    velocity = (streams.get("velocity_smooth") or {}).get("data", [])
+
+    if not dist or not time_s:
+        return []
+
+    total_distance = dist[-1] if dist else 0
+    splits = []
+    piece_start_idx = 0
+    piece_num = 1
+    target = 500.0
+
+    while target <= total_distance + 50:  # +50m tolerance for final piece
+        # Find index where cumulative distance first crosses target
+        end_idx = next(
+            (i for i, d in enumerate(dist) if d >= target),
+            len(dist) - 1,
+        )
+
+        slice_hr = [hr[i] for i in range(piece_start_idx, end_idx + 1) if i < len(hr)]
+        slice_watts = [watts[i] for i in range(piece_start_idx, end_idx + 1) if i < len(watts)]
+        slice_cad = [cadence[i] for i in range(piece_start_idx, end_idx + 1) if i < len(cadence)]
+        slice_vel = [velocity[i] for i in range(piece_start_idx, end_idx + 1) if i < len(velocity)]
+
+        start_time = time_s[piece_start_idx] if piece_start_idx < len(time_s) else 0
+        end_time = time_s[end_idx] if end_idx < len(time_s) else 0
+        elapsed = end_time - start_time
+        piece_dist = dist[end_idx] - dist[piece_start_idx] if piece_start_idx < len(dist) else 500
+
+        # pace in seconds per 500m
+        pace_per_500m = int(elapsed / (piece_dist / 500)) if piece_dist > 0 else 0
+
+        splits.append(
+            {
+                "split_number": piece_num,
+                "distance": round(piece_dist, 1),
+                "elapsed_time": elapsed,
+                "pace_per_500m": pace_per_500m,
+                "average_heartrate": round(sum(slice_hr) / len(slice_hr), 1) if slice_hr else None,
+                "average_watts": round(sum(slice_watts) / len(slice_watts), 1) if slice_watts else None,
+                "average_cadence": round(sum(slice_cad) / len(slice_cad), 1) if slice_cad else None,
+                "average_velocity": round(sum(slice_vel) / len(slice_vel), 3) if slice_vel else None,
+                "start_index": piece_start_idx,
+                "end_index": end_idx,
+                "source": "stream_derived",
+            }
+        )
+
+        piece_start_idx = end_idx + 1
+        target += 500.0
+        piece_num += 1
+
+        if piece_start_idx >= len(dist):
+            break
+
+    return splits
+
+
+def get_rowing_intervals(activity: dict, streams: dict) -> tuple[list[dict], str]:
+    """
+    Returns (intervals, source) for a rowing activity.
+    Prefers device auto-laps (Garmin/Apple Watch 500m auto-lap),
+    falls back to stream-derived 500m splits.
+
+    Returns:
+        intervals: list of 500m piece dicts
+        source: 'laps' | 'stream_derived'
+    """
+    laps = activity.get("laps") or []
+
+    # Filter to laps that look like auto-500m pieces
+    valid_500m = [l for l in laps if 450 <= (l.get("distance") or 0) <= 550]
+
+    # Also filter out rest laps (avg pace worse than 3:30/500m = 210s)
+    # velocity in m/s → 500m pace in seconds = 500 / avg_speed
+    def lap_pace(lap):
+        spd = lap.get("average_speed") or 0
+        return (500 / spd) if spd > 0 else 999
+
+    work_laps = [l for l in valid_500m if lap_pace(l) < 210]
+
+    if len(work_laps) >= len(laps) * 0.6 and len(work_laps) > 0:
+        # Device auto-lapped reliably — convert laps to canonical interval shape
+        intervals = []
+        for i, lap in enumerate(work_laps):
+            spd = lap.get("average_speed") or 0
+            pace = int(500 / spd) if spd > 0 else None
+            intervals.append(
+                {
+                    "split_number": i + 1,
+                    "distance": lap.get("distance"),
+                    "elapsed_time": lap.get("elapsed_time"),
+                    "moving_time": lap.get("moving_time"),
+                    "pace_per_500m": pace,
+                    "average_heartrate": lap.get("average_heartrate"),
+                    "max_heartrate": lap.get("max_heartrate"),
+                    "average_watts": lap.get("average_watts"),
+                    "average_cadence": lap.get("average_cadence"),
+                    "total_elevation_gain": lap.get("total_elevation_gain"),
+                    "start_index": lap.get("start_index"),
+                    "end_index": lap.get("end_index"),
+                    "source": "laps",
+                }
+            )
+        return intervals, "laps"
+
+    # Fallback: derive from streams
+    stream_splits = compute_500m_splits_from_streams(streams)
+    return stream_splits, "stream_derived"
+
+
 async def get_activity_laps(activity_id: int, access_token: str, delay: bool = False) -> list[Any]:
     await _sleep_if_delay(delay)
     url = f"{STRAVA_API_BASE}/activities/{activity_id}/laps"

@@ -547,3 +547,8 @@ def calculate_threshold_hr_est(max_hr: int, resting_hr: int) -> int:
 def normalize_rowing_watts(rowing_watts: float) -> float:
     """Converts average rowing watts to cycling-equivalent watts (~12% metabolic cost uplift)."""
     return round(float(rowing_watts) * 1.12, 2)
+
+
+def estimate_max_hr(age_years: int) -> int:
+    """Tanaka formula — more accurate than 220-age for trained athletes."""
+    return round(208 - (0.7 * age_years))
