@@ -1,0 +1,524 @@
+---
+description: Astrape AI backend design and architecture. Use this rule whenever working on the FastAPI backend — routers, services, models, algorithms, database migrations, OAuth integrations, AI coach logic, tool calling, sanitization, webhooks, or Cloud Run deployment. Always apply when the user mentions TSS/CTL/ATL, Gemma/Gemini, Garmin/WHOOP/Strava, Supabase schema, or any backend Python code for Astrape.
+globs:
+  - "backend/**/*.py"
+  - "backend/migrations/**/*.sql"
+  - "backend/tests/**/*.py"
+  - "backend/Dockerfile"
+  - "backend/requirements.txt"
+alwaysApply: false
+---
+
+# Astrape AI — Backend Design Rules
+
+You are working on the **Astrape AI** backend: a stateless, async **FastAPI** service deployed
+on **Google Cloud Run**. All computation (TSS, CTL, ATL, TSB, readiness scores) happens
+server-side. The client is a Svelte 5 + Capacitor mobile app. You are the mathematical and
+AI orchestration core.
+
+---
+
+## Stack
+
+| Layer | Technology |
+|---|---|
+| Language | Python 3.12 |
+| Framework | FastAPI 0.111+ (async) |
+| Validation | Pydantic v2 |
+| Database | Supabase PostgreSQL + pgvector |
+| Primary AI model | **Gemma 4 26B** (local / self-hosted) |
+| Secondary AI model | **Gemini Flash Lite** (latest — lightweight/fast calls, embeddings) |
+| Compute | NumPy 1.26+ / Pandas 2.x |
+| HTTP client | httpx (async) |
+| Auth | Supabase JWT + python-jose |
+| Deployment | Google Cloud Run (Docker, auto-scale to zero) |
+
+> **Model note:** Do NOT reference Gemini 2.5 Pro anywhere in code or docs. The AI layer
+> uses **Gemma 4 26B** as the primary coaching model and **Gemini Flash Lite (latest)** for
+> lightweight tasks. Never swap these without explicit instruction.
+
+---
+
+## Project Structure
+
+```
+backend/
+├── app/
+│   ├── main.py              # FastAPI app + CORS + router registration
+│   ├── config.py            # pydantic-settings (env vars)
+│   ├── dependencies.py      # get_db(), get_current_athlete() — injected via Depends()
+│   ├── routers/             # One file per resource domain
+│   │   ├── athlete.py       # GET /athlete/state, PATCH /athlete/profile
+│   │   ├── workouts.py      # POST /workouts, GET /workouts
+│   │   ├── biometrics.py    # POST /biometrics, GET /biometrics/summary
+│   │   ├── coach.py         # POST /coach/message (SSE streaming)
+│   │   ├── sync.py          # POST /sync/garmin, /sync/whoop, /sync/strava (webhooks)
+│   │   ├── plan.py          # GET/POST /plan, PATCH /plan/week
+│   │   ├── training_plans.py
+│   │   ├── analysis.py      # GET /analysis/{type}
+│   │   └── debug.py         # Dev-only endpoints (guarded by APP_ENV)
+│   ├── services/
+│   │   ├── algorithms.py    # Pure functions: TSS, CTL, ATL, TSB, Strain, Readiness
+│   │   ├── ai_coach.py      # Gemma/Gemini integration, tool calling, RAG pipeline
+│   │   ├── sanitizer.py     # AI hallucination firewall — validates tool output before DB write
+│   │   ├── garmin.py        # Garmin OAuth 1.0a + webhook ingestion
+│   │   ├── whoop.py         # WHOOP OAuth 2.0 + webhook ingestion
+│   │   └── strava.py        # Strava OAuth 2.0 + webhook ingestion + Streams blob storage
+│   └── models/
+│       ├── athlete.py       # AthleteState, AthleteProfile Pydantic models
+│       ├── workout.py       # WorkoutPayload, WorkoutResponse, IntervalPayload
+│       ├── biometrics.py    # BiometricReading, BiometricSummary
+│       └── schemas.py       # Shared request/response types
+├── migrations/              # SQL files (source of truth — never modify with Supabase Studio)
+├── seeds/                   # dev_athlete.sql (90 days of mock data)
+├── tests/
+├── Dockerfile
+├── cloudbuild.yaml
+└── requirements.txt
+```
+
+---
+
+## Architecture Principles
+
+1. **Stateless API.** Cloud Run instances share nothing. All state lives in Supabase. Never use module-level mutable state.
+2. **Algorithms are pure functions.** `services/algorithms.py` has no DB or HTTP calls. Arrays in, numbers out.
+3. **Routers are thin.** Validate input, call a service, return a Pydantic model. Business logic belongs in `services/`.
+4. **All computation is server-side.** The mobile client NEVER computes TSS, CTL, ATL, or TSB.
+5. **RLS is the second line of defense.** JWT validation in `dependencies.py` is primary.
+6. **AI output is never trusted.** Every AI-generated value written to the DB passes through `services/sanitizer.py` first.
+
+---
+
+## Auth Pattern
+
+Every protected endpoint uses `Depends(get_current_athlete)` from `dependencies.py`.
+
+```python
+# dependencies.py
+security = HTTPBearer()
+
+async def get_current_athlete(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db = Depends(get_db)
+) -> dict:
+    token = credentials.credentials
+    try:
+        payload = jwt.decode(token, settings.SUPABASE_JWT_SECRET, algorithms=["HS256"])
+        user_id: str = payload.get("sub")
+    except JWTError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
+    athlete = await db.table("athletes").select("*").eq("user_id", user_id).single().execute()
+    return athlete.data
+```
+
+---
+
+## Router Pattern
+
+```python
+# routers/workouts.py
+router = APIRouter(prefix="/workouts", tags=["workouts"])
+
+@router.post("", response_model=WorkoutResponse, status_code=201)
+async def ingest_workout(
+    payload: WorkoutPayload,
+    athlete: dict = Depends(get_current_athlete),
+    db = Depends(get_db)
+):
+    tss = _compute_tss(payload, athlete)
+    row = payload.model_dump() | {"athlete_id": athlete["id"], "tss": tss}
+    result = await db.table("workouts").insert(row).execute()
+    await _recompute_athlete_load(athlete["id"], db)
+    return WorkoutResponse(**result.data[0])
+```
+
+---
+
+## AI Agent Architecture
+
+### Output format: XML tags (NOT JSON schema)
+
+Do **not** use `response_schema` or strict Pydantic JSON output — this breaks tool-calling.
+The model responds with XML tags:
+
+```
+<scratchpad>
+  Internal reasoning, tool planning, data analysis...
+</scratchpad>
+<response>
+  The message delivered to the athlete.
+</response>
+```
+
+Parse `<response>...</response>` for the athlete-facing text. Never forward `<scratchpad>` to the client.
+
+### Regex fallback parser
+
+After a heavy batch of tool calls the model may drop its XML tags. Always use this fallback:
+
+```python
+import re
+
+def _extract_athlete_message_from_text(raw_text: str) -> str:
+    # Primary: well-formed XML
+    match = re.search(r"<response>(.*?)</response>", raw_text, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+
+    # Fallback: strip scratchpad, return remainder
+    cleaned = re.sub(r"<scratchpad>.*?</scratchpad>", "", raw_text, flags=re.DOTALL).strip()
+    return cleaned if cleaned else raw_text.strip()
+```
+
+### Unblocking the event loop
+
+Gemma/Gemini SDK calls are synchronous. **Always** wrap the agentic loop in `asyncio.to_thread`
+to keep FastAPI's event loop free for other requests:
+
+```python
+@router.post("/coach/message")
+async def coach_message(payload: CoachMessage, athlete = Depends(get_current_athlete)):
+    result = await asyncio.to_thread(_run_agentic_loop, context, payload.message)
+    return {"response": result}
+```
+
+For SSE streaming, pipe chunks through a thread-safe `asyncio.Queue`.
+
+### Batch scheduling & lazy summaries
+
+When scheduling a full week, instruct the AI to fire all `schedule_workout` tool calls in
+parallel. If the final summary generation times out after tools succeed, catch it gracefully:
+
+```python
+try:
+    summary = await asyncio.to_thread(_generate_week_summary, tool_results)
+except Exception:
+    summary = "Your training week has been scheduled successfully."
+
+return {"response": summary, "workouts_created": len(tool_results)}
+```
+
+### Server-side tool invocations
+
+Set `include_server_side_tool_invocations=True` in `ToolConfig` so the model can use
+built-in tools (e.g. Google Search) alongside custom Python functions in the same turn.
+
+### Context assembly
+
+```python
+context = {
+    "athlete": {
+        "ctl": athlete_state["ctl"],
+        "atl": athlete_state["atl"],
+        "tsb": athlete_state["tsb"],
+        "readiness_score": athlete_state["readiness_score"],
+    },
+    "biometrics": {
+        "hrv_rmssd": today_bio["hrv_rmssd"],
+        "hrv_delta_7d": hrv_delta,       # vs 7-day rolling avg
+        "resting_hr": today_bio["resting_hr"],
+        "sleep_hours": today_bio["sleep_hours"],
+        "recovery_score": today_bio["recovery_score"],
+    },
+    "recent_workouts": last_5_workouts,
+    "rag_memories": pgvector_results,
+}
+```
+
+### Callable AI tools
+- `get_athlete_state(athlete_id)` — re-fetch fresh CTL/ATL/TSB mid-conversation
+- `get_recent_workouts(athlete_id, n)` — last N workouts with TSS
+- `get_sleep_summary(athlete_id, days)` — HRV + sleep trend
+- `schedule_workout(athlete_id, date, sport, duration_minutes, projected_tss, description, markdown_notes, intervals)`
+
+### RAG pipeline
+
+```python
+# Embed with Gemini Flash Lite (cheap + fast, 768 dims)
+query_embedding = embed_with_flash_lite(user_message)
+
+memories = db.rpc("match_coach_memories", {
+    "query_embedding": query_embedding,
+    "athlete_id": athlete_id,
+    "match_count": 5,
+    "similarity_threshold": 0.75
+})
+# After response: embed key insights, persist to coach_memories
+```
+
+---
+
+## Defensive Sanitization Layer (AI Hallucination Firewall)
+
+All AI-generated data written to Supabase **must** pass through `services/sanitizer.py`.
+Call it inside every `handle_schedule_workout` tool handler, before the insert.
+
+```python
+# services/sanitizer.py
+
+KEY_ALIASES = {
+    "phase": "name",
+    "duration_min": "duration_minutes",
+    "target_power": "watts",
+    "interval_type": "type",
+}
+
+def sanitize_workout_payload(raw: dict) -> dict:
+    """Remap hallucinated keys and hard-cast numeric fields before DB insert."""
+    out = {KEY_ALIASES.get(k, k): v for k, v in raw.items()}
+
+    for field in ("duration_minutes", "projected_tss", "watts", "target_hr"):
+        if field in out:
+            try:
+                out[field] = int(out[field])
+            except (TypeError, ValueError):
+                out.pop(field, None)   # drop rather than corrupt
+
+    return out
+```
+
+---
+
+## Markdown Notes for Granular Targets
+
+The `schedule_workout` tool accepts `markdown_notes: str`. The backend writes it directly
+into the `description` column — never parses it. The frontend renders it as Markdown.
+
+```python
+row["description"] = payload.get("markdown_notes", "")
+```
+
+Example AI-generated content:
+```markdown
+| Metric  | Target          |
+|---------|-----------------|
+| Power   | 280–300W        |
+| HR      | Z4 (160–170 bpm)|
+| Cadence | 90–95 rpm       |
+```
+
+---
+
+## Nested Interval Support
+
+`IntervalPayload` supports deep nesting via `sub_intervals`:
+
+```python
+class IntervalPayload(BaseModel):
+    name: str
+    duration_minutes: int
+    intensity: str              # "threshold", "Z4", "recovery", etc.
+    watts: Optional[int] = None
+    target_hr: Optional[int] = None
+    sub_intervals: Optional[list["IntervalPayload"]] = None
+
+IntervalPayload.model_rebuild()   # required for self-referential Pydantic v2
+```
+
+Stored in `training_plans.structure` JSONB. Example:
+```json
+{
+  "intervals": [
+    {
+      "name": "Main Set", "duration_minutes": 36, "intensity": "threshold",
+      "sub_intervals": [
+        {"name": "Work", "duration_minutes": 6, "watts": 285},
+        {"name": "Recovery", "duration_minutes": 3, "watts": 160}
+      ]
+    }
+  ]
+}
+```
+
+---
+
+## Schema Decoupling (Legacy DB ↔ Modern API)
+
+**Do not migrate the DB.** Maintain the mapping in the Pydantic layer only.
+
+| DB column (legacy) | API field (canonical) |
+|---|---|
+| `planned_date` | `date` |
+| `duration_min` | `duration_minutes` |
+| `target_tss` | `projected_tss` |
+
+```python
+class TrainingPlanWorkout(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    date: date = Field(alias="planned_date")
+    duration_minutes: int = Field(alias="duration_min")
+    projected_tss: float = Field(alias="target_tss")
+
+    def to_db_dict(self) -> dict:
+        return {
+            "planned_date": self.date.isoformat(),
+            "duration_min": self.duration_minutes,
+            "target_tss": self.projected_tss,
+        }
+```
+
+---
+
+## Third-Party Integrations
+
+### Strava — event-driven, never poll
+
+```python
+@router.post("/sync/strava")
+async def strava_webhook(request: Request, db = Depends(get_db)):
+    body = await request.body()
+    _verify_hmac(body, request.headers.get("X-Hub-Signature"), settings.STRAVA_WEBHOOK_SECRET)
+
+    event = await request.json()
+    if event.get("aspect_type") == "create" and event.get("object_type") == "activity":
+        asyncio.create_task(_ingest_strava_activity(event["object_id"], db))
+
+    return {"status": "ok"}   # Strava requires 200 within 2 seconds
+```
+
+### Strava Streams → Supabase Storage blob
+
+Second-by-second HR/Watts/Cadence/GPS is stored as a JSON blob, not relational rows.
+Save the path in `workouts.stream_storage_path`.
+
+```python
+async def _store_strava_streams(activity_id: int, streams: dict, storage_client):
+    path = f"strava_streams/{activity_id}.json"
+    await storage_client.from_("activity-streams").upload(path, json.dumps(streams).encode())
+    return path
+```
+
+### Multi-device deduplication
+
+Group events within a **5-minute start window** as the same workout. Source-of-truth hierarchy:
+
+| Data type | Source of truth |
+|---|---|
+| Recovery / Sleep / Strain | **Whoop** |
+| Power / GPS / Cadence | **Strava / Garmin** |
+
+---
+
+## Webhook HMAC Validation (All Providers)
+
+Reject failing webhooks with `403`. Never process an unverified payload.
+
+```python
+def _verify_hmac(body: bytes, signature: str, secret: str):
+    expected = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, signature.removeprefix("sha256=")):
+        raise HTTPException(status_code=403, detail="Invalid webhook signature")
+```
+
+---
+
+## Algorithm Conventions (`services/algorithms.py`)
+
+Pure NumPy only. No I/O. Round all outputs to 2 decimal places.
+
+**Cycling TSS:** `(duration_sec × NP × IF) / (FTP × 3600) × 100` where `IF = NP / FTP`
+
+**Running TSS (rTSS):** `IF = threshold_pace_sec_km / avg_pace_sec_km`; `TSS = duration_hours × IF² × 100`
+
+**CTL (42d EWMA, cold-start seeded):**
+```python
+alpha = 1 - exp(-1/42)
+ctl[0] = (historical_avg × (1-alpha)) + (tss[0] × alpha)   # never cold-start at 0
+ctl[i] = ctl[i-1] × (1-alpha) + tss[i] × alpha
+```
+
+**ATL:** same with `time_constant=7`
+
+**TSB:** `CTL_yesterday - ATL_yesterday`
+
+**Readiness (sigmoid):** `100 / (1 + exp(-k × tsb))` — TSB=0 maps to 50
+
+**Strain (logarithmic):**
+- Zone coefficients Z1–Z5: `[0.5, 1.0, 2.0, 4.0, 8.0]`
+- `raw = Σ(zone_minutes[z] × coeff[z])`; strength workouts: `raw *= 1.15`
+- `score = 100 × log(raw+1) / log(MAX_RAW_24H+1)`
+
+---
+
+## Database Schema (Key Tables)
+
+**`athletes`** — id, user_id, display_name, ftp, max_hr, resting_hr, weight_kg, training_zones JSONB
+
+**`workouts`** — id, athlete_id, source, sport, started_at, duration_seconds, distance_m, avg_hr, norm_power_w, avg_pace_sec_km, tss, hr_zone_{0-5}_pct, `stream_storage_path TEXT`
+
+**`biometrics`** — id, athlete_id, date, hrv_rmssd, resting_hr, sleep_hours, sleep_score, recovery_score, body_temp_c, source
+
+**`tss_history`** — id, athlete_id, date, tss, ctl, atl, tsb — `UNIQUE(athlete_id, date)`
+
+**`training_plans`** — id, athlete_id, `planned_date` DATE, `duration_min` INT, `target_tss` NUMERIC, sport, `description TEXT` (Markdown notes), `structure JSONB` (nested intervals)
+
+**`coach_memories`** — id, athlete_id, memory_type, content, context_ctl, context_tsb, context_date, `embedding vector(768)` — HNSW cosine index (`m=16, ef_construction=64`)
+
+**`oauth_tokens`** — id, athlete_id, provider, access_token (encrypted via Vault), refresh_token (encrypted), expires_at
+
+**RLS on every table:**
+```sql
+USING (athlete_id IN (SELECT id FROM athletes WHERE user_id = auth.uid()))
+```
+
+---
+
+## Config (`config.py`)
+
+```python
+class Settings(BaseSettings):
+    SUPABASE_URL: str
+    SUPABASE_ANON_KEY: str
+    SUPABASE_SERVICE_ROLE_KEY: str
+    SUPABASE_JWT_SECRET: str
+    GEMINI_API_KEY: str          # Gemini Flash Lite only
+    GARMIN_CONSUMER_KEY: str
+    GARMIN_CONSUMER_SECRET: str
+    GARMIN_WEBHOOK_SECRET: str
+    WHOOP_CLIENT_ID: str
+    WHOOP_CLIENT_SECRET: str
+    STRAVA_CLIENT_ID: str
+    STRAVA_CLIENT_SECRET: str
+    STRAVA_WEBHOOK_SECRET: str
+    APP_ENV: str = "development"
+    APP_BASE_URL: str = "http://localhost:8000"
+
+    class Config:
+        env_file = ".env"
+```
+
+Never hardcode secrets. Cloud Run reads them from **Secret Manager**.
+
+---
+
+## Common Patterns
+
+| Pattern | Correct |
+|---|---|
+| DB access | `Depends(get_db)` — never a module-level client |
+| Error handling | `HTTPException(status_code=..., detail=str)` only |
+| Logging | `logging.getLogger(__name__)` — never `print()` in prod |
+| Numeric rounding | `round(value, 2)` on all TSS/CTL/ATL/TSB outputs |
+| Async | All I/O must be `async def`; sync SDK calls → `asyncio.to_thread` |
+| AI output → DB | Always through `services/sanitizer.py` first |
+| Strava streams | Supabase Storage blob — never relational rows |
+| Secrets | `settings.*` only — never `os.environ` directly |
+
+---
+
+## Anti-Patterns — Never Do These
+
+- ❌ `response_schema` / strict JSON output with tool-calling → use XML tags
+- ❌ Calling Gemma/Gemini SDK synchronously in an async route → use `asyncio.to_thread`
+- ❌ Writing AI-generated data to Supabase without `sanitizer.py`
+- ❌ Polling Strava for new activities → use `activity.create` webhook
+- ❌ Storing Strava stream data as relational rows → use Supabase Storage blobs
+- ❌ Treating Whoop as source of truth for power/GPS → Strava/Garmin owns those fields
+- ❌ Referencing Gemini 2.5 Pro → model is **Gemma 4 26B** + **Gemini Flash Lite**
+- ❌ Computing TSS/CTL/ATL/TSB in the mobile client
+- ❌ Skipping HMAC validation on any webhook endpoint
+- ❌ Storing OAuth tokens in plaintext → use Supabase Vault encryption
+- ❌ Cold-starting CTL from 0 → use the average-seeding strategy
+- ❌ DB migrations to rename legacy columns → use Pydantic `Field(alias=...)` mapping

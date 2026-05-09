@@ -7,7 +7,6 @@ ASTRAPE is a multi-source, AI-driven health and fitness coaching platform that i
 ![Svelte](https://img.shields.io/badge/Svelte-5-FF3E00?logo=svelte&logoColor=white)
 ![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.111-009688?logo=fastapi&logoColor=white)
-![Gemini](https://img.shields.io/badge/Gemini 2.5 Pro-4285F4?logo=google&logoColor=white)
 ![Supabase](https://img.shields.io/badge/Supabase-PostgreSQL-3ECF8E?logo=supabase&logoColor=white)
 ![Cloud Run](https://img.shields.io/badge/Google_Cloud-Run-4285F4?logo=googlecloud&logoColor=white)
 
@@ -24,7 +23,7 @@ Rather than trusting a single device, ASTRAPE ingests heart rate, HRV, sleep sta
 TSS, CTL, ATL, and TSB are computed server-side using NumPy-vectorized operations over rolling windows. Recovery and strain scores are derived from transparent, auditable weighted multi-factor models — not black-box device algorithms.
 
 **3. Speaks like a coach, thinks like a physiologist.**
-The ASTRAPE AI agent (Gemini 2.5 Pro) receives structured athletic context on every query — CTL, HRV trend, sleep debt, TSB position — and responds with concise, data-anchored recommendations. Every answer references at least one real number from the athlete's actual data.
+The ASTRAPE AI agent receives structured athletic context on every query — CTL, HRV trend, sleep debt, TSB position — and responds with concise, data-anchored recommendations. Every answer references at least one real number from the athlete's actual data.
 
 ---
 
@@ -43,8 +42,8 @@ The ASTRAPE AI agent (Gemini 2.5 Pro) receives structured athletic context on ev
 └──────┬──────────────┬────────────┬──────┘
        │              │            │
   ┌────▼────┐  ┌──────▼──────┐  ┌─▼──────────────┐
-  │ Gemini  │  │ Garmin API  │  │    Supabase     │
-  │ 2.5 Pro │  │ WHOOP API   │  │ PostgreSQL      │
+  │         │  │ Garmin API  │  │    Supabase     │
+  │         │  │ WHOOP API   │  │ PostgreSQL      │
   │ RAG +   │  │ HealthKit   │  │ pgvector · RLS  │
   │ Fn Call │  │ (on-device) │  │ Realtime        │
   └─────────┘  └─────────────┘  └────────────────┘
