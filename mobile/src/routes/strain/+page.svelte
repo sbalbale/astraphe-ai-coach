@@ -121,33 +121,40 @@
 
   function getWorkoutIcon(type: string) {
     const t = type?.toLowerCase();
-    if (t === 'run') return '🏃';
+    if (t === 'run' || t === 'running') return '🏃';
     if (t === 'bike' || t === 'cycling') return '🚴';
-    if (t === 'rowing') return '🚣';
-    if (t === 'swim') return '🏊';
+    if (t === 'row' || t === 'rowing') return '🚣';
+    if (t === 'swim' || t === 'swimming') return '🏊';
     if (t === 'strength' || t === 'strength_training' || t === 'gym') return '💪';
-    return '🏋️';
+    if (t === 'mobility') return '🧘';
+    return '⭐';
   }
 
   function getWorkoutLabel(type: string) {
     const t = type?.toLowerCase();
     if (t === 'strength_training' || t === 'strength' || t === 'gym') return 'Strength';
+    if (t === 'mobility') return 'Mobility';
+    if (t === 'other') return 'Other';
     return t ? t.charAt(0).toUpperCase() + t.slice(1) : 'Workout';
   }
 
   function getWorkoutColor(type: string) {
     const t = type?.toLowerCase();
-    if (t === 'run') return 'var(--blue)';
+    if (t === 'run' || t === 'running') return 'var(--blue)';
     if (t === 'bike' || t === 'cycling') return 'var(--teal)';
-    if (t === 'rowing') return 'var(--amber)';
+    if (t === 'row' || t === 'rowing') return 'var(--amber)';
+    if (t === 'mobility') return '#a855f7';
+    if (t === 'other') return 'var(--amber)';
     return 'var(--text2)';
   }
 
   function getWorkoutBg(type: string) {
     const t = type?.toLowerCase();
-    if (t === 'run') return 'bg-blue-dim border-blue-glow';
+    if (t === 'run' || t === 'running') return 'bg-blue-dim border-blue-glow';
     if (t === 'bike' || t === 'cycling') return 'bg-teal-dim border-[rgba(0,200,168,0.3)]';
-    if (t === 'rowing') return 'bg-amber-dim border-[rgba(255,203,136,0.3)]';
+    if (t === 'row' || t === 'rowing') return 'bg-amber-dim border-[rgba(255,203,136,0.3)]';
+    if (t === 'mobility') return 'bg-glass border-[rgba(168,85,247,0.35)]';
+    if (t === 'other') return 'bg-glass border-[rgba(234,179,8,0.35)]';
     return 'bg-glass border-border';
   }
 

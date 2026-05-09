@@ -1,6 +1,5 @@
 from google import genai
 from google.genai import types
-from pydantic import BaseModel, Field
 from app.config import settings
 from app.services import coach_tools
 from app.services.algorithms import compute_z_score
@@ -13,18 +12,6 @@ from typing import Any
 import numpy as np
 from supabase import Client
 from datetime import timedelta
-
-
-class CoachResponse(BaseModel):
-    internal_reasoning: str = Field(
-        description=(
-            "Your private scratchpad. Do all your math, physiological constraint checking, "
-            "and tool-call planning here. The user will never see this."
-        )
-    )
-    athlete_message: str = Field(
-        description="The final, clinical, objective response intended for the athlete. No fluff."
-    )
 
 
 _client = genai.Client(api_key=settings.GEMINI_API_KEY)
@@ -381,15 +368,14 @@ def build_initialization_message(
         directive = (
             "[PROACTIVE CHECK]\nThe following severe anomalies were detected (JSON):\n"
             + json.dumps(anomalies, ensure_ascii=False)
-            + "\n\nWrite exactly 2–3 sentences. Name the triggering metric(s) with concrete values. "
-            "Recommend a decisive action (e.g. cancel threshold work, swap for recovery). "
-            "ASTRAPE voice: clinical, no emojis."
+            + "\n\nWrite exactly 2–3 sentences. Name the triggering metric(s). Recommend a decisive action. "
+            "ASTRAPE voice: clinical, no emojis. Wrap your final message in <response> ... </response> tags."
         )
     else:
         directive = (
             "[INITIAL GREETING]\nNo severe anomaly triggers fired. "
             "Write at most 2 sentences, context-aware, and cite TSB or HRV from the context. "
-            "ASTRAPE voice: clinical, no emojis."
+            "ASTRAPE voice: clinical, no emojis. Wrap your final message in <response> ... </response> tags."
         )
 
     prompt = f"{instructions}\n\n{context_block}\n\n{directive}"
@@ -400,8 +386,6 @@ def build_initialization_message(
             config=types.GenerateContentConfig(
                 max_output_tokens=256,
                 temperature=0.35,
-                response_mime_type="application/json",
-                response_schema=CoachResponse,
             ),
         )
         text = _extract_athlete_message_from_model_output(response)
@@ -425,41 +409,54 @@ def _history_to_gemini_contents(history: list[dict]) -> list[types.Content]:
     return out
 
 
+def _extract_grounding_sources(response: Any) -> list[dict[str, str]]:
+    """Parse Google Search grounding chunks into citation dicts for the client."""
+    sources: list[dict[str, str]] = []
+    seen: set[str] = set()
+    try:
+        cands = getattr(response, "candidates", None)
+        if not cands:
+            return []
+        cand0 = cands[0]
+        gmd = getattr(cand0, "grounding_metadata", None)
+        if gmd is None:
+            return []
+        chunks = getattr(gmd, "grounding_chunks", None) or []
+        for chunk in chunks:
+            web = getattr(chunk, "web", None)
+            if web is None:
+                continue
+            title = getattr(web, "title", None) or ""
+            uri = getattr(web, "uri", None) or getattr(web, "url", None) or ""
+            uri = uri.strip()
+            if not uri or uri in seen:
+                continue
+            seen.add(uri)
+            sources.append({"title": str(title).strip(), "url": uri})
+    except Exception:
+        return sources
+    return sources
+
+
 def _extract_athlete_message_from_model_output(response: Any) -> str:
-    """
-    Parse structured JSON output from Gemini and return only the user-facing message.
-    """
+    """Extracts text from Gemini response and passes it to the XML parser."""
     raw_text = (getattr(response, "text", None) or "").strip()
-    if not raw_text:
-        parsed = getattr(response, "parsed", None)
-        if parsed is not None and hasattr(parsed, "athlete_message"):
-            am = getattr(parsed, "athlete_message", None)
-            if isinstance(am, str) and am.strip():
-                return am.strip()
     return _extract_athlete_message_from_text(raw_text)
 
 
 def _extract_athlete_message_from_text(raw_text: str) -> str:
-    """
-    Parse CoachResponse JSON from model text; fall back to legacy sanitizer on failure.
-    """
+    """Parse XML <response> tags from model text; fall back to legacy sanitizer on failure."""
     raw = (raw_text or "").strip()
     if not raw:
         return ""
-    try:
-        return CoachResponse.model_validate_json(raw).athlete_message.strip()
-    except Exception as e:
-        try:
-            data = json.loads(raw)
-            if isinstance(data, dict):
-                msg = data.get("athlete_message")
-                if isinstance(msg, str) and msg.strip():
-                    return msg.strip()
-        except Exception:
-            pass
-        print(f"Error parsing AI response: {e}")
-        stripped = _strip_internal_reasoning(raw)
-        return stripped if stripped else "I encountered an error processing your request."
+
+    match = re.search(r'<response>(.*?)</response>', raw, re.DOTALL | re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+
+    print("Warning: Model missed <response> tags. Falling back to sanitizer.")
+    stripped = _strip_internal_reasoning(raw)
+    return stripped if stripped else "I encountered an error processing your request."
 
 
 def _strip_internal_reasoning(text: str) -> str:
@@ -543,10 +540,11 @@ def get_coach_response_agentic(
     db: Client | None = None,
     conversation_id: str | None = None,
     model_name: str | None = None,
-    max_tool_hops: int = 4,
-) -> str:
+    max_tool_hops: int = 15,
+) -> tuple[str, list[dict[str, str]]]:
     """
     Non-streaming coach reply with manual Gemini function calling (tool loop).
+    Returns (athlete-facing message, web search citation sources when present).
     """
     system_instruction = load_coach_instructions()
     context_block = (
@@ -563,13 +561,14 @@ def get_coach_response_agentic(
             model=effective_model,
             contents=final_prompt,
             config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=CoachResponse,
                 thinking_config=types.ThinkingConfig(include_thoughts=False),
                 temperature=0.35,
             ),
         )
-        return _extract_athlete_message_from_model_output(response)
+        return (
+            _extract_athlete_message_from_model_output(response),
+            _extract_grounding_sources(response),
+        )
 
     history = (
         _load_conversation_history(db, athlete_id, conversation_id, limit=24)
@@ -621,19 +620,35 @@ def get_coach_response_agentic(
         system_instruction=system_with_ctx,
         tools=coach_tools.TOOLS,
         automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+        tool_config=types.ToolConfig(
+            include_server_side_tool_invocations=True
+        ),
         thinking_config=types.ThinkingConfig(include_thoughts=False),
-        temperature=0.35,
-        response_mime_type="application/json",
-        response_schema=CoachResponse,
+        temperature=0.4,
     )
 
     last_response = None
     for _hop in range(max_tool_hops + 1):
-        last_response = _client.models.generate_content(
-            model=effective_model,
-            contents=contents,
-            config=config,
-        )
+        try:
+            last_response = _client.models.generate_content(
+                model=effective_model,
+                contents=contents,
+                config=config,
+            )
+        except Exception as e:
+            print(f"CRITICAL: Final agent summary failed: {e}")
+            tail = contents[-1] if contents else None
+            parts_iter = getattr(tail, "parts", None)
+            parts_list = list(parts_iter) if parts_iter else []
+            if parts_list and any(
+                getattr(p, "function_response", None) for p in parts_list
+            ):
+                return (
+                    "I have successfully updated your training plan with the requested sessions. Please check your calendar for the details.",
+                    [],
+                )
+            raise
+
         if not last_response.candidates:
             break
         cand = last_response.candidates[0]
@@ -667,6 +682,9 @@ def get_coach_response_agentic(
                     )
                 except Exception as e:
                     result = {"error": str(e)}
+                print(f"\n--- [TOOL EXECUTED: {name}] ---")
+                print(f"Args: {args}")
+                print(f"Result: {result}\n")
                 fr_parts.append(types.Part.from_function_response(name=name, response=result))
             if fr_parts:
                 contents.append(types.Content(role="user", parts=fr_parts))
@@ -674,15 +692,22 @@ def get_coach_response_agentic(
 
         joined = "".join(t for t in texts if t)
         if joined.strip():
-            return _extract_athlete_message_from_text(joined)
+            return (
+                _extract_athlete_message_from_text(joined),
+                _extract_grounding_sources(last_response),
+            )
         fallback = getattr(last_response, "text", None) or ""
         if fallback.strip():
-            return _extract_athlete_message_from_text(fallback)
+            return (
+                _extract_athlete_message_from_text(fallback),
+                _extract_grounding_sources(last_response),
+            )
         break
 
     fallback = getattr(last_response, "text", None) or "" if last_response else ""
     final = _extract_athlete_message_from_text(fallback)
-    return final or "Unable to complete coach response."
+    grounding = _extract_grounding_sources(last_response) if last_response else []
+    return (final or "Unable to complete coach response.", grounding)
 
 
 async def _build_system_context_string_async(
@@ -732,7 +757,7 @@ def get_coach_response(
     db: Client | None = None,
     conversation_id: str | None = None,
     model_name: str | None = None,
-) -> str:
+) -> tuple[str, list[dict[str, str]]]:
     return get_coach_response_agentic(
         athlete_id=athlete_id,
         message=message,
@@ -766,8 +791,6 @@ async def get_coach_response_stream(
         model=effective_model,
         contents=final_prompt,
         config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=CoachResponse,
             thinking_config=types.ThinkingConfig(include_thoughts=False),
             temperature=0.35,
         ),

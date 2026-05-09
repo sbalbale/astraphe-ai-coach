@@ -4,13 +4,13 @@ from pydantic import BaseModel
 from typing import Optional, List
 import asyncio
 import json
+import traceback
 from datetime import datetime
 
 from app.services.ai_coach import (
     build_initialization_message,
     generate_coach_conversation_title,
     get_coach_response,
-    get_coach_response_stream,
 )
 from app.dependencies import get_current_athlete, get_current_gemini_model, get_current_user_tier, get_user_db
 
@@ -218,7 +218,8 @@ async def chat_with_coach(
     try:
         conversation_id = payload.conversation_id or _create_conversation(db, athlete_id, title=None)
         _insert_message(db, athlete_id, conversation_id, role="user", content=payload.message, image_urls=payload.image_urls)
-        coach_reply = get_coach_response(
+        coach_reply, coach_sources = await asyncio.to_thread(
+            get_coach_response,
             athlete_id=athlete_id,
             message=payload.message,
             current_tss=payload.recent_tss,
@@ -234,8 +235,16 @@ async def chat_with_coach(
             _force_set_conversation_title(db, athlete_id, conversation_id, new_title)
         except Exception:
             pass
-        return {"status": "success", "conversation_id": conversation_id, "reply": coach_reply}
+        return {
+            "status": "success",
+            "conversation_id": conversation_id,
+            "reply": coach_reply,
+            "sources": coach_sources,
+        }
     except Exception as e:
+        print("--- AI COACH CRASH LOG ---")
+        traceback.print_exc()
+        print("--------------------------")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/stream")
@@ -260,8 +269,9 @@ async def stream_chat_with_coach(
         # v1 streaming: run the same agentic tool loop as /message, then stream the final text.
         # (Tool-call events are intentionally not streamed in this iteration.)
         ai_full = ""
+        ai_sources: list = []
         try:
-            ai_full = await asyncio.to_thread(
+            ai_full, ai_sources = await asyncio.to_thread(
                 get_coach_response,
                 athlete_id,
                 payload.message,
@@ -279,6 +289,7 @@ async def stream_chat_with_coach(
             for i in range(0, len(ai_full), chunk_size):
                 chunk = ai_full[i : i + chunk_size]
                 yield f"data: {json.dumps({'text': chunk})}\n\n"
+            yield f"data: {json.dumps({'sources': ai_sources or []})}\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
         else:

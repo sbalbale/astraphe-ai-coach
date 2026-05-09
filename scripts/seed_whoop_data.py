@@ -169,6 +169,8 @@ def map_activity(name: str) -> str:
         return "swim"
     if any(k in n for k in ("strength", "lift", "weight", "gym", "crossfit")):
         return "gym"
+    if any(k in n for k in ("yoga", "mobility", "stretch", "pilates", "barre", "meditation")):
+        return "mobility"
     return "other"
 
 

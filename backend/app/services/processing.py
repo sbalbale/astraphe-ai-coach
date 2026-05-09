@@ -143,7 +143,9 @@ def process_and_save_workout(payload: WorkoutPayload, athlete_id: str, db):
     sport = payload.workout_type.lower()
     if sport in ("gym", "strength_training"):
         sport = "strength"
-    
+    elif sport in ("mobility", "yoga", "stretching", "stretch", "pilates"):
+        sport = "mobility"
+
     hr_zones = {
         1: payload.hr_zone_1_pct,
         2: payload.hr_zone_2_pct,
@@ -160,9 +162,8 @@ def process_and_save_workout(payload: WorkoutPayload, athlete_id: str, db):
         except Exception:
             hr_zone_0_pct = None
 
-    # Map sport to internal enum conventions.
-    # DB constraint for workouts.sport allows: run|bike|swim|strength|rowing|other.
-    mapped_sport = sport if sport in ("run", "bike", "swim", "strength", "row") else "other"
+    # Map sport to internal enum conventions (see workouts_sport_check migration).
+    mapped_sport = sport if sport in ("run", "bike", "swim", "strength", "row", "mobility") else "other"
     if sport == "cycling":
         mapped_sport = "bike"
 

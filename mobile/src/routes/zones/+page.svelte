@@ -107,17 +107,28 @@
     { id: 'bike', label: '🚴 Bike' },
     { id: 'swim', label: '🏊 Swim' },
     { id: 'strength', label: '💪 Strength' },
-    { id: 'rowing', label: '🚣 Row' },
+    { id: 'mobility', label: '🧘 Mobility' },
+    { id: 'row', label: '🚣 Row' },
     { id: 'other', label: '🏁 Other' }
   ];
 
+  const sportAliases: Record<string, string[]> = {
+    run: ['run', 'running'],
+    bike: ['bike', 'cycling'],
+    swim: ['swim', 'swimming'],
+    row: ['row', 'rowing'],
+    mobility: ['mobility', 'yoga', 'stretching', 'stretch', 'pilates']
+  };
+
   const sportFilteredWorkouts = $derived(
-    sport === 'all' 
-      ? athleteStore.workouts 
-      : athleteStore.workouts.filter(w => {
+    sport === 'all'
+      ? athleteStore.workouts
+      : athleteStore.workouts.filter((w) => {
           const s = w.sport?.toLowerCase();
-          // Backward compatibility for older rows.
+          if (!s) return false;
           if (sport === 'strength') return s === 'strength' || s === 'strength_training' || s === 'gym';
+          const aliases = sportAliases[sport];
+          if (aliases) return aliases.includes(s);
           return s === sport;
         })
   );

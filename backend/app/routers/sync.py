@@ -634,7 +634,19 @@ def get_athlete_by_garmin_id(db, garmin_id: str):
 
 def map_garmin_sport(garmin_type: str) -> str:
     """Maps Garmin sports to internal enums."""
-    mapping = {"RUNNING": "run", "CYCLING": "bike", "SWIMMING": "swim", "STRENGTH_TRAINING": "strength"}
+    mapping = {
+        "RUNNING": "run",
+        "CYCLING": "bike",
+        "SWIMMING": "swim",
+        "STRENGTH_TRAINING": "strength",
+        "YOGA": "mobility",
+        "PILATES": "mobility",
+        "MEDITATION": "mobility",
+        "BREATHING": "mobility",
+        "TAI_CHI": "mobility",
+        "STRETCHING": "mobility",
+        "MOBILITY": "mobility",
+    }
     return mapping.get(garmin_type, "other")
 
 def map_whoop_sport(sport: object) -> str:
@@ -652,6 +664,18 @@ def map_whoop_sport(sport: object) -> str:
             return "swim"
         if s in ("rowing", "row"):
             return "row"
+        if s in (
+            "yoga",
+            "mobility",
+            "stretching",
+            "stretch",
+            "pilates",
+            "barre",
+            "tai chi",
+            "tai_chi",
+            "meditation",
+        ):
+            return "mobility"
         # If it's a numeric string, fall through to id mapping.
         if s.isdigit():
             sport = int(s)
@@ -665,6 +689,7 @@ def map_whoop_sport(sport: object) -> str:
             8: "bike",
             66: "strength",   # WHOOP strength/weightlifting
             70: "swim",
+            44: "mobility",   # Yoga (WHOOP sport id)
         }
         return mapping.get(sport, "other")
 

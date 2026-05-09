@@ -23,7 +23,7 @@ ZONE_IF: dict[str, float] = {
 }
 
 FOCUS_ZONES = tuple(ZONE_IF.keys())
-DEFAULT_SPORT = "Bike"
+DEFAULT_SPORT = "other"
 
 
 def _parse_iso_date(s: str) -> date:
@@ -151,6 +151,83 @@ def handle_simulate_training_impact(
     }
 
 
+def _workout_structure_bodyweight(
+    focus_zone: str,
+    duration_minutes: int,
+    thr_hr: int | None,
+    max_hr: int | None,
+    resting_hr: int | None,
+    sport: str,
+) -> dict[str, Any]:
+    """
+    Mobility / strength sessions without power targets (no FTP-based watts).
+    """
+    d = max(15, int(duration_minutes))
+    wu = max(5, int(round(d * 0.18)))
+    cd = max(5, int(round(d * 0.15)))
+    main = max(5, d - wu - cd)
+
+    def hr_band(lo_pct: float, hi_pct: float) -> dict[str, int] | None:
+        if not all([thr_hr, max_hr, resting_hr]):
+            return None
+        hrr = max_hr - resting_hr
+        if hrr <= 0:
+            return None
+        return {
+            "hr_low": int(resting_hr + lo_pct * hrr),
+            "hr_high": int(resting_hr + hi_pct * hrr),
+        }
+
+    if sport == "mobility":
+        main_desc = {
+            "Recovery": "Easy flow: breath-led mobility, joint circles, light range-of-motion work",
+            "Endurance": "Sustained mobility circuit: longer holds and repeated patterns without fatigue",
+            "Tempo": "Dynamic mobility with controlled tempo; stay smooth, not ballistic",
+            "Threshold": "Challenging mobility flows; brief quality-focused efforts with full rest",
+            "VO2Max": "Short explosive mobility bouts with generous recovery between rounds",
+        }.get(focus_zone, "Main mobility work")
+        warmup_desc = "Breath and joint prep; gradual range expansion"
+        cooldown_desc = "Down-shift: static holds and parasympathetic breathing"
+    else:
+        main_desc = {
+            "Recovery": "Light movement prep and technique work; very submaximal loads",
+            "Endurance": "Muscular endurance strength circuit; controlled reps, steady tempo",
+            "Tempo": "Moderate-load strength work with consistent tempo",
+            "Threshold": "Heavier compound work; quality sets near challenging loads",
+            "VO2Max": "Power or explosive primitives; low reps, full recovery between sets",
+        }.get(focus_zone, "Main strength work")
+        warmup_desc = "General warmup: activation and patterning"
+        cooldown_desc = "Easy cooldown and mobility flush"
+
+    blocks: list[dict[str, Any]] = [
+        {
+            "phase": "warmup",
+            "duration_min": wu,
+            "description": warmup_desc,
+            "target_hr": hr_band(0.45, 0.65),
+        },
+        {
+            "phase": "main",
+            "duration_min": main,
+            "description": main_desc,
+            "target_hr": hr_band(0.50, 0.72),
+        },
+        {
+            "phase": "cooldown",
+            "duration_min": cd,
+            "description": cooldown_desc,
+            "target_hr": hr_band(0.45, 0.60),
+        },
+    ]
+
+    return {
+        "sport": sport,
+        "focus_zone": focus_zone,
+        "duration_minutes": d,
+        "structure": blocks,
+    }
+
+
 def _workout_structure(
     focus_zone: str,
     duration_minutes: int,
@@ -161,6 +238,10 @@ def _workout_structure(
     sport: str,
 ) -> dict[str, Any]:
     """Build a structured JSON workout (warmup / main / cooldown)."""
+    if sport in ("mobility", "strength"):
+        return _workout_structure_bodyweight(
+            focus_zone, duration_minutes, thr_hr, max_hr, resting_hr, sport
+        )
     d = max(15, int(duration_minutes))
     wu = max(5, int(round(d * 0.15)))
     cd = max(5, int(round(d * 0.15)))
@@ -292,6 +373,68 @@ def _workout_structure(
     }
 
 
+def _sanitize_workout_structure(raw_structure: Any) -> list[dict[str, Any]]:
+    """Normalize legacy generator blocks and AI tool output to canonical interval shape."""
+    if not isinstance(raw_structure, list):
+        return []
+    clean_structure: list[dict[str, Any]] = []
+
+    for block in raw_structure:
+        if not isinstance(block, dict):
+            continue
+
+        duration = block.get("duration_minutes") or block.get("duration_min") or block.get("duration") or 0
+        try:
+            duration = int(duration)
+        except (TypeError, ValueError):
+            duration = 0
+
+        name = block.get("name") or block.get("phase") or block.get("type") or "Step"
+
+        clean_block: dict[str, Any] = {
+            "name": str(name).capitalize(),
+            "duration_minutes": duration,
+            "description": str(block.get("description") or ""),
+            "sub_intervals": [],
+        }
+
+        for key in ("target_power_percent_ftp", "target_hr_zone"):
+            if key in block:
+                try:
+                    clean_block[key] = int(block[key])
+                except (TypeError, ValueError):
+                    pass
+
+        raw_subs = block.get("sub_intervals") or block.get("intervals") or []
+        if isinstance(raw_subs, list):
+            for sub in raw_subs:
+                if not isinstance(sub, dict):
+                    continue
+                sub_dur = sub.get("duration_minutes") or sub.get("duration_min") or sub.get("duration") or 0
+                try:
+                    sub_dur_int = int(sub_dur)
+                except (TypeError, ValueError):
+                    sub_dur_int = 0
+                sub_name = sub.get("name") or sub.get("type") or "Interval"
+
+                clean_sub: dict[str, Any] = {
+                    "name": str(sub_name).capitalize(),
+                    "duration_minutes": sub_dur_int,
+                    "description": str(sub.get("description") or ""),
+                }
+                for key in ("target_power_percent_ftp", "target_hr_zone"):
+                    if key in sub:
+                        try:
+                            clean_sub[key] = int(sub[key])
+                        except (TypeError, ValueError):
+                            pass
+                clean_block["sub_intervals"].append(clean_sub)
+
+        clean_structure.append(clean_block)
+
+    return clean_structure
+
+
 def handle_schedule_workout(
     args: dict[str, Any],
     *,
@@ -318,20 +461,21 @@ def handle_schedule_workout(
     raw_sport = str(args.get("sport", DEFAULT_SPORT)).strip() or DEFAULT_SPORT
     sport_norm = raw_sport.strip().lower()
     # Normalize to frontend conventions (Workout.sport):
-    # running|cycling|swimming|rowing|strength
-    if sport_norm in ("bike", "biking", "cycling", "ride"):
-        sport = "cycling"
-    elif sport_norm in ("run", "running"):
-        sport = "running"
+    if sport_norm in ("bike", "biking", "cycling", "cycle", "ride"):
+        sport = "bike"
+    elif sport_norm in ("run", "running", "jogging"):
+        sport = "run"
     elif sport_norm in ("swim", "swimming"):
-        sport = "swimming"
-    elif sport_norm in ("row", "rowing"):
-        sport = "rowing"
+        sport = "swim"
+    elif sport_norm in ("row", "rowing", "erg"):
+        sport = "row"
     elif sport_norm in ("strength", "gym", "lifting", "weights"):
         sport = "strength"
+    elif sport_norm in ("mobility", "yoga", "stretching", "stretch"):
+        sport = "mobility"
     else:
-        # Default to cycling (most common) to keep downstream UI stable.
-        sport = "cycling"
+        # Safely default to 'other' for unrecognized activities
+        sport = "other"
 
     try:
         res = (
@@ -362,8 +506,17 @@ def handle_schedule_workout(
             focus_zone, duration_minutes, ftp, thr_hr, max_hr, resting_hr, sport
         )
         title = f"{sport} — {focus_zone} ({duration_minutes}m)"
+
+    raw_ai_structure = args.get("structure")
+    if duration_minutes > 0 and isinstance(raw_ai_structure, list) and len(raw_ai_structure) > 0:
+        workout_json["structure"] = raw_ai_structure
+
+    clean_structure = _sanitize_workout_structure(workout_json.get("structure") or [])
+    workout_json["structure"] = clean_structure
+
     # Keep legacy `description` as a compact JSON string for backwards compatibility.
     description = json.dumps(workout_json, ensure_ascii=False)
+    markdown_notes = str(args.get("markdown_notes", "")).strip()
 
     try:
         ins = (
@@ -374,11 +527,11 @@ def handle_schedule_workout(
                     "planned_date": planned_date.isoformat(),
                     "sport": sport,
                     "title": title,
-                    "description": description,
+                    "description": markdown_notes if markdown_notes else description,
                     "duration_min": duration_minutes,
                     "target_tss": int(round(est_tss)),
                     "primary_zone": focus_zone,
-                    "structure": workout_json.get("structure") or [],
+                    "structure": clean_structure,
                     "status": "planned",
                     "generated_by": "astrape_ai",
                 }
@@ -398,7 +551,7 @@ def handle_schedule_workout(
         "duration_minutes": duration_minutes,
         "projected_tss": int(round(est_tss)),
         "description": (workout_json.get("notes") or "") if isinstance(workout_json, dict) else "",
-        "structure": workout_json.get("structure") or [],
+        "structure": clean_structure,
         "completed": False,
     }
 
@@ -567,7 +720,47 @@ _schedule_decl = types.FunctionDeclaration(
             "date": types.Schema(type=types.Type.STRING, description="Planned date ISO YYYY-MM-DD"),
             "sport": types.Schema(
                 type=types.Type.STRING,
-                description="Bike, Run, or Swim (default Bike)",
+                description="run, bike, swim, row, strength, mobility, or other. (default other)",
+            ),
+            "structure": types.Schema(
+                type=types.Type.ARRAY,
+                description="The workout structure blocks (Warmup, Main Set, Cooldown).",
+                items=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "name": types.Schema(
+                            type=types.Type.STRING,
+                            description="'Warmup', 'Main Set', or 'Cooldown'",
+                        ),
+                        "duration_minutes": types.Schema(type=types.Type.INTEGER),
+                        "description": types.Schema(type=types.Type.STRING),
+                        "target_power_percent_ftp": types.Schema(type=types.Type.INTEGER),
+                        "target_hr_zone": types.Schema(type=types.Type.INTEGER),
+                        "sub_intervals": types.Schema(
+                            type=types.Type.ARRAY,
+                            description="Optional nested intervals (e.g., 6x 3min Work / 1min Recovery).",
+                            items=types.Schema(
+                                type=types.Type.OBJECT,
+                                properties={
+                                    "name": types.Schema(
+                                        type=types.Type.STRING,
+                                        description="'Work' or 'Recovery'",
+                                    ),
+                                    "duration_minutes": types.Schema(type=types.Type.INTEGER),
+                                    "target_power_percent_ftp": types.Schema(type=types.Type.INTEGER),
+                                    "target_hr_zone": types.Schema(type=types.Type.INTEGER),
+                                },
+                            ),
+                        ),
+                    },
+                ),
+            ),
+            "markdown_notes": types.Schema(
+                type=types.Type.STRING,
+                description=(
+                    "A concise Markdown-formatted summary of the intervals, including target watts, "
+                    "heart rate, or pace (e.g., a table or bulleted list)."
+                ),
             ),
         },
         required=["duration_minutes", "focus_zone", "date"],
@@ -608,6 +801,7 @@ _clear_training_plans_decl = types.FunctionDeclaration(
 
 TOOLS: list[types.Tool] = [
     types.Tool(function_declarations=[_simulate_decl, _schedule_decl, _nutrition_decl, _clear_training_plans_decl]),
+    types.Tool(google_search=types.GoogleSearch()),
 ]
 
 ToolHandler = Callable[[dict[str, Any], str, Client], dict[str, Any]]
