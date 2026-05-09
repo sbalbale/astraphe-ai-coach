@@ -8,7 +8,7 @@ from app.dependencies import get_current_athlete, get_user_db, get_admin_db
 from app.services import whoop
 from app.services.whoop_backfill import backfill_historical_data
 from app.config import settings
-from datetime import datetime
+from datetime import datetime, timedelta
 from app.models.workout import WorkoutPayload
 from app.models.biometrics import DailyBiometrics
 from app.services.processing import process_and_save_workout, process_and_save_biometrics
