@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
 
 from google import genai
@@ -19,7 +19,8 @@ AnalysisRow = Dict[str, Any]
 
 
 def _now_iso() -> str:
-    return datetime.utcnow().isoformat() + "Z"
+    # Timezone-aware UTC; preserve legacy 'Z' suffix on the wire.
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def canonical_json(obj: Any) -> str:

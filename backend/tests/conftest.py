@@ -52,9 +52,10 @@ def test_athlete_id():
 class _FakeSupabaseQuery:
     """Minimal chainable fake matching the supabase-py table/rpc surface used in routes."""
 
-    def __init__(self, rows: list[dict] | None = None):
+    def __init__(self, rows: list[dict] | None = None, fake_id: str = "fake-row-id"):
         self._rows: list[dict] = list(rows) if rows is not None else []
         self._single_mode = False
+        self._fake_id = fake_id
 
     # Mutating ops --------------------------------------------------------
     def insert(self, payload, *_a, **_k):
@@ -62,11 +63,11 @@ class _FakeSupabaseQuery:
         # that reads `res.data[0]["id"]` keeps working.
         if isinstance(payload, dict):
             row = {**payload}
-            row.setdefault("id", "fake-row-id")
+            row.setdefault("id", self._fake_id)
             self._rows = [row]
         elif isinstance(payload, list):
             self._rows = [
-                {**r, "id": r.get("id") or "fake-row-id"} for r in payload
+                {**r, "id": r.get("id") or self._fake_id} for r in payload
             ]
         return self
 
@@ -129,6 +130,12 @@ class _FakeSupabaseQuery:
 class _FakeSupabaseClient:
     """Minimal in-memory stand-in for the supabase-py Client."""
 
+    # Per-table fake row id used when an insert payload doesn't supply one.
+    _FAKE_IDS: dict[str, str] = {
+        "coach_conversations": "fake-conversation-id",
+        "coach_messages": "fake-message-id",
+    }
+
     def __init__(self):
         # Pre-seeded rows per table so reads return realistic shapes.
         # Routes mainly need: a coach_conversations row that looks "untitled"
@@ -145,7 +152,10 @@ class _FakeSupabaseClient:
         self.storage = MagicMock()
 
     def table(self, name: str) -> _FakeSupabaseQuery:
-        return _FakeSupabaseQuery(self._table_seeds.get(name, []))
+        return _FakeSupabaseQuery(
+            rows=self._table_seeds.get(name, []),
+            fake_id=self._FAKE_IDS.get(name, "fake-row-id"),
+        )
 
     def rpc(self, *_a, **_k) -> _FakeSupabaseQuery:
         return _FakeSupabaseQuery([])

@@ -5,7 +5,7 @@ from typing import Optional, List
 import asyncio
 import json
 import traceback
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.services.ai_coach import (
     build_initialization_message,
@@ -24,7 +24,8 @@ class CreateConversation(BaseModel):
     title: Optional[str] = None
 
 def _now_iso() -> str:
-    return datetime.utcnow().isoformat() + "Z"
+    # Timezone-aware UTC; preserve legacy 'Z' suffix on the wire.
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 def _generate_conversation_title(message: str | None, image_urls: Optional[List[str]] = None) -> str:
     base = (message or "").strip()

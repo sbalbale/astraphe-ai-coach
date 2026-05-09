@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, date as date_type
+from datetime import datetime, timedelta, timezone, date as date_type
 from typing import Any, Optional
 
 from app.services import whoop
@@ -54,10 +54,10 @@ async def backfill_historical_data(athlete_id: str, access_token: str, db: Any =
     except Exception as e:
         print(f"[whoop.backfill] Failed to update profile/measurements: {e}")
 
-    end = datetime.utcnow()
+    end = datetime.now(timezone.utc)
     start = end - timedelta(days=days)
-    start_s = start.isoformat(timespec="milliseconds") + "Z"
-    end_s = end.isoformat(timespec="milliseconds") + "Z"
+    start_s = start.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    end_s = end.isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
     print(f"[whoop.backfill] start={start_s} end={end_s} athlete_id={athlete_id}")
 

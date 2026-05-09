@@ -112,16 +112,19 @@ async def strava_webhook(payload: StravaWebhookEvent):
 ```
 GET /activities/{id}
 ```
-Returns the full `DetailedActivity` object. Key fields:
+Returns the full `DetailedActivity` object. **Store the entire raw JSON blob** in `source_ids` or a dedicated `raw_payload` JSONB column — don't filter fields at ingest time. You can always derive computed columns later; you can never recover data you didn't save. Key fields to index/surface:
 - `average_heartrate`, `max_heartrate`
 - `average_watts`, `max_watts`, `weighted_average_watts` (≈ Normalized Power)
 - `kilojoules` (total work done)
 - `average_cadence`
-- `splits_metric` / `splits_standard` (per-km or per-mile splits)
-- `laps` (structured lap objects)
+- `splits_metric` (per-500m for rowing, per-km for running) ← **secondary breakdown, fallback if no laps**
+- `splits_standard` (per-mile splits, store for completeness)
+- `laps` (auto-lapped every 500m by Garmin + Apple Watch) ← **primary for rowing interval analysis**
 - `has_heartrate`, `device_watts` (flags to check before requesting streams)
-- `suffer_score` (Strava's own training load metric — useful as a cross-check)
+- `suffer_score` (Strava's training load score — useful cross-check)
 - `sport_type` (crucial for deduplication logic)
+- `perceived_exertion`, `hide_from_home`, `gear_id`, `device_name`
+- `segment_efforts[]` (store full array — useful for progress tracking later)
 
 ### 3.2 Activity Streams ← The Gold
 ```
@@ -194,6 +197,7 @@ ALTER TABLE workouts ADD COLUMN strava_streams_fetched BOOLEAN DEFAULT FALSE;
 ALTER TABLE workouts ADD COLUMN primary_source TEXT; -- 'strava' | 'garmin' | 'whoop' | 'healthkit'
 ALTER TABLE workouts ADD COLUMN source_ids JSONB DEFAULT '{}';
 -- e.g. {"strava": "123456", "garmin": "garmin_push_123", "whoop": "abc-uuid"}
+ALTER TABLE workouts ADD COLUMN raw_strava_payload JSONB; -- full DetailedActivity JSON, unfiltered
 
 -- New table for raw stream data (separate from workouts due to size)
 CREATE TABLE activity_streams (
@@ -265,14 +269,18 @@ async def find_or_create_canonical_workout(
 | Field | Winner | Why |
 |---|---|---|
 | `elapsed_time`, `distance` | Strava > Garmin > HealthKit | GPS accuracy |
-| `average_heartrate` | Strava streams > WHOOP > Garmin | 1s resolution |
+| `average_heartrate` | Strava streams > Garmin > WHOOP | See note below |
 | `average_watts` | Strava (device_watts) > Garmin | Direct meter data |
 | `strain`, `recovery` | WHOOP only | Proprietary algo |
 | `hrv_4t` | WHOOP only | Proprietary algo |
 | `tss` | Calculated from best source | See algorithms.py |
-| `gps_polyline` | Strava only | WHOOP has no GPS |
-| `laps` | Strava > Garmin | Richer object |
-| `splits` | Strava metric splits | Standardized |
+| `gps_polyline` | Strava > Garmin (pending API) | WHOOP has no GPS |
+| `laps` | Strava > Garmin (pending API) | Garmin + Apple Watch auto-lap every 500m for rowing |
+| `splits` | Strava `splits_metric` | Secondary/fallback — per-500m if no laps present |
+
+> **HR source priority rationale**: For *during-activity* HR, Strava > Garmin > WHOOP. The device recording the Strava activity (Garmin watch, Wahoo, etc.) is typically a chest strap or wrist optical — both are optimized for exercise capture and validated against each other at point of recording. WHOOP's optical sensor on wrist or bicep is excellent for resting/recovery HR and HRV but isn't the primary recording device during a structured workout — it's capturing incidentally. Garmin chest straps (HRM-Pro, HRM-Dual) are ECG-accurate and the gold standard for activity HR, but since Strava gets the same data file from the Garmin device, Strava streams *are* the Garmin data — just delivered via a different pipe.
+>
+> **When Garmin API access arrives**: Garmin's webhook push includes GPS, splits, data directly. Once integrated, the priority will be: Strava streams (if available) = Garmin direct (same source device, different pipe) > WHOOP. Use whichever arrived first and flag as duplicate.
 
 ### 4.3 Stream Alignment When Times Don't Match
 
@@ -331,18 +339,17 @@ def zones_from_max_hr(max_hr: int) -> dict:
     }
 ```
 
-**Model B: % LTHR (Coggan / more accurate for trained athletes)**
+**Model B: % LTHR — Coggan 5-Zone (the model you're using)**
 ```python
-def zones_from_lthr(lthr: int) -> dict:
-    return {
-        "Z1": (0,              round(lthr * 0.81)),
-        "Z2": (round(lthr * 0.81), round(lthr * 0.89)),
-        "Z3": (round(lthr * 0.90), round(lthr * 0.93)),
-        "Z4": (round(lthr * 0.94), round(lthr * 1.00)),
-        "Z5a": (round(lthr * 1.00), round(lthr * 1.02)),  # Threshold
-        "Z5b": (round(lthr * 1.03), round(lthr * 1.06)),  # VO2max
-        "Z5c": (round(lthr * 1.06), lthr * 2),             # Anaerobic
-    }
+def _lthr_zones(lthr: int) -> list[HRZone]:
+    """Coggan-style 5-zone model anchored to lactate threshold HR (Z5 merges VO2max + anaerobic)."""
+    return [
+        HRZone(1, "Active Recovery", 0,              int(lthr * 0.81)),
+        HRZone(2, "Endurance",       int(lthr * 0.81), int(lthr * 0.89)),
+        HRZone(3, "Tempo",           int(lthr * 0.89), int(lthr * 0.93)),
+        HRZone(4, "Threshold",       int(lthr * 0.93), int(lthr * 1.05)),
+        HRZone(5, "VO2max+",         int(lthr * 1.05), 999),
+    ]
 ```
 
 **Model C: Heart Rate Reserve (Karvonen) — best for general athletes**
@@ -604,7 +611,41 @@ services/
 
 7. **Secondary HR**: Strava HR stream comes from whatever device recorded the activity (Watch, Garmin, Wahoo). For rowing: typically Garmin HR strap via Garmin device → uploaded to Strava. This is the same HR as Garmin webhook data — deduplicate at the `average_heartrate` field level, prefer whichever has stream data.
 
-8. **Splits vs Laps**: Strava's `splits_metric` are automatic 1km splits (always). `laps` are manual (button presses on device). For rowing, athletes press lap at the end of each piece — always use `laps` for interval analysis. Use `splits_metric` for distance-based pacing charts.
+8. **Laps vs Splits (Rowing)**: Both Garmin rowing sport profiles and Apple Watch rowing workouts **auto-lap every 500m by default** — so `laps` in Strava for a rowing activity will almost always be device-generated 500m segments with full per-lap HR, pace, watts, and cadence. This is better than `splits_metric` for rowing because Strava's `splits_metric` is per-kilometer for all activities regardless of sport. A 4×2000m session gives you 16 laps at 500m from the device vs. 8 one-km splits from Strava — laps are far more analytically useful for intervals.
+
+   **Strategy: laps as primary, stream-derived as fallback, splits_metric always stored.**
+
+   ```python
+   async def get_rowing_intervals(workout_id, activity, streams):
+       laps = activity.laps or []
+
+       # Check if laps look like auto-500m intervals
+       valid_500m_laps = [
+           l for l in laps
+           if 450 <= l.distance <= 550  # 500m ± 10% tolerance
+       ]
+
+       if len(valid_500m_laps) >= len(laps) * 0.8:
+           # 80%+ of laps are ~500m → device auto-lapped reliably
+           primary = "laps"
+           intervals = valid_500m_laps
+       else:
+           # Fallback: derive 500m splits from distance stream directly
+           # Slices time/HR/watts/cadence arrays at every 500m mark
+           primary = "stream_derived"
+           intervals = compute_500m_splits_from_streams(streams)
+
+       # Always store splits_metric too (per-km, useful for longer pieces)
+       return {
+           "primary": primary,
+           "intervals": intervals,
+           "splits_metric": activity.splits_metric,
+       }
+   ```
+
+   The stream-derived fallback slices the `distance`/`time`/`heartrate`/`watts` arrays at every 500m mark — bulletproof for edge cases like manual recordings, phone-only Strava sessions, or Concept2 ErgData uploads with no auto-lap config.
+
+   **Store all three in the DB**: raw `laps` JSONB, raw `splits_metric` JSONB, and a computed `intervals` JSONB column using the priority logic above. The UI always reads from `intervals` — sourcing logic stays entirely in the backend.
 
 ---
 
