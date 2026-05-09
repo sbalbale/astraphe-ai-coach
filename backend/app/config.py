@@ -44,7 +44,13 @@ class Settings(BaseSettings):
     GARMIN_CONSUMER_SECRET: Optional[str] = None
     GARMIN_WEBHOOK_SECRET: Optional[str] = None
     GARMIN_OAUTH_CONFIRM_URL: str = "https://connect.garmin.com/oauthConfirm"
-    
+
+    # --- Strava API ---
+    STRAVA_CLIENT_ID: str = ""
+    STRAVA_CLIENT_SECRET: str = ""
+    STRAVA_WEBHOOK_VERIFY_TOKEN: str = ""  # a static secret string you choose, used to verify Strava's hub challenge
+    STRAVA_WEBHOOK_SUBSCRIPTION_ID: int = 0  # filled in after you register the webhook
+
     # --- Manual Testing ---
     TEST_ATHLETE_ID: str | None = None
 
