@@ -97,14 +97,13 @@
     max_hr: 'Max HR %'
   };
 
-  /** Colors by zone number — supports 5- and 6-zone models from API */
+  /** Colors by zone number — API returns exactly five HR zones for every method */
   const ZONE_COLORS: Record<number, string> = {
     1: '#4621FF',
     2: '#00C8A8',
     3: '#FFCB88',
     4: '#F07178',
-    5: '#FF4791',
-    6: '#E01E5A'
+    5: '#FF4791'
   };
 
   const ZONE_DESCRIPTIONS: Record<number, string> = {
@@ -112,8 +111,7 @@
     2: 'Steady endurance. Aerobic base and fat metabolism.',
     3: 'Moderate-hard. Tempo and sustainable hard efforts.',
     4: 'Threshold. Race-pace sustainable intensity.',
-    5: 'VO2max. Short high-intensity intervals.',
-    6: 'Anaerobic. Very short maximal efforts.'
+    5: 'VO2max and above. Hard intervals and short maximal efforts.'
   };
 
   const hasProfile = $derived(!!athleteStore.profile);
@@ -134,7 +132,7 @@
 
   const hasZoneDefinitions = $derived(hrZones.length > 0);
 
-  /** Scale zone bars (avoids Coggan Z6 sentinel max 999) */
+  /** Scale zone bars (open-ended Z5 uses max 999 sentinel) */
   const displayCeiling = $derived.by(() => {
     const profileMax = athleteStore.profile?.max_hr;
     let cap = typeof profileMax === 'number' ? profileMax : 0;

@@ -34,14 +34,13 @@ class ZoneResult:
 
 
 def _lthr_zones(lthr: int) -> list[HRZone]:
-    """Coggan 6-zone model anchored to lactate threshold HR."""
+    """Coggan-style 5-zone model anchored to lactate threshold HR (Z5 merges VO2max + anaerobic)."""
     return [
         HRZone(1, "Active Recovery", 0, int(lthr * 0.81)),
         HRZone(2, "Endurance", int(lthr * 0.81), int(lthr * 0.89)),
         HRZone(3, "Tempo", int(lthr * 0.89), int(lthr * 0.93)),
-        HRZone(4, "Threshold", int(lthr * 0.93), int(lthr * 1.01)),
-        HRZone(5, "VO2max", int(lthr * 1.01), int(lthr * 1.06)),
-        HRZone(6, "Anaerobic", int(lthr * 1.06), 999),
+        HRZone(4, "Threshold", int(lthr * 0.93), int(lthr * 1.05)),
+        HRZone(5, "VO2max+", int(lthr * 1.05), 999),
     ]
 
 
