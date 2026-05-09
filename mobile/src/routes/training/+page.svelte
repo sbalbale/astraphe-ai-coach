@@ -322,10 +322,7 @@
 </script>
 
 <div class="flex flex-col gap-3">
-  <div>
-    <p class="text-xs text-slate-400 font-mono uppercase tracking-[0.1em]">Performance</p>
-    <h1 class="text-[22px] font-bold tracking-[-0.02em] text-slate-200">Training Analysis</h1>
-  </div>
+  <h1 class="text-[20px] font-bold tracking-[-0.02em] text-slate-200 pt-1">Training Analysis</h1>
 
   {#if showNoTrainingData}
     <EmptyState 
