@@ -9,6 +9,7 @@ import httpx
 from fastapi import HTTPException
 
 from app.config import settings
+from app.services.processing import find_or_create_canonical_workout, normalize_sport
 
 STRAVA_OAUTH_TOKEN_URL = "https://www.strava.com/oauth/token"
 STRAVA_API_BASE = "https://www.strava.com/api/v3"
@@ -237,3 +238,28 @@ async def get_athlete_strava_id(access_token: str, delay: bool = False) -> int |
         return int(aid)
     except Exception:
         return None
+
+
+async def resolve_canonical_workout_for_strava_activity(
+    db: Any,
+    athlete_id: str,
+    activity_type: str | None,
+    started_at_utc: datetime,
+    elapsed_seconds: int,
+    activity_id: int,
+    external_id: str | None = None,
+) -> tuple[dict, bool]:
+    """
+    Resolve or create the canonical ``workouts`` row for a Strava activity.
+    Dedupe logic lives in ``app.services.processing`` — do not duplicate constants here.
+    """
+    return await find_or_create_canonical_workout(
+        db,
+        athlete_id,
+        "strava",
+        normalize_sport(activity_type or ""),
+        started_at_utc,
+        int(max(0, elapsed_seconds)),
+        external_id or str(activity_id),
+        activity_id,
+    )
