@@ -158,7 +158,34 @@ def _find_or_create_canonical_workout_sync(
             .execute()
         )
         if exact and exact.data:
-            return (exact.data, False)
+            row = exact.data
+            # Same bookkeeping as fuzzy merge: source_ids + primary_source (exact path used to return early).
+            existing_source_ids = dict(row.get("source_ids") or {})
+            if external_id:
+                existing_source_ids[source] = external_id
+            if source == "strava" and strava_activity_id is not None:
+                existing_source_ids["strava"] = str(strava_activity_id)
+            if row.get("source") == "whoop" and row.get("external_id"):
+                existing_source_ids.setdefault("whoop", str(row["external_id"]))
+
+            current_primary = row.get("primary_source") or "manual"
+            new_primary = current_primary
+            if current_primary in SOURCE_PRIORITY:
+                if SOURCE_PRIORITY.index(source) < SOURCE_PRIORITY.index(current_primary):
+                    new_primary = source
+            else:
+                new_primary = source
+
+            merge_update: dict[str, Any] = {
+                "source_ids": existing_source_ids,
+                "primary_source": new_primary,
+            }
+            merge_payload = _strip_none_update_values(merge_update)
+            if merge_payload:
+                updated = db.table("workouts").update(merge_payload).eq("id", row["id"]).execute()
+                merged_row = (updated.data or [row])[0]
+                return (merged_row, False)
+            return (row, False)
 
     from_ts = started_at.timestamp() - DEDUP_WINDOW_SECONDS
     to_ts = started_at.timestamp() + DEDUP_WINDOW_SECONDS

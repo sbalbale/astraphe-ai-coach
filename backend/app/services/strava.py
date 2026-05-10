@@ -55,6 +55,16 @@ async def _sleep_if_delay(delay: bool) -> None:
         await asyncio.sleep(STRAVA_BACKFILL_REQUEST_GAP_S)
 
 
+def _parse_strava_start_date(value: Any) -> datetime | None:
+    """Parse Strava ``start_date`` (ISO 8601) from list or detail payloads."""
+    if not value or not isinstance(value, str):
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
 def _optional_smallint(value: Any, *, max_val: int = 32767) -> int | None:
     """Coerce Strava floats to SMALLINT for PostgREST; None if missing or invalid."""
     if value is None:
@@ -515,6 +525,7 @@ async def ingest_strava_activity(
         sport_type=sport_type,
         started_at=start_time,
         elapsed_time_seconds=elapsed_time,
+        external_id=str(activity_id),
         strava_activity_id=activity_id,
     )
     workout_id = workout["id"]
@@ -538,10 +549,12 @@ async def ingest_strava_activity(
     ended_at = start_time + timedelta(seconds=int(max(0, elapsed_time)))
     update: dict[str, Any] = {
         "strava_activity_id": activity_id,
-        "strava_streams_fetched": bool(streams),
+        # True = streams API was attempted for this activity; empty stream dict is valid (e.g. Zwift, no HR).
+        "strava_streams_fetched": True,
         "primary_source": "strava",
         "raw_strava_payload": activity,
         "sport": _sport_for_db(sport_type),
+        "title": activity.get("name"),
         "started_at": activity["start_date"],
         "ended_at": ended_at.isoformat(),
         "duration_seconds": int(max(0, elapsed_time)),
@@ -621,11 +634,16 @@ async def backfill_historical_data(
     days: int = 90,
 ) -> None:
     """
-    Fetches last N days of Strava activities and ingests each one.
+    Fetches last N days of Strava activities and ingests each one, **newest first**.
+
+    Strava sorts **oldest first** when the ``after`` query param is used; we paginate with
+    ``page``/``per_page`` only (default **newest first**) and stop once ``start_date`` is
+    before the cutoff so recent activities land in the DB first.
+
     Spaces detail fetches (get activity + streams + laps) using ``STRAVA_BACKFILL_REQUEST_GAP_S``;
     on HTTP 429 sleeps ``Retry-After`` or 15 minutes and retries the same activity.
     """
-    after_ts = int((datetime.now(timezone.utc) - timedelta(days=days)).timestamp())
+    cutoff_start = datetime.now(timezone.utc) - timedelta(days=days)
     page = 1
     per_page = 50
     total_ingested = 0
@@ -637,7 +655,8 @@ async def backfill_historical_data(
         await asyncio.sleep(STRAVA_BACKFILL_REQUEST_GAP_S)
 
         url = f"{STRAVA_API_BASE}/athlete/activities"
-        params = {"after": after_ts, "page": page, "per_page": per_page}
+        # Do not pass ``after`` — Strava then returns oldest-first; ``page`` alone is newest-first.
+        params = {"page": page, "per_page": per_page}
         headers = _auth_headers(access_token)
 
         activities: list[Any] = []
@@ -665,7 +684,13 @@ async def backfill_historical_data(
         if not activities:
             break  # no more pages (or fetch failed)
 
+        reached_cutoff = False
         for activity in activities:
+            start_dt = _parse_strava_start_date(activity.get("start_date"))
+            if start_dt is not None and start_dt < cutoff_start:
+                reached_cutoff = True
+                break
+
             aid = activity.get("id")
             if aid is None:
                 continue
@@ -714,6 +739,9 @@ async def backfill_historical_data(
                     f"[strava.backfill] Gave up activity {aid} after {max_rate_limit_retries} "
                     "rate-limit waits"
                 )
+
+        if reached_cutoff:
+            break
 
         if len(activities) < per_page:
             break  # last page
