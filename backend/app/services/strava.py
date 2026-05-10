@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -366,57 +367,116 @@ def compute_500m_splits_from_streams(streams: dict) -> list[dict]:
     return splits
 
 
+def _time_series_to_streams_dict(time_series: Any) -> dict[str, Any]:
+    """Rebuild Strava-style stream objects from ``activity_streams.time_series`` JSON."""
+    if not isinstance(time_series, dict) or not time_series:
+        return {}
+    out: dict[str, Any] = {}
+    for k, v in time_series.items():
+        key = str(k)
+        if isinstance(v, list):
+            out[key] = {"data": v}
+        elif isinstance(v, dict) and isinstance(v.get("data"), list):
+            out[key] = v
+    return out
+
+
+def _parse_raw_strava_payload(value: Any) -> dict | None:
+    """``raw_strava_payload`` may be JSONB object or a double-encoded JSON string from some writers."""
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        s = value.strip()
+        if not s:
+            return None
+        try:
+            out = json.loads(s)
+        except json.JSONDecodeError:
+            return None
+        return out if isinstance(out, dict) else None
+    return None
+
+
+def _supabase_resp_data(resp: Any) -> Any:
+    """Safe ``.data`` read — some clients or error paths leave ``execute()`` as None."""
+    return getattr(resp, "data", None) if resp is not None else None
+
+
+def _supabase_single_row(resp: Any) -> dict | None:
+    """Normalize ``maybe_single().execute()`` to one dict or None."""
+    data = _supabase_resp_data(resp)
+    if data is None:
+        return None
+    if isinstance(data, dict):
+        return data
+    if isinstance(data, list) and len(data) == 1 and isinstance(data[0], dict):
+        return data[0]
+    return None
+
+
+def _load_cached_laps_for_workout(db: Any, workout_id: str) -> list[dict] | None:
+    """Return laps from ``activity_laps.raw_lap`` ordered by ``lap_index``, or None if unusable."""
+    res = (
+        db.table("activity_laps")
+        .select("lap_index, raw_lap")
+        .eq("workout_id", workout_id)
+        .execute()
+    )
+    data = _supabase_resp_data(res)
+    rows = data if isinstance(data, list) else []
+    if not rows:
+        return None
+    ordered = sorted(
+        rows,
+        key=lambda row: (
+            row.get("lap_index") is None,
+            row.get("lap_index") if row.get("lap_index") is not None else 0,
+        ),
+    )
+    laps_out: list[dict] = []
+    for r in ordered:
+        rl = r.get("raw_lap")
+        if not isinstance(rl, dict):
+            return None
+        laps_out.append(rl)
+    return laps_out
+
+
 def get_rowing_intervals(activity: dict, streams: dict) -> tuple[list[dict], str]:
     """
-    Returns (intervals, source) for a rowing activity.
-    Prefers device auto-laps (Garmin/Apple Watch 500m auto-lap),
-    falls back to stream-derived 500m splits.
-
-    Returns:
-        intervals: list of 500m piece dicts
-        source: 'laps' | 'stream_derived'
+    Returns all device autolaps exactly as recorded — no filtering, no work/rest
+    discrimination. Every lap Garmin recorded is returned including rest and
+    active recovery pieces. Stream derivation only fires if there are no laps at all.
     """
     laps = activity.get("laps") or []
 
-    # Filter to laps that look like auto-500m pieces
-    valid_500m = [l for l in laps if 450 <= (l.get("distance") or 0) <= 550]
+    if not laps:
+        stream_splits = compute_500m_splits_from_streams(streams)
+        return stream_splits, "stream_derived"
 
-    # Also filter out rest laps (avg pace worse than 3:30/500m = 210s)
-    # velocity in m/s → 500m pace in seconds = 500 / avg_speed
-    def lap_pace(lap):
+    intervals = []
+    for i, lap in enumerate(laps):
         spd = lap.get("average_speed") or 0
-        return (500 / spd) if spd > 0 else 999
+        pace = int(500 / spd) if spd > 0 else None
+        intervals.append({
+            "split_number": i + 1,
+            "distance": lap.get("distance"),
+            "elapsed_time": lap.get("elapsed_time"),
+            "moving_time": lap.get("moving_time"),
+            "pace_per_500m": pace,
+            "average_heartrate": lap.get("average_heartrate"),
+            "max_heartrate": lap.get("max_heartrate"),
+            "average_watts": lap.get("average_watts"),
+            "average_cadence": lap.get("average_cadence"),
+            "total_elevation_gain": lap.get("total_elevation_gain"),
+            "start_index": lap.get("start_index"),
+            "end_index": lap.get("end_index"),
+            "source": "laps",
+        })
 
-    work_laps = [l for l in valid_500m if lap_pace(l) < 210]
-
-    if len(work_laps) >= len(laps) * 0.6 and len(work_laps) > 0:
-        # Device auto-lapped reliably — convert laps to canonical interval shape
-        intervals = []
-        for i, lap in enumerate(work_laps):
-            spd = lap.get("average_speed") or 0
-            pace = int(500 / spd) if spd > 0 else None
-            intervals.append(
-                {
-                    "split_number": i + 1,
-                    "distance": lap.get("distance"),
-                    "elapsed_time": lap.get("elapsed_time"),
-                    "moving_time": lap.get("moving_time"),
-                    "pace_per_500m": pace,
-                    "average_heartrate": lap.get("average_heartrate"),
-                    "max_heartrate": lap.get("max_heartrate"),
-                    "average_watts": lap.get("average_watts"),
-                    "average_cadence": lap.get("average_cadence"),
-                    "total_elevation_gain": lap.get("total_elevation_gain"),
-                    "start_index": lap.get("start_index"),
-                    "end_index": lap.get("end_index"),
-                    "source": "laps",
-                }
-            )
-        return intervals, "laps"
-
-    # Fallback: derive from streams
-    stream_splits = compute_500m_splits_from_streams(streams)
-    return stream_splits, "stream_derived"
+    return intervals, "laps"
 
 
 async def get_activity_laps(activity_id: int, access_token: str, delay: bool = False) -> list[Any]:
@@ -527,14 +587,47 @@ async def ingest_strava_activity(
         elapsed_time_seconds=elapsed_time,
         external_id=str(activity_id),
         strava_activity_id=activity_id,
+        strava_activity_payload=activity,
     )
     workout_id = workout["id"]
 
+    primary_aid = workout.get("strava_activity_id")
+    try:
+        primary_int = int(primary_aid) if primary_aid is not None else None
+    except (TypeError, ValueError):
+        primary_int = None
+    is_primary_strava = primary_int is not None and primary_int == int(activity_id)
+
+    if not is_primary_strava:
+        print(
+            f"[strava.ingest] activity_id={activity_id} merged as duplicate; "
+            f"canonical primary strava_activity_id={primary_int}"
+        )
+        return workout
+
     streams: dict[str, Any] = {}
     if not workout.get("strava_streams_fetched"):
-        streams = await get_activity_streams(activity_id, access_token, delay=delay)
+        ts_row = (
+            db.table("activity_streams")
+            .select("time_series")
+            .eq("workout_id", workout_id)
+            .maybe_single()
+            .execute()
+        )
+        ts_holder = _supabase_single_row(ts_row)
+        ts = ts_holder.get("time_series") if ts_holder else None
+        streams = _time_series_to_streams_dict(ts)
+        if not streams:
+            streams = await get_activity_streams(activity_id, access_token, delay=delay)
 
-    laps = await get_activity_laps(activity_id, access_token, delay=delay)
+    if not workout.get("strava_streams_fetched"):
+        cached_laps = _load_cached_laps_for_workout(db, workout_id)
+        if cached_laps is not None:
+            laps: list[Any] = cached_laps
+        else:
+            laps = await get_activity_laps(activity_id, access_token, delay=delay)
+    else:
+        laps = await get_activity_laps(activity_id, access_token, delay=delay)
 
     hr_stream = (streams.get("heartrate") or {}).get("data", [])
     zones = get_athlete_zones(athlete)
@@ -543,7 +636,12 @@ async def ingest_strava_activity(
     intervals = None
     intervals_source = None
     if is_rowing:
-        intervals, intervals_source = get_rowing_intervals(activity, streams)
+        # Laps API can return [] while GET /activities/{id} already embedded laps — do not wipe them.
+        embedded_laps = activity.get("laps")
+        embedded_list = embedded_laps if isinstance(embedded_laps, list) else []
+        merged_laps = laps if laps else embedded_list
+        activity_for_intervals = {**activity, "laps": merged_laps}
+        intervals, intervals_source = get_rowing_intervals(activity_for_intervals, streams)
 
     # workouts table columns must match Supabase schema (see migrations); extras live in raw_strava_payload.
     ended_at = start_time + timedelta(seconds=int(max(0, elapsed_time)))
@@ -695,16 +793,26 @@ async def backfill_historical_data(
             if aid is None:
                 continue
 
-            skip_res = (
+            skip_primary = (
                 db.table("workouts")
                 .select("id")
+                .eq("athlete_id", athlete_id)
                 .eq("strava_activity_id", aid)
                 .eq("strava_streams_fetched", True)
                 .maybe_single()
                 .execute()
             )
-            # supabase-py: no matching row → execute() may be None, not an object with .data.
-            if skip_res is not None and skip_res.data is not None:
+            if skip_primary is not None and skip_primary.data is not None:
+                continue
+            skip_linked = (
+                db.table("workouts")
+                .select("id")
+                .eq("athlete_id", athlete_id)
+                .contains("source_ids", {"strava": [str(aid)]})
+                .maybe_single()
+                .execute()
+            )
+            if skip_linked is not None and skip_linked.data is not None:
                 continue
 
             rl_attempts = 0
@@ -751,3 +859,115 @@ async def backfill_historical_data(
         f"[strava.backfill] Complete. Ingested {total_ingested} activities "
         f"for athlete={athlete_id}"
     )
+
+
+def reprocess_rowing_intervals_from_stored_data(db: Any, workout_id: str) -> tuple[str, str]:
+    """
+    Recompute rowing ``intervals`` / ``intervals_source`` and HR-zone columns from DB only:
+    ``workouts.raw_strava_payload``, ``activity_streams.time_series``, and ``activity_laps``
+    (falling back to laps embedded in the payload when no lap rows exist). No Strava HTTP.
+    """
+    try:
+        wres = (
+            db.table("workouts")
+            .select("id, athlete_id, sport, raw_strava_payload")
+            .eq("id", workout_id)
+            .maybe_single()
+            .execute()
+        )
+        row = _supabase_single_row(wres)
+        if not row:
+            return "skip", "workout not found"
+        if row.get("sport") != "row":
+            return "skip", f"sport is {row.get('sport')!r}, not row"
+        activity = _parse_raw_strava_payload(row.get("raw_strava_payload"))
+        if not activity:
+            return "skip", "raw_strava_payload missing or not a JSON object"
+
+        ares = (
+            db.table("athletes")
+            .select("*")
+            .eq("id", row["athlete_id"])
+            .maybe_single()
+            .execute()
+        )
+        athlete = _supabase_single_row(ares) or {}
+
+        ts_row = (
+            db.table("activity_streams")
+            .select("time_series")
+            .eq("workout_id", workout_id)
+            .maybe_single()
+            .execute()
+        )
+        ts_holder = _supabase_single_row(ts_row)
+        ts = ts_holder.get("time_series") if ts_holder else None
+        streams = _time_series_to_streams_dict(ts)
+
+        laps_db = _load_cached_laps_for_workout(db, workout_id)
+        if laps_db is not None:
+            laps: list[Any] = laps_db
+        else:
+            emb = activity.get("laps")
+            laps = emb if isinstance(emb, list) else []
+
+        activity_for = {**activity, "laps": laps}
+        intervals, intervals_source = get_rowing_intervals(activity_for, streams)
+
+        hr_stream = (streams.get("heartrate") or {}).get("data", [])
+        zones = get_athlete_zones(athlete)
+        zone_dist = compute_zone_distribution(hr_stream, zones) if hr_stream else {}
+
+        update: dict[str, Any] = {
+            "intervals": intervals,
+            "intervals_source": intervals_source,
+            "strava_streams_fetched": True,
+        }
+        update.update(_hr_stream_zone_dist_to_workout_columns(zone_dist))
+        update = {k: v for k, v in update.items() if v is not None}
+
+        db.table("workouts").update(update).eq("id", workout_id).execute()
+        return (
+            "ok",
+            f"source={intervals_source} pieces={len(intervals)} stream_types={len(streams)} laps_used={len(laps)}",
+        )
+    except Exception as e:
+        return "error", str(e)
+
+
+async def reset_rowing_intervals(db) -> int:
+    """
+    Clear rowing interval columns so ingest/reprocess can rebuild them.
+
+    Targets ``sport=row`` with a Strava activity id and ``intervals_source`` in
+    ``laps`` or ``stream_derived`` (stream_derived was previously excluded, so
+    those rows never matched the old reset).
+    """
+
+    def _sync() -> int:
+        sel = (
+            db.table("workouts")
+            .select("id")
+            .eq("sport", "row")
+            .not_.is_("strava_activity_id", "null")
+            .in_("intervals_source", ["laps", "stream_derived"])
+            .execute()
+        )
+        data = _supabase_resp_data(sel)
+        rows = data if isinstance(data, list) else []
+        n = len(rows)
+        if n == 0:
+            return 0
+        db.table("workouts").update(
+            {
+                "intervals": None,
+                "intervals_source": None,
+                "strava_streams_fetched": False,
+            }
+        ).eq("sport", "row").not_.is_("strava_activity_id", "null").in_(
+            "intervals_source",
+            ["laps", "stream_derived"],
+        ).execute()
+        return n
+
+    return await asyncio.to_thread(_sync)

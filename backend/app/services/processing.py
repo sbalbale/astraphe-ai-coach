@@ -107,6 +107,42 @@ def _sport_for_db(sport: str) -> str:
     return legacy.get(c, "other")
 
 
+def _merge_strava_source_ids(existing_source_ids: dict[str, Any], strava_activity_id: int) -> None:
+    """Accumulate every Strava activity id that maps to this canonical workout (multi-device duplicates)."""
+    sid = str(int(strava_activity_id))
+    raw = existing_source_ids.get("strava")
+    if raw is None:
+        existing_source_ids["strava"] = [sid]
+        return
+    if isinstance(raw, str):
+        lst = [raw]
+        if sid not in lst:
+            lst.append(sid)
+        existing_source_ids["strava"] = lst
+        return
+    if isinstance(raw, list):
+        lst = [str(x) for x in raw]
+        if sid not in lst:
+            lst.append(sid)
+        existing_source_ids["strava"] = lst
+        return
+    existing_source_ids["strava"] = [sid]
+
+
+def _strava_quality_score(activity: dict | None) -> int:
+    """Higher = richer Strava detail. Used to pick primary when duplicate activities merge."""
+    if not activity or not isinstance(activity, dict):
+        return 0
+    score = 0
+    if activity.get("start_latlng"):
+        score += 3
+    if activity.get("average_watts") or activity.get("weighted_average_watts"):
+        score += 2
+    if activity.get("has_heartrate") or activity.get("average_heartrate"):
+        score += 1
+    return score
+
+
 def _strip_none_update_values(d: dict[str, Any]) -> dict[str, Any]:
     """
     PostgREST PATCH semantics: omit keys whose value is None so we do not wipe existing DB fields.
@@ -126,6 +162,7 @@ def _find_or_create_canonical_workout_sync(
     elapsed_time_seconds: int,
     external_id: str | None = None,
     strava_activity_id: int | None = None,
+    strava_activity_payload: dict | None = None,
 ) -> tuple[dict, bool]:
     """
     Find an existing canonical workout that matches this session, or create a new one.
@@ -136,6 +173,10 @@ def _find_or_create_canonical_workout_sync(
       2. Fuzzy: same athlete + sport + started_at within ±10min + duration within 20%
 
     On merge: updates source_ids, elevates primary_source by SOURCE_PRIORITY order.
+    Strava duplicates accumulate in ``source_ids["strava"]`` (list of ids). When
+    ``strava_activity_payload`` is set (Strava ingest), a richer duplicate can replace
+    ``strava_activity_id`` and reset ``strava_streams_fetched`` for a re-fetch.
+
     On create: inserts a minimal row; caller should UPDATE full workout fields afterward.
     """
     DEDUP_WINDOW_SECONDS = 600
@@ -161,10 +202,10 @@ def _find_or_create_canonical_workout_sync(
             row = exact.data
             # Same bookkeeping as fuzzy merge: source_ids + primary_source (exact path used to return early).
             existing_source_ids = dict(row.get("source_ids") or {})
-            if external_id:
+            if external_id and source != "strava":
                 existing_source_ids[source] = external_id
-            if source == "strava" and strava_activity_id is not None:
-                existing_source_ids["strava"] = str(strava_activity_id)
+            if strava_activity_id is not None:
+                _merge_strava_source_ids(existing_source_ids, strava_activity_id)
             if row.get("source") == "whoop" and row.get("external_id"):
                 existing_source_ids.setdefault("whoop", str(row["external_id"]))
 
@@ -218,8 +259,10 @@ def _find_or_create_canonical_workout_sync(
     if matched:
         workout_id = matched["id"]
         existing_source_ids = dict(matched.get("source_ids") or {})
-        if external_id:
+        if external_id and source != "strava":
             existing_source_ids[source] = external_id
+        if strava_activity_id is not None:
+            _merge_strava_source_ids(existing_source_ids, strava_activity_id)
         current_primary = matched.get("primary_source") or "manual"
         new_primary = current_primary
         if current_primary in SOURCE_PRIORITY:
@@ -234,6 +277,30 @@ def _find_or_create_canonical_workout_sync(
         }
         if strava_activity_id is not None and not matched.get("strava_activity_id"):
             merge_update["strava_activity_id"] = strava_activity_id
+        elif (
+            strava_activity_id is not None
+            and source == "strava"
+            and strava_activity_payload is not None
+            and matched.get("strava_activity_id") is not None
+            and int(matched["strava_activity_id"]) != int(strava_activity_id)
+        ):
+            existing_payload = matched.get("raw_strava_payload")
+            if not isinstance(existing_payload, dict):
+                existing_payload = None
+            new_score = _strava_quality_score(strava_activity_payload)
+            old_score = _strava_quality_score(existing_payload)
+            if new_score > old_score:
+                merge_update["strava_activity_id"] = strava_activity_id
+                merge_update["strava_streams_fetched"] = False
+                print(
+                    f"[strava.dedup] Promoting activity {strava_activity_id} over "
+                    f"{matched['strava_activity_id']} (score {new_score} > {old_score})"
+                )
+            else:
+                print(
+                    f"[strava.dedup] Keeping activity {matched['strava_activity_id']} as primary "
+                    f"over duplicate {strava_activity_id} (scores old={old_score} new={new_score})"
+                )
 
         merge_payload = _strip_none_update_values(merge_update)
         if merge_payload:
@@ -243,6 +310,12 @@ def _find_or_create_canonical_workout_sync(
             merged_row = matched
         return (merged_row, False)
 
+    init_source_ids: dict[str, Any] = {}
+    if external_id and source != "strava":
+        init_source_ids[source] = external_id
+    if strava_activity_id is not None:
+        _merge_strava_source_ids(init_source_ids, strava_activity_id)
+
     insert_row: dict[str, Any] = {
         "athlete_id": athlete_id,
         "source": source,
@@ -251,7 +324,7 @@ def _find_or_create_canonical_workout_sync(
         "started_at": started_at.isoformat(),
         "ended_at": ended_at.isoformat(),
         "duration_seconds": dur_i,
-        "source_ids": {source: external_id} if external_id else {},
+        "source_ids": init_source_ids,
     }
     if external_id is not None:
         insert_row["external_id"] = external_id
@@ -272,6 +345,7 @@ async def find_or_create_canonical_workout(
     elapsed_time_seconds: int,
     external_id: str | None = None,
     strava_activity_id: int | None = None,
+    strava_activity_payload: dict | None = None,
 ) -> tuple[dict, bool]:
     return await asyncio.to_thread(
         _find_or_create_canonical_workout_sync,
@@ -283,6 +357,7 @@ async def find_or_create_canonical_workout(
         elapsed_time_seconds,
         external_id,
         strava_activity_id,
+        strava_activity_payload,
     )
 
 
