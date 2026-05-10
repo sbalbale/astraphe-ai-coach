@@ -62,6 +62,14 @@ def _expires_at_iso_from_strava(token_payload: dict[str, Any]) -> str | None:
     return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
 
 
+def strava_oauth_expires_at_iso(token_payload: dict[str, Any]) -> str | None:
+    """
+    Persist oauth_tokens.expires_at the same way as get_valid_token after refresh:
+    ISO 8601 UTC string, compatible with _expires_ts_from_db / TIMESTAMPTZ.
+    """
+    return _expires_at_iso_from_strava(token_payload)
+
+
 async def exchange_oauth_code(code: str, redirect_uri: str, delay: bool = False) -> dict[str, Any]:
     """POST authorization_code grant; returns full Strava token payload."""
     await _sleep_if_delay(delay)
