@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
 from fastapi import HTTPException
 
 from app.config import settings
+from app.services.hr_zones import compute_zone_distribution, get_athlete_zones
 from app.services.processing import find_or_create_canonical_workout, normalize_sport
 
 STRAVA_OAUTH_TOKEN_URL = "https://www.strava.com/oauth/token"
@@ -383,4 +384,220 @@ async def resolve_canonical_workout_for_strava_activity(
         int(max(0, elapsed_seconds)),
         external_id or str(activity_id),
         activity_id,
+    )
+
+
+async def ingest_strava_activity(
+    owner_strava_id: int,
+    activity_id: int,
+    db,
+    delay: bool = False,
+    access_token: str | None = None,
+) -> dict | None:
+    """
+    Full pipeline: fetch -> deduplicate -> store streams/laps -> compute zones -> return workout.
+    Called by both the webhook handler and the backfill task.
+    If access_token is set, skips get_valid_token (avoids redundant DB reads during backfill).
+    """
+    athlete_res = (
+        db.table("athletes")
+        .select("*")
+        .eq("strava_athlete_id", owner_strava_id)
+        .maybe_single()
+        .execute()
+    )
+    if not athlete_res.data:
+        print(f"[strava.ingest] No athlete found for strava_id={owner_strava_id}")
+        return None
+
+    athlete = athlete_res.data
+    athlete_id = athlete["id"]
+
+    if not access_token:
+        access_token = await get_valid_token(athlete_id, db)
+    if not access_token:
+        print(f"[strava.ingest] No valid token for athlete_id={athlete_id}")
+        return None
+
+    if delay:
+        await asyncio.sleep(0.5)
+
+    activity = await get_activity(activity_id, access_token)
+    if not activity or "id" not in activity:
+        return None
+
+    sport_type = normalize_sport(activity.get("sport_type") or activity.get("type") or "")
+    start_time = datetime.fromisoformat(activity["start_date"].replace("Z", "+00:00"))
+    elapsed_time = activity.get("elapsed_time") or 0
+    is_rowing = sport_type == "rowing"
+
+    workout, was_created = await find_or_create_canonical_workout(
+        db=db,
+        athlete_id=athlete_id,
+        source="strava",
+        sport_type=sport_type,
+        started_at=start_time,
+        elapsed_time_seconds=elapsed_time,
+        strava_activity_id=activity_id,
+    )
+    workout_id = workout["id"]
+
+    streams: dict[str, Any] = {}
+    if not workout.get("strava_streams_fetched"):
+        if delay:
+            await asyncio.sleep(0.5)
+        streams = await get_activity_streams(activity_id, access_token)
+
+    if delay:
+        await asyncio.sleep(0.5)
+    laps = await get_activity_laps(activity_id, access_token)
+
+    hr_stream = (streams.get("heartrate") or {}).get("data", [])
+    zones = get_athlete_zones(athlete)
+    zone_dist = compute_zone_distribution(hr_stream, zones) if hr_stream else {}
+
+    intervals = None
+    intervals_source = None
+    if is_rowing:
+        intervals, intervals_source = get_rowing_intervals(activity, streams)
+
+    update: dict[str, Any] = {
+        "strava_activity_id": activity_id,
+        "strava_streams_fetched": bool(streams),
+        "primary_source": "strava",
+        "raw_strava_payload": activity,
+        "sport": sport_type,
+        "started_at": activity["start_date"],
+        "elapsed_time": elapsed_time,
+        "moving_time": activity.get("moving_time"),
+        "distance_m": activity.get("distance"),
+        "avg_hr": activity.get("average_heartrate"),
+        "max_hr": activity.get("max_heartrate"),
+        "avg_watts": activity.get("average_watts"),
+        "max_watts": activity.get("max_watts"),
+        "weighted_avg_watts": activity.get("weighted_average_watts"),
+        "kilojoules": activity.get("kilojoules"),
+        "avg_cadence": activity.get("average_cadence"),
+        "suffer_score": activity.get("suffer_score"),
+        "perceived_exertion": activity.get("perceived_exertion"),
+        "total_elevation_gain": activity.get("total_elevation_gain"),
+        "splits_metric": activity.get("splits_metric"),
+        "splits_standard": activity.get("splits_standard"),
+        "hr_zone_distribution": zone_dist if zone_dist else None,
+    }
+
+    if intervals is not None:
+        update["intervals"] = intervals
+        update["intervals_source"] = intervals_source
+
+    update = {k: v for k, v in update.items() if v is not None}
+
+    db.table("workouts").update(update).eq("id", workout_id).execute()
+
+    if streams:
+        db.table("activity_streams").upsert(
+            {
+                "workout_id": workout_id,
+                "athlete_id": athlete_id,
+                "time_series": {
+                    k: v.get("data", [])
+                    for k, v in streams.items()
+                    if isinstance(v, dict)
+                },
+                "resolution_seconds": 1,
+            },
+            on_conflict="workout_id",
+        ).execute()
+
+    if laps:
+        db.table("activity_laps").delete().eq("workout_id", workout_id).execute()
+        lap_rows = []
+        for lap in laps:
+            spd = lap.get("average_speed") or 0
+            lap_rows.append(
+                {
+                    "workout_id": workout_id,
+                    "athlete_id": athlete_id,
+                    "lap_index": lap.get("lap_index"),
+                    "start_index": lap.get("start_index"),
+                    "end_index": lap.get("end_index"),
+                    "elapsed_time": lap.get("elapsed_time"),
+                    "moving_time": lap.get("moving_time"),
+                    "distance": lap.get("distance"),
+                    "average_heartrate": lap.get("average_heartrate"),
+                    "max_heartrate": lap.get("max_heartrate"),
+                    "average_watts": lap.get("average_watts"),
+                    "average_cadence": lap.get("average_cadence"),
+                    "average_speed": spd,
+                    "total_elevation_gain": lap.get("total_elevation_gain"),
+                    "raw_lap": lap,
+                }
+            )
+        db.table("activity_laps").insert(lap_rows).execute()
+
+    print(
+        f"[strava.ingest] activity_id={activity_id} athlete={athlete_id} "
+        f"sport={sport_type} created={was_created}"
+    )
+    return workout
+
+
+async def backfill_historical_data(
+    athlete_id: str,
+    owner_strava_id: int,
+    access_token: str,
+    db,
+    days: int = 90,
+) -> None:
+    """
+    Fetches last N days of Strava activities and ingests each one.
+    Rate-limit safe: 0.5s delay between requests.
+    Only fetches activity summaries first; streams are fetched per-activity during ingest.
+    """
+    after_ts = int((datetime.now(timezone.utc) - timedelta(days=days)).timestamp())
+    page = 1
+    per_page = 50
+    total_ingested = 0
+
+    print(f"[strava.backfill] Starting {days}d backfill for athlete={athlete_id}")
+
+    while True:
+        await asyncio.sleep(0.5)  # rate limit buffer
+
+        url = f"{STRAVA_API_BASE}/athlete/activities"
+        params = {"after": after_ts, "page": page, "per_page": per_page}
+        headers = _auth_headers(access_token)
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(url, params=params, headers=headers)
+
+        if resp.status_code != 200:
+            print(f"[strava.backfill] Error fetching page {page}: {resp.status_code}")
+            break
+
+        activities = resp.json()
+        if not activities:
+            break  # no more pages
+
+        for activity in activities:
+            try:
+                await ingest_strava_activity(
+                    owner_strava_id=owner_strava_id,
+                    activity_id=activity["id"],
+                    db=db,
+                    delay=True,
+                    access_token=access_token,
+                )
+                total_ingested += 1
+            except Exception as e:
+                print(f"[strava.backfill] Failed activity {activity.get('id')}: {e}")
+                continue
+
+        if len(activities) < per_page:
+            break  # last page
+        page += 1
+
+    print(
+        f"[strava.backfill] Complete. Ingested {total_ingested} activities "
+        f"for athlete={athlete_id}"
     )
