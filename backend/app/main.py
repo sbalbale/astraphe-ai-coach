@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import workouts, coach, athlete, biometrics, sync, plan, debug, analysis, training_plans
+from app.routers import workouts, activity_detail, coach, athlete, biometrics, sync, plan, debug, analysis, training_plans
 
 app = FastAPI(
     title="ASTRAPE Backend API",
@@ -19,6 +19,7 @@ app.add_middleware(
 
 app.include_router(athlete.router)
 app.include_router(workouts.router)
+app.include_router(activity_detail.router)
 app.include_router(biometrics.router)
 app.include_router(coach.router)
 app.include_router(sync.router)
