@@ -123,21 +123,29 @@
       <p class="text-[13px] font-semibold mb-3">Connected Apps</p>
       <div class="flex flex-col gap-4">
         <!-- Apple Health -->
-        <div class="flex items-center justify-between">
-          <div class="flex items-center gap-3">
+        <div class="flex items-center justify-between gap-2">
+          <div class="flex items-center gap-3 min-w-0">
             <div
               class="w-9 h-9 rounded-xl flex items-center justify-center border border-border bg-glass shrink-0"
             >
               <!-- Iconify + Simple Icons: https://iconify.design/ -->
               <Icon icon="simple-icons:apple" width={22} height={22} color="#FFFFFF" aria-hidden="true" />
             </div>
-            <div>
+            <div class="min-w-0">
               <p class="text-[13px] font-medium">Apple Health</p>
               <p class="text-[10px] text-text2">Sleep & Workouts</p>
+              {#if integrations.apple.connected}
+                <span
+                  class="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono uppercase tracking-wide bg-teal-dim text-teal border border-teal/30"
+                >
+                  <Icon icon="simple-icons:apple" width={12} height={12} color="#FFFFFF" aria-hidden="true" />
+                  Connected
+                </span>
+              {/if}
             </div>
           </div>
           <button
-            class="px-3 py-1 rounded-full text-[11px] font-medium cursor-pointer transition-all duration-200"
+            class="px-3 py-1 rounded-full text-[11px] font-medium cursor-pointer transition-all duration-200 shrink-0"
             style={integrations.apple.connected
               ? 'background: var(--color-red-dim); color: var(--color-red); border: 1px solid rgba(240,113,120,0.3)'
               : 'background: rgba(240,113,120,0.15); color: #F07178; border: 1px solid rgba(240,113,120,0.3)'}
@@ -148,8 +156,8 @@
         </div>
 
         <!-- Garmin -->
-        <div class="flex items-center justify-between">
-          <div class="flex items-center gap-3">
+        <div class="flex items-center justify-between gap-2">
+          <div class="flex items-center gap-3 min-w-0">
             <div
               class="w-9 h-9 rounded-xl flex items-center justify-center border shrink-0"
               style="background: rgba(0, 160, 233, 0.14); border-color: rgba(0, 160, 233, 0.28)"
@@ -157,13 +165,21 @@
               <!-- Garmin Connect app blue -->
               <Icon icon="simple-icons:garmin" width={22} height={22} color="#00A0E9" aria-hidden="true" />
             </div>
-            <div>
+            <div class="min-w-0">
               <p class="text-[13px] font-medium">Garmin Connect</p>
               <p class="text-[10px] text-text2">Performance Data</p>
+              {#if integrations.garmin.connected}
+                <span
+                  class="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono uppercase tracking-wide bg-teal-dim text-teal border border-teal/30"
+                >
+                  <Icon icon="simple-icons:garmin" width={12} height={12} color="#00A0E9" aria-hidden="true" />
+                  Connected
+                </span>
+              {/if}
             </div>
           </div>
           <button
-            class="px-3 py-1 rounded-full text-[11px] font-medium cursor-pointer transition-all duration-200"
+            class="px-3 py-1 rounded-full text-[11px] font-medium cursor-pointer transition-all duration-200 shrink-0"
             style={integrations.garmin.connected
               ? 'background: var(--color-red-dim); color: var(--color-red); border: 1px solid rgba(240,113,120,0.3)'
               : 'background: rgba(0, 160, 233, 0.15); color: #00A0E9; border: 1px solid rgba(0, 160, 233, 0.35)'}
@@ -174,21 +190,29 @@
         </div>
 
         <!-- WHOOP -->
-        <div class="flex items-center justify-between">
-          <div class="flex items-center gap-3">
+        <div class="flex items-center justify-between gap-2">
+          <div class="flex items-center gap-3 min-w-0">
             <div
               class="w-9 h-9 rounded-xl flex items-center justify-center border shrink-0 bg-bg2"
               style="border-color: rgba(255,255,255,0.12)"
             >
               <Icon icon="arcticons:whoop" width={22} height={22} color="#FFFFFF" aria-hidden="true" />
             </div>
-            <div>
+            <div class="min-w-0">
               <p class="text-[13px] font-medium">WHOOP</p>
               <p class="text-[10px] text-text2">Recovery & HRV</p>
+              {#if integrations.whoop.connected}
+                <span
+                  class="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono uppercase tracking-wide bg-teal-dim text-teal border border-teal/30"
+                >
+                  <Icon icon="arcticons:whoop" width={12} height={12} color="#FFFFFF" aria-hidden="true" />
+                  Connected
+                </span>
+              {/if}
             </div>
           </div>
           <button
-            class="px-3 py-1 rounded-full text-[11px] font-medium cursor-pointer transition-all duration-200"
+            class="px-3 py-1 rounded-full text-[11px] font-medium cursor-pointer transition-all duration-200 shrink-0"
             style={integrations.whoop.connected
               ? 'background: var(--color-red-dim); color: var(--color-red); border: 1px solid rgba(240,113,120,0.3)'
               : 'background: rgba(255,203,136,0.15); color: #FFCB88; border: 1px solid rgba(255,203,136,0.3)'}

@@ -30,56 +30,81 @@ from app.services.algorithms import (
     calculate_threshold_hr_est
 )
 
+# Strava / vendor aliases → ``workouts.sport`` CHECK values (run, bike, swim, strength, row, mobility, other).
+# Keys are matched case-insensitively via ``_SPORT_CANONICAL_LOOKUP``; unknown inputs → ``other``.
 SPORT_CANONICAL = {
     # Rowing
-    "Rowing": "rowing",
-    "VirtualRow": "rowing",
+    "Rowing": "row",
+    "VirtualRow": "row",
+    "IndoorRow": "row",
+    "rowing": "row",
     # Running
     "Run": "run",
     "TrailRun": "run",
     "VirtualRun": "run",
+    "running": "run",
     # Cycling
-    "Ride": "cycling",
-    "VirtualRide": "cycling",
-    "EBikeRide": "cycling",
+    "Ride": "bike",
+    "VirtualRide": "bike",
+    "EBikeRide": "bike",
+    "cycling": "bike",
     # Strength
     "WeightTraining": "strength",
     "Workout": "strength",
-    # Other
+    "Crossfit": "strength",
+    "functional_fitness": "strength",
+    # Mobility
+    "Yoga": "mobility",
+    "Stretching": "mobility",
+    "Pilates": "mobility",
+    # Swim
     "Swim": "swim",
     "OpenWaterSwim": "swim",
-    "Walk": "walk",
-    "Hike": "hike",
-    # WHOOP sport names (normalize to same canonical values)
-    "rowing": "rowing",
-    "running": "run",
-    "cycling": "cycling",
-    "functional_fitness": "strength",
+    "VirtualSwim": "swim",
+    "PoolSwim": "swim",
+    "LapSwim": "swim",
+    "SwimInterval": "swim",
+    "SwimWorkout": "swim",
+    "SwimSet": "swim",
+    "SwimLaps": "swim",
     "swimming": "swim",
+    # Collapse to other
+    "Walk": "other",
+    "Hike": "other",
+    # Pass-through for values already stored / sent as DB enum
+    "run": "run",
+    "bike": "bike",
+    "swim": "swim",
+    "strength": "strength",
+    "row": "row",
+    "mobility": "mobility",
+    "other": "other",
 }
+
+_SPORT_CANONICAL_LOOKUP: dict[str, str] = {k.lower(): v for k, v in SPORT_CANONICAL.items()}
 
 SOURCE_PRIORITY = ["strava", "garmin", "healthkit", "whoop", "manual"]
 
+_DB_SPORTS = frozenset({"run", "bike", "swim", "strength", "row", "mobility", "other"})
+
 
 def normalize_sport(raw_sport: str) -> str:
-    """Normalize any source's sport string to a canonical value (not DB CHECK values)."""
+    """Map any vendor sport string to a ``workouts.sport`` value; unknown → ``other``."""
     if not raw_sport:
         return "other"
-    return SPORT_CANONICAL.get(raw_sport, raw_sport.lower().replace(" ", "_"))
+    return _SPORT_CANONICAL_LOOKUP.get(raw_sport.strip().lower(), "other")
 
 
-def _sport_for_db(canonical: str) -> str:
-    """Map canonical sport from ``normalize_sport`` to ``workouts.sport`` CHECK-safe values."""
-    c = (canonical or "").lower()
-    if c == "rowing":
-        return "row"
-    if c == "cycling":
-        return "bike"
-    if c in ("walk", "hike"):
-        return "other"
-    if c in ("run", "bike", "swim", "strength", "row", "mobility", "other"):
+def _sport_for_db(sport: str) -> str:
+    """
+    Ensure a value is safe for ``workouts.sport``. ``normalize_sport`` already returns DB
+    enums; this still maps legacy intermediate names if any caller passes them.
+    """
+    c = (sport or "").strip().lower()
+    if c in _DB_SPORTS:
         return c
-    return "other"
+    legacy = {"rowing": "row", "cycling": "bike", "walk": "other", "hike": "other"}
+    return legacy.get(c, "other")
 
 
 def _strip_none_update_values(d: dict[str, Any]) -> dict[str, Any]:
@@ -104,8 +129,7 @@ def _find_or_create_canonical_workout_sync(
 ) -> tuple[dict, bool]:
     """
     Find an existing canonical workout that matches this session, or create a new one.
-    ``sport_type`` must already be canonical (see ``normalize_sport``); DB queries use
-    ``_sport_for_db(sport_type)``.
+    ``sport_type`` must be a DB sport from ``normalize_sport``; ``_sport_for_db`` normalizes inserts.
 
     Match criteria:
       1. Exact: strava_activity_id matches (Strava fast path)
@@ -421,7 +445,7 @@ async def process_and_save_workout(payload: WorkoutPayload, athlete_id: str, db:
     anchor_gender = athlete.get("gender") or "male"
     threshold_pace_sec_km = _parse_pace_to_sec_per_km(athlete.get("threshold_pace"))
 
-    if canonical == "cycling" and payload.normalized_power:
+    if canonical == "bike" and payload.normalized_power:
         tss = compute_tss_power(
             payload.duration_seconds, payload.normalized_power, payload.ftp_at_time
         )
@@ -453,7 +477,7 @@ async def process_and_save_workout(payload: WorkoutPayload, athlete_id: str, db:
             gender=str(anchor_gender),
             threshold_hr_source=anchor_threshold_hr_source,
         )
-    elif canonical == "rowing" and hasattr(payload, "avg_power") and payload.avg_power:
+    elif canonical == "row" and hasattr(payload, "avg_power") and payload.avg_power:
         norm_watts = normalize_rowing_watts(payload.avg_power)
         tss = compute_tss_power(payload.duration_seconds, int(norm_watts), payload.ftp_at_time)
     elif getattr(payload, "tss", None):

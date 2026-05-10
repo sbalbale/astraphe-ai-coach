@@ -10,7 +10,11 @@ from fastapi import HTTPException
 
 from app.config import settings
 from app.services.hr_zones import compute_zone_distribution, get_athlete_zones
-from app.services.processing import find_or_create_canonical_workout, normalize_sport
+from app.services.processing import (
+    _sport_for_db,
+    find_or_create_canonical_workout,
+    normalize_sport,
+)
 
 STRAVA_OAUTH_TOKEN_URL = "https://www.strava.com/oauth/token"
 STRAVA_API_BASE = "https://www.strava.com/api/v3"
@@ -20,10 +24,72 @@ STREAM_KEYS = (
     "latlng,grade_smooth,temp,moving"
 )
 
+# Strava read limits are tight (~100/15min per app); backfill spaces out detail fetches.
+STRAVA_BACKFILL_REQUEST_GAP_S = 1.5
+STRAVA_RATE_LIMIT_COOLDOWN_S = 900  # 15 min rolling window when no Retry-After
+
+
+class StravaRateLimitError(Exception):
+    """Raised on HTTP 429 from Strava read APIs so callers can back off (backfill/webhook)."""
+
+    def __init__(self, message: str = "Strava rate limit exceeded", *, retry_after: int | None = None):
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+def _retry_after_seconds(response: httpx.Response, default: int = STRAVA_RATE_LIMIT_COOLDOWN_S) -> int:
+    raw = response.headers.get("Retry-After")
+    if not raw:
+        return default
+    try:
+        v = int(raw)
+        if 1 <= v <= 7200:
+            return v
+    except ValueError:
+        pass
+    return default
+
 
 async def _sleep_if_delay(delay: bool) -> None:
     if delay:
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(STRAVA_BACKFILL_REQUEST_GAP_S)
+
+
+def _optional_smallint(value: Any, *, max_val: int = 32767) -> int | None:
+    """Coerce Strava floats to SMALLINT for PostgREST; None if missing or invalid."""
+    if value is None:
+        return None
+    try:
+        n = int(round(float(value)))
+    except (TypeError, ValueError):
+        return None
+    if n < 0:
+        n = 0
+    if n > max_val:
+        n = max_val
+    return n
+
+
+def _hr_stream_zone_dist_to_workout_columns(zone_dist: dict[str, Any]) -> dict[str, Any]:
+    """Map compute_zone_distribution Z1..Z5 into workouts.hr_zone_*_pct columns."""
+    if not zone_dist:
+        return {}
+    col_by_key = {
+        "Z0": "hr_zone_0_pct",
+        "Z1": "hr_zone_1_pct",
+        "Z2": "hr_zone_2_pct",
+        "Z3": "hr_zone_3_pct",
+        "Z4": "hr_zone_4_pct",
+        "Z5": "hr_zone_5_pct",
+    }
+    out: dict[str, Any] = {}
+    for zk, col in col_by_key.items():
+        if zk not in zone_dist:
+            continue
+        v = _optional_smallint(zone_dist[zk], max_val=100)
+        if v is not None:
+            out[col] = v
+    return out
 
 
 def _expires_ts_from_db(value: Any) -> float | None:
@@ -175,6 +241,8 @@ async def get_activity(activity_id: int, access_token: str, delay: bool = False)
     url = f"{STRAVA_API_BASE}/activities/{activity_id}"
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.get(url, headers=_auth_headers(access_token))
+    if response.status_code == 429:
+        raise StravaRateLimitError(retry_after=_retry_after_seconds(response))
     if response.status_code < 200 or response.status_code >= 300:
         raise HTTPException(
             status_code=response.status_code,
@@ -204,6 +272,8 @@ async def get_activity_streams(
         response = await client.get(url, headers=_auth_headers(access_token), params=params)
     if response.status_code == 404:
         return {}
+    if response.status_code == 429:
+        raise StravaRateLimitError(retry_after=_retry_after_seconds(response))
     if response.status_code < 200 or response.status_code >= 300:
         raise HTTPException(
             status_code=response.status_code,
@@ -345,6 +415,8 @@ async def get_activity_laps(activity_id: int, access_token: str, delay: bool = F
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(url, headers=_auth_headers(access_token))
+        if response.status_code == 429:
+            raise StravaRateLimitError(retry_after=_retry_after_seconds(response))
         if response.status_code < 200 or response.status_code >= 300:
             return []
         data = response.json()
@@ -427,17 +499,14 @@ async def ingest_strava_activity(
         print(f"[strava.ingest] No valid token for athlete_id={athlete_id}")
         return None
 
-    if delay:
-        await asyncio.sleep(0.5)
-
-    activity = await get_activity(activity_id, access_token)
+    activity = await get_activity(activity_id, access_token, delay=delay)
     if not activity or "id" not in activity:
         return None
 
     sport_type = normalize_sport(activity.get("sport_type") or activity.get("type") or "")
     start_time = datetime.fromisoformat(activity["start_date"].replace("Z", "+00:00"))
     elapsed_time = activity.get("elapsed_time") or 0
-    is_rowing = sport_type == "rowing"
+    is_rowing = sport_type == "row"
 
     workout, was_created = await find_or_create_canonical_workout(
         db=db,
@@ -452,13 +521,9 @@ async def ingest_strava_activity(
 
     streams: dict[str, Any] = {}
     if not workout.get("strava_streams_fetched"):
-        if delay:
-            await asyncio.sleep(0.5)
-        streams = await get_activity_streams(activity_id, access_token)
+        streams = await get_activity_streams(activity_id, access_token, delay=delay)
 
-    if delay:
-        await asyncio.sleep(0.5)
-    laps = await get_activity_laps(activity_id, access_token)
+    laps = await get_activity_laps(activity_id, access_token, delay=delay)
 
     hr_stream = (streams.get("heartrate") or {}).get("data", [])
     zones = get_athlete_zones(athlete)
@@ -469,30 +534,28 @@ async def ingest_strava_activity(
     if is_rowing:
         intervals, intervals_source = get_rowing_intervals(activity, streams)
 
+    # workouts table columns must match Supabase schema (see migrations); extras live in raw_strava_payload.
+    ended_at = start_time + timedelta(seconds=int(max(0, elapsed_time)))
     update: dict[str, Any] = {
         "strava_activity_id": activity_id,
         "strava_streams_fetched": bool(streams),
         "primary_source": "strava",
         "raw_strava_payload": activity,
-        "sport": sport_type,
+        "sport": _sport_for_db(sport_type),
         "started_at": activity["start_date"],
-        "elapsed_time": elapsed_time,
-        "moving_time": activity.get("moving_time"),
+        "ended_at": ended_at.isoformat(),
+        "duration_seconds": int(max(0, elapsed_time)),
         "distance_m": activity.get("distance"),
-        "avg_hr": activity.get("average_heartrate"),
-        "max_hr": activity.get("max_heartrate"),
-        "avg_watts": activity.get("average_watts"),
-        "max_watts": activity.get("max_watts"),
-        "weighted_avg_watts": activity.get("weighted_average_watts"),
-        "kilojoules": activity.get("kilojoules"),
-        "avg_cadence": activity.get("average_cadence"),
-        "suffer_score": activity.get("suffer_score"),
-        "perceived_exertion": activity.get("perceived_exertion"),
-        "total_elevation_gain": activity.get("total_elevation_gain"),
+        "avg_hr": _optional_smallint(activity.get("average_heartrate")),
+        "max_hr": _optional_smallint(activity.get("max_heartrate")),
+        "avg_power_w": _optional_smallint(activity.get("average_watts")),
+        "norm_power_w": _optional_smallint(activity.get("weighted_average_watts")),
+        "elevation_gain_m": activity.get("total_elevation_gain"),
+        "strain_score": _optional_smallint(activity.get("suffer_score"), max_val=1000),
         "splits_metric": activity.get("splits_metric"),
         "splits_standard": activity.get("splits_standard"),
-        "hr_zone_distribution": zone_dist if zone_dist else None,
     }
+    update.update(_hr_stream_zone_dist_to_workout_columns(zone_dist))
 
     if intervals is not None:
         update["intervals"] = intervals
@@ -559,47 +622,98 @@ async def backfill_historical_data(
 ) -> None:
     """
     Fetches last N days of Strava activities and ingests each one.
-    Rate-limit safe: 0.5s delay between requests.
-    Only fetches activity summaries first; streams are fetched per-activity during ingest.
+    Spaces detail fetches (get activity + streams + laps) using ``STRAVA_BACKFILL_REQUEST_GAP_S``;
+    on HTTP 429 sleeps ``Retry-After`` or 15 minutes and retries the same activity.
     """
     after_ts = int((datetime.now(timezone.utc) - timedelta(days=days)).timestamp())
     page = 1
     per_page = 50
     total_ingested = 0
+    max_rate_limit_retries = 6
 
     print(f"[strava.backfill] Starting {days}d backfill for athlete={athlete_id}")
 
     while True:
-        await asyncio.sleep(0.5)  # rate limit buffer
+        await asyncio.sleep(STRAVA_BACKFILL_REQUEST_GAP_S)
 
         url = f"{STRAVA_API_BASE}/athlete/activities"
         params = {"after": after_ts, "page": page, "per_page": per_page}
         headers = _auth_headers(access_token)
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.get(url, params=params, headers=headers)
-
-        if resp.status_code != 200:
-            print(f"[strava.backfill] Error fetching page {page}: {resp.status_code}")
+        activities: list[Any] = []
+        list_retries = 0
+        while list_retries < max_rate_limit_retries:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.get(url, params=params, headers=headers)
+            if resp.status_code == 429:
+                wait = _retry_after_seconds(resp)
+                print(f"[strava.backfill] List activities 429 — sleeping {wait}s")
+                await asyncio.sleep(wait)
+                list_retries += 1
+                continue
+            if resp.status_code != 200:
+                print(f"[strava.backfill] Error fetching page {page}: {resp.status_code}")
+                activities = []
+                break
+            raw = resp.json()
+            activities = raw if isinstance(raw, list) else []
             break
+        else:
+            print(f"[strava.backfill] Gave up fetching activity list page {page} after repeated 429s")
+            activities = []
 
-        activities = resp.json()
         if not activities:
-            break  # no more pages
+            break  # no more pages (or fetch failed)
 
         for activity in activities:
-            try:
-                await ingest_strava_activity(
-                    owner_strava_id=owner_strava_id,
-                    activity_id=activity["id"],
-                    db=db,
-                    delay=True,
-                    access_token=access_token,
-                )
-                total_ingested += 1
-            except Exception as e:
-                print(f"[strava.backfill] Failed activity {activity.get('id')}: {e}")
+            aid = activity.get("id")
+            if aid is None:
                 continue
+
+            skip_res = (
+                db.table("workouts")
+                .select("id")
+                .eq("strava_activity_id", aid)
+                .eq("strava_streams_fetched", True)
+                .maybe_single()
+                .execute()
+            )
+            # supabase-py: no matching row → execute() may be None, not an object with .data.
+            if skip_res is not None and skip_res.data is not None:
+                continue
+
+            rl_attempts = 0
+            while rl_attempts < max_rate_limit_retries:
+                try:
+                    await ingest_strava_activity(
+                        owner_strava_id=owner_strava_id,
+                        activity_id=int(aid),
+                        db=db,
+                        delay=True,
+                        access_token=access_token,
+                    )
+                    total_ingested += 1
+                    break
+                except StravaRateLimitError as e:
+                    wait = (
+                        e.retry_after
+                        if e.retry_after and e.retry_after > 0
+                        else STRAVA_RATE_LIMIT_COOLDOWN_S
+                    )
+                    print(
+                        f"[strava.backfill] Rate limited on activity {aid} — "
+                        f"sleeping {wait}s (attempt {rl_attempts + 1}/{max_rate_limit_retries})"
+                    )
+                    await asyncio.sleep(wait)
+                    rl_attempts += 1
+                except Exception as e:
+                    print(f"[strava.backfill] Failed activity {aid}: {e}")
+                    break
+            else:
+                print(
+                    f"[strava.backfill] Gave up activity {aid} after {max_rate_limit_retries} "
+                    "rate-limit waits"
+                )
 
         if len(activities) < per_page:
             break  # last page
