@@ -1,6 +1,8 @@
+import json
 import urllib.parse
 import secrets
 import asyncio
+from html import escape
 from fastapi import APIRouter, Request, Response, HTTPException, Depends, BackgroundTasks, Query
 from fastapi.responses import RedirectResponse, HTMLResponse
 from starlette.requests import ClientDisconnect
@@ -28,6 +30,217 @@ def get_clean_strava_redirect_url():
     """Strava OAuth redirect_uri — must match authorize and token exchange exactly."""
     base = settings.APP_BASE_URL.strip().rstrip("/")
     return f"{base}{settings.API_PREFIX}/sync/oauth/strava/callback"
+
+
+def _oauth_connected_success_response(deep_link: str, provider: str) -> HTMLResponse:
+    """In-app browser landing page after OAuth — same UX as WHOOP, themed per provider."""
+    themes = {
+        "whoop": {
+            "page_title": "ASTRAPE • WHOOP Connected",
+            "headline": "WHOOP connected",
+            "body": "Your WHOOP account is now linked to ASTRAPE. You can safely return to the app.",
+            "grad1": "rgba(124, 58, 237, 0.35)",
+            "grad2": "rgba(34, 211, 238, 0.22)",
+            "brand_a": "#7C3AED",
+            "brand_b": "#22D3EE",
+            "logo_shadow": "rgba(124, 58, 237, 0.25)",
+            "btn_shadow": "rgba(124, 58, 237, 0.22)",
+        },
+        "strava": {
+            "page_title": "ASTRAPE • Strava Connected",
+            "headline": "Strava connected",
+            "body": "Your Strava account is now linked to ASTRAPE. Recent activities will sync in the background—you can return to the app whenever you're ready.",
+            "grad1": "rgba(252, 76, 2, 0.42)",
+            "grad2": "rgba(255, 140, 90, 0.20)",
+            "brand_a": "#FC4C02",
+            "brand_b": "#FF9F66",
+            "logo_shadow": "rgba(252, 76, 2, 0.40)",
+            "btn_shadow": "rgba(252, 76, 2, 0.30)",
+        },
+    }
+    t = themes.get(provider, themes["whoop"])
+    return HTMLResponse(
+        f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{t["page_title"]}</title>
+    <meta name="color-scheme" content="dark light" />
+    <style>
+      :root {{
+        --bg0: #070A12;
+        --bg1: #0B1022;
+        --card: rgba(255, 255, 255, 0.06);
+        --cardBorder: rgba(255, 255, 255, 0.10);
+        --text: rgba(255, 255, 255, 0.92);
+        --muted: rgba(255, 255, 255, 0.70);
+        --brandA: {t["brand_a"]};
+        --brandB: {t["brand_b"]};
+        --ok: #34D399;
+      }}
+      * {{ box-sizing: border-box; }}
+      body {{
+        margin: 0;
+        min-height: 100vh;
+        color: var(--text);
+        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
+        background:
+          radial-gradient(1200px 600px at 20% -10%, {t["grad1"]}, transparent 60%),
+          radial-gradient(900px 500px at 90% 10%, {t["grad2"]}, transparent 55%),
+          linear-gradient(180deg, var(--bg0), var(--bg1));
+        display: grid;
+        place-items: center;
+        padding: 24px;
+      }}
+      .wrap {{ width: min(560px, 100%); }}
+      .card {{
+        background: var(--card);
+        border: 1px solid var(--cardBorder);
+        border-radius: 18px;
+        padding: 22px;
+        backdrop-filter: blur(10px);
+        box-shadow:
+          0 24px 50px rgba(0, 0, 0, 0.45),
+          inset 0 1px 0 rgba(255, 255, 255, 0.05);
+      }}
+      .brand {{
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 14px;
+      }}
+      .logo {{
+        width: 36px;
+        height: 36px;
+        border-radius: 12px;
+        background: linear-gradient(135deg, var(--brandA), var(--brandB));
+        box-shadow: 0 10px 24px {t["logo_shadow"]};
+      }}
+      .brand h1 {{
+        margin: 0;
+        font-size: 14px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }}
+      .title {{
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin: 6px 0 8px;
+      }}
+      .check {{
+        width: 22px;
+        height: 22px;
+        border-radius: 999px;
+        display: grid;
+        place-items: center;
+        background: rgba(52, 211, 153, 0.15);
+        border: 1px solid rgba(52, 211, 153, 0.35);
+        color: var(--ok);
+        flex: 0 0 auto;
+      }}
+      h2 {{
+        margin: 0;
+        font-size: 22px;
+        line-height: 1.2;
+      }}
+      p {{
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.5;
+      }}
+      .actions {{
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-top: 16px;
+      }}
+      a.btn, button.btn {{
+        appearance: none;
+        border: 0;
+        cursor: pointer;
+        text-decoration: none;
+        font-weight: 600;
+        padding: 12px 14px;
+        border-radius: 12px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+      }}
+      .primary {{
+        color: #081018;
+        background: linear-gradient(135deg, var(--brandA), var(--brandB));
+        box-shadow: 0 18px 34px {t["btn_shadow"]};
+      }}
+      .secondary {{
+        color: var(--text);
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+      }}
+      .tiny {{
+        font-size: 12px;
+        margin-top: 14px;
+        color: rgba(255, 255, 255, 0.55);
+      }}
+      code {{
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        font-size: 12px;
+        color: rgba(255, 255, 255, 0.78);
+      }}
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="card">
+        <div class="brand">
+          <div class="logo" aria-hidden="true"></div>
+          <h1>ASTRAPE AI Coach</h1>
+        </div>
+
+        <div class="title">
+          <div class="check" aria-hidden="true">✓</div>
+          <h2>{t["headline"]}</h2>
+        </div>
+        <p>{t["body"]}</p>
+
+        <div class="actions">
+          <a class="btn primary" href="{escape(deep_link, quote=True)}">Open ASTRAPE</a>
+          <button class="btn secondary" type="button" id="copyBtn">Copy link</button>
+        </div>
+
+        <div class="tiny">
+          If your browser didn’t open the app automatically, use the button above. Link:
+          <br />
+          <code id="dl">{escape(deep_link)}</code>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const deepLink = {json.dumps(deep_link)};
+
+      setTimeout(() => {{
+        try {{ window.location.href = deepLink; }} catch (e) {{}}
+      }}, 50);
+
+      const copyBtn = document.getElementById("copyBtn");
+      copyBtn?.addEventListener("click", async () => {{
+        try {{
+          await navigator.clipboard.writeText(deepLink);
+          copyBtn.textContent = "Copied";
+          setTimeout(() => (copyBtn.textContent = "Copy link"), 1200);
+        }} catch (e) {{
+          window.prompt("Copy this link:", deepLink);
+        }}
+      }});
+    </script>
+  </body>
+</html>""",
+        status_code=200,
+    )
 
 @router.post("/garmin/webhook")
 async def garmin_webhook(request: Request, background_tasks: BackgroundTasks, db=Depends(get_admin_db)):
@@ -431,192 +644,8 @@ async def whoop_oauth_callback(
         
         deep_link = f"{settings.MOBILE_DEEP_LINK_SCHEME}://connected?provider=whoop&status=success"
         # When this flow runs in a desktop browser, custom URI schemes won't open reliably.
-        # Return a tiny HTML page that attempts the deep link and provides a manual link.
-        return HTMLResponse(
-            f"""<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>ASTRAPE • WHOOP Connected</title>
-    <meta name="color-scheme" content="dark light" />
-    <style>
-      :root {{
-        --bg0: #070A12;
-        --bg1: #0B1022;
-        --card: rgba(255, 255, 255, 0.06);
-        --cardBorder: rgba(255, 255, 255, 0.10);
-        --text: rgba(255, 255, 255, 0.92);
-        --muted: rgba(255, 255, 255, 0.70);
-        --brandA: #7C3AED; /* violet */
-        --brandB: #22D3EE; /* cyan */
-        --ok: #34D399;     /* emerald */
-      }}
-      * {{ box-sizing: border-box; }}
-      body {{
-        margin: 0;
-        min-height: 100vh;
-        color: var(--text);
-        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
-        background:
-          radial-gradient(1200px 600px at 20% -10%, rgba(124, 58, 237, 0.35), transparent 60%),
-          radial-gradient(900px 500px at 90% 10%, rgba(34, 211, 238, 0.22), transparent 55%),
-          linear-gradient(180deg, var(--bg0), var(--bg1));
-        display: grid;
-        place-items: center;
-        padding: 24px;
-      }}
-      .wrap {{ width: min(560px, 100%); }}
-      .card {{
-        background: var(--card);
-        border: 1px solid var(--cardBorder);
-        border-radius: 18px;
-        padding: 22px;
-        backdrop-filter: blur(10px);
-        box-shadow:
-          0 24px 50px rgba(0, 0, 0, 0.45),
-          inset 0 1px 0 rgba(255, 255, 255, 0.05);
-      }}
-      .brand {{
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        margin-bottom: 14px;
-      }}
-      .logo {{
-        width: 36px;
-        height: 36px;
-        border-radius: 12px;
-        background: linear-gradient(135deg, var(--brandA), var(--brandB));
-        box-shadow: 0 10px 24px rgba(124, 58, 237, 0.25);
-      }}
-      .brand h1 {{
-        margin: 0;
-        font-size: 14px;
-        letter-spacing: 0.12em;
-        text-transform: uppercase;
-        color: var(--muted);
-      }}
-      .title {{
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        margin: 6px 0 8px;
-      }}
-      .check {{
-        width: 22px;
-        height: 22px;
-        border-radius: 999px;
-        display: grid;
-        place-items: center;
-        background: rgba(52, 211, 153, 0.15);
-        border: 1px solid rgba(52, 211, 153, 0.35);
-        color: var(--ok);
-        flex: 0 0 auto;
-      }}
-      h2 {{
-        margin: 0;
-        font-size: 22px;
-        line-height: 1.2;
-      }}
-      p {{
-        margin: 0;
-        color: var(--muted);
-        line-height: 1.5;
-      }}
-      .actions {{
-        display: flex;
-        gap: 10px;
-        flex-wrap: wrap;
-        margin-top: 16px;
-      }}
-      a.btn, button.btn {{
-        appearance: none;
-        border: 0;
-        cursor: pointer;
-        text-decoration: none;
-        font-weight: 600;
-        padding: 12px 14px;
-        border-radius: 12px;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        gap: 10px;
-      }}
-      .primary {{
-        color: #081018;
-        background: linear-gradient(135deg, var(--brandA), var(--brandB));
-        box-shadow: 0 18px 34px rgba(124, 58, 237, 0.22);
-      }}
-      .secondary {{
-        color: var(--text);
-        background: rgba(255, 255, 255, 0.06);
-        border: 1px solid rgba(255, 255, 255, 0.12);
-      }}
-      .tiny {{
-        font-size: 12px;
-        margin-top: 14px;
-        color: rgba(255, 255, 255, 0.55);
-      }}
-      code {{
-        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-        font-size: 12px;
-        color: rgba(255, 255, 255, 0.78);
-      }}
-    </style>
-  </head>
-  <body>
-    <div class="wrap">
-      <div class="card">
-        <div class="brand">
-          <div class="logo" aria-hidden="true"></div>
-          <h1>ASTRAPE AI Coach</h1>
-        </div>
+        return _oauth_connected_success_response(deep_link, "whoop")
 
-        <div class="title">
-          <div class="check" aria-hidden="true">✓</div>
-          <h2>WHOOP connected</h2>
-        </div>
-        <p>Your WHOOP account is now linked to ASTRAPE. You can safely return to the app.</p>
-
-        <div class="actions">
-          <a class="btn primary" href="{deep_link}">Open ASTRAPE</a>
-          <button class="btn secondary" type="button" id="copyBtn">Copy link</button>
-        </div>
-
-        <div class="tiny">
-          If your browser didn’t open the app automatically, use the button above. Link:
-          <br />
-          <code id="dl">{deep_link}</code>
-        </div>
-      </div>
-    </div>
-
-    <script>
-      const deepLink = "{deep_link}";
-
-      // Attempt deep link quickly, but leave the page usable if blocked.
-      setTimeout(() => {{
-        try {{ window.location.href = deepLink; }} catch (e) {{}}
-      }}, 50);
-
-      const copyBtn = document.getElementById("copyBtn");
-      copyBtn?.addEventListener("click", async () => {{
-        try {{
-          await navigator.clipboard.writeText(deepLink);
-          copyBtn.textContent = "Copied";
-          setTimeout(() => (copyBtn.textContent = "Copy link"), 1200);
-        }} catch (e) {{
-          // Clipboard can be blocked; fall back to a prompt.
-          window.prompt("Copy this link:", deepLink);
-        }}
-      }});
-    </script>
-  </body>
-</html>""",
-            status_code=200,
-        )
-        
     except Exception as e:
         print(f"[whoop.oauth.callback] ERROR: {repr(e)}")
         return {"status": "error", "message": str(e)}
@@ -716,14 +745,7 @@ async def strava_oauth_callback(
             )
 
         deep_link = f"{settings.MOBILE_DEEP_LINK_SCHEME}://connected?provider=strava&status=success"
-        return HTMLResponse(
-            f"""
-        <html><body>
-        <script>window.location.href='{deep_link}';</script>
-        <p>Strava connected! <a href="{deep_link}">Return to Astrape</a></p>
-        </body></html>
-    """
-        )
+        return _oauth_connected_success_response(deep_link, "strava")
     except HTTPException:
         raise
     except Exception as e:
