@@ -742,6 +742,7 @@ async def get_sync_status(athlete_id: str = Depends(get_current_athlete), db=Dep
         "integrations": {
             "garmin": {"connected": "garmin" in providers, "last_sync": "2026-04-26T10:14:00Z"},
             "whoop": {"connected": "whoop" in providers, "last_sync": None},
+            "strava": {"connected": "strava" in providers, "last_sync": None},
             # HealthKit does not use OAuth tokens. Until the mobile client sends a verifiable
             # handshake/sync marker, report it as disconnected.
             "healthkit": {"connected": False, "last_sync": None}
