@@ -6,7 +6,7 @@ import numpy as np
 
 from app.models.athlete import AthleteState, AthleteProfileUpdate
 from app.services.algorithms import compute_z_score
-from app.services.hr_zones import athlete_dict_with_hr_zones
+from app.services.hr_zones import athlete_dict_with_hr_zones, get_athlete_zones
 from app.dependencies import get_current_athlete, get_user_db, get_admin_db
 
 router = APIRouter(prefix="/v1/athlete", tags=["Athlete"])
@@ -251,6 +251,88 @@ async def get_athlete_profile(
     if not res or not res.data:
         raise HTTPException(status_code=404, detail="Athlete not found")
     return athlete_dict_with_hr_zones(res.data)
+
+
+def _build_athlete_zones_update(payload: dict) -> dict:
+    """
+    Map PUT /zones JSON to athletes columns. Never includes `lthr` (GENERATED ALWAYS).
+    Client may send `method` (mapped to hr_zone_method) or `lthr` (mapped to threshold_hr).
+    """
+    if not isinstance(payload, dict):
+        return {}
+    out: dict = {}
+    hm, m = payload.get("hr_zone_method"), payload.get("method")
+    if hm is not None:
+        out["hr_zone_method"] = hm
+    elif m is not None:
+        out["hr_zone_method"] = m
+    for k in ("max_hr", "resting_hr"):
+        if k in payload and payload[k] is not None:
+            out[k] = payload[k]
+    thr_raw = None
+    if "lthr" in payload and payload.get("lthr") is not None:
+        thr_raw = payload["lthr"]
+    elif "threshold_hr" in payload and payload.get("threshold_hr") is not None:
+        thr_raw = payload["threshold_hr"]
+    if thr_raw is not None:
+        try:
+            tv = int(thr_raw)
+            out["threshold_hr"] = tv
+            if tv > 0:
+                out["threshold_hr_source"] = "manual"
+        except (TypeError, ValueError):
+            pass
+    return out
+
+
+@router.get("/zones")
+async def get_zones(
+    athlete_id: str = Depends(get_current_athlete),
+    db=Depends(get_user_db),
+):
+    """Returns the athlete's current HR zone definitions."""
+    res = (
+        db.table("athletes")
+        .select("lthr, threshold_hr, max_hr, resting_hr, hr_zone_method")
+        .eq("id", athlete_id)
+        .maybe_single()
+        .execute()
+    )
+    athlete = res.data or {}
+    zones = get_athlete_zones(athlete)
+    return {
+        "zones": [
+            {"zone": z.zone, "name": z.name, "min_bpm": z.min_bpm, "max_bpm": z.max_bpm}
+            for z in zones
+        ],
+        "anchors": {
+            "lthr": athlete.get("lthr") or athlete.get("threshold_hr"),
+            "max_hr": athlete.get("max_hr"),
+            "resting_hr": athlete.get("resting_hr"),
+            "method": athlete.get("hr_zone_method") or "lthr",
+        },
+    }
+
+
+@router.put("/zones")
+async def update_zones(
+    payload: dict,
+    athlete_id: str = Depends(get_current_athlete),
+    db=Depends(get_user_db),
+):
+    """Update HR zone anchors. method: 'lthr' | 'max_hr_percent' | 'hrr' (stored as hr_zone_method)."""
+    update = _build_athlete_zones_update(payload)
+    if not update:
+        raise HTTPException(status_code=400, detail="No valid fields provided")
+    try:
+        update_res = db.table("athletes").update(update).eq("id", athlete_id).execute()
+    except Exception as e:
+        print(f"[athlete.zones.put] update failed: {repr(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to update zones: {str(e)}")
+    if getattr(update_res, "data", None) == []:
+        raise HTTPException(status_code=403, detail="Zones update was not permitted")
+    return {"status": "updated", "fields": list(update.keys())}
+
 
 @router.patch("/profile")
 async def update_athlete_profile(
