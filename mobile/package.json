@@ -32,9 +32,11 @@
 	"dependencies": {
 		"@capacitor/app": "^8.1.0",
 		"@capacitor/background-runner": "^3.0.0",
+		"@capacitor/browser": "^8.0.0",
 		"@capacitor/core": "^8.3.1",
 		"@capacitor/ios": "^8.3.1",
 		"@capacitor/preferences": "^8.0.1",
+		"@iconify/svelte": "^5.2.1",
 		"@interval-health/capacitor-health": "^2.0.0",
 		"@supabase/supabase-js": "^2.105.0",
 		"d3": "^7.9.0",

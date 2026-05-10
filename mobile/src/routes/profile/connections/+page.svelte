@@ -1,27 +1,71 @@
 <script lang="ts">
+  import { App } from '@capacitor/app';
+  import { Browser } from '@capacitor/browser';
+  import { Capacitor } from '@capacitor/core';
+  import Icon from '@iconify/svelte';
   import Card from '$lib/components/Card.svelte';
   import { goto } from '$app/navigation';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { HealthIntegration } from '$lib/integrations/health';
   import { api } from '$lib/api';
 
+  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+
   let syncing = $state('');
 
   const integrations = $derived({
     apple: athleteStore.syncStatus?.integrations?.healthkit || { connected: false },
     garmin: athleteStore.syncStatus?.integrations?.garmin || { connected: false },
-    whoop: athleteStore.syncStatus?.integrations?.whoop || { connected: false }
+    whoop: athleteStore.syncStatus?.integrations?.whoop || { connected: false },
+    strava: athleteStore.syncStatus?.integrations?.strava || { connected: false }
   });
 
   function goBack() {
     goto('/profile');
   }
 
+  function isOAuthConnectedDeepLink(url: string): boolean {
+    try {
+      const u = new URL(url);
+      if (u.host !== 'connected') return false;
+      const p = u.searchParams.get('provider');
+      const s = u.searchParams.get('status');
+      return (p === 'strava' || p === 'whoop') && s === 'success';
+    } catch {
+      return false;
+    }
+  }
+
+  async function refreshSyncAfterOAuth() {
+    const syncData = await api.getSyncStatus();
+    if (syncData) athleteStore.syncStatus = syncData;
+  }
+
+  async function onAppUrlOpen(event: { url: string }) {
+    if (!isOAuthConnectedDeepLink(event.url)) return;
+    await refreshSyncAfterOAuth();
+  }
+
+  $effect(() => {
+    const sub = App.addListener('appUrlOpen', onAppUrlOpen);
+    return () => {
+      void sub.then((h) => h.remove());
+    };
+  });
+
+  async function openOAuthAuthorize(providerPath: 'whoop' | 'strava') {
+    const aid = athleteStore.profile?.id || '';
+    const url = `${API_URL}/v1/sync/oauth/${providerPath}/authorize?athlete_id=${encodeURIComponent(aid)}`;
+    if (Capacitor.isNativePlatform()) {
+      await Browser.open({ url });
+    } else {
+      window.location.href = url;
+    }
+  }
+
   async function toggleIntegration(id: string) {
     if (syncing) return;
     syncing = id;
-
-    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
     if (id === 'apple') {
       if (integrations.apple.connected) {
@@ -30,7 +74,6 @@
         const granted = await HealthIntegration.requestPermissions();
         if (granted) {
           await HealthIntegration.syncRecentData();
-          // Refresh from backend so UI reflects the real connection state.
           const syncData = await api.getSyncStatus();
           if (syncData) athleteStore.syncStatus = syncData;
         }
@@ -39,14 +82,19 @@
       if (integrations.whoop.connected) {
         await athleteStore.unlinkIntegration('whoop');
       } else {
-        const aid = athleteStore.profile?.id || '';
-        window.location.href = `${API_URL}/v1/sync/oauth/whoop/authorize?athlete_id=${aid}`;
+        await openOAuthAuthorize('whoop');
+      }
+    } else if (id === 'strava') {
+      if (integrations.strava.connected) {
+        await athleteStore.unlinkIntegration('strava');
+      } else {
+        await openOAuthAuthorize('strava');
       }
     } else if (id === 'garmin') {
       if (integrations.garmin.connected) {
         await athleteStore.unlinkIntegration('garmin');
       } else {
-        await new Promise(resolve => setTimeout(resolve, 1500));
+        await new Promise((resolve) => setTimeout(resolve, 1500));
         const syncData = await api.getSyncStatus();
         if (syncData) athleteStore.syncStatus = syncData;
       }
@@ -77,7 +125,12 @@
         <!-- Apple Health -->
         <div class="flex items-center justify-between">
           <div class="flex items-center gap-3">
-            <div class="w-9 h-9 rounded-xl bg-[#F07178]/10 text-[#F07178] flex items-center justify-center text-xl border border-[#F07178]/20">🍎</div>
+            <div
+              class="w-9 h-9 rounded-xl flex items-center justify-center border border-border bg-glass shrink-0"
+            >
+              <!-- Iconify + Simple Icons: https://iconify.design/ -->
+              <Icon icon="simple-icons:apple" width={22} height={22} color="#FFFFFF" aria-hidden="true" />
+            </div>
             <div>
               <p class="text-[13px] font-medium">Apple Health</p>
               <p class="text-[10px] text-text2">Sleep & Workouts</p>
@@ -97,7 +150,13 @@
         <!-- Garmin -->
         <div class="flex items-center justify-between">
           <div class="flex items-center gap-3">
-            <div class="w-9 h-9 rounded-xl bg-[#00C8A8]/10 text-[#00C8A8] flex items-center justify-center text-xl border border-[#00C8A8]/20">⌚</div>
+            <div
+              class="w-9 h-9 rounded-xl flex items-center justify-center border shrink-0"
+              style="background: rgba(0, 160, 233, 0.14); border-color: rgba(0, 160, 233, 0.28)"
+            >
+              <!-- Garmin Connect app blue -->
+              <Icon icon="simple-icons:garmin" width={22} height={22} color="#00A0E9" aria-hidden="true" />
+            </div>
             <div>
               <p class="text-[13px] font-medium">Garmin Connect</p>
               <p class="text-[10px] text-text2">Performance Data</p>
@@ -107,7 +166,7 @@
             class="px-3 py-1 rounded-full text-[11px] font-medium cursor-pointer transition-all duration-200"
             style={integrations.garmin.connected
               ? 'background: var(--color-red-dim); color: var(--color-red); border: 1px solid rgba(240,113,120,0.3)'
-              : 'background: rgba(0,200,168,0.15); color: #00C8A8; border: 1px solid rgba(0,200,168,0.3)'}
+              : 'background: rgba(0, 160, 233, 0.15); color: #00A0E9; border: 1px solid rgba(0, 160, 233, 0.35)'}
             onclick={() => toggleIntegration('garmin')}
           >
             {syncing === 'garmin' ? '...' : integrations.garmin.connected ? 'Unlink' : 'Connect'}
@@ -117,7 +176,12 @@
         <!-- WHOOP -->
         <div class="flex items-center justify-between">
           <div class="flex items-center gap-3">
-            <div class="w-9 h-9 rounded-xl bg-[#FFCB88]/10 text-[#FFCB88] flex items-center justify-center text-xl border border-[#FFCB88]/20">🔴</div>
+            <div
+              class="w-9 h-9 rounded-xl flex items-center justify-center border shrink-0 bg-bg2"
+              style="border-color: rgba(255,255,255,0.12)"
+            >
+              <Icon icon="arcticons:whoop" width={22} height={22} color="#FFFFFF" aria-hidden="true" />
+            </div>
             <div>
               <p class="text-[13px] font-medium">WHOOP</p>
               <p class="text-[10px] text-text2">Recovery & HRV</p>
@@ -131,6 +195,39 @@
             onclick={() => toggleIntegration('whoop')}
           >
             {syncing === 'whoop' ? '...' : integrations.whoop.connected ? 'Unlink' : 'Connect'}
+          </button>
+        </div>
+
+        <!-- Strava -->
+        <div class="flex items-center justify-between gap-2">
+          <div class="flex items-center gap-3 min-w-0">
+            <div
+              class="w-9 h-9 rounded-xl flex items-center justify-center border shrink-0"
+              style="background: rgba(252,76,2,0.12); border-color: rgba(252,76,2,0.28)"
+            >
+              <Icon icon="simple-icons:strava" width={22} height={22} color="#FC4C02" aria-hidden="true" />
+            </div>
+            <div class="min-w-0">
+              <p class="text-[13px] font-medium">Strava</p>
+              <p class="text-[10px] text-text2">Activities & routes</p>
+              {#if integrations.strava.connected}
+                <span
+                  class="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono uppercase tracking-wide bg-teal-dim text-teal border border-teal/30"
+                >
+                  <Icon icon="simple-icons:strava" width={12} height={12} color="#FC4C02" aria-hidden="true" />
+                  Connected
+                </span>
+              {/if}
+            </div>
+          </div>
+          <button
+            class="px-3 py-1 rounded-full text-[11px] font-medium cursor-pointer transition-all duration-200 shrink-0"
+            style={integrations.strava.connected
+              ? 'background: var(--color-red-dim); color: var(--color-red); border: 1px solid rgba(240,113,120,0.3)'
+              : 'background: rgba(252,76,2,0.15); color: #FC4C02; border: 1px solid rgba(252,76,2,0.3)'}
+            onclick={() => toggleIntegration('strava')}
+          >
+            {syncing === 'strava' ? '...' : integrations.strava.connected ? 'Unlink' : 'Connect'}
           </button>
         </div>
       </div>
