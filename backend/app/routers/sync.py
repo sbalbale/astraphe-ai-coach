@@ -1,12 +1,13 @@
 import urllib.parse
 import secrets
 import asyncio
-from fastapi import APIRouter, Request, Response, HTTPException, Depends, BackgroundTasks
+from fastapi import APIRouter, Request, Response, HTTPException, Depends, BackgroundTasks, Query
 from fastapi.responses import RedirectResponse, HTMLResponse
 from starlette.requests import ClientDisconnect
 from app.dependencies import get_current_athlete, get_user_db, get_admin_db
 from app.services import whoop
 from app.services import strava as strava_service
+from app.services.strava import backfill_historical_data as strava_backfill
 from app.services.whoop_backfill import backfill_historical_data
 from app.config import settings
 from datetime import datetime, timedelta
@@ -296,6 +297,69 @@ async def whoop_webhook(request: Request, background_tasks: BackgroundTasks, db=
 
     return Response(status_code=200)
 
+
+def _webhook_int(value) -> int | None:
+    """Coerce Strava JSON numeric ids to int for DB / service calls."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+@router.get("/strava/webhook")
+async def strava_webhook_verify(
+    request: Request,
+    hub_mode: str | None = Query(None, alias="hub.mode"),
+    hub_verify_token: str | None = Query(None, alias="hub.verify_token"),
+    hub_challenge: str | None = Query(None, alias="hub.challenge"),
+):
+    """Strava calls this once when you register the webhook subscription."""
+    if hub_mode == "subscribe" and hub_verify_token == settings.STRAVA_WEBHOOK_VERIFY_TOKEN:
+        return {"hub.challenge": hub_challenge}
+    raise HTTPException(status_code=403, detail="Verification failed")
+
+
+@router.post("/strava/webhook")
+async def strava_webhook(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db=Depends(get_admin_db),
+):
+    """Receives activity create/update/delete events from Strava."""
+    try:
+        payload = await request.json()
+    except Exception:
+        return Response(status_code=200)
+
+    print(
+        f"[strava.webhook] aspect={payload.get('aspect_type')} "
+        f"object={payload.get('object_type')} id={payload.get('object_id')}"
+    )
+
+    aspect = payload.get("aspect_type")
+    obj_type = payload.get("object_type")
+    activity_id = _webhook_int(payload.get("object_id"))
+    owner_strava_id = _webhook_int(payload.get("owner_id"))
+
+    if obj_type == "activity" and aspect == "create" and activity_id is not None and owner_strava_id is not None:
+        background_tasks.add_task(
+            strava_service.ingest_strava_activity,
+            owner_strava_id,
+            activity_id,
+            db,
+        )
+    elif obj_type == "activity" and aspect == "delete" and activity_id is not None:
+        db.table("workouts").update({"strava_activity_id": None}).eq(
+            "strava_activity_id", activity_id
+        ).execute()
+
+    return Response(status_code=200)
+
+
 @router.get("/oauth/whoop/authorize")
 async def whoop_oauth_authorize(athlete_id: str = None):
     """Step 1: Redirect user to WHOOP for authorization."""
@@ -559,24 +623,24 @@ async def whoop_oauth_callback(
 
 
 @router.get("/oauth/strava/authorize")
-async def strava_oauth_authorize(state: str | None = None):
-    """Redirect athlete to Strava OAuth (authorization code flow)."""
+async def strava_oauth_authorize(athlete_id: str | None = None):
+    """Redirect user to Strava for authorization."""
+    if not athlete_id or athlete_id == "undefined":
+        raise HTTPException(status_code=400, detail="athlete_id required")
     if not settings.STRAVA_CLIENT_ID or not settings.STRAVA_CLIENT_SECRET:
         raise HTTPException(status_code=503, detail="Strava OAuth is not configured")
-    redirect_url = get_clean_strava_redirect_url()
-    athlete_id = state
-    if athlete_id == "undefined" or not athlete_id:
-        athlete_id = settings.TEST_ATHLETE_ID or secrets.token_urlsafe(16)
+    callback_url = get_clean_strava_redirect_url()
     params = {
         "client_id": settings.STRAVA_CLIENT_ID,
-        "redirect_uri": redirect_url,
         "response_type": "code",
+        "redirect_uri": callback_url,
         "approval_prompt": "auto",
-        "scope": "read,activity:read_all",
+        "scope": "activity:read_all,profile:read_all",
         "state": athlete_id,
     }
-    auth_url = f"https://www.strava.com/oauth/authorize?{urllib.parse.urlencode(params)}"
-    return RedirectResponse(url=auth_url)
+    return RedirectResponse(
+        url=f"https://www.strava.com/oauth/authorize?{urllib.parse.urlencode(params)}"
+    )
 
 
 @router.get("/oauth/strava/callback")
@@ -586,68 +650,79 @@ async def strava_oauth_callback(
     state: str | None = None,
     db=Depends(get_admin_db),
 ):
-    """Strava redirects here with ?code=…; exchange tokens, link athlete, schedule backfill."""
-    redirect_url = get_clean_strava_redirect_url()
+    """Exchange code for tokens, store, and kick off backfill."""
+    callback_url = get_clean_strava_redirect_url()
     try:
-        token_data = await strava_service.exchange_oauth_code(code, redirect_url)
+        athlete_id = state
+        if not athlete_id or athlete_id == "undefined":
+            raise HTTPException(status_code=400, detail="Missing athlete_id in state")
+
+        token_data = await strava_service.exchange_oauth_code(code, callback_url)
         access_token = token_data.get("access_token")
-        if not access_token:
-            raise HTTPException(status_code=400, detail="Strava token exchange returned no access_token")
+        refresh_token = token_data.get("refresh_token")
+        expires_iso = strava_service.strava_oauth_expires_at_iso(token_data)
 
-        athlete_id = state if state != "undefined" else None
-        if not athlete_id:
-            raise HTTPException(status_code=400, detail="Missing athlete_id")
-
-        athlete_blob = token_data.get("athlete")
-        strava_athlete_id = None
-        if isinstance(athlete_blob, dict):
-            strava_athlete_id = athlete_blob.get("id")
+        strava_athlete = token_data.get("athlete") or {}
+        strava_athlete_id = strava_athlete.get("id") if isinstance(strava_athlete, dict) else None
         if strava_athlete_id is None:
             strava_athlete_id = await strava_service.get_athlete_strava_id(access_token)
-        if strava_athlete_id is None:
-            raise HTTPException(status_code=400, detail="Could not resolve Strava athlete id")
-        strava_athlete_id = int(strava_athlete_id)
+        if strava_athlete_id is not None:
+            try:
+                strava_athlete_id = int(strava_athlete_id)
+            except (TypeError, ValueError):
+                strava_athlete_id = None
 
-        db.table("athletes").update({"strava_athlete_id": strava_athlete_id}).eq("id", athlete_id).execute()
+        if not access_token:
+            raise HTTPException(status_code=400, detail="Token exchange failed")
 
-        token_row = {
+        token_row: dict = {
             "athlete_id": athlete_id,
             "provider": "strava",
             "access_token": access_token,
-            "refresh_token": token_data.get("refresh_token"),
+            "refresh_token": refresh_token,
+            "external_user_id": str(strava_athlete_id) if strava_athlete_id is not None else None,
         }
-        expires_iso = strava_service.strava_oauth_expires_at_iso(token_data)
         if expires_iso is not None:
             token_row["expires_at"] = expires_iso
-        db.table("oauth_tokens").upsert(token_row).execute()
 
-        if background_tasks is not None:
-            background_tasks.add_task(
-                strava_service.backfill_historical_data,
-                athlete_id,
-                strava_athlete_id,
-                access_token,
-                db,
-                90,
-            )
-        else:
-            asyncio.create_task(
-                strava_service.backfill_historical_data(
-                    athlete_id, strava_athlete_id, access_token, db, 90
+        db.table("oauth_tokens").upsert(
+            token_row,
+            on_conflict="athlete_id,provider",
+        ).execute()
+
+        if strava_athlete_id is not None:
+            db.table("athletes").update({"strava_athlete_id": strava_athlete_id}).eq(
+                "id", athlete_id
+            ).execute()
+
+        if strava_athlete_id is not None:
+            if background_tasks is not None:
+                background_tasks.add_task(
+                    strava_backfill,
+                    athlete_id,
+                    strava_athlete_id,
+                    access_token,
+                    db,
+                    90,
                 )
+            else:
+                asyncio.create_task(
+                    strava_backfill(athlete_id, strava_athlete_id, access_token, db, 90)
+                )
+        else:
+            print(
+                f"[strava.oauth.callback] Strava athlete id unresolved; "
+                f"tokens saved, skipping backfill athlete_id={athlete_id}"
             )
 
         deep_link = f"{settings.MOBILE_DEEP_LINK_SCHEME}://connected?provider=strava&status=success"
         return HTMLResponse(
-            f"""<!doctype html>
-<html lang="en"><head><meta charset="utf-8"/><title>ASTRAPE • Strava connected</title></head>
-<body style="font-family:system-ui;padding:24px;">
-  <h2>Strava connected</h2>
-  <p>You can return to the app.</p>
-  <p><a href="{deep_link}">Open ASTRAPE</a></p>
-  <script>setTimeout(()=>{{try{{location.href="{deep_link}"}}catch(e){{}}}},50);</script>
-</body></html>""",
-            status_code=200,
+            f"""
+        <html><body>
+        <script>window.location.href='{deep_link}';</script>
+        <p>Strava connected! <a href="{deep_link}">Return to Astrape</a></p>
+        </body></html>
+    """
         )
     except HTTPException:
         raise
