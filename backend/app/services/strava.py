@@ -294,9 +294,11 @@ async def get_activity_streams(
         streams = response.json()
     except Exception:
         return {}
-    if not isinstance(streams, list):
-        return {}
-    return {s["type"]: s for s in streams if isinstance(s, dict) and "type" in s}
+    if isinstance(streams, dict):
+        return {k: v for k, v in streams.items() if isinstance(v, dict)}
+    if isinstance(streams, list):
+        return {s["type"]: s for s in streams if isinstance(s, dict) and "type" in s}
+    return {}
 
 
 def compute_500m_splits_from_streams(streams: dict) -> list[dict]:
@@ -379,6 +381,49 @@ def _time_series_to_streams_dict(time_series: Any) -> dict[str, Any]:
         elif isinstance(v, dict) and isinstance(v.get("data"), list):
             out[key] = v
     return out
+
+
+def _load_stored_streams_dict(db: Any, workout_id: str) -> dict[str, Any]:
+    """Return Strava-style streams from ``activity_streams``, or {} if no row."""
+    ts_row = (
+        db.table("activity_streams")
+        .select("time_series")
+        .eq("workout_id", workout_id)
+        .maybe_single()
+        .execute()
+    )
+    ts_holder = _supabase_single_row(ts_row)
+    if not ts_holder:
+        return {}
+    return _time_series_to_streams_dict(ts_holder.get("time_series"))
+
+
+def _upsert_activity_streams(
+    db: Any, workout_id: str, athlete_id: str, streams: dict[str, Any]
+) -> None:
+    if not streams:
+        return
+    payload = {
+        "workout_id": workout_id,
+        "athlete_id": athlete_id,
+        "time_series": {
+            k: v.get("data", [])
+            for k, v in streams.items()
+            if isinstance(v, dict)
+        },
+        "resolution_seconds": 1,
+    }
+    existing = (
+        db.table("activity_streams")
+        .select("id")
+        .eq("workout_id", workout_id)
+        .maybe_single()
+        .execute()
+    )
+    if _supabase_single_row(existing):
+        db.table("activity_streams").update(payload).eq("workout_id", workout_id).execute()
+    else:
+        db.table("activity_streams").insert(payload).execute()
 
 
 def _parse_raw_strava_payload(value: Any) -> dict | None:
@@ -605,20 +650,11 @@ async def ingest_strava_activity(
         )
         return workout
 
-    streams: dict[str, Any] = {}
-    if not workout.get("strava_streams_fetched"):
-        ts_row = (
-            db.table("activity_streams")
-            .select("time_series")
-            .eq("workout_id", workout_id)
-            .maybe_single()
-            .execute()
-        )
-        ts_holder = _supabase_single_row(ts_row)
-        ts = ts_holder.get("time_series") if ts_holder else None
-        streams = _time_series_to_streams_dict(ts)
-        if not streams:
-            streams = await get_activity_streams(activity_id, access_token, delay=delay)
+    # Fetch from Strava when no activity_streams row exists (flag alone is not reliable:
+    # reprocess/merge paths may set strava_streams_fetched without persisting streams).
+    streams = _load_stored_streams_dict(db, workout_id)
+    if not streams:
+        streams = await get_activity_streams(activity_id, access_token, delay=delay)
 
     if not workout.get("strava_streams_fetched"):
         cached_laps = _load_cached_laps_for_workout(db, workout_id)
@@ -676,20 +712,7 @@ async def ingest_strava_activity(
 
     db.table("workouts").update(update).eq("id", workout_id).execute()
 
-    if streams:
-        db.table("activity_streams").upsert(
-            {
-                "workout_id": workout_id,
-                "athlete_id": athlete_id,
-                "time_series": {
-                    k: v.get("data", [])
-                    for k, v in streams.items()
-                    if isinstance(v, dict)
-                },
-                "resolution_seconds": 1,
-            },
-            on_conflict="workout_id",
-        ).execute()
+    _upsert_activity_streams(db, workout_id, athlete_id, streams)
 
     if laps:
         db.table("activity_laps").delete().eq("workout_id", workout_id).execute()
@@ -921,7 +944,6 @@ def reprocess_rowing_intervals_from_stored_data(db: Any, workout_id: str) -> tup
         update: dict[str, Any] = {
             "intervals": intervals,
             "intervals_source": intervals_source,
-            "strava_streams_fetched": True,
         }
         update.update(_hr_stream_zone_dist_to_workout_columns(zone_dist))
         update = {k: v for k, v in update.items() if v is not None}
@@ -933,6 +955,67 @@ def reprocess_rowing_intervals_from_stored_data(db: Any, workout_id: str) -> tup
         )
     except Exception as e:
         return "error", str(e)
+
+
+async def hydrate_workout_streams(
+    db: Any,
+    athlete_id: str,
+    workout_id: str,
+    *,
+    delay: bool = False,
+) -> dict[str, Any]:
+    """
+    Fetch Strava streams when ``activity_streams`` is missing for a linked workout.
+    Idempotent when a stream row already exists.
+    """
+    wres = (
+        db.table("workouts")
+        .select("id, athlete_id, strava_activity_id")
+        .eq("id", workout_id)
+        .eq("athlete_id", athlete_id)
+        .maybe_single()
+        .execute()
+    )
+    workout = _supabase_single_row(wres)
+    if not workout:
+        raise HTTPException(status_code=404, detail="Workout not found")
+
+    strava_id = workout.get("strava_activity_id")
+    if strava_id is None:
+        raise HTTPException(status_code=400, detail="Workout has no Strava activity id")
+
+    if _load_stored_streams_dict(db, workout_id):
+        return {"status": "already_stored"}
+
+    access_token = await get_valid_token(athlete_id, db, delay=delay)
+    if not access_token:
+        raise HTTPException(status_code=503, detail="Strava not connected")
+
+    streams = await get_activity_streams(int(strava_id), access_token, delay=delay)
+
+    db.table("workouts").update({"strava_streams_fetched": True}).eq("id", workout_id).execute()
+    _upsert_activity_streams(db, workout_id, athlete_id, streams)
+
+    hr_stream = (streams.get("heartrate") or {}).get("data", [])
+    if hr_stream:
+        ares = (
+            db.table("athletes")
+            .select("*")
+            .eq("id", athlete_id)
+            .maybe_single()
+            .execute()
+        )
+        athlete = _supabase_single_row(ares) or {}
+        zones = get_athlete_zones(athlete)
+        zone_dist = compute_zone_distribution(hr_stream, zones)
+        zone_cols = _hr_stream_zone_dist_to_workout_columns(zone_dist)
+        if zone_cols:
+            db.table("workouts").update(zone_cols).eq("id", workout_id).execute()
+
+    return {
+        "status": "hydrated" if streams else "empty",
+        "stream_types": sorted(streams.keys()) if streams else [],
+    }
 
 
 async def reset_rowing_intervals(db) -> int:

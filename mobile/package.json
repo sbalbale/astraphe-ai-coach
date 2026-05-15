@@ -20,6 +20,7 @@
 		"@sveltejs/vite-plugin-svelte": "^7.0.0",
 		"@tailwindcss/typography": "^0.5.19",
 		"@types/d3": "^7.4.3",
+		"@types/leaflet": "^1.9.21",
 		"autoprefixer": "^10.5.0",
 		"postcss": "^8.5.12",
 		"svelte": "^5.55.2",
@@ -43,6 +44,7 @@
 		"dompurify": "^3.2.7",
 		"katex": "^0.16.45",
 		"layerchart": "^1.0.13",
+		"leaflet": "^1.9.4",
 		"lucide-svelte": "^1.0.1",
 		"marked": "^16.2.1",
 		"marked-katex-extension": "^5.1.8"

@@ -26,6 +26,21 @@
   import { boundedScoreCssColor } from '$lib/colorSystem';
   import { formCssColor, getWeeklyLoadDeltaColor } from '$lib/scoreColors';
   import { Lightbulb } from 'lucide-svelte';
+  import {
+    getActivityStreams,
+    getActivityLaps,
+    getActivityIntervals,
+    hydrateActivityStreams,
+    type ActivityStreams,
+    type ActivityLap,
+    type ActivityIntervals,
+  } from '$lib/services/activityService';
+  import { stravaPolylineFromPayload } from '$lib/utils/polyline';
+  import StreamCharts from '$lib/components/workout/StreamCharts.svelte';
+  import IntervalsTable from '$lib/components/workout/IntervalsTable.svelte';
+  import GpsTrace from '$lib/components/workout/GpsTrace.svelte';
+  import LapStrip from '$lib/components/workout/LapStrip.svelte';
+  import DataSources from '$lib/components/workout/DataSources.svelte';
 
   const CTL_IDENTITY_HEX = '#3b82f6';
   const ATL_IDENTITY_HEX = '#64748b';
@@ -45,6 +60,17 @@
   let selectedWorkout = $state<any>(null);
   let workoutAnalysisText = $state<string | null>(null);
   let workoutAnalysisLoading = $state(false);
+
+  let detailStreams = $state<ActivityStreams | null>(null);
+  let detailLaps = $state<ActivityLap[]>([]);
+  let detailIntervals = $state<ActivityIntervals | null>(null);
+  let detailLoading = $state(false);
+  let detailHydrating = $state(false);
+  let detailError = $state<string | null>(null);
+
+  const detailStravaPolyline = $derived(
+    selectedWorkout ? stravaPolylineFromPayload(selectedWorkout.raw_strava_payload) : null
+  );
 
   const zoneColors = ['#AAB3BF', '#4621FF', '#00C8A8', '#FFCB88', '#F07178', '#FF4791'];
 
@@ -278,6 +304,59 @@
       return;
     }
     void loadWorkoutAnalysis(workoutId);
+  });
+
+  $effect(() => {
+    const w = selectedWorkout;
+
+    detailStreams = null;
+    detailLaps = [];
+    detailIntervals = null;
+    detailError = null;
+    detailLoading = false;
+    detailHydrating = false;
+
+    if (!w?.id || !w.strava_activity_id) return;
+
+    let cancelled = false;
+    detailLoading = true;
+
+    (async () => {
+      try {
+        let [streams, laps, intervals] = await Promise.all([
+          getActivityStreams(w.id),
+          getActivityLaps(w.id),
+          getActivityIntervals(w.id),
+        ]);
+
+        if (cancelled) return;
+
+        if (!streams && w.strava_activity_id) {
+          detailHydrating = true;
+          const hydrated = await hydrateActivityStreams(w.id);
+          if (cancelled) return;
+          if (hydrated && (hydrated.status === 'hydrated' || hydrated.status === 'already_stored')) {
+            streams = await getActivityStreams(w.id);
+          }
+        }
+
+        if (cancelled) return;
+        detailStreams = streams;
+        detailLaps = laps ?? [];
+        detailIntervals = intervals;
+      } catch (e: unknown) {
+        if (!cancelled) detailError = e instanceof Error ? e.message : 'Failed to load workout details';
+      } finally {
+        if (!cancelled) {
+          detailLoading = false;
+          detailHydrating = false;
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   });
 
   let analysisText = $state<string | null>(null);
@@ -570,6 +649,73 @@
                 This session contributed {Math.round(selectedWorkout.tss || 0)} points to your acute load. {selectedWorkout.tss > 80 ? 'Ensure proper recovery tonight.' : 'Good aerobic contribution.'}
               </p>
             </div>
+          {/if}
+
+          <div class="mt-5 pt-4 border-t border-border">
+            <DataSources workout={selectedWorkout} />
+          </div>
+
+          {#if selectedWorkout.strava_activity_id}
+            {#if detailLoading}
+              <div class="mt-4 space-y-3">
+                {#each [150, 150, 120] as h}
+                  <div class="rounded-2xl bg-glass animate-pulse" style="height: {h}px;"></div>
+                {/each}
+              </div>
+
+            {:else if detailError}
+              <p class="text-[11px] text-red mt-3 font-mono">{detailError}</p>
+
+            {:else}
+              {#if selectedWorkout.strava_streams_fetched === false}
+                <p class="text-[11px] text-text2 font-mono mt-3 leading-relaxed">
+                  Strava is linked, but stream data has not been imported for this workout yet. Reconnect
+                  Strava or run the Strava backfill script to load charts and GPS.
+                </p>
+              {:else if detailHydrating}
+                <p class="text-[11px] text-text2 font-mono mt-3 animate-pulse">
+                  Loading stream data from Strava…
+                </p>
+              {:else if !detailStreams && selectedWorkout.strava_streams_fetched}
+                <p class="text-[11px] text-text2 font-mono mt-3">
+                  No stream data stored for this workout (Strava may have returned no streams for this activity).
+                </p>
+              {/if}
+
+              {#if detailLaps.length >= 2}
+                <div class="mt-4">
+                  <LapStrip laps={detailLaps} sport={selectedWorkout.sport} />
+                </div>
+              {/if}
+
+              {#if detailStreams}
+                <div class="mt-4">
+                  <StreamCharts
+                    streams={detailStreams}
+                    laps={detailLaps}
+                    sport={selectedWorkout.sport}
+                  />
+                </div>
+              {/if}
+
+              {#if (detailStreams?.time_series?.latlng && detailStreams.time_series.latlng.length > 1) || detailStravaPolyline}
+                <div class="mt-4">
+                  <GpsTrace
+                    latlng={detailStreams?.time_series?.latlng}
+                    polyline={detailStravaPolyline}
+                    velocity={detailStreams?.time_series?.velocity_smooth}
+                    time={detailStreams?.time_series?.time}
+                    moving={detailStreams?.time_series?.moving}
+                  />
+                </div>
+              {/if}
+
+              {#if selectedWorkout.sport === 'row' && detailIntervals?.intervals?.length}
+                <div class="mt-4">
+                  <IntervalsTable data={detailIntervals} />
+                </div>
+              {/if}
+            {/if}
           {/if}
         </Card>
       {:else}
