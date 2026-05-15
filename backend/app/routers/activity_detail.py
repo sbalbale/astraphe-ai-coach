@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from app.config import settings
 from app.dependencies import get_current_athlete, get_user_db
 from app.services.hr_zones import compute_zone_distribution, get_athlete_zones
+from app.services import strava as strava_service
 
 router = APIRouter(prefix=f"{settings.API_PREFIX}/activities", tags=["Activity Detail"])
 
@@ -70,6 +71,16 @@ async def get_intervals(
     }
 
 
+@router.post("/{workout_id}/hydrate-streams")
+async def hydrate_streams(
+    workout_id: str,
+    athlete_id: str = Depends(get_current_athlete),
+    db=Depends(get_user_db),
+):
+    """Fetch and store Strava streams when missing from activity_streams."""
+    return await strava_service.hydrate_workout_streams(db, athlete_id, workout_id)
+
+
 @router.get("/{workout_id}/zones")
 async def get_workout_zones(
     workout_id: str,
@@ -102,7 +113,31 @@ async def get_workout_zones(
     if stream_res and stream_res.data:
         hr_stream = stream_res.data.get("time_series", {}).get("heartrate", [])
 
+    source = "stream"
     distribution = compute_zone_distribution(hr_stream, zones)
+    data_points = len(hr_stream)
+
+    if not hr_stream:
+        workout_res = (
+            db.table("workouts")
+            .select(
+                "hr_zone_1_pct, hr_zone_2_pct, hr_zone_3_pct, hr_zone_4_pct, hr_zone_5_pct, duration_seconds"
+            )
+            .eq("id", workout_id)
+            .eq("athlete_id", athlete_id)
+            .maybe_single()
+            .execute()
+        )
+        workout = workout_res.data if workout_res else None
+        if workout:
+            summary = {
+                f"Z{i}": float(workout.get(f"hr_zone_{i}_pct") or 0)
+                for i in range(1, 6)
+            }
+            if any(summary.values()):
+                distribution = summary
+                source = "summary"
+                data_points = int(workout.get("duration_seconds") or 0)
 
     return {
         "distribution": distribution,
@@ -116,5 +151,6 @@ async def get_workout_zones(
             for z in zones
         ],
         "method": athlete.get("hr_zone_method") or "lthr",
-        "data_points": len(hr_stream),
+        "data_points": data_points,
+        "source": source,
     }
