@@ -4,6 +4,7 @@
   import { App } from '@capacitor/app';
   import { page } from '$app/stores';
   import { afterNavigate, goto } from '$app/navigation';
+  import { resolve } from '$app/paths';
   import Sidebar from '$lib/components/Sidebar.svelte';
   import BottomNav from '$lib/components/BottomNav.svelte';
   import ConfirmHost from '$lib/components/ConfirmHost.svelte';
@@ -14,6 +15,17 @@
   afterNavigate(() => {
     analysisNavEpoch.bump();
   });
+
+  /** Same pathname but ?workout_id= — plain <a href="/training"> may not navigate; force list view. */
+  function onTrainingTabClick(e: MouseEvent) {
+    if (
+      $page.url.pathname === '/training' &&
+      $page.url.searchParams.has('workout_id')
+    ) {
+      e.preventDefault();
+      goto(resolve('/training'), { keepFocus: true, noScroll: true });
+    }
+  }
 
   const props = $props();
   
@@ -148,8 +160,12 @@
       {:else if ['/dashboard', '/training', '/zones'].includes($page.url.pathname)}
         <div class="flex gap-5 px-4 pt-2.5 border-b border-border shrink-0">
           {#each [{id: '/dashboard', label: 'Home'}, {id: '/training', label: 'Training'}, {id: '/zones', label: 'Zones'}] as t (t.id)}
-            <a href={t.id} class="pb-2 text-xs font-medium font-mono tracking-wide border-b-2 -mb-px no-underline transition-all duration-200
-              {$page.url.pathname === t.id ? 'border-blue text-text0' : 'border-transparent text-text2'}">
+            <a
+              href={t.id}
+              class="pb-2 text-xs font-medium font-mono tracking-wide border-b-2 -mb-px no-underline transition-all duration-200
+              {$page.url.pathname === t.id ? 'border-blue text-text0' : 'border-transparent text-text2'}"
+              onclick={t.id === '/training' ? onTrainingTabClick : undefined}
+            >
               {t.label}
             </a>
           {/each}
