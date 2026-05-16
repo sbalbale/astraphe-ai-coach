@@ -24,43 +24,186 @@ Astrape uses a **dark-first, translucent aesthetic** — layered depth, continuo
 
 ## Design Tokens
 
-### Colors (CSS Variables → Tailwind)
+Always use Tailwind utility classes for color. Never hardcode hex values or `rgba()` literals in `class=""` attributes. CSS variables (`var(--*)`) are valid only in `style=""` attributes and `<style>` blocks — **never** in Tailwind class strings.
 
-```css
-/* Base backgrounds — layered depth */
---bg0: #08080F   → bg-bg0         /* deepest layer, page background */
---bg1: #0F0F1A   → bg-bg1         /* section backgrounds */
---bg2: #141424   → bg-bg2         /* card backgrounds */
---bg3: #1C1C30   → bg-bg3         /* elevated cards, code blocks */
+### Backgrounds / Surfaces (Tailwind → CSS var → hex)
 
-/* Glassmorphism surfaces */
---glass:  rgba(255,255,255,0.04)  → bg-glass
---glass2: rgba(255,255,255,0.08)  → bg-glass2
---border: rgba(255,255,255,0.07)  → border-border
+| Tailwind | CSS var | Hex | Usage |
+|----------|---------|-----|-------|
+| `bg-bg0` | `--bg0` | `#08080F` | Deepest layer, page background |
+| `bg-bg1` | `--bg1` | `#0F0F1A` | Section backgrounds |
+| `bg-bg2` | `--bg2` | `#141424` | Card backgrounds |
+| `bg-bg3` | `--bg3` | `#1C1C30` | Elevated cards, code blocks |
+| `bg-glass` | `--glass` | `rgba(255,255,255,0.04)` | Standard card surface |
+| `bg-glass2` | `--glass2` | `rgba(255,255,255,0.08)` | Elevated / interactive surface |
+| `border-border` | `--border` | `rgba(255,255,255,0.07)` | All card and divider borders |
 
-/* Accent palette — use sparingly */
---blue:  #4621FF  → text-blue  / bg-blue  / border-blue   /* primary CTA, active states */
---teal:  #00C8A8  → text-teal  / bg-teal  / border-teal   /* success, HRV, recovery */
---amber: #FFCB88  → text-amber / bg-amber / border-amber  /* warnings, TSB, effort */
---red:   #F07178  → text-red   / bg-red   / border-red    /* alerts, max HR, danger */
+### Accent Colors
 
-/* Semantic accent dims (15% opacity backgrounds) */
---blue-dim:  rgba(70,33,255,0.15)   → bg-blue-dim
---teal-dim:  rgba(0,200,168,0.15)   → bg-teal-dim
---amber-dim: rgba(255,203,136,0.15) → bg-amber-dim
---red-dim:   rgba(240,113,120,0.15) → bg-red-dim
+| Tailwind | CSS var | Hex | Usage |
+|----------|---------|-----|-------|
+| `text-blue` / `bg-blue` / `border-blue` | `--blue` | `#4621FF` | Primary CTA, active states, fitness |
+| `bg-blue-dim` | — | `rgba(70,33,255,0.15)` | Selected card backgrounds |
+| `border-blue-glow` | — | `rgba(70,33,255,0.3)` | Active card border glow |
+| `text-teal` / `bg-teal` / `border-teal` | `--teal` | `#00C8A8` | Success, HRV, recovery |
+| `bg-teal-dim` | — | `rgba(0,200,168,0.15)` | Positive state backgrounds |
+| `text-amber` / `bg-amber` / `border-amber` | `--amber` | `#FFCB88` | Warnings, ATL effort, load |
+| `bg-amber-dim` | — | `rgba(255,203,136,0.15)` | Caution state backgrounds |
+| `text-red` / `bg-red` / `border-red` | `--red` | `#F07178` | Alerts, max HR, danger |
+| `bg-red-dim` | — | `rgba(240,113,120,0.15)` | Alert state backgrounds |
 
-/* Text hierarchy */
---text0: #F0F0FF                    → text-text0   /* primary text */
---text1: rgba(240,240,255,0.65)     → text-text1   /* secondary text */
---text2: rgba(240,240,255,0.35)     → text-text2   /* labels, placeholders */
+### Text Hierarchy
+
+| Tailwind | CSS var | Value | Usage |
+|----------|---------|-------|-------|
+| `text-text0` | `--text0` | `#F0F0FF` | Primary text |
+| `text-text1` | `--text1` | `rgba(240,240,255,0.65)` | Secondary text, labels |
+| `text-text2` | `--text2` | `rgba(240,240,255,0.35)` | Placeholders, metadata, disabled |
+
+**`text-text3` does not exist** — use `text-text2` for the most muted text.
+
+### Zone Colors (HR Zones — CSS variable only)
+
+Zone colors exist **only as CSS variables** — there are no Tailwind utilities for them. Use `var(--zone-n)` in `style=""` attributes or canvas `fillStyle`. Never use a zone color as a UI accent.
+
+| CSS var | Hex | Zone |
+|---------|-----|------|
+| `--zone-0` | `#94a3b8` | Zone 0 / rest |
+| `--zone-1` | `#579BFA` | Zone 1 — light perceptual blue, **distinct from `--blue` (`#4621FF`)** |
+| `--zone-2` | `#00C8A8` | Zone 2 |
+| `--zone-3` | `#FFCB88` | Zone 3 |
+| `--zone-4` | `#FF8C42` | Zone 4 |
+| `--zone-5` | `#F07178` | Zone 5 |
+
+Usage in templates:
+```svelte
+<!-- Zone color on a DOM element -->
+<div style="color: var(--zone-1)">Z1</div>
+
+<!-- Zone color in Tailwind arbitrary value (only when no style= is available) -->
+<div class="bg-[color:var(--zone-1)]">Z1</div>
+
+<!-- Canvas — must use hex from HR_ZONE_HEX constant, not var(--zone-n) -->
+ctx.fillStyle = HR_ZONE_HEX[1]; // '#579BFA'
 ```
 
-### Typography
+### Training Load Chart Colors
+
+These are chart-specific identity tokens, separate from the semantic accent palette. Use hex constants from `$lib/scoreColors.ts` for canvas/LayerChart; use Tailwind classes for DOM legend swatches only.
+
+| Token | Hex | Tailwind (DOM only) | Usage |
+|-------|-----|---------------------|-------|
+| `CHART_CTL_STROKE` | `#3b82f6` | `text-chartCtl` / `stroke-chartCtl` | CTL (fitness) line |
+| `CHART_ATL_STROKE` | `#334155` | `text-chartAtl` / `stroke-chartAtl` | ATL (fatigue) line |
+
+```ts
+// scoreColors.ts — import these for canvas and LayerChart props
+import { CHART_CTL_STROKE, CHART_ATL_STROKE } from '$lib/scoreColors';
+// DOM legend swatch only:
+// class="bg-chartCtl" or class="bg-chartAtl"
+```
+
+### Brand Namespace
+
+`astrape.*` tokens exist in Tailwind config as aliases. Prefer the semantic tokens above; use `astrape-*` only for cross-platform brand consistency requirements.
+
+---
+
+## Tailwind Conventions
+
+### Opacity Modifiers — Multiples of 5 Only
+
+Tailwind v3 utility opacity modifiers must be multiples of 5 (`/5`, `/10`, `/15`, `/20`, `/25`, `/30`, `/40`, `/50`, etc.). **Non-standard steps like `/12`, `/35`, `/45` will not compile** unless added to the safelist (not configured).
+
+```svelte
+<!-- ✅ Correct -->
+<div class="bg-blue/10 border-teal/30 from-blue/10 to-teal/5">
+
+<!-- ❌ Will not compile -->
+<div class="bg-blue/12 border-red/35 from-blue/45">
+
+<!-- ✅ Use arbitrary rgba for exact non-standard opacities -->
+<div class="border-[rgba(240,113,120,0.35)] from-[rgba(70,33,255,0.12)]">
+```
+
+### No Hardcoded Colors in Class Attributes
+
+```svelte
+<!-- ❌ Wrong — arbitrary hex in class -->
+<div class="text-[#4621FF] bg-[#08080F] border-[rgba(255,255,255,0.07)]">
+
+<!-- ✅ Correct — Tailwind tokens -->
+<div class="text-blue bg-bg0 border-border">
+```
+
+### Standard Tailwind Palette is Forbidden for UI
+
+Never use `slate-*`, `gray-*`, `zinc-*`, `indigo-*`, `white`, `black`, `blue-500`, `red-300`, etc. as UI colors. Map everything to Astrape tokens:
+
+| Forbidden | Astrape replacement |
+|-----------|---------------------|
+| `text-white`, `text-slate-100/200` | `text-text0` |
+| `text-slate-300/400` | `text-text1` |
+| `text-slate-500/600` | `text-text2` |
+| `bg-slate-900/950` | `bg-bg0` / `bg-bg1` |
+| `bg-slate-800`, `bg-slate-800/40` | `bg-bg2` or `bg-glass2` |
+| `border-slate-700/800` | `border-border` |
+| `bg-black/60`, `bg-black/80` | `bg-bg0/60`, `bg-bg0/80` |
+| `bg-white/5`, `ring-white/[0.12]` | `bg-glass`, `ring-border` |
+| `text-indigo-*`, `bg-indigo-*` | `text-blue`, `bg-blue-dim`, `border-blue/30` |
+| `text-blue-500` | `text-blue` |
+| `text-red-300/400` | `text-red` |
+
+**Exception:** Third-party brand colors (Strava `#FC4C02`, Garmin `#009CDE`, Apple, WHOOP) and sport-type colors with no Astrape equivalent (`#a855f7` mobility, `#eab308` other) are kept as hex literals with a comment.
+
+### CSS Variables in Tailwind Class Strings
+
+`var(--*)` does not work inside Tailwind utility strings. Use `style=""` for CSS variable application:
+
+```svelte
+<!-- ❌ Wrong -->
+<div class="text-[var(--teal)]">
+
+<!-- ✅ Correct — use Tailwind token -->
+<div class="text-teal">
+
+<!-- ✅ Correct — use style for dynamic/zone vars where no token exists -->
+<div style="color: var(--zone-2)">
+```
+
+### Canvas, D3, Mapbox, and SVG Presentation Attributes
+
+CSS variables **do not resolve** in any of these contexts. Always use hex literals or constants from `scoreColors.ts`:
+
+| Context | Rule |
+|---------|------|
+| Canvas `fillStyle` / `strokeStyle` | Hex only — `'#4621FF'` or `CHART_CTL_STROKE` |
+| D3 `.attr('stroke', c)` / `.attr('fill', c)` | Hex only |
+| Mapbox GL `paint: { 'line-color': … }` | Hex only |
+| SVG `stroke={color}` / `fill={color}` (presentation attributes) | Hex only |
+| `{@html}` SVG template string `stroke="${c}"` | Hex only |
+| SVG `style="stroke: var(--blue)"` | CSS var valid here only |
+| DOM `class="text-blue"` | Tailwind token |
+
+```svelte
+<!-- ❌ Renders as black — var() in canvas/D3/Mapbox -->
+ctx.fillStyle = 'var(--blue)';
+.attr('stroke', 'var(--teal)')
+paint: { 'line-color': 'var(--blue)' }
+
+<!-- ✅ Correct -->
+ctx.fillStyle = '#4621FF';
+.attr('stroke', '#00C8A8')
+paint: { 'line-color': '#4621FF' }
+```
+
+---
+
+## Typography
 
 ```
-Display / Headings  → font-sans    (Space Grotesk, loaded via Google Fonts)
-Labels / Data / Code → font-mono  (Space Mono, loaded via Google Fonts)
+Display / Headings   → font-sans   (Space Grotesk)
+Labels / Data / Code → font-mono   (Space Mono)
 ```
 
 **Rules:**
@@ -96,7 +239,6 @@ Labels / Data / Code → font-mono  (Space Mono, loaded via Google Fonts)
 ### Metric Display
 
 ```svelte
-<!-- Large metric value -->
 <div class="flex flex-col gap-0.5">
   <span class="text-[10px] font-mono text-text2 uppercase tracking-widest">
     {label}
@@ -111,13 +253,12 @@ Labels / Data / Code → font-mono  (Space Mono, loaded via Google Fonts)
 ### Status / Tag Badge
 
 ```svelte
-<!-- Color-coded tag badges -->
+<!-- Color-coded tag badges — swap teal → blue / amber / red for other states -->
 <span class="inline-flex items-center px-2 py-0.5 rounded text-[10px]
              font-mono uppercase tracking-wide
              bg-teal-dim text-teal border border-teal/30">
   Good
 </span>
-<!-- Swap teal → blue / amber / red for other states -->
 ```
 
 ### Section Header
@@ -127,7 +268,6 @@ Labels / Data / Code → font-mono  (Space Mono, loaded via Google Fonts)
   <p class="text-[10px] font-mono text-text2 uppercase tracking-widest">
     {sectionLabel}
   </p>
-  <!-- optional right action -->
 </div>
 ```
 
@@ -146,13 +286,33 @@ Labels / Data / Code → font-mono  (Space Mono, loaded via Google Fonts)
 
 ```svelte
 <button
-  class="w-full py-3 rounded-xl font-semibold text-sm text-white
+  class="w-full py-3 rounded-xl font-semibold text-sm text-text0
          bg-blue hover:bg-blue/90 active:bg-blue/80
          transition-colors disabled:opacity-40 disabled:pointer-events-none
          shadow-[0_8px_24px_-12px_rgba(70,33,255,0.7)]"
 >
   {label}
 </button>
+```
+
+### Destructive Button
+
+```svelte
+<button
+  class="w-full py-3 rounded-xl font-semibold text-sm
+         bg-red-dim text-red border border-red/30
+         hover:bg-red/20 transition-colors"
+>
+  {label}
+</button>
+```
+
+### Modal Backdrop
+
+```svelte
+<div class="fixed inset-0 bg-bg0/60 z-50">
+  <!-- modal content -->
+</div>
 ```
 
 ### Divider
@@ -169,25 +329,17 @@ Always use **Svelte 5 runes**. Never use the legacy `$:`, `writable()`, or `expo
 
 ```svelte
 <script lang="ts">
-  // Props
   let { value = 0, label = '' }: { value: number; label: string } = $props();
-
-  // Local state
   let loading = $state(false);
   let items = $state<string[]>([]);
-
-  // Derived values
   let displayValue = $derived(value > 0 ? value.toFixed(1) : '—');
-
-  // Side effects
   $effect(() => {
-    // runs reactively; clean up with returned function
     return () => {};
   });
 </script>
 ```
 
-### Event handling
+### Event Handling
 
 Use `onclick`, `oninput`, `onkeydown` (lowercase, no `on:` prefix — Svelte 5 syntax).
 
@@ -214,8 +366,6 @@ export const exampleStore = createStore();
 
 ## Layout & Spacing
 
-The app is a **mobile-first Capacitor app**. All screens use:
-
 ```svelte
 <!-- Standard page shell -->
 <div class="flex flex-col h-full bg-bg0 text-text0 overflow-y-auto">
@@ -223,10 +373,10 @@ The app is a **mobile-first Capacitor app**. All screens use:
 </div>
 ```
 
-- Base spacing unit: `4px` (Tailwind `gap-1`, `p-1`, etc.)
+- Base spacing unit: `4px` (`gap-1`, `p-1`, etc.)
 - Cards inside a page: `p-4` internal padding, `gap-3` between cards
 - Section-level spacing: `mb-6` between major sections
-- Safe area: use `pb-safe` / `pt-safe` on root containers for notch/home-bar clearance
+- Safe area: **`pb-safe` and `pt-safe` are not configured** — use `pb-8` / `pt-4` as a conservative approximation until a safeArea plugin is added
 
 ---
 
@@ -238,34 +388,46 @@ Using **LayerChart** (D3-backed SVG). Key conventions:
 - Line strokes: `strokeWidth={2}`, accent color
 - Axis ticks: `font-mono`, `text-text2`, `text-[10px]`
 - Always DPR-scale canvas elements manually (`devicePixelRatio`)
-- Metric-to-color mapping:
-  - HRV / Recovery → `--teal`
-  - CTL (fitness) → `--blue`
-  - ATL (fatigue) → `--amber`
-  - TSB (form) → dynamic: positive → `--teal`, negative → `--red`
-  - HR / effort → `--red`
+
+### Metric-to-color mapping
+
+| Metric | Semantic color | DOM class | Canvas/chart |
+|--------|----------------|-----------|--------------|
+| HRV / Recovery | teal | `text-teal` | `'#00C8A8'` |
+| CTL (fitness) | chartCtl | `text-chartCtl` | `CHART_CTL_STROKE` |
+| ATL (fatigue load) | chartAtl | `text-chartAtl` | `CHART_ATL_STROKE` |
+| ATL (effort/UI) | amber | `text-amber` | `'#FFCB88'` |
+| TSB (form) positive | teal | `text-teal` | `'#00C8A8'` |
+| TSB (form) negative | red | `text-red` | `'#F07178'` |
+| HR / effort | red | `text-red` | `'#F07178'` |
+| HR zones | zone vars | `style="color: var(--zone-n)"` | `HR_ZONE_HEX[n]` |
+
+### Gradient Card Backgrounds
+
+```svelte
+<!-- Static gradient — Tailwind v3, opacity must be multiple of 5 -->
+<Card class="bg-gradient-to-br from-blue/10 via-transparent to-teal/5">
+
+<!-- Non-standard opacity — use arbitrary rgba -->
+<Card class="bg-gradient-to-br from-[rgba(70,33,255,0.12)] via-transparent to-teal/5">
+
+<!-- Dynamic gradient — keep inline style -->
+<div style="background: linear-gradient(135deg, {color}22, transparent)">
+```
 
 ---
 
 ## Accent Glow Reference
 
-```css
-/* Active card glow */
-box-shadow: 0 0 40px -10px <accent>33
-
-/* CTA button glow */
-box-shadow: 0 8px 24px -12px rgba(70,33,255,0.7)
-
-/* Focus ring */
-outline: 2px solid <accent>; outline-offset: 2px;
-```
-
-In Tailwind:
 ```
 shadow-[0_0_40px_-10px_rgba(70,33,255,0.3)]    /* blue card glow */
 shadow-[0_0_40px_-10px_rgba(0,200,168,0.3)]    /* teal card glow */
-shadow-[0_8px_24px_-12px_rgba(70,33,255,0.7)]  /* blue button glow */
+shadow-[0_0_40px_-10px_rgba(255,203,136,0.3)]  /* amber card glow */
+shadow-[0_0_40px_-10px_rgba(240,113,120,0.3)]  /* red card glow */
+shadow-[0_8px_24px_-12px_rgba(70,33,255,0.7)]  /* blue CTA button glow */
 ```
+
+One glow per screen section maximum. No glow on non-modal blur elements.
 
 ---
 
@@ -275,7 +437,14 @@ shadow-[0_8px_24px_-12px_rgba(70,33,255,0.7)]  /* blue button glow */
 2. **Never** use light-mode color values (`white`, `gray-100`, etc.) as backgrounds.
 3. **Never** use more than one accent glow per screen section.
 4. **Never** use Inter, Roboto, or system-ui as primary fonts.
-5. **Always** use `font-mono` for numeric/metric values.
-6. **Always** use Svelte 5 rune syntax (`$state`, `$derived`, `$effect`, `$props`).
-7. **Always** keep glassmorphic surfaces as layered opacity — not solid fills — for card surfaces.
-8. Buttons are never `<form>` submit elements in Svelte — use `onclick` handlers directly.
+5. **Never** use standard Tailwind palette colors (`slate-*`, `indigo-*`, `white`, `black`, `blue-500`, `red-300`, etc.) as UI colors — map to Astrape tokens.
+6. **Never** hardcode hex or `rgba()` literals in Tailwind `class=""` attributes — use tokens; keep hex only in canvas, D3, Mapbox paint, and SVG presentation attributes.
+7. **Never** use `var(--*)` in canvas `fillStyle`/`strokeStyle`, D3 `.attr()` calls, Mapbox `paint`, or SVG presentation attributes — CSS variables do not resolve in these contexts.
+8. **Never** use `text-text3` — it is not defined. Use `text-text2`.
+9. **Never** use `pb-safe` / `pt-safe` — not configured. Use `pb-8` / `pt-4`.
+10. **Never** use Tailwind opacity modifiers that are not multiples of 5 (`/12`, `/35`, `/45`, etc.) — use nearest `/5` step or `[rgba(…)]` arbitrary value.
+11. **Always** use `font-mono` for numeric/metric values.
+12. **Always** use Svelte 5 rune syntax (`$state`, `$derived`, `$effect`, `$props`).
+13. **Always** keep glassmorphic surfaces as layered opacity — not solid fills — for card surfaces.
+14. Buttons are never `<form>` submit elements in Svelte — use `onclick` handlers directly.
+15. Zone-1 color (`--zone-1`) is `#579BFA` — a lighter perceptual blue. **Never** substitute `--blue` (`#4621FF`) for zone-1 or vice versa.
