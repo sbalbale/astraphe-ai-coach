@@ -38,6 +38,8 @@
     getActivityIntervals,
     getActivityZones,
     hydrateActivityStreams,
+    refetchWorkoutFromStrava,
+    streamsHaveVelocity,
     type ActivityStreams,
     type ActivityLap,
     type ActivityIntervals,
@@ -45,6 +47,7 @@
   } from '$lib/services/activityService';
   import { stravaPolylineFromPayload } from '$lib/utils/polyline';
   import StreamCharts from '$lib/components/workout/StreamCharts.svelte';
+  import SplitCharts from '$lib/components/workout/SplitCharts.svelte';
   import IntervalsTable from '$lib/components/workout/IntervalsTable.svelte';
   import GpsTrace from '$lib/components/workout/GpsTrace.svelte';
   import LapStrip from '$lib/components/workout/LapStrip.svelte';
@@ -76,6 +79,9 @@
   let detailLoading = $state(false);
   let detailHydrating = $state(false);
   let detailError = $state<string | null>(null);
+  let detailRepulling = $state(false);
+  let detailRepullMessage = $state<string | null>(null);
+  let detailReloadEpoch = $state(0);
 
   const detailStravaPolyline = $derived(
     selectedWorkout ? stravaPolylineFromPayload(selectedWorkout.raw_strava_payload) : null
@@ -308,8 +314,32 @@
     void loadWorkoutAnalysis(workoutId);
   });
 
+  async function repullFromStrava() {
+    const w = selectedWorkout;
+    if (!w?.id || !w.strava_activity_id || detailRepulling) return;
+    detailRepulling = true;
+    detailRepullMessage = null;
+    detailError = null;
+    try {
+      const result = await refetchWorkoutFromStrava(w.id);
+      if (result.workout) {
+        selectedWorkout = { ...w, ...result.workout };
+      }
+      const types = result.stream_types?.length ? result.stream_types.join(', ') : 'none';
+      detailRepullMessage = result.has_latlng_stream
+        ? `Updated from Strava (GPS stream included).`
+        : `Updated from Strava. Streams: ${types}.`;
+      detailReloadEpoch += 1;
+    } catch (e: unknown) {
+      detailError = e instanceof Error ? e.message : 'Failed to repull from Strava';
+    } finally {
+      detailRepulling = false;
+    }
+  }
+
   $effect(() => {
     const w = selectedWorkout;
+    void detailReloadEpoch;
 
     detailStreams = null;
     detailLaps = [];
@@ -671,6 +701,20 @@
           </div>
 
           {#if selectedWorkout.strava_activity_id}
+            <div class="mt-3 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                class="px-3 py-1.5 rounded-full text-[11px] font-medium border border-border bg-glass2 text-text1 hover:border-teal/40 hover:text-teal transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={detailRepulling || detailLoading}
+                onclick={() => repullFromStrava()}
+              >
+                {detailRepulling ? 'Pulling from Strava…' : 'Repull from Strava'}
+              </button>
+              {#if detailRepullMessage}
+                <span class="text-[10px] font-mono text-teal leading-snug">{detailRepullMessage}</span>
+              {/if}
+            </div>
+
             {#if detailLoading}
               <div class="mt-4 space-y-3">
                 {#each [150, 150, 120] as h}
@@ -720,8 +764,15 @@
                     latlng={detailStreams?.time_series?.latlng}
                     polyline={detailStravaPolyline}
                     heartrate={detailStreams?.time_series?.heartrate}
+                    time={detailStreams?.time_series?.time}
                     zones={mergedHrZoneDefs}
                   />
+                </div>
+              {/if}
+
+              {#if selectedWorkout.sport === 'row' && (detailIntervals?.intervals?.length ?? 0) >= 2 && !streamsHaveVelocity(detailStreams)}
+                <div class="mt-4">
+                  <SplitCharts intervals={detailIntervals?.intervals ?? []} zones={mergedHrZoneDefs} />
                 </div>
               {/if}
 

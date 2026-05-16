@@ -461,6 +461,67 @@ def _supabase_single_row(resp: Any) -> dict | None:
     return None
 
 
+def _pick_best_laps(api_laps: list[Any] | None, embedded_laps: list[Any] | None) -> list[Any]:
+    """
+    Prefer rich device autolaps from GET /activities/{id} over the /laps endpoint.
+
+    Strava often returns a single synthetic lap (distance 0, full elapsed time) from /laps
+    while the activity detail payload includes the real 500m splits.
+    """
+    api = [lap for lap in (api_laps or []) if isinstance(lap, dict)]
+    emb = [lap for lap in (embedded_laps or []) if isinstance(lap, dict)]
+    if not api:
+        return emb
+    if not emb:
+        return api
+    if len(emb) > len(api):
+        return emb
+    if len(api) == 1 and len(emb) > 1:
+        only = api[0]
+        dist = only.get("distance") or 0
+        try:
+            dist_f = float(dist)
+        except (TypeError, ValueError):
+            dist_f = 0.0
+        if dist_f < 100:
+            return emb
+    return api
+
+
+def _persist_activity_laps(
+    db: Any, workout_id: str, athlete_id: str, laps: list[Any]
+) -> None:
+    if not laps:
+        return
+    db.table("activity_laps").delete().eq("workout_id", workout_id).execute()
+    lap_rows = []
+    for lap in laps:
+        if not isinstance(lap, dict):
+            continue
+        spd = lap.get("average_speed") or 0
+        lap_rows.append(
+            {
+                "workout_id": workout_id,
+                "athlete_id": athlete_id,
+                "lap_index": lap.get("lap_index"),
+                "start_index": lap.get("start_index"),
+                "end_index": lap.get("end_index"),
+                "elapsed_time": lap.get("elapsed_time"),
+                "moving_time": lap.get("moving_time"),
+                "distance": lap.get("distance"),
+                "average_heartrate": lap.get("average_heartrate"),
+                "max_heartrate": lap.get("max_heartrate"),
+                "average_watts": lap.get("average_watts"),
+                "average_cadence": lap.get("average_cadence"),
+                "average_speed": spd,
+                "total_elevation_gain": lap.get("total_elevation_gain"),
+                "raw_lap": lap,
+            }
+        )
+    if lap_rows:
+        db.table("activity_laps").insert(lap_rows).execute()
+
+
 def _load_cached_laps_for_workout(db: Any, workout_id: str) -> list[dict] | None:
     """Return laps from ``activity_laps.raw_lap`` ordered by ``lap_index``, or None if unusable."""
     res = (
@@ -588,6 +649,7 @@ async def ingest_strava_activity(
     db,
     delay: bool = False,
     access_token: str | None = None,
+    force_refresh: bool = False,
 ) -> dict | None:
     """
     Full pipeline: fetch -> deduplicate -> store streams/laps -> compute zones -> return workout.
@@ -653,10 +715,12 @@ async def ingest_strava_activity(
     # Fetch from Strava when no activity_streams row exists (flag alone is not reliable:
     # reprocess/merge paths may set strava_streams_fetched without persisting streams).
     streams = _load_stored_streams_dict(db, workout_id)
-    if not streams:
+    if force_refresh or not streams:
         streams = await get_activity_streams(activity_id, access_token, delay=delay)
 
-    if not workout.get("strava_streams_fetched"):
+    if force_refresh:
+        laps = await get_activity_laps(activity_id, access_token, delay=delay)
+    elif not workout.get("strava_streams_fetched"):
         cached_laps = _load_cached_laps_for_workout(db, workout_id)
         if cached_laps is not None:
             laps: list[Any] = cached_laps
@@ -669,13 +733,15 @@ async def ingest_strava_activity(
     zones = get_athlete_zones(athlete)
     zone_dist = compute_zone_distribution(hr_stream, zones) if hr_stream else {}
 
+    embedded_list = activity.get("laps") if isinstance(activity.get("laps"), list) else []
+    if is_rowing:
+        merged_laps = _pick_best_laps(laps, embedded_list)
+    else:
+        merged_laps = laps if laps else embedded_list
+
     intervals = None
     intervals_source = None
     if is_rowing:
-        # Laps API can return [] while GET /activities/{id} already embedded laps — do not wipe them.
-        embedded_laps = activity.get("laps")
-        embedded_list = embedded_laps if isinstance(embedded_laps, list) else []
-        merged_laps = laps if laps else embedded_list
         activity_for_intervals = {**activity, "laps": merged_laps}
         intervals, intervals_source = get_rowing_intervals(activity_for_intervals, streams)
 
@@ -714,31 +780,7 @@ async def ingest_strava_activity(
 
     _upsert_activity_streams(db, workout_id, athlete_id, streams)
 
-    if laps:
-        db.table("activity_laps").delete().eq("workout_id", workout_id).execute()
-        lap_rows = []
-        for lap in laps:
-            spd = lap.get("average_speed") or 0
-            lap_rows.append(
-                {
-                    "workout_id": workout_id,
-                    "athlete_id": athlete_id,
-                    "lap_index": lap.get("lap_index"),
-                    "start_index": lap.get("start_index"),
-                    "end_index": lap.get("end_index"),
-                    "elapsed_time": lap.get("elapsed_time"),
-                    "moving_time": lap.get("moving_time"),
-                    "distance": lap.get("distance"),
-                    "average_heartrate": lap.get("average_heartrate"),
-                    "max_heartrate": lap.get("max_heartrate"),
-                    "average_watts": lap.get("average_watts"),
-                    "average_cadence": lap.get("average_cadence"),
-                    "average_speed": spd,
-                    "total_elevation_gain": lap.get("total_elevation_gain"),
-                    "raw_lap": lap,
-                }
-            )
-        db.table("activity_laps").insert(lap_rows).execute()
+    _persist_activity_laps(db, workout_id, athlete_id, merged_laps)
 
     print(
         f"[strava.ingest] activity_id={activity_id} athlete={athlete_id} "
@@ -928,11 +970,9 @@ def reprocess_rowing_intervals_from_stored_data(db: Any, workout_id: str) -> tup
         streams = _time_series_to_streams_dict(ts)
 
         laps_db = _load_cached_laps_for_workout(db, workout_id)
-        if laps_db is not None:
-            laps: list[Any] = laps_db
-        else:
-            emb = activity.get("laps")
-            laps = emb if isinstance(emb, list) else []
+        emb = activity.get("laps")
+        embedded = emb if isinstance(emb, list) else []
+        laps = _pick_best_laps(laps_db, embedded)
 
         activity_for = {**activity, "laps": laps}
         intervals, intervals_source = get_rowing_intervals(activity_for, streams)
@@ -949,12 +989,109 @@ def reprocess_rowing_intervals_from_stored_data(db: Any, workout_id: str) -> tup
         update = {k: v for k, v in update.items() if v is not None}
 
         db.table("workouts").update(update).eq("id", workout_id).execute()
+        _persist_activity_laps(db, workout_id, row["athlete_id"], laps)
         return (
             "ok",
             f"source={intervals_source} pieces={len(intervals)} stream_types={len(streams)} laps_used={len(laps)}",
         )
     except Exception as e:
         return "error", str(e)
+
+
+_WORKOUT_REFETCH_COLUMNS = (
+    "id, title, sport, started_at, ended_at, duration_seconds, distance_m, avg_hr, max_hr, "
+    "strava_activity_id, strava_streams_fetched, raw_strava_payload, intervals, intervals_source, "
+    "splits_metric, hr_zone_1_pct, hr_zone_2_pct, hr_zone_3_pct, hr_zone_4_pct, hr_zone_5_pct, tss"
+)
+
+
+async def refetch_workout_from_strava(
+    db: Any,
+    athlete_id: str,
+    workout_id: str,
+    *,
+    delay: bool = False,
+) -> dict[str, Any]:
+    """Re-download activity detail, streams, and laps from Strava for one stored workout."""
+    wres = (
+        db.table("workouts")
+        .select("id, athlete_id, strava_activity_id")
+        .eq("id", workout_id)
+        .eq("athlete_id", athlete_id)
+        .maybe_single()
+        .execute()
+    )
+    workout = _supabase_single_row(wres)
+    if not workout:
+        raise HTTPException(status_code=404, detail="Workout not found")
+
+    strava_id_raw = workout.get("strava_activity_id")
+    if strava_id_raw is None:
+        raise HTTPException(status_code=400, detail="Workout has no Strava activity id")
+
+    ares = (
+        db.table("athletes")
+        .select("strava_athlete_id")
+        .eq("id", athlete_id)
+        .maybe_single()
+        .execute()
+    )
+    athlete_row = _supabase_single_row(ares)
+    owner_raw = athlete_row.get("strava_athlete_id") if athlete_row else None
+    if owner_raw is None:
+        raise HTTPException(status_code=400, detail="Strava not linked for this athlete")
+
+    try:
+        owner = int(owner_raw)
+        activity_id = int(strava_id_raw)
+    except (TypeError, ValueError) as e:
+        raise HTTPException(status_code=400, detail="Invalid Strava ids on workout/athlete") from e
+
+    access_token = await get_valid_token(athlete_id, db, delay=delay)
+    if not access_token:
+        raise HTTPException(status_code=503, detail="Strava not connected")
+
+    try:
+        result = await ingest_strava_activity(
+            owner_strava_id=owner,
+            activity_id=activity_id,
+            db=db,
+            delay=delay,
+            access_token=access_token,
+            force_refresh=True,
+        )
+    except StravaRateLimitError as e:
+        wait = e.retry_after if e.retry_after and e.retry_after > 0 else STRAVA_RATE_LIMIT_COOLDOWN_S
+        raise HTTPException(
+            status_code=429,
+            detail=f"Strava rate limit — try again in about {int(wait)}s",
+        ) from e
+
+    if not result:
+        raise HTTPException(status_code=502, detail="Strava did not return activity data")
+
+    streams = _load_stored_streams_dict(db, workout_id)
+    latlng = (streams.get("latlng") or {}).get("data", [])
+    latlng_len = len(latlng) if isinstance(latlng, list) else 0
+
+    fresh = (
+        db.table("workouts")
+        .select(_WORKOUT_REFETCH_COLUMNS)
+        .eq("id", workout_id)
+        .eq("athlete_id", athlete_id)
+        .maybe_single()
+        .execute()
+    )
+    workout_row = _supabase_single_row(fresh) or result
+
+    return {
+        "status": "ok",
+        "workout_id": workout_id,
+        "strava_activity_id": activity_id,
+        "stream_types": sorted(streams.keys()) if streams else [],
+        "has_latlng_stream": latlng_len >= 2,
+        "workout": workout_row,
+    }
 
 
 async def hydrate_workout_streams(
