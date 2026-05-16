@@ -1,0 +1,58 @@
+/**
+ * Astrape Biometric Intelligence
+ * Custom algorithms for Sleep and Recovery scoring
+ */
+
+export interface SleepData {
+  durationMin: number;
+  deepPct: number;
+  remPct: number;
+  lightPct: number;
+  awakePct: number;
+}
+
+export interface RecoveryData {
+  hrv: number;
+  restingHr: number;
+  sleepScore: number;
+  hrvBaseline: number;
+  rhrBaseline: number;
+}
+
+/**
+ * Calculates a custom Astrape Sleep Score (0-100)
+ * Weights: 60% Duration, 40% Quality (REM + Deep)
+ */
+export function calculateSleepScore(data: SleepData): number {
+  if (!data.durationMin) return 0;
+
+  // 1. Duration Score (Goal: 8 hours / 480 mins)
+  const durationScore = Math.min(100, (data.durationMin / 480) * 100);
+
+  // 2. Quality Score (Goal: REM + Deep >= 45% of total)
+  const qualityPct = (data.remPct || 0) + (data.deepPct || 0);
+  const qualityScore = Math.min(100, (qualityPct / 45) * 100);
+
+  return Math.round((durationScore * 0.6) + (qualityScore * 0.4));
+}
+
+/**
+ * Calculates a custom Astrape Recovery Score (0-100)
+ * Weights: 45% HRV, 25% RHR, 30% Sleep
+ */
+export function calculateRecoveryScore(data: RecoveryData): number {
+  // 1. HRV Score (Relative to baseline)
+  // Higher is better. 100 points if HRV >= Baseline + 10%
+  const hrvRatio = data.hrv / (data.hrvBaseline || 50);
+  const hrvScore = Math.min(100, Math.max(0, hrvRatio * 75)); // Scaled conservative
+
+  // 2. RHR Score (Relative to baseline)
+  // Lower is better. 100 points if RHR <= Baseline - 5%
+  const rhrDiff = (data.rhrBaseline || 60) - data.restingHr;
+  const rhrScore = Math.min(100, Math.max(0, 50 + (rhrDiff * 5))); // 50 is baseline, +/- 5 points per bpm
+
+  // 3. Sleep contribution
+  const sleepContrib = data.sleepScore;
+
+  return Math.round((hrvScore * 0.45) + (rhrScore * 0.25) + (sleepContrib * 0.3));
+}
