@@ -1,5 +1,6 @@
 <script lang="ts">
   import { supabase } from '$lib/supabase';
+  import { authRedirectUrl } from '$lib/utils/redirectUrl';
   import { goto } from '$app/navigation';
   
   let name = $state('');
@@ -19,7 +20,8 @@
       options: {
         data: {
           full_name: name,
-        }
+        },
+        emailRedirectTo: authRedirectUrl('callback'),
       }
     });
 
@@ -29,24 +31,11 @@
       return;
     }
 
-    // If email confirmation is disabled (local dev), we get a session immediately
     if (data.session) {
-      // Seed initial training data for this new user via the backend
-      try {
-        const token = data.session.access_token;
-        await fetch(`${import.meta.env.VITE_API_URL}/v1/athlete/onboard`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          }
-        });
-      } catch {
-        // Non-fatal — dashboard will handle empty state gracefully
-      }
+      // Email confirmations disabled (local dev only) — go straight to onboarding
       goto('/onboarding');
     } else {
-      // Email confirmation required
+      // Email confirmation required — Supabase sent the confirmation email
       errorMsg = 'Check your email to confirm your account, then sign in.';
       loading = false;
     }

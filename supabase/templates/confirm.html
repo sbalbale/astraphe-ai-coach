@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Confirm your Astrape account</title>
+</head>
+<body style="margin:0;padding:0;background-color:#08080F;font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color:#08080F;padding:40px 16px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:600px;background-color:#12121A;border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:40px 32px;">
+          <tr>
+            <td>
+              <h1 style="margin:0 0 16px;font-size:24px;font-weight:700;color:#F0F0FF;line-height:1.3;">
+                Confirm your account
+              </h1>
+              <p style="margin:0 0 28px;font-size:15px;line-height:1.6;color:rgba(240,240,255,0.65);">
+                Click the button below to confirm your email address and activate your Astrape account.
+              </p>
+              <table role="presentation" cellspacing="0" cellpadding="0" style="margin:0 0 28px;">
+                <tr>
+                  <td style="border-radius:8px;background-color:#4621FF;">
+                    <a href="{{ .ConfirmationURL }}" style="display:inline-block;padding:14px 28px;font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;border-radius:8px;">
+                      Confirm Email
+                    </a>
+                  </td>
+                </tr>
+              </table>
+              <p style="margin:0 0 8px;font-size:13px;line-height:1.5;color:rgba(240,240,255,0.35);">
+                Or copy this link:
+              </p>
+              <p style="margin:0 0 32px;font-size:12px;line-height:1.5;word-break:break-all;">
+                <a href="{{ .ConfirmationURL }}" style="color:#4621FF;text-decoration:underline;">{{ .ConfirmationURL }}</a>
+              </p>
+              <p style="margin:0;font-size:13px;line-height:1.5;color:#6B7280;">
+                If you didn't create an account, you can safely ignore this email.
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
