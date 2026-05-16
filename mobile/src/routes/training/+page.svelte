@@ -712,10 +712,8 @@
                   <GpsTrace
                     latlng={detailStreams?.time_series?.latlng}
                     polyline={detailStravaPolyline}
-                    velocity={detailStreams?.time_series?.velocity_smooth}
                     heartrate={detailStreams?.time_series?.heartrate}
                     zones={detailZones?.zones}
-                    moving={detailStreams?.time_series?.moving}
                   />
                 </div>
               {/if}
