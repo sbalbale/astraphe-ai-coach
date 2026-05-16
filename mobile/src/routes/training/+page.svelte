@@ -46,7 +46,7 @@
     type ActivityZones,
   } from '$lib/services/activityService';
   import { stravaPolylineFromPayload } from '$lib/utils/polyline';
-  import { normalizeUnits } from '$lib/utils/units';
+  import { formatWorkoutDistance, normalizeUnits } from '$lib/utils/units';
   import { supportsPaceChart } from '$lib/utils/paceChart';
   import StreamCharts from '$lib/components/workout/StreamCharts.svelte';
   import SplitCharts from '$lib/components/workout/SplitCharts.svelte';
@@ -673,7 +673,9 @@
             </div>
             <div class="bg-glass2 p-2.5 rounded-xl border border-border">
               <p class="text-[9px] text-text2 font-mono uppercase mb-1">Distance</p>
-              <p class="text-sm font-bold">{selectedWorkout.distance_m ? (selectedWorkout.distance_m / 1000).toFixed(2) + 'km' : '--'}</p>
+              <p class="text-sm font-bold">
+                {formatWorkoutDistance(selectedWorkout.distance_m, measurementUnits, selectedWorkout.sport)}
+              </p>
             </div>
             <div class="bg-glass2 p-2.5 rounded-xl border border-border">
               <p class="text-[9px] text-text2 font-mono uppercase mb-1">Avg HR</p>

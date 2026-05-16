@@ -22,12 +22,23 @@
   import { boundedScoreCssColor } from '$lib/colorSystem';
   import { CHART_ATL_STROKE, CHART_CTL_STROKE, formCssColor } from '$lib/scoreColors';
   import { canonicalHrZoneShortName, formatHrZoneTitle } from '$lib/hrZoneDisplay';
+  import { normalizeUnits, workoutDistanceParts } from '$lib/utils/units';
 
   const CTL_IDENTITY_HEX = CHART_CTL_STROKE;
   const ATL_IDENTITY_HEX = CHART_ATL_STROKE;
 
   const isConnected = $derived(Object.values(athleteStore.syncStatus?.integrations || {}).some((i: any) => i.connected));
-  
+
+  const measurementUnits = $derived(
+    normalizeUnits((athleteStore.profile as { measurement_units?: string })?.measurement_units)
+  );
+
+  const selectedWorkoutDistance = $derived.by(() => {
+    const w = selectedWorkout;
+    if (!w?.distance_m) return null;
+    return workoutDistanceParts(w.distance_m, measurementUnits, w.sport);
+  });
+
   // Rolling 7-day window (cannot go into the future).
   // Source of truth for the picker is a YYYY-MM-DD string.
   let endPickerValue = $state('');
@@ -603,12 +614,12 @@
             <span class="text-[10px] text-text2 font-mono">TSS</span>
           </div>
         </div>
-        {#if selectedWorkout.distance_m}
+        {#if selectedWorkoutDistance}
           <div class="p-4 rounded-2xl bg-glass border border-border/50">
             <p class="text-[10px] text-text2 font-mono uppercase mb-1">Distance</p>
             <div class="flex items-baseline gap-1">
-              <span class="text-[20px] font-bold text-text0">{(selectedWorkout.distance_m / 1000).toFixed(2)}</span>
-              <span class="text-[10px] text-text2 font-mono">KM</span>
+              <span class="text-[20px] font-bold text-text0">{selectedWorkoutDistance.value}</span>
+              <span class="text-[10px] text-text2 font-mono uppercase">{selectedWorkoutDistance.unit}</span>
             </div>
           </div>
         {/if}
