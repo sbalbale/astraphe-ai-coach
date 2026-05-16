@@ -21,6 +21,8 @@
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { authStore } from '$lib/stores/authStore.svelte';
   import { api } from '$lib/api';
+  import { goto } from '$app/navigation';
+  import { resolve } from '$app/paths';
   import { page } from '$app/stores';
   import { addDays, endOfWeek, format, startOfWeek } from 'date-fns';
   import { boundedScoreCssColor } from '$lib/colorSystem';
@@ -151,7 +153,29 @@
   // Week selector (History tab)
   // Source of truth is the picked day (YYYY-MM-DD). We derive the Monday week start from it.
   let weekPickerValue = $state('');
-  let appliedWorkoutIdFromUrl = $state(false);
+
+  function openWorkout(w: { id?: string; started_at?: string }) {
+    if (!w?.id) return;
+    metric = 'history';
+    if (w.started_at) {
+      weekPickerValue = format(new Date(w.started_at), 'yyyy-MM-dd');
+    }
+    const target = resolve(`/training?workout_id=${encodeURIComponent(String(w.id))}`);
+    if ($page.url.searchParams.get('workout_id') === String(w.id)) {
+      const match = (athleteStore.workouts || []).find((x) => String(x?.id) === String(w.id));
+      if (match) selectedWorkout = match;
+      return;
+    }
+    goto(target, { keepFocus: true, noScroll: true });
+  }
+
+  function closeWorkout() {
+    if ($page.url.searchParams.has('workout_id')) {
+      goto(resolve('/training'), { keepFocus: true, noScroll: true });
+    } else {
+      selectedWorkout = null;
+    }
+  }
 
   function parseDateInputLocal(value: string): Date {
     const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value || '');
@@ -175,18 +199,22 @@
   }
 
   const workoutIdFromUrl = $derived($page.url.searchParams.get('workout_id'));
+
+  /** Keep detail view in sync with ?workout_id= (deep links, Training tab, browser back). */
   $effect(() => {
-    if (appliedWorkoutIdFromUrl) return;
-    if (!workoutIdFromUrl) return;
+    const id = workoutIdFromUrl;
+    if (!id) {
+      selectedWorkout = null;
+      return;
+    }
     if (!hasWorkouts) return;
 
-    const match = (athleteStore.workouts || []).find((w) => String(w?.id) === String(workoutIdFromUrl));
+    const match = (athleteStore.workouts || []).find((w) => String(w?.id) === String(id));
     if (!match) return;
 
     metric = 'history';
     weekPickerValue = format(new Date(match.started_at), 'yyyy-MM-dd');
     selectedWorkout = match;
-    appliedWorkoutIdFromUrl = true;
   });
 
   const weekWorkouts = $derived.by(() => {
@@ -336,7 +364,7 @@
     if (!ok) return;
     try {
       await athleteStore.deleteWorkout(selectedWorkout.id);
-      selectedWorkout = null;
+      closeWorkout();
     } catch (e) {
       console.error(e);
       alert('Failed to delete workout');
@@ -509,7 +537,7 @@
     <!-- Metric Tabs -->
     <div class="flex gap-1.5 overflow-x-auto pb-0.5 shrink-0">
       {#each tabs as tab (tab)}
-        <Pill active={metric === tab} onclick={() => { metric = tab; selectedWorkout = null; }}>
+        <Pill active={metric === tab} onclick={() => { metric = tab; closeWorkout(); }}>
           {tab.charAt(0).toUpperCase() + tab.slice(1)}
         </Pill>
       {/each}
@@ -623,7 +651,7 @@
         <div class="mb-2 flex items-center justify-between gap-2">
           <button
             class="text-xs text-blue flex items-center gap-1 bg-transparent border-none p-0 cursor-pointer"
-            onclick={() => (selectedWorkout = null)}
+            onclick={closeWorkout}
           >
             ← Back to list
           </button>
@@ -909,7 +937,7 @@
           {#each weekWorkouts as w (w?.id ?? w?.started_at)}
             {@const strainVal = Number.isFinite(Number(w?.strain_score)) ? Math.round(Number(w.strain_score)) : null}
             {@const tssVal = Number.isFinite(Number(w?.tss)) ? Math.round(Number(w.tss)) : null}
-            <button class="text-left bg-transparent border-none p-0 cursor-pointer w-full" onclick={() => selectedWorkout = w}>
+            <button class="text-left bg-transparent border-none p-0 cursor-pointer w-full" onclick={() => openWorkout(w)}>
               <Card style="padding: 12px 14px;">
                 <div class="flex items-center gap-3">
                   <div class="w-10 h-10 rounded-xl shrink-0 flex items-center justify-center text-[18px] {getWorkoutBg(w.sport)}">
