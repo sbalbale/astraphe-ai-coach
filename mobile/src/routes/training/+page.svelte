@@ -703,6 +703,7 @@
                     streams={detailStreams}
                     laps={detailLaps}
                     sport={selectedWorkout.sport}
+                    zones={detailZones?.zones ?? []}
                   />
                 </div>
               {/if}
