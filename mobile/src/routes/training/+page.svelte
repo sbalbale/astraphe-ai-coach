@@ -80,8 +80,9 @@
   let detailHydrating = $state(false);
   let detailError = $state<string | null>(null);
   let detailRepulling = $state(false);
-  let detailRepullMessage = $state<string | null>(null);
   let detailReloadEpoch = $state(0);
+  let lastRepullWorkoutId = $state<string | null>(null);
+  let repullDismissedWorkoutIds = $state<Set<string>>(new Set());
 
   const detailStravaPolyline = $derived(
     selectedWorkout ? stravaPolylineFromPayload(selectedWorkout.raw_strava_payload) : null
@@ -90,6 +91,57 @@
   const mergedHrZoneDefs = $derived(
     mergeWorkoutZoneDefs(detailZones?.zones, athleteStore.profile?.hr_zones?.zones)
   );
+
+  /** True when streams/laps/intervals loaded enough for the detail charts to render. */
+  const detailChartsReady = $derived.by(() => {
+    const w = selectedWorkout;
+    if (!w?.strava_activity_id || detailLoading || detailRepulling || detailHydrating) {
+      return false;
+    }
+    if (detailError) return false;
+
+    const hasHrStream = (detailStreams?.time_series?.heartrate?.length ?? 0) > 1;
+    const hasRoute =
+      (detailStreams?.time_series?.latlng?.length ?? 0) > 1 || Boolean(detailStravaPolyline);
+    const hasIntervals = (detailIntervals?.intervals?.length ?? 0) >= 2;
+
+    if (w.sport === 'row') {
+      return hasIntervals && (hasHrStream || hasRoute);
+    }
+    return hasHrStream || hasRoute || detailLaps.length >= 2;
+  });
+
+  /** Rowing with lap splits but missing GPS stream / pace velocity — stale Strava ingest. */
+  const workoutDataNeedsRepull = $derived.by(() => {
+    const w = selectedWorkout;
+    if (!w?.strava_activity_id || w.sport !== 'row') return false;
+    const hasIntervals = (detailIntervals?.intervals?.length ?? 0) >= 2;
+    const noLatlngStream = (detailStreams?.time_series?.latlng?.length ?? 0) < 2;
+    const noPaceStream = !streamsHaveVelocity(detailStreams);
+    return hasIntervals && noLatlngStream && noPaceStream;
+  });
+
+  const showRepullDataButton = $derived.by(() => {
+    const w = selectedWorkout;
+    if (!w?.strava_activity_id) return false;
+    if (repullDismissedWorkoutIds.has(w.id)) return false;
+    return !detailChartsReady || detailRepulling || workoutDataNeedsRepull;
+  });
+
+  $effect(() => {
+    const w = selectedWorkout;
+    if (
+      !w?.id ||
+      w.id !== lastRepullWorkoutId ||
+      !detailChartsReady ||
+      detailRepulling ||
+      detailLoading
+    ) {
+      return;
+    }
+    repullDismissedWorkoutIds = new Set(repullDismissedWorkoutIds).add(w.id);
+    lastRepullWorkoutId = null;
+  });
 
   // Week selector (History tab)
   // Source of truth is the picked day (YYYY-MM-DD). We derive the Monday week start from it.
@@ -314,24 +366,20 @@
     void loadWorkoutAnalysis(workoutId);
   });
 
-  async function repullFromStrava() {
+  async function repullWorkoutData() {
     const w = selectedWorkout;
     if (!w?.id || !w.strava_activity_id || detailRepulling) return;
     detailRepulling = true;
-    detailRepullMessage = null;
     detailError = null;
+    lastRepullWorkoutId = w.id;
     try {
       const result = await refetchWorkoutFromStrava(w.id);
       if (result.workout) {
         selectedWorkout = { ...w, ...result.workout };
       }
-      const types = result.stream_types?.length ? result.stream_types.join(', ') : 'none';
-      detailRepullMessage = result.has_latlng_stream
-        ? `Updated from Strava (GPS stream included).`
-        : `Updated from Strava. Streams: ${types}.`;
       detailReloadEpoch += 1;
     } catch (e: unknown) {
-      detailError = e instanceof Error ? e.message : 'Failed to repull from Strava';
+      detailError = e instanceof Error ? e.message : 'Failed to repull workout data';
     } finally {
       detailRepulling = false;
     }
@@ -701,19 +749,18 @@
           </div>
 
           {#if selectedWorkout.strava_activity_id}
-            <div class="mt-3 flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                class="px-3 py-1.5 rounded-full text-[11px] font-medium border border-border bg-glass2 text-text1 hover:border-teal/40 hover:text-teal transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                disabled={detailRepulling || detailLoading}
-                onclick={() => repullFromStrava()}
-              >
-                {detailRepulling ? 'Pulling from Strava…' : 'Repull from Strava'}
-              </button>
-              {#if detailRepullMessage}
-                <span class="text-[10px] font-mono text-teal leading-snug">{detailRepullMessage}</span>
-              {/if}
-            </div>
+            {#if showRepullDataButton}
+              <div class="mt-3">
+                <button
+                  type="button"
+                  class="px-3 py-1.5 rounded-full text-[11px] font-medium border border-border bg-glass2 text-text1 hover:border-teal/40 hover:text-teal transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={detailRepulling || detailLoading}
+                  onclick={() => repullWorkoutData()}
+                >
+                  {detailRepulling || detailLoading ? 'Pulling data…' : 'Repull data'}
+                </button>
+              </div>
+            {/if}
 
             {#if detailLoading}
               <div class="mt-4 space-y-3">
