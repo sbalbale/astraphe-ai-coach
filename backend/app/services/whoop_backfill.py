@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta, timezone, date as date_type
 from typing import Any, Optional
 
@@ -28,6 +29,15 @@ async def backfill_historical_data(athlete_id: str, access_token: str, db: Any =
     Pull historical WHOOP sleep/recovery/workouts and persist into Supabase.
     This is intended to run right after OAuth connect.
     """
+    try:
+        await _backfill_historical_data_impl(athlete_id, access_token, db, days)
+    except Exception as e:
+        print(f"[whoop.backfill] FAILED athlete_id={athlete_id}: {e!r}")
+
+
+async def _backfill_historical_data_impl(
+    athlete_id: str, access_token: str, db: Any = None, days: int = 90
+) -> None:
     # If no DB provided (common for background tasks), create one.
     if db is None:
         db = get_admin_db()
@@ -74,40 +84,9 @@ async def backfill_historical_data(athlete_id: str, access_token: str, db: Any =
     except Exception:
         offset = 0
 
-    # 1) Cycles (Daily Strain)
-    cycles = await whoop.fetch_collection(access_token, "cycle", start_s, end_s)
-    print(f"[whoop.backfill] cycles={len(cycles)}")
-
-    for cyc in cycles:
-        # WHOOP cycle biological day is best determined by the end of the cycle (the day you wake up)
-        # or if end is null (current cycle), use created_at or start + some hours.
-        cycle_ref_time = cyc.get("end") or cyc.get("created_at") or cyc.get("start")
-        if not cycle_ref_time:
-            continue
-            
-        utc_ref = _parse_dt(cycle_ref_time)
-        local_ref = utc_ref + timedelta(minutes=offset)
-        d = local_ref.date()
-        score = (cyc.get("score") or {}) if isinstance(cyc.get("score"), dict) else {}
-        strain = score.get("strain")
-
-        payload = DailyBiometrics(
-            date=d,
-            source="whoop",
-            hrv_rmssd=None,
-            resting_hr=None,
-            sleep_duration_min=None,
-            sleep_score=None,
-            sleep_deep_pct=None,
-            sleep_rem_pct=None,
-            sleep_need_min=None,
-            sleep_debt_min=None,
-            skin_temp_deviation=None,
-            spo2_pct=None,
-        )
-        process_and_save_biometrics(payload, athlete_id, db)
-
-    # 2) Workouts First (to establish training load for readiness scores)
+    # Workouts first (to establish training load for readiness scores).
+    # Skip WHOOP "cycle" records here — they carry no fields we persist and each
+    # process_and_save_biometrics call fans out into many Supabase queries.
     workouts = await whoop.fetch_collection(access_token, "activity/workout", start_s, end_s)
     print(f"[whoop.backfill] workouts={len(workouts)}")
 
@@ -209,9 +188,12 @@ async def backfill_historical_data(athlete_id: str, access_token: str, db: Any =
             spo2_pct=score.get("spo2_percentage"),
             recovery_score=rec.get("score", {}).get("recovery_score") if isinstance(rec.get("score"), dict) else None,
         )
-        process_and_save_biometrics(payload, athlete_id, db)
+        try:
+            await asyncio.to_thread(process_and_save_biometrics, payload, athlete_id, db)
+        except Exception as e:
+            print(f"[whoop.backfill] recovery_upsert_failed date={d}: {e}")
 
-    # 3) Sleep (duration + stage breakdown + sleep score)
+    # Sleep (duration + stage breakdown + sleep score)
     sleeps = await whoop.fetch_collection(access_token, "activity/sleep", start_s, end_s)
     print(f"[whoop.backfill] sleeps={len(sleeps)}")
 
@@ -259,6 +241,9 @@ async def backfill_historical_data(athlete_id: str, access_token: str, db: Any =
             skin_temp_deviation=None,
             spo2_pct=None,
         )
-        process_and_save_biometrics(payload, athlete_id, db)
+        try:
+            await asyncio.to_thread(process_and_save_biometrics, payload, athlete_id, db)
+        except Exception as e:
+            print(f"[whoop.backfill] sleep_upsert_failed date={d} external_id={external_id}: {e}")
 
     print(f"[whoop.backfill] complete athlete_id={athlete_id}")
