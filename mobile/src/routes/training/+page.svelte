@@ -111,22 +111,20 @@
     return hasHrStream || hasRoute || detailLaps.length >= 2;
   });
 
-  /** Rowing with lap splits but missing GPS stream / pace velocity — stale Strava ingest. */
-  const workoutDataNeedsRepull = $derived.by(() => {
-    const w = selectedWorkout;
-    if (!w?.strava_activity_id || w.sport !== 'row') return false;
-    const hasIntervals = (detailIntervals?.intervals?.length ?? 0) >= 2;
-    const noLatlngStream = (detailStreams?.time_series?.latlng?.length ?? 0) < 2;
-    const noPaceStream = !streamsHaveVelocity(detailStreams);
-    return hasIntervals && noLatlngStream && noPaceStream;
-  });
-
   const showRepullDataButton = $derived.by(() => {
     const w = selectedWorkout;
     if (!w?.strava_activity_id) return false;
     if (repullDismissedWorkoutIds.has(w.id)) return false;
-    return !detailChartsReady || detailRepulling || workoutDataNeedsRepull;
+    if (detailLoading || detailHydrating) return false;
+    if (detailRepulling) return true;
+    return !detailChartsReady;
   });
+
+  const detailMissingPaceStream = $derived(
+    Boolean(detailStreams) &&
+      !streamsHaveVelocity(detailStreams) &&
+      (detailStreams?.time_series?.heartrate?.length ?? 0) > 1
+  );
 
   $effect(() => {
     const w = selectedWorkout;
@@ -413,11 +411,11 @@
 
         if (cancelled) return;
 
-        if (!streams && w.strava_activity_id) {
+        if (!streams && w.strava_activity_id && w.strava_streams_fetched === false) {
           detailHydrating = true;
           const hydrated = await hydrateActivityStreams(w.id);
           if (cancelled) return;
-          if (hydrated && (hydrated.status === 'hydrated' || hydrated.status === 'already_stored')) {
+          if (hydrated.status === 'hydrated' || hydrated.status === 'already_stored') {
             streams = await getActivityStreams(w.id);
             if (!zones || (zones.data_points === 0 && zones.source !== 'summary')) {
               zones = await getActivityZones(w.id);
@@ -757,7 +755,7 @@
                   disabled={detailRepulling || detailLoading}
                   onclick={() => repullWorkoutData()}
                 >
-                  {detailRepulling || detailLoading ? 'Pulling data…' : 'Repull data'}
+                  {detailRepulling ? 'Pulling data…' : 'Repull data'}
                 </button>
               </div>
             {/if}
@@ -792,6 +790,13 @@
                 <div class="mt-4">
                   <LapStrip laps={detailLaps} sport={selectedWorkout.sport} zones={mergedHrZoneDefs} />
                 </div>
+              {/if}
+
+              {#if detailMissingPaceStream && selectedWorkout.sport !== 'row'}
+                <p class="text-[11px] text-text2 font-mono mt-3 leading-relaxed">
+                  Pace stream unavailable from Strava for this activity (heart rate is still shown). Try
+                  Repull data if streams were imported incorrectly.
+                </p>
               {/if}
 
               {#if detailStreams}
