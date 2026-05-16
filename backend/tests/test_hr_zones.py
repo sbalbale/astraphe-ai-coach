@@ -103,3 +103,15 @@ def test_explicit_lthr_uses_coggan_even_when_estimated():
     assert zr is not None
     assert zr.method == "lthr"
     assert zr.zones[0].max_bpm == int(165 * 0.81)
+
+
+def test_unified_hi_zone_short_labels_all_methods():
+    expected = ("Recovery", "Endurance", "Tempo", "Threshold", "VO2max+")
+    z_hrr = compute_hr_zones(190, 50, None, None)
+    assert z_hrr and tuple(z.name for z in z_hrr.zones) == expected
+    z_max = compute_hr_zones(190, None, None, None)
+    assert z_max and tuple(z.name for z in z_max.zones) == expected
+    z_lthr = compute_hr_zones(185, None, 160, "manual")
+    assert z_lthr is not None
+    assert z_lthr.method == "lthr"
+    assert tuple(z.name for z in z_lthr.zones) == expected
