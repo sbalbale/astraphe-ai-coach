@@ -31,6 +31,7 @@
 		"@sveltejs/vite-plugin-svelte": "7.0.0",
 		"@tailwindcss/typography": "0.5.19",
 		"@types/d3": "7.4.3",
+		"@types/node": "^22.19.1",
 		"autoprefixer": "10.5.0",
 		"postcss": "8.5.12",
 		"svelte": "5.55.5",
