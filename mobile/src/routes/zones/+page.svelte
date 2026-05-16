@@ -15,7 +15,7 @@
   import { authStore } from '$lib/stores/authStore.svelte';
   import { goto } from '$app/navigation';
   import { api } from '$lib/api';
-  import { HR_ZONE_HEX } from '$lib/hrZoneDisplay';
+  import { HR_ZONE_HEX, HR_ZONE_LABELS } from '$lib/hrZoneDisplay';
   import {
     addDays,
     addMonths,
@@ -100,21 +100,15 @@
 
   /** Descriptions by zone number — API returns exactly five HR zones for every method */
   const ZONE_DESCRIPTIONS: Record<number, string> = {
-    1: 'Easier aerobic work. Active recovery and base.',
+    1: 'Recovery and very easy aerobic work.',
     2: 'Steady endurance. Aerobic base and fat metabolism.',
     3: 'Moderate-hard. Tempo and sustainable hard efforts.',
     4: 'Threshold. Race-pace sustainable intensity.',
-    5: 'VO2max and above. Hard intervals and short maximal efforts.'
+    5: 'VO2max+. Hard intervals and short maximal efforts.'
   };
 
   /** Time-in-zones stacked bar labels (always Z1-Z5 — no WHOOP-only Z0 bucket) */
-  const TIME_IN_ZONES_LABELS = [
-    'Z1 · Active Recovery',
-    'Z2 · Aerobic Endurance',
-    'Z3 · Tempo',
-    'Z4 · Threshold',
-    'Z5 · VO2max'
-  ];
+  const TIME_IN_ZONES_LABELS = [1, 2, 3, 4, 5].map((z) => `Z${z} · ${HR_ZONE_LABELS[z]}`);
 
   const hasProfile = $derived(!!athleteStore.profile);
 
@@ -124,7 +118,7 @@
   const hrZones = $derived(
     (athleteStore.profile?.hr_zones?.zones ?? []).map((z: { zone: number; name: string; min: number; max: number }) => ({
       zone: z.zone,
-      name: z.name,
+      name: HR_ZONE_LABELS[z.zone] ?? z.name,
       lo: z.min,
       hi: z.max,
       color: HR_ZONE_HEX[z.zone] ?? '#AAB3BF',

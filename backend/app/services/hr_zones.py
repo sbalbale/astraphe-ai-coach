@@ -60,14 +60,25 @@ class ZoneResult:
     anchor_label: str
 
 
+# Display names are shared with the mobile app (`mobile/src/lib/hrZoneDisplay.ts`).
+HR_ZONE_STANDARD_NAMES: tuple[str, ...] = (
+    "Recovery",  # Z1
+    "Endurance",
+    "Tempo",
+    "Threshold",
+    "VO2max+",  # Z5
+)
+
+
 def _lthr_zones(lthr: int) -> list[HRZone]:
     """Coggan-style 5-zone model anchored to lactate threshold HR (Z5 merges VO2max + anaerobic)."""
+    names = HR_ZONE_STANDARD_NAMES
     return [
-        HRZone(1, "Active Recovery", 0, int(lthr * 0.81)),
-        HRZone(2, "Endurance", int(lthr * 0.81), int(lthr * 0.89)),
-        HRZone(3, "Tempo", int(lthr * 0.89), int(lthr * 0.93)),
-        HRZone(4, "Threshold", int(lthr * 0.93), int(lthr * 1.05)),
-        HRZone(5, "VO2max+", int(lthr * 1.05), 999),
+        HRZone(1, names[0], 0, int(lthr * 0.81)),
+        HRZone(2, names[1], int(lthr * 0.81), int(lthr * 0.89)),
+        HRZone(3, names[2], int(lthr * 0.89), int(lthr * 0.93)),
+        HRZone(4, names[3], int(lthr * 0.93), int(lthr * 1.05)),
+        HRZone(5, names[4], int(lthr * 1.05), 999),
     ]
 
 
@@ -78,23 +89,26 @@ def _hrr_zones(max_hr: int, resting_hr: int) -> list[HRZone]:
     def z(pct: float) -> int:
         return int(resting_hr + hrr * pct)
 
+    names = HR_ZONE_STANDARD_NAMES
+
     return [
-        HRZone(1, "Recovery", 0, z(0.60)),
-        HRZone(2, "Aerobic", z(0.60), z(0.70)),
-        HRZone(3, "Tempo", z(0.70), z(0.80)),
-        HRZone(4, "Threshold", z(0.80), z(0.90)),
-        HRZone(5, "VO2max", z(0.90), 999),
+        HRZone(1, names[0], 0, z(0.60)),
+        HRZone(2, names[1], z(0.60), z(0.70)),
+        HRZone(3, names[2], z(0.70), z(0.80)),
+        HRZone(4, names[3], z(0.80), z(0.90)),
+        HRZone(5, names[4], z(0.90), 999),
     ]
 
 
 def _max_hr_zones(max_hr: int) -> list[HRZone]:
     """Simple 5-zone model as % of max HR. Least accurate, last resort."""
+    names = HR_ZONE_STANDARD_NAMES
     return [
-        HRZone(1, "Recovery", 0, int(max_hr * 0.60)),
-        HRZone(2, "Aerobic", int(max_hr * 0.60), int(max_hr * 0.70)),
-        HRZone(3, "Tempo", int(max_hr * 0.70), int(max_hr * 0.80)),
-        HRZone(4, "Threshold", int(max_hr * 0.80), int(max_hr * 0.90)),
-        HRZone(5, "VO2max", int(max_hr * 0.90), 999),
+        HRZone(1, names[0], 0, int(max_hr * 0.60)),
+        HRZone(2, names[1], int(max_hr * 0.60), int(max_hr * 0.70)),
+        HRZone(3, names[2], int(max_hr * 0.70), int(max_hr * 0.80)),
+        HRZone(4, names[3], int(max_hr * 0.80), int(max_hr * 0.90)),
+        HRZone(5, names[4], int(max_hr * 0.90), 999),
     ]
 
 

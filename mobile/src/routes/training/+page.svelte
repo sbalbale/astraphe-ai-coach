@@ -24,7 +24,12 @@
   import { page } from '$app/stores';
   import { addDays, endOfWeek, format, startOfWeek } from 'date-fns';
   import { boundedScoreCssColor } from '$lib/colorSystem';
-  import { mergeWorkoutZoneDefs, HR_ZONE_HEX, formatZoneBpmRange } from '$lib/hrZoneDisplay';
+  import {
+    mergeWorkoutZoneDefs,
+    HR_ZONE_HEX,
+    formatZoneBpmRange,
+    canonicalHrZoneShortName,
+  } from '$lib/hrZoneDisplay';
   import { formCssColor, getWeeklyLoadDeltaColor } from '$lib/scoreColors';
   import { Lightbulb } from 'lucide-svelte';
   import {
@@ -602,14 +607,15 @@
                   {@const zone = 5 - topIdx}
                   {@const color = HR_ZONE_HEX[zone]}
                   {@const zDef = mergedHrZoneDefs.find((d) => d.zone === zone)}
+                  {@const zn = canonicalHrZoneShortName(zone) || zDef?.name}
                   <div class="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] gap-x-1.5 gap-y-1.5">
                     <div class="flex min-w-0 gap-2 self-start pt-0.5">
                       <span class="mt-1 h-2 w-2 shrink-0 rounded-full" style="background: {color};"></span>
                       <div class="min-w-0 flex-1">
                         <div class="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
                           <span class="text-[11px] text-text0 font-mono uppercase shrink-0">Z{zone}</span>
-                          {#if zDef?.name}
-                            <span class="text-[11px] text-text1 font-sans font-medium leading-snug">{zDef.name}</span>
+                          {#if zn}
+                            <span class="text-[11px] text-text1 font-sans font-medium leading-snug">{zn}</span>
                           {/if}
                           <span class="text-[10px] text-text2 font-mono">{formatZoneBpmRange(zDef)}</span>
                         </div>

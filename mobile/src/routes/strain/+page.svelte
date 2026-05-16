@@ -21,6 +21,7 @@
   import { addDays, format, subDays } from 'date-fns';
   import { boundedScoreCssColor } from '$lib/colorSystem';
   import { formCssColor } from '$lib/scoreColors';
+  import { canonicalHrZoneShortName, formatHrZoneTitle } from '$lib/hrZoneDisplay';
 
   const CTL_IDENTITY_HEX = '#3b82f6';
   const ATL_IDENTITY_HEX = '#64748b';
@@ -442,10 +443,14 @@
             {#each [5, 4, 3, 2, 1] as zone (zone)}
               {@const pct = dayZones.zonePct[zone - 1] || 0}
               {@const secs = dayZones.zoneSeconds[zone - 1] || 0}
+              {@const zTitle = formatHrZoneTitle(zone)}
               <div class="flex items-center gap-3">
-                <div class="w-9 flex items-center gap-1.5 shrink-0">
-                  <div class="w-2 h-2 rounded-full" style="background: var(--zone-{zone})"></div>
-                  <span class="text-[10px] font-mono text-text2">Z{zone}</span>
+                <div class="min-w-[5.75rem] max-w-[6.25rem] flex items-center gap-1.5 shrink-0">
+                  <div class="w-2 h-2 shrink-0 rounded-full" style="background: var(--zone-{zone})"></div>
+                  <div class="min-w-0 leading-tight" title={zTitle}>
+                    <span class="block text-[10px] font-mono text-text2">Z{zone}</span>
+                    <span class="block text-[9px] text-text3 truncate">{canonicalHrZoneShortName(zone)}</span>
+                  </div>
                 </div>
                 <div class="flex-1 h-1.5 bg-glass rounded-full overflow-hidden relative">
                   <div
@@ -632,10 +637,14 @@
           <div class="flex flex-col gap-3">
             {#each [5, 4, 3, 2, 1] as zone (zone)}
               {@const pct = selectedWorkout[`hr_zone_${zone}_pct`] || 0}
+              {@const zTitle = formatHrZoneTitle(zone)}
               <div class="flex items-center gap-3">
-                <div class="w-8 flex items-center gap-1.5 shrink-0">
-                  <div class="w-2 h-2 rounded-full" style="background: var(--zone-{zone})"></div>
-                  <span class="text-[10px] font-mono text-text2">Z{zone}</span>
+                <div class="min-w-[5.25rem] max-w-[6rem] flex items-center gap-1.5 shrink-0">
+                  <div class="w-2 h-2 shrink-0 rounded-full" style="background: var(--zone-{zone})"></div>
+                  <div class="min-w-0 leading-tight" title={zTitle}>
+                    <span class="block text-[10px] font-mono text-text2">Z{zone}</span>
+                    <span class="block text-[9px] text-text3 truncate">{canonicalHrZoneShortName(zone)}</span>
+                  </div>
                 </div>
                 <div class="flex-1 h-1.5 bg-glass rounded-full overflow-hidden relative">
                    <div 

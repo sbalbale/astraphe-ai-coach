@@ -8,14 +8,14 @@ from app.services.hr_zones import compute_hr_zones
 # CONSTANTS
 # ==========================================
 
-# Proprietary Strain weighting for HR zones
+# Proprietary Strain weighting for HR zones (Z1 Recovery … Z5 VO2max+)
 ZONE_STRAIN_COEFFICIENTS = {
     0: 0.0,    # Z0 Resting
     1: 0.5,    # Z1 Recovery
-    2: 1.0,    # Z2 Aerobic
+    2: 1.0,    # Z2 Endurance
     3: 2.5,    # Z3 Tempo
     4: 5.0,    # Z4 Threshold
-    5: 8.0,    # Z5 VO2max
+    5: 8.0,    # Z5 VO2max+
 }
 
 # The absolute maximum theoretical strain (24 hours at pure Zone 5)
