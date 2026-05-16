@@ -250,10 +250,10 @@
   // — they encode a *category* of sleep architecture, so they're allowed to
   // stay distinct and are not driven by the semantic ASTRAPE rules.
   const stageColors: Record<string, string> = {
-    deep: "#4621FF",
-    rem: "#00C8A8",
-    light: "#FFCB88",
-    awake: "#F07178",
+    deep: 'var(--blue)',
+    rem: 'var(--teal)',
+    light: 'var(--amber)',
+    awake: 'var(--red)',
   };
   // Sleep score is a bounded 0-100 score so it follows the unified rule of
   // thirds (>=67 teal / 34-66 amber / <=33 red).
@@ -593,7 +593,7 @@
 
       <!-- Contextual Insight -->
       <Card
-        style="background: linear-gradient(135deg, rgba(70,33,255,0.12), transparent);"
+        class="!bg-gradient-to-br from-blue/10 via-transparent to-transparent"
       >
         <p class="text-[13px] font-semibold mb-1.5">Sleep Analysis</p>
         {#if analysisLoading && analysisText === null}

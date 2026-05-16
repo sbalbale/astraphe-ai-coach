@@ -152,7 +152,7 @@
           <div class="mt-1 flex items-baseline justify-between gap-3 flex-wrap">
             <p class="text-[18px] font-semibold font-mono text-astrape-teal">{formatHms(riegelSeconds)}</p>
             {#if riegelPace}
-              <p class="text-[13px] font-semibold font-mono text-blue-500">{formatPaceMinutesPerKm(riegelPace)}</p>
+              <p class="text-[13px] font-semibold font-mono text-blue">{formatPaceMinutesPerKm(riegelPace)}</p>
             {/if}
           </div>
         {:else}
@@ -194,16 +194,18 @@
           <div class="flex gap-2">
             <button
               type="button"
-              class="px-2 py-2 rounded-xl bg-glass border border-border text-[11px] font-medium transition-colors cursor-pointer"
-              style={fractionMode === 'preset' ? 'color: var(--color-text0); border-color: rgba(0,200,168,0.45)' : 'color: var(--color-text2)'}
+              class="px-2 py-2 rounded-xl bg-glass border text-[11px] font-medium transition-colors cursor-pointer {fractionMode === 'preset'
+                ? 'text-text0 border-teal/40'
+                : 'text-text2 border-border'}"
               onclick={() => (fractionMode = 'preset')}
             >
               Preset
             </button>
             <button
               type="button"
-              class="px-2 py-2 rounded-xl bg-glass border border-border text-[11px] font-medium transition-colors cursor-pointer"
-              style={fractionMode === 'custom' ? 'color: var(--color-text0); border-color: rgba(70,33,255,0.45)' : 'color: var(--color-text2)'}
+              class="px-2 py-2 rounded-xl bg-glass border text-[11px] font-medium transition-colors cursor-pointer {fractionMode === 'custom'
+                ? 'text-text0 border-blue/40'
+                : 'text-text2 border-border'}"
               onclick={() => (fractionMode = 'custom')}
             >
               Custom
@@ -242,7 +244,7 @@
             <div class="p-3 rounded-xl bg-glass border border-border">
               <p class="text-[10px] text-text2 uppercase tracking-wider">VMA</p>
               <p class="mt-1 text-[16px] font-semibold font-mono text-astrape-teal">{vmaKmh.toFixed(2)} km/h</p>
-              <p class="text-[12px] font-semibold font-mono text-blue-500">{vmaMs.toFixed(2)} m/s</p>
+              <p class="text-[12px] font-semibold font-mono text-blue">{vmaMs.toFixed(2)} m/s</p>
             </div>
             <div class="p-3 rounded-xl bg-glass border border-border">
               <p class="text-[10px] text-text2 uppercase tracking-wider">Pace @ VMA</p>

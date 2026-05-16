@@ -104,12 +104,12 @@
       </div>
     </Card>
 
-    <Card style="border-color: rgba(240,113,120,0.3); background: linear-gradient(135deg, rgba(240,113,120,0.05), transparent);">
+    <Card class="border-red/30 !bg-gradient-to-br from-red/5 via-transparent to-transparent">
       <p class="text-[13px] font-semibold text-red mb-2">Danger Zone</p>
       <p class="text-[11px] text-text1 leading-relaxed mb-4">
         Permanently delete your account and wipe all personal data from our servers. This action is irreversible and you will lose all your coaching history, connected integrations, and AI models.
       </p>
-      <button onclick={handleDeleteAccount} class="w-full py-2.5 bg-red-dim border border-red text-red text-xs font-semibold rounded-lg hover:bg-red hover:text-white transition-colors cursor-pointer">
+      <button onclick={handleDeleteAccount} class="w-full py-2.5 bg-red-dim border border-red text-red text-xs font-semibold rounded-lg hover:bg-red hover:text-text0 transition-colors cursor-pointer">
         Delete Account
       </button>
     </Card>

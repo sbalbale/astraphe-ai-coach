@@ -20,11 +20,11 @@
   import { api } from '$lib/api';
   import { addDays, format, subDays } from 'date-fns';
   import { boundedScoreCssColor } from '$lib/colorSystem';
-  import { formCssColor } from '$lib/scoreColors';
+  import { CHART_ATL_STROKE, CHART_CTL_STROKE, formCssColor } from '$lib/scoreColors';
   import { canonicalHrZoneShortName, formatHrZoneTitle } from '$lib/hrZoneDisplay';
 
-  const CTL_IDENTITY_HEX = '#3b82f6';
-  const ATL_IDENTITY_HEX = '#64748b';
+  const CTL_IDENTITY_HEX = CHART_CTL_STROKE;
+  const ATL_IDENTITY_HEX = CHART_ATL_STROKE;
 
   const isConnected = $derived(Object.values(athleteStore.syncStatus?.integrations || {}).some((i: any) => i.connected));
   
@@ -146,7 +146,7 @@
     if (t === 'run' || t === 'running') return 'var(--blue)';
     if (t === 'bike' || t === 'cycling') return 'var(--teal)';
     if (t === 'row' || t === 'rowing') return 'var(--amber)';
-    if (t === 'mobility') return '#a855f7';
+    if (t === 'mobility') return '#a855f7'; // sport-type color, no design token
     if (t === 'other') return 'var(--amber)';
     return 'var(--text2)';
   }
@@ -154,8 +154,8 @@
   function getWorkoutBg(type: string) {
     const t = type?.toLowerCase();
     if (t === 'run' || t === 'running') return 'bg-blue-dim border-blue-glow';
-    if (t === 'bike' || t === 'cycling') return 'bg-teal-dim border-[rgba(0,200,168,0.3)]';
-    if (t === 'row' || t === 'rowing') return 'bg-amber-dim border-[rgba(255,203,136,0.3)]';
+    if (t === 'bike' || t === 'cycling') return 'bg-teal-dim border-teal/30';
+    if (t === 'row' || t === 'rowing') return 'bg-amber-dim border-amber/30';
     if (t === 'mobility') return 'bg-glass border-[rgba(168,85,247,0.35)]';
     if (t === 'other') return 'bg-glass border-[rgba(234,179,8,0.35)]';
     return 'bg-glass border-border';
@@ -449,7 +449,7 @@
                   <div class="w-2 h-2 shrink-0 rounded-full" style="background: var(--zone-{zone})"></div>
                   <div class="min-w-0 leading-tight" title={zTitle}>
                     <span class="block text-[10px] font-mono text-text2">Z{zone}</span>
-                    <span class="block text-[9px] text-text3 truncate">{canonicalHrZoneShortName(zone)}</span>
+                    <span class="block text-[9px] text-text2 truncate">{canonicalHrZoneShortName(zone)}</span>
                   </div>
                 </div>
                 <div class="flex-1 h-1.5 bg-glass rounded-full overflow-hidden relative">
@@ -459,7 +459,7 @@
                   ></div>
                 </div>
                 <div class="w-[84px] text-right shrink-0">
-                  <span class="text-[11px] font-bold font-mono {pct > 0 ? 'text-text1' : 'text-text3'}">
+                  <span class="text-[11px] font-bold font-mono {pct > 0 ? 'text-text1' : 'text-text2'}">
                     {formatMinutes(secs)} · {pct}%
                   </span>
                 </div>
@@ -524,7 +524,7 @@
 
       <!-- Analysis Card -->
       <Card
-        style="background: linear-gradient(135deg, rgba(70,33,255,0.12), transparent);"
+        class="!bg-gradient-to-br from-blue/10 via-transparent to-transparent"
       >
         <p class="text-[13px] font-semibold mb-1.5">Strain Analysis</p>
         {#if analysisLoading && analysisText === null}
@@ -615,8 +615,7 @@
       </div>
 
       {#if authStore.tier === 'premium'}
-        <div class="mt-4 pt-4 border-t border-border/40"
-             style="background: linear-gradient(135deg, rgba(70,33,255,0.08), transparent); border-radius: 12px; padding: 12px;">
+        <div class="mt-4 pt-4 border-t border-border/40 rounded-xl p-3 bg-gradient-to-br from-blue/10 via-transparent to-transparent">
           <div class="flex items-center gap-1.5 mb-2">
             <span class="text-[11px] font-mono uppercase tracking-[0.08em] text-blue">AI Insight</span>
             <Tag color="var(--blue)">ASTRAPE</Tag>
@@ -643,7 +642,7 @@
                   <div class="w-2 h-2 shrink-0 rounded-full" style="background: var(--zone-{zone})"></div>
                   <div class="min-w-0 leading-tight" title={zTitle}>
                     <span class="block text-[10px] font-mono text-text2">Z{zone}</span>
-                    <span class="block text-[9px] text-text3 truncate">{canonicalHrZoneShortName(zone)}</span>
+                    <span class="block text-[9px] text-text2 truncate">{canonicalHrZoneShortName(zone)}</span>
                   </div>
                 </div>
                 <div class="flex-1 h-1.5 bg-glass rounded-full overflow-hidden relative">
@@ -653,7 +652,7 @@
                   ></div>
                 </div>
                 <div class="w-8 text-right shrink-0">
-                  <span class="text-[11px] font-bold font-mono {pct > 0 ? 'text-text1' : 'text-text3'}">{pct}%</span>
+                  <span class="text-[11px] font-bold font-mono {pct > 0 ? 'text-text1' : 'text-text2'}">{pct}%</span>
                 </div>
               </div>
             {/each}

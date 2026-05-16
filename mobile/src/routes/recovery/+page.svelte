@@ -553,26 +553,26 @@
       <Card style="padding: 14px;">
         <div class="flex items-center justify-between mb-3">
           <p class="text-[13px] font-semibold">Contributing Factors</p>
-          <span class="text-[10px] uppercase tracking-wider text-slate-400">vs baseline</span>
+          <span class="text-[10px] uppercase tracking-wider text-text1">vs baseline</span>
         </div>
 
         <div class="w-full space-y-0">
         <!-- ─── Vitals & Trends (unbounded, deviation tracks) ─── -->
-        <p class="mb-3 text-[10px] uppercase tracking-wider text-slate-400">Vitals &amp; Trends</p>
+        <p class="mb-3 text-[10px] uppercase tracking-wider text-text1">Vitals &amp; Trends</p>
         <div class="mb-6 flex w-full flex-col">
           <!-- HRV -->
           <div class="flex w-full flex-col gap-2 border-b border-white/[0.06] py-5">
             <!-- Top row: label + arrow | Δ + neutral absolute -->
             <div class="flex w-full items-center justify-between gap-4">
               <div class="min-w-0 flex items-center gap-1.5">
-                <p class="text-[11px] font-semibold uppercase tracking-wide text-slate-200">HRV</p>
+                <p class="text-[11px] font-semibold uppercase tracking-wide text-text0">HRV</p>
                 <TrendIndicator z={hrvZ} size={12} />
               </div>
               <div class="shrink-0 flex items-baseline gap-2 leading-tight">
                 <span class="text-[11px] font-mono tabular-nums" style="color: {hrvZ === null ? 'var(--text2)' : zScoreCssColor(hrvZ)}">
                   {formatSignedInt(hrvDelta)}
                 </span>
-                <span class={`text-[12px] font-semibold tabular-nums ${hrvToday === null ? 'text-slate-500' : 'text-slate-200'}`}>
+                <span class={`text-[12px] font-semibold tabular-nums ${hrvToday === null ? 'text-text2' : 'text-text0'}`}>
                   {hrvToday === null ? '--' : `${hrvToday}ms`}
                 </span>
               </div>
@@ -581,7 +581,7 @@
             <div class="w-full">
               <DeviationTrack z={hrvZ} />
             </div>
-            <p class="text-[11px] leading-snug text-slate-400">
+            <p class="text-[11px] leading-snug text-text1">
               {hrvToday === null
                 ? 'Not available for this day.'
                 : hrvBaseline === null
@@ -596,14 +596,14 @@
           <div class="flex w-full flex-col gap-2 border-b border-white/[0.06] py-5">
             <div class="flex w-full items-center justify-between gap-4">
               <div class="min-w-0 flex items-center gap-1.5">
-                <p class="text-[11px] font-semibold uppercase tracking-wide text-slate-200">Resting HR</p>
+                <p class="text-[11px] font-semibold uppercase tracking-wide text-text0">Resting HR</p>
                 <TrendIndicator z={rhrZ} inverted size={12} />
               </div>
               <div class="shrink-0 flex items-baseline gap-2 leading-tight">
                 <span class="text-[11px] font-mono tabular-nums" style="color: {rhrZ === null ? 'var(--text2)' : zScoreCssColor(rhrZ, true)}">
                   {formatSignedInt(rhrDelta)}
                 </span>
-                <span class={`text-[12px] font-semibold tabular-nums ${rhrToday === null ? 'text-slate-500' : 'text-slate-200'}`}>
+                <span class={`text-[12px] font-semibold tabular-nums ${rhrToday === null ? 'text-text2' : 'text-text0'}`}>
                   {rhrToday === null ? '--' : `${rhrToday}bpm`}
                 </span>
               </div>
@@ -611,7 +611,7 @@
             <div class="w-full">
               <DeviationTrack z={rhrZ} inverted />
             </div>
-            <p class="text-[11px] leading-snug text-slate-400">
+            <p class="text-[11px] leading-snug text-text1">
               {rhrToday === null
                 ? 'Not available for this day.'
                 : rhrBaseline === null || rhrDelta === null
@@ -626,14 +626,14 @@
           <div class="flex w-full flex-col gap-2 border-b border-white/[0.06] py-5">
             <div class="flex w-full items-center justify-between gap-4">
               <div class="min-w-0 flex items-center gap-1.5">
-                <p class="text-[11px] font-semibold uppercase tracking-wide text-slate-200">Body Temp</p>
+                <p class="text-[11px] font-semibold uppercase tracking-wide text-text0">Body Temp</p>
                 <TrendIndicator z={bodyTempZ} inverted size={12} />
               </div>
               <div class="shrink-0 flex items-baseline gap-2 leading-tight">
                 <span class="text-[11px] font-mono tabular-nums" style="color: {bodyTempZ === null ? 'var(--text2)' : zScoreCssColor(bodyTempZ, true)}">
                   {bodyTempDeltaDisplay === null ? '--' : formatSigned1dp(bodyTempDeltaDisplay, isImperial ? '°F' : '°C')}
                 </span>
-                <span class={`text-[12px] font-semibold tabular-nums ${bodyTempDisplay === null ? 'text-slate-500' : 'text-slate-200'}`}>
+                <span class={`text-[12px] font-semibold tabular-nums ${bodyTempDisplay === null ? 'text-text2' : 'text-text0'}`}>
                   {bodyTempDisplay === null ? '--' : `${bodyTempDisplay}${isImperial ? '°F' : '°C'}`}
                 </span>
               </div>
@@ -641,7 +641,7 @@
             <div class="w-full">
               <DeviationTrack z={bodyTempZ} inverted />
             </div>
-            <p class="text-[11px] leading-snug text-slate-400">
+            <p class="text-[11px] leading-snug text-text1">
               {bodyTempCToday === null
                 ? 'Not available for this day.'
                 : bodyTempBaselineDisplay === null || bodyTempDeltaDisplay === null
@@ -656,14 +656,14 @@
           <div class="flex w-full flex-col gap-2 border-b border-white/[0.06] py-5 last:border-b-0">
             <div class="flex w-full items-center justify-between gap-4">
               <div class="min-w-0 flex items-center gap-1.5">
-                <p class="text-[11px] font-semibold uppercase tracking-wide text-slate-200">SpO2</p>
+                <p class="text-[11px] font-semibold uppercase tracking-wide text-text0">SpO2</p>
                 <TrendIndicator z={spo2Z} size={12} />
               </div>
               <div class="shrink-0 flex items-baseline gap-2 leading-tight">
                 <span class="text-[11px] font-mono tabular-nums" style="color: {spo2Z === null ? 'var(--text2)' : zScoreCssColor(spo2Z)}">
                   {formatSignedInt(spo2Delta)}
                 </span>
-                <span class={`text-[12px] font-semibold tabular-nums ${spo2Pct === null ? 'text-slate-500' : 'text-slate-200'}`}>
+                <span class={`text-[12px] font-semibold tabular-nums ${spo2Pct === null ? 'text-text2' : 'text-text0'}`}>
                   {spo2Pct === null ? '--' : `${spo2Pct}%`}
                 </span>
               </div>
@@ -671,7 +671,7 @@
             <div class="w-full">
               <DeviationTrack z={spo2Z} />
             </div>
-            <p class="text-[11px] leading-snug text-slate-400">
+            <p class="text-[11px] leading-snug text-text1">
               {spo2Pct === null
                 ? 'Not available for this day.'
                 : spo2Baseline === null || spo2Delta === null
@@ -686,28 +686,28 @@
         </div>
 
         <!-- ─── Performance Drivers (bounded scores, progress bars) ─── -->
-        <p class="mb-3 text-[10px] uppercase tracking-wider text-slate-400">Performance Drivers</p>
+        <p class="mb-3 text-[10px] uppercase tracking-wider text-text1">Performance Drivers</p>
         <div class="flex w-full flex-col">
           <!-- Sleep Quality (rule of thirds, not inverted) -->
           <div class="flex w-full flex-col gap-2 border-b border-white/[0.06] py-5">
             <div class="flex w-full items-center justify-between gap-4">
-              <p class="text-[11px] font-semibold uppercase tracking-wide text-slate-200">Sleep Quality</p>
+              <p class="text-[11px] font-semibold uppercase tracking-wide text-text0">Sleep Quality</p>
               <div class="shrink-0 flex items-baseline gap-2 leading-tight">
                 <span class="text-[11px] font-mono tabular-nums" style="color: {sleepScoreToday === null ? 'var(--text2)' : boundedScoreCssColor(sleepScoreToday)}">
                   {formatSignedInt(sleepDelta)}
                 </span>
-                <span class={`text-[12px] font-semibold tabular-nums ${sleepScoreToday === null ? 'text-slate-500' : 'text-slate-200'}`}>
+                <span class={`text-[12px] font-semibold tabular-nums ${sleepScoreToday === null ? 'text-text2' : 'text-text0'}`}>
                   {sleepScoreToday === null ? '--' : `${sleepScoreToday}%`}
                 </span>
               </div>
             </div>
-            <div class="h-[6px] w-full overflow-hidden rounded-full bg-slate-800/95 ring-1 ring-inset ring-white/[0.12]">
+            <div class="h-[6px] w-full overflow-hidden rounded-full bg-bg2 ring-1 ring-inset ring-border">
               <div
                 class="h-full rounded-full transition-[width] duration-300"
                 style="width: {sleepFillPct}%; background: {sleepScoreToday === null ? 'var(--text2)' : boundedScoreCssColor(sleepScoreToday)};"
               ></div>
             </div>
-            <p class="text-[11px] leading-snug text-slate-400">
+            <p class="text-[11px] leading-snug text-text1">
               {sleepScoreToday === null
                 ? 'Not available for this day.'
                 : `${sleepDurationHM === null ? '--' : sleepDurationHM} asleep with ${sleepScoreToday}% quality.${sleepDeepPct === null ? '' : ` Deep sleep at ${sleepDeepPct}%.`}`}
@@ -717,23 +717,23 @@
           <!-- Prior Load (strain score, INVERTED rule of thirds — high == bad) -->
           <div class="flex w-full flex-col gap-2 py-5">
             <div class="flex w-full items-center justify-between gap-4">
-              <p class="text-[11px] font-semibold uppercase tracking-wide text-slate-200">Prior Load</p>
+              <p class="text-[11px] font-semibold uppercase tracking-wide text-text0">Prior Load</p>
               <div class="shrink-0 flex items-baseline gap-2 leading-tight">
                 <span class="text-[11px] font-mono tabular-nums" style="color: {priorStrainScore === null ? 'var(--text2)' : boundedScoreCssColor(priorStrainScore, true)}">
                   {formatSignedInt(priorStrainDelta)}
                 </span>
-                <span class={`text-[12px] font-semibold tabular-nums ${priorLoad?.dailyTss == null ? 'text-slate-500' : 'text-slate-200'}`}>
+                <span class={`text-[12px] font-semibold tabular-nums ${priorLoad?.dailyTss == null ? 'text-text2' : 'text-text0'}`}>
                   {priorLoad?.dailyTss == null ? '--' : `${priorLoad.dailyTss} TSS`}
                 </span>
               </div>
             </div>
-            <div class="h-[6px] w-full overflow-hidden rounded-full bg-slate-800/95 ring-1 ring-inset ring-white/[0.12]">
+            <div class="h-[6px] w-full overflow-hidden rounded-full bg-bg2 ring-1 ring-inset ring-border">
               <div
                 class="h-full rounded-full transition-[width] duration-300"
                 style="width: {priorFillPct}%; background: {priorStrainScore === null ? 'var(--text2)' : boundedScoreCssColor(priorStrainScore, true)};"
               ></div>
             </div>
-            <p class="text-[11px] leading-snug text-slate-400">
+            <p class="text-[11px] leading-snug text-text1">
               {priorLoad === null
                 ? 'Not available for this day.'
                 : priorStrainScore === null
@@ -753,7 +753,7 @@
 
       <!-- Analysis Card -->
       <Card
-        style="background: linear-gradient(135deg, rgba(70,33,255,0.12), transparent);"
+        class="!bg-gradient-to-br from-blue/10 via-transparent to-transparent"
       >
         <p class="text-[13px] font-semibold mb-1.5">Recovery Analysis</p>
         <p class="text-xs text-text1 leading-relaxed">

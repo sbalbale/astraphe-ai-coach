@@ -309,9 +309,9 @@
       'text-[13px] leading-relaxed text-text0 [&_table]:my-0 [&_table]:w-full [&_table]:border-collapse',
       /* Mobile: stack — no squeezed fixed columns */
       'max-sm:[&_table]:block max-sm:[&_thead]:hidden max-sm:[&_tbody]:block max-sm:[&_table]:border-0',
-      'max-sm:[&_tbody_tr]:block max-sm:[&_tbody_tr]:mb-3 max-sm:[&_tbody_tr]:last:mb-0 max-sm:[&_tbody_tr]:rounded-lg max-sm:[&_tbody_tr]:border max-sm:[&_tbody_tr]:border-border/45 max-sm:[&_tbody_tr]:bg-white/[0.04] max-sm:[&_tbody_tr]:p-3',
+      'max-sm:[&_tbody_tr]:block max-sm:[&_tbody_tr]:mb-3 max-sm:[&_tbody_tr]:last:mb-0 max-sm:[&_tbody_tr]:rounded-lg max-sm:[&_tbody_tr]:border max-sm:[&_tbody_tr]:border-border/45 max-sm:[&_tbody_tr]:bg-glass max-sm:[&_tbody_tr]:p-3',
       'max-sm:[&_tbody_td]:flex max-sm:[&_tbody_td]:min-w-0 max-sm:[&_tbody_td]:flex-col max-sm:[&_tbody_td]:items-stretch max-sm:[&_tbody_td]:gap-1 max-sm:[&_tbody_td]:border-0 max-sm:[&_tbody_td]:py-2.5 max-sm:[&_tbody_td]:px-0 max-sm:[&_tbody_td]:first:pt-0 max-sm:[&_tbody_td]:last:pb-0',
-      'max-sm:[&_tbody_td]:[word-break:normal] max-sm:[&_tbody_td]:before:font-mono max-sm:[&_tbody_td]:before:text-[11px] max-sm:[&_tbody_td]:before:uppercase max-sm:[&_tbody_td]:before:tracking-wide max-sm:[&_tbody_td]:before:text-slate-400 max-sm:[&_tbody_td]:before:leading-snug max-sm:[&_tbody_td]:before:content-[attr(data-label)] max-sm:[&_tbody_td]:before:text-left',
+      'max-sm:[&_tbody_td]:[word-break:normal] max-sm:[&_tbody_td]:before:font-mono max-sm:[&_tbody_td]:before:text-[11px] max-sm:[&_tbody_td]:before:uppercase max-sm:[&_tbody_td]:before:tracking-wide max-sm:[&_tbody_td]:before:text-text1 max-sm:[&_tbody_td]:before:leading-snug max-sm:[&_tbody_td]:before:content-[attr(data-label)] max-sm:[&_tbody_td]:before:text-left',
       'max-sm:[&_tbody_td]:not(:last-child):border-b max-sm:[&_tbody_td]:not(:last-child):border-border/30',
       /* Desktop table */
       'sm:[&_table]:table-fixed sm:[&_table]:min-w-0',
@@ -321,7 +321,7 @@
       'sm:[&_thead]:border-b sm:[&_thead]:border-border/50 sm:[&_thead]:bg-blue/10',
       'sm:[&_thead_th]:border-border/40 sm:[&_thead_th]:px-3 sm:[&_thead_th]:py-2 sm:[&_thead_th]:text-left',
       'sm:[&_tbody_td]:border-t sm:[&_tbody_td]:border-border/35 sm:[&_tbody_td]:px-3 sm:[&_tbody_td]:py-2',
-      'sm:[&_tbody_tr:nth-child(even)]:bg-white/5',
+      'sm:[&_tbody_tr:nth-child(even)]:bg-glass',
       'sm:[&_th:nth-child(2)]:text-center sm:[&_td:nth-child(2)]:text-center sm:[&_th:nth-child(2)]:font-mono sm:[&_td:nth-child(2)]:font-mono',
       'sm:[&_th:nth-child(3)]:text-center sm:[&_td:nth-child(3)]:text-center sm:[&_th:nth-child(3)]:font-mono sm:[&_td:nth-child(3)]:font-mono'
     ].join(' ');
@@ -382,7 +382,7 @@
         <div class="bg-glass border border-border rounded-2xl p-4">
           <div class="flex items-center justify-between mb-3">
             <div>
-              <div class="text-[12px] text-slate-400 font-mono">Month</div>
+              <div class="text-[12px] text-text1 font-mono">Month</div>
               <div class="text-[16px] font-semibold">{format(viewMonth, 'MMMM yyyy')}</div>
             </div>
             <div class="flex items-center gap-2">
@@ -407,7 +407,7 @@
 
           <div class="grid grid-cols-7 gap-2 mb-2">
             {#each dow as d (d)}
-              <div class="text-[10px] text-slate-400 font-mono text-center py-1">{d}</div>
+              <div class="text-[10px] text-text1 font-mono text-center py-1">{d}</div>
             {/each}
           </div>
 
@@ -437,7 +437,7 @@
                       <span class={['w-1.5 h-1.5 rounded-full', indicatorClass(w)].join(' ')}></span>
                     {/each}
                     {#if items.length > 3}
-                      <span class="text-[9px] sm:text-[10px] leading-none text-slate-400 font-mono">+{items.length - 3}</span>
+                      <span class="text-[9px] sm:text-[10px] leading-none text-text1 font-mono">+{items.length - 3}</span>
                     {/if}
                   </div>
 
@@ -457,7 +457,7 @@
         <div class="bg-glass border border-border rounded-2xl p-4">
           <div class="flex items-center justify-between gap-3 mb-3">
             <div class="min-w-0">
-              <div class="text-[12px] text-slate-400 font-mono">Agenda</div>
+              <div class="text-[12px] text-text1 font-mono">Agenda</div>
               <div class="text-[16px] font-semibold truncate">
                 {#if agendaView === 'day'}
                   {format(selectedDate, 'EEE, MMM d')}
@@ -472,7 +472,7 @@
                 type="button"
                 class={[
                   'px-3 py-1 rounded-full transition-colors',
-                  agendaView === 'day' ? 'bg-blue text-white' : 'text-text0 hover:bg-glass'
+                  agendaView === 'day' ? 'bg-blue text-text0' : 'text-text0 hover:bg-glass'
                 ].join(' ')}
                 role="tab"
                 aria-selected={agendaView === 'day'}
@@ -484,7 +484,7 @@
                 type="button"
                 class={[
                   'px-3 py-1 rounded-full transition-colors',
-                  agendaView === 'week' ? 'bg-blue text-white' : 'text-text0 hover:bg-glass'
+                  agendaView === 'week' ? 'bg-blue text-text0' : 'text-text0 hover:bg-glass'
                 ].join(' ')}
                 role="tab"
                 aria-selected={agendaView === 'week'}
@@ -507,7 +507,7 @@
           {:else if agendaItems.length === 0}
             <div class="bg-glass2 border border-border rounded-xl p-4">
               <div class="text-[13px] font-semibold">Nothing scheduled</div>
-              <div class="text-[12px] text-slate-400 mt-1">
+              <div class="text-[12px] text-text1 mt-1">
                 {#if agendaView === 'day'}
                   No workouts planned for this day.
                 {:else}
@@ -531,17 +531,17 @@
                       </div>
                       <div class="min-w-0">
                         <div class="text-[14px] font-semibold truncate">{w.title ?? w.type ?? 'Session'}</div>
-                        <div class="text-[11px] text-slate-400 font-mono">
+                        <div class="text-[11px] text-text1 font-mono">
                           {agendaView === 'week' ? format(w.date, 'EEE • ') : ''}{w.duration ?? '—'}
                         </div>
                       </div>
                     </div>
 
                     <div class="text-right shrink-0">
-                      <div class={['text-[12px] font-mono', Number.isFinite(tss) ? 'text-text0' : 'text-slate-400'].join(' ')}>
+                      <div class={['text-[12px] font-mono', Number.isFinite(tss) ? 'text-text0' : 'text-text1'].join(' ')}>
                         {Number.isFinite(tss) ? `${tss} TSS` : '-- TSS'}
                       </div>
-                      <div class="text-[10px] text-slate-400 mt-0.5">
+                      <div class="text-[10px] text-text1 mt-0.5">
                         <span class={['inline-block w-2 h-2 rounded-full mr-1.5 align-middle', indicatorClass(w)].join(' ')}></span>
                         {w.type ?? 'Workout'}
                       </div>
@@ -567,17 +567,17 @@
   >
     <button
       type="button"
-      class="absolute inset-0 bg-black/80 backdrop-blur-sm"
+      class="absolute inset-0 bg-bg0/80 backdrop-blur-sm"
       aria-label="Close"
       onclick={closeWorkout}
     ></button>
 
     <div
-      class="relative w-full min-w-0 max-w-[720px] max-h-[85vh] overflow-y-auto bg-[rgba(10,12,18,0.96)] border border-border rounded-2xl p-4 sm:p-5 shadow-[0_20px_60px_rgba(0,0,0,0.75)]"
+      class="relative w-full min-w-0 max-w-[720px] max-h-[85vh] overflow-y-auto bg-bg1/95 border border-border rounded-2xl p-4 sm:p-5 shadow-2xl"
     >
       <div class="flex items-start justify-between gap-4 mb-7">
         <div class="min-w-0">
-          <div class="text-[12px] text-slate-400 font-mono">
+          <div class="text-[12px] text-text1 font-mono">
             {format(selectedWorkout.date, 'EEE, MMM d')} • {selectedWorkout.duration ?? '—'}
           </div>
           <div class="text-[18px] font-semibold truncate">{selectedWorkout.title ?? selectedWorkout.type ?? 'Session'}</div>
@@ -587,7 +587,7 @@
           {#if backendTrainingPlanId(selectedWorkout)}
             <button
               type="button"
-              class="rounded-xl border px-3 py-2 text-[13px] font-medium transition-colors border-red-400/55 text-red-300 hover:bg-red-500/15 disabled:opacity-50 disabled:pointer-events-none"
+              class="rounded-xl border px-3 py-2 text-[13px] font-medium transition-colors border-red/55 text-red hover:bg-red-dim disabled:opacity-50 disabled:pointer-events-none"
               disabled={removingPlanWorkout}
               onclick={removeSelectedTrainingPlan}
             >
@@ -608,7 +608,7 @@
       <div class="grid gap-6">
         {#if sessionDetailContext.hasPrescriptionTable}
           <div class="space-y-3">
-            <h3 class="text-[12px] text-slate-400 font-mono uppercase tracking-widest">Prescription</h3>
+            <h3 class="text-[12px] text-text1 font-mono uppercase tracking-widest">Prescription</h3>
             <div class="min-w-0 w-full">
               {#key sessionDetailContext.prescriptionMarkdown}
                 <div
@@ -622,7 +622,7 @@
           </div>
           {#if sessionDetailContext.coachNotes.length > 0}
             <div class="bg-glass2 border border-border rounded-xl p-4">
-              <h3 class="text-[12px] text-slate-400 font-mono mb-1">Coach's Notes</h3>
+              <h3 class="text-[12px] text-text1 font-mono mb-1">Coach's Notes</h3>
               <div class={coachNotesMarkdownProseClass}>
                 {@html renderCoachMarkdownToSafeHtml(sessionDetailContext.coachNotes)}
               </div>
@@ -630,14 +630,14 @@
           {/if}
         {:else}
           <div class="bg-glass2 border border-border rounded-xl p-4">
-            <h3 class="text-[12px] text-slate-400 font-mono mb-1">Coach's Notes</h3>
+            <h3 class="text-[12px] text-text1 font-mono mb-1">Coach's Notes</h3>
             <p class="text-[14px] leading-relaxed text-text0">{sessionDetailContext.coachNotes}</p>
           </div>
         {/if}
 
         {#if !sessionDetailContext.contextIsMarkdownTable && stepsFor(selectedWorkout).length > 0}
           <div class="space-y-3">
-            <h3 class="text-[12px] text-slate-400 font-mono uppercase tracking-widest">Technical Blocks</h3>
+            <h3 class="text-[12px] text-text1 font-mono uppercase tracking-widest">Technical Blocks</h3>
             <div class="bg-glass2 border border-border rounded-xl p-4">
               <ol class="list-decimal pl-5 grid gap-2">
                 {#each stepsFor(selectedWorkout) as step, i (i)}
@@ -647,7 +647,7 @@
                     {:else}
                       <div class="grid gap-0.5">
                         <div class="font-semibold">{step.title ?? 'Step'}</div>
-                        <div class="text-[12px] text-slate-400">
+                        <div class="text-[12px] text-text1">
                           {#if step.duration}
                             <span class="font-mono text-text0">{step.duration}</span>
                           {/if}
@@ -664,7 +664,7 @@
                 {/each}
               </ol>
               {#if !(selectedWorkout.blocks?.length || selectedWorkout.structure?.length)}
-                <div class="text-[11px] text-slate-400 mt-3">
+                <div class="text-[11px] text-text1 mt-3">
                   Scaffolded outline (replace with real blocks when available).
                 </div>
               {/if}

@@ -218,14 +218,14 @@
             <div class="flex p-1 bg-glass2 rounded-lg border border-border">
               <button
                 type="button"
-                class="flex-1 py-1.5 text-xs rounded-md transition-colors {units === 'metric' ? 'bg-blue text-white' : 'text-text2 hover:text-text0'}"
+                class="flex-1 py-1.5 text-xs rounded-md transition-colors {units === 'metric' ? 'bg-blue text-text0' : 'text-text2 hover:text-text0'}"
                 onclick={() => setUnits('metric')}
               >
                 Metric
               </button>
               <button
                 type="button"
-                class="flex-1 py-1.5 text-xs rounded-md transition-colors {units === 'imperial' ? 'bg-blue text-white' : 'text-text2 hover:text-text0'}"
+                class="flex-1 py-1.5 text-xs rounded-md transition-colors {units === 'imperial' ? 'bg-blue text-text0' : 'text-text2 hover:text-text0'}"
                 onclick={() => setUnits('imperial')}
               >
                 Imperial
@@ -238,14 +238,14 @@
             <div class="flex p-1 bg-glass2 rounded-lg border border-border">
               <button
                 type="button"
-                class="flex-1 py-1.5 text-xs rounded-md transition-colors {timeFormat === '12h' ? 'bg-blue text-white' : 'text-text2 hover:text-text0'}"
+                class="flex-1 py-1.5 text-xs rounded-md transition-colors {timeFormat === '12h' ? 'bg-blue text-text0' : 'text-text2 hover:text-text0'}"
                 onclick={() => (timeFormat = '12h')}
               >
                 12-Hour
               </button>
               <button
                 type="button"
-                class="flex-1 py-1.5 text-xs rounded-md transition-colors {timeFormat === '24h' ? 'bg-blue text-white' : 'text-text2 hover:text-text0'}"
+                class="flex-1 py-1.5 text-xs rounded-md transition-colors {timeFormat === '24h' ? 'bg-blue text-text0' : 'text-text2 hover:text-text0'}"
                 onclick={() => (timeFormat = '24h')}
               >
                 24-Hour
@@ -368,7 +368,7 @@
                   type="number"
                   bind:value={ftpRaw}
                   placeholder="e.g. 280"
-                  class="w-full p-2 bg-glass2 border border-border rounded-lg text-sm text-text0 font-mono outline-none focus:border-[#4621FF]"
+                  class="w-full p-2 bg-glass2 border border-border rounded-lg text-sm text-text0 font-mono outline-none focus:border-blue"
                 />
               </div>
             </div>
@@ -393,7 +393,7 @@
       <button
         type="submit"
         disabled={!canSubmit}
-        class="w-full mt-1 py-3.5 bg-teal text-bg1 font-semibold rounded-xl hover:bg-[#00b598] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        class="w-full mt-1 py-3.5 bg-teal text-bg1 font-semibold rounded-xl hover:bg-teal/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
       >
         {saving ? 'Saving...' : 'Finish Setup'}
       </button>

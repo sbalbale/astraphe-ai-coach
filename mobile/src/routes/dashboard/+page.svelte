@@ -22,10 +22,10 @@
   import { resolve } from '$app/paths';
   import { format } from 'date-fns';
   import { boundedScoreCssColor } from '$lib/colorSystem';
-  import { formCssColor, getZScoreColor } from '$lib/scoreColors';
+  import { CHART_ATL_STROKE, CHART_CTL_STROKE, formCssColor, getZScoreColor } from '$lib/scoreColors';
 
-  const CTL_IDENTITY_HEX = '#3b82f6';
-  const ATL_IDENTITY_HEX = '#64748b';
+  const CTL_IDENTITY_HEX = CHART_CTL_STROKE;
+  const ATL_IDENTITY_HEX = CHART_ATL_STROKE;
 
   const props = $props();
 
@@ -279,7 +279,7 @@
     />
   {:else}
     <!-- Readiness Card -->
-    <Card style="background: linear-gradient(135deg, rgba(70,33,255,0.18) 0%, rgba(0,200,168,0.10) 100%); border-color: rgba(70,33,255,0.3);">
+    <Card class="!bg-gradient-to-br from-blue/15 to-teal/10 border-blue/30">
       <div class="flex items-center gap-4">
         <RadialProgress
           value={todayReadiness ?? 0}
@@ -352,7 +352,7 @@
     </div>
 
     <!-- AI Summary -->
-    <Card style="background: linear-gradient(135deg, rgba(70,33,255,0.12), transparent);">
+    <Card class="!bg-gradient-to-br from-blue/10 via-transparent to-transparent">
       <div class="flex justify-between items-center mb-2">
         <span class="text-[13px] font-semibold">AI Summary</span>
         <Tag color="var(--blue)">BETA</Tag>
@@ -370,7 +370,7 @@
             <span class="text-[10px] font-mono flex items-center gap-1 text-chartCtl">
               <span class="w-4 h-0.5 bg-chartCtl inline-block rounded-[1px]"></span> CTL
             </span>
-            <span class="text-[10px] font-mono flex items-center gap-1 text-[#94a3b8]">
+            <span class="text-[10px] font-mono flex items-center gap-1 text-text2">
               <span class="w-2.5 h-2.5 bg-chartAtl/80 inline-block rounded-sm"></span> ATL
             </span>
           </div>
@@ -385,7 +385,7 @@
         <div class="flex justify-between items-start mb-2">
           <span class="text-[9px] text-text2 font-mono uppercase tracking-[0.08em]">Recovery trends</span>
           {#if todayReadiness === null && latestRecovery !== null}
-            <span class="text-[8px] bg-white/5 px-1 rounded text-text2 border border-white/5 uppercase">Latest</span>
+            <span class="text-[8px] bg-glass px-1 rounded text-text2 border border-border uppercase">Latest</span>
           {/if}
         </div>
         <div class="flex items-baseline gap-1.5">
@@ -425,7 +425,7 @@
         <div class="flex justify-between items-start mb-2">
           <span class="text-[9px] text-text2 font-mono uppercase tracking-[0.08em]">Sleep</span>
           {#if todaySleepMin === null && latestSleepMin !== null}
-            <span class="text-[8px] bg-white/5 px-1 rounded text-text2 border border-white/5 uppercase">Latest</span>
+            <span class="text-[8px] bg-glass px-1 rounded text-text2 border border-border uppercase">Latest</span>
           {/if}
         </div>
         <div class="flex items-baseline gap-1.5">
@@ -501,9 +501,9 @@
             >
               <div class="flex items-center gap-3 py-2.5 {i < 2 ? 'border-b border-border' : ''}">
                 <div class="w-9 h-9 rounded-xl shrink-0 flex items-center justify-center text-[15px]
-                  {type === 'run' || type === 'running' ? 'bg-blue-dim border border-[rgba(70,33,255,0.3)]' : 
-                   type === 'bike' || type === 'cycling' ? 'bg-teal-dim border border-[rgba(0,200,168,0.3)]' : 
-                   type === 'row' || type === 'rowing' ? 'bg-amber-dim border border-[rgba(255,203,136,0.3)]' :
+                  {type === 'run' || type === 'running' ? 'bg-blue-dim border border-blue/30' :
+                   type === 'bike' || type === 'cycling' ? 'bg-teal-dim border border-teal/30' :
+                   type === 'row' || type === 'rowing' ? 'bg-amber-dim border border-amber/30' :
                    type === 'swim' || type === 'swimming' ? 'bg-glass border border-border' :
                    type === 'mobility' ? 'bg-glass border border-[rgba(168,85,247,0.35)]' :
                    type === 'other' ? 'bg-glass border border-[rgba(234,179,8,0.35)]' :

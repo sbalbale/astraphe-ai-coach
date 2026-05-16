@@ -336,11 +336,11 @@
 
 <div class="flex flex-col h-full min-h-0 w-full box-border">
   <div
-    class="w-full h-full flex flex-col flex-1 min-h-0 rounded-none border-0 bg-slate-900/35 overflow-hidden"
+    class="w-full h-full flex flex-col flex-1 min-h-0 rounded-none border-0 bg-bg1/35 overflow-hidden"
   >
     <!-- Mockup header -->
-    <div class="shrink-0 px-4 pt-4 pb-3 flex items-center justify-between gap-3 border-b border-slate-800/80">
-      <span class="text-[11px] sm:text-xs tracking-wide font-semibold text-slate-400">Astrape AI Coach Chat</span>
+    <div class="shrink-0 px-4 pt-4 pb-3 flex items-center justify-between gap-3 border-b border-border">
+      <span class="text-[11px] sm:text-xs tracking-wide font-semibold text-text1">Astrape AI Coach Chat</span>
       <div class="flex items-center gap-1.5 shrink-0">
         <span
           class="inline-flex h-2 w-2 rounded-full bg-teal animate-pulse shadow-[0_0_10px_rgba(0,200,168,0.55)]"
@@ -351,39 +351,39 @@
     </div>
 
     <!-- History controls -->
-    <div class="shrink-0 px-4 py-2 flex items-center justify-end gap-2 border-b border-slate-800/60 bg-slate-950/25">
+    <div class="shrink-0 px-4 py-2 flex items-center justify-end gap-2 border-b border-border bg-bg0/25">
       {#if conversations.length > 0}
         <div class="relative flex-1 min-w-0 max-w-[220px]" bind:this={convoMenuEl}>
           <button
             type="button"
-            class="w-full bg-slate-800/40 border border-slate-700 rounded-xl text-[11px] text-slate-200 pl-3 pr-8 py-2 outline-none truncate text-left hover:bg-slate-800/60 transition-colors"
+            class="w-full bg-glass2 border border-border rounded-xl text-[11px] text-text0 pl-3 pr-8 py-2 outline-none truncate text-left hover:bg-glass transition-colors"
             onclick={() => { convoMenuOpen = !convoMenuOpen; }}
             aria-label="Select chat"
           >
             {currentConversationTitle()}
           </button>
-          <div class="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 text-[10px]">▼</div>
+          <div class="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-text2 text-[10px]">▼</div>
 
           {#if convoMenuOpen}
             <div
-              class="absolute left-0 right-0 mt-2 max-w-[min(100vw-2rem,320px)] bg-slate-900/95 backdrop-blur border border-slate-700 rounded-2xl shadow-2xl overflow-hidden z-20"
+              class="absolute left-0 right-0 mt-2 max-w-[min(100vw-2rem,320px)] bg-bg1/95 backdrop-blur border border-border rounded-2xl shadow-2xl overflow-hidden z-20"
             >
               <div class="max-h-[320px] overflow-y-auto">
                 {#each conversations as c (c.id)}
                   <div
-                    class="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-slate-800/50 transition-colors cursor-pointer {c.id === conversationId ? 'bg-slate-800/35' : ''}"
+                    class="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-glass2 transition-colors cursor-pointer {c.id === conversationId ? 'bg-glass2' : ''}"
                     role="button"
                     tabindex="0"
                     onclick={() => selectConversation(c.id)}
                     onkeydown={(e) => e.key === 'Enter' && selectConversation(c.id)}
                   >
                     <div class="flex-1 min-w-0">
-                      <div class="text-[12px] text-slate-200 truncate">{c.title || 'New chat'}</div>
-                      <div class="text-[10px] text-slate-500 truncate">{c.updated_at || c.created_at || ''}</div>
+                      <div class="text-[12px] text-text0 truncate">{c.title || 'New chat'}</div>
+                      <div class="text-[10px] text-text2 truncate">{c.updated_at || c.created_at || ''}</div>
                     </div>
                     <button
                       type="button"
-                      class="w-8 h-8 rounded-lg bg-slate-800/70 border border-slate-600 text-slate-300 hover:text-red-400 transition-colors flex items-center justify-center shrink-0"
+                      class="w-8 h-8 rounded-lg bg-glass2 border border-border text-text1 hover:text-red transition-colors flex items-center justify-center shrink-0"
                       onclick={(e) => { e.stopPropagation(); deleteConversation(c.id); }}
                       aria-label="Delete chat"
                       title="Delete"
@@ -399,7 +399,7 @@
       {/if}
       <button
         type="button"
-        class="px-3 py-1.5 rounded-lg text-[11px] bg-slate-800/40 border border-slate-700 text-slate-300 hover:bg-slate-800/65 transition-colors shrink-0"
+        class="px-3 py-1.5 rounded-lg text-[11px] bg-glass2 border border-border text-text1 hover:bg-glass transition-colors shrink-0"
         onclick={newChat}
       >
         New
@@ -414,13 +414,13 @@
         {#if msg.role === 'ai'}
           <div class="flex gap-2.5 items-end justify-start">
             <div
-              class="w-8 h-8 shrink-0 rounded-full bg-slate-800 border border-slate-600 flex items-center justify-center text-[9px] font-bold tracking-wide text-teal select-none"
+              class="w-8 h-8 shrink-0 rounded-full bg-bg2 border border-border flex items-center justify-center text-[9px] font-bold tracking-wide text-teal select-none"
               aria-hidden="true"
             >
               AI
             </div>
             <div
-              class="max-w-[min(92%,28rem)] px-[14px] py-[10px] text-[13px] leading-[1.55] text-slate-100 rounded-2xl rounded-bl-md border border-slate-700/80 bg-slate-800/60"
+              class="max-w-[min(92%,28rem)] px-[14px] py-[10px] text-[13px] leading-[1.55] text-text0 rounded-2xl rounded-bl-md border border-border bg-glass2"
             >
               {#if msg.image_urls && msg.image_urls.length > 0}
                 <div class="flex gap-2 flex-wrap mb-2">
@@ -429,18 +429,18 @@
                       <img
                         src={u}
                         alt="upload"
-                        class="w-24 h-24 object-cover rounded-lg border border-slate-600/80"
+                        class="w-24 h-24 object-cover rounded-lg border border-border"
                       />
                     </a>
                   {/each}
                 </div>
               {/if}
               {#if msg.streaming && !msg.text.trim()}
-                <div class="flex items-center gap-2 text-slate-400">
+                <div class="flex items-center gap-2 text-text1">
                   <div class="flex gap-1">
-                    <div class="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce"></div>
-                    <div class="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce [animation-delay:150ms]"></div>
-                    <div class="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce [animation-delay:300ms]"></div>
+                    <div class="w-1.5 h-1.5 bg-blue rounded-full animate-bounce"></div>
+                    <div class="w-1.5 h-1.5 bg-blue rounded-full animate-bounce [animation-delay:150ms]"></div>
+                    <div class="w-1.5 h-1.5 bg-blue rounded-full animate-bounce [animation-delay:300ms]"></div>
                   </div>
                   <span class="text-[12px]">Thinking…</span>
                 </div>
@@ -452,7 +452,7 @@
         {:else}
           <div class="flex gap-2.5 items-end justify-end">
             <div
-              class="max-w-[min(92%,28rem)] px-[14px] py-[10px] text-[13px] leading-[1.55] text-slate-100 rounded-2xl rounded-br-md border border-indigo-500/30 bg-indigo-900/40"
+              class="max-w-[min(92%,28rem)] px-[14px] py-[10px] text-[13px] leading-[1.55] text-text0 rounded-2xl rounded-br-md border border-blue/30 bg-blue-dim"
             >
               {#if msg.image_urls && msg.image_urls.length > 0}
                 <div class="flex gap-2 flex-wrap mb-2 justify-end">
@@ -461,7 +461,7 @@
                       <img
                         src={u}
                         alt="upload"
-                        class="w-24 h-24 object-cover rounded-lg border border-indigo-500/25"
+                        class="w-24 h-24 object-cover rounded-lg border border-blue/30"
                       />
                     </a>
                   {/each}
@@ -470,7 +470,7 @@
               {msg.text}
             </div>
             <div
-              class="w-8 h-8 shrink-0 rounded-full bg-slate-950 border border-slate-700 flex items-center justify-center text-[10px] font-semibold text-slate-400 select-none uppercase"
+              class="w-8 h-8 shrink-0 rounded-full bg-bg0 border border-border flex items-center justify-center text-[10px] font-semibold text-text1 select-none uppercase"
               aria-hidden="true"
             >
               {userInitials}
@@ -480,12 +480,12 @@
       {/each}
     </div>
 
-    <div class="shrink-0 px-4 pt-2 pb-1 border-t border-slate-800/60 bg-slate-950/20">
+    <div class="shrink-0 px-4 pt-2 pb-1 border-t border-border bg-bg0/20">
       <div class="flex gap-2 overflow-x-auto pb-3 mb-2 scrollbar-thin">
         {#each promptSuggestions as s, i (s + String(i))}
           <button
             type="button"
-            class="whitespace-nowrap shrink-0 px-3 py-2 rounded-xl text-sm text-slate-300 bg-slate-800/50 hover:bg-slate-700/80 border border-slate-700 transition-colors text-left cursor-pointer font-sans"
+            class="whitespace-nowrap shrink-0 px-3 py-2 rounded-xl text-sm text-text1 bg-glass2 hover:bg-glass border border-border transition-colors text-left cursor-pointer font-sans"
             onclick={() => { input = s; }}
           >
             {s}
@@ -500,10 +500,10 @@
               <img
                 src={u}
                 alt="pending upload"
-                class="w-16 h-16 object-cover rounded-lg border border-slate-700"
+                class="w-16 h-16 object-cover rounded-lg border border-border"
               />
               <button
-                class="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-slate-900 border border-slate-600 text-slate-300 text-[12px] flex items-center justify-center hover:border-slate-500"
+                class="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-bg1 border border-border text-text1 text-[12px] flex items-center justify-center hover:border-text2"
                 onclick={() => { pendingImageUrls = pendingImageUrls.filter(x => x !== u); }}
                 aria-label="Remove image"
                 type="button"
@@ -526,7 +526,7 @@
         />
         <button
           type="button"
-          class="w-10 h-10 rounded-xl shrink-0 text-slate-300 text-[17px] flex items-center justify-center transition-colors border border-slate-700 bg-slate-900 hover:bg-slate-800 disabled:opacity-40"
+          class="w-10 h-10 rounded-xl shrink-0 text-text1 text-[17px] flex items-center justify-center transition-colors border border-border bg-bg1 hover:bg-bg2 disabled:opacity-40"
           disabled={loading}
           onclick={pickImage}
           aria-label="Attach image"
@@ -547,11 +547,11 @@
             }
           }}
           placeholder="Ask your coach... (Shift+Enter for new line)"
-          class="flex-1 min-w-0 min-h-[2.75rem] max-h-[200px] px-4 py-3 rounded-xl text-[13px] leading-snug bg-slate-900 border border-slate-700 text-slate-100 placeholder:text-slate-500 font-sans outline-none focus:border-slate-500 focus:ring-1 focus:ring-slate-600/80 resize-none overflow-hidden"
+          class="flex-1 min-w-0 min-h-[2.75rem] max-h-[200px] px-4 py-3 rounded-xl text-[13px] leading-snug bg-bg1 border border-border text-text0 placeholder:text-text2 font-sans outline-none focus:border-blue focus:ring-1 focus:ring-blue/30 resize-none overflow-hidden"
         ></textarea>
         <button
           type="button"
-          class="w-11 h-11 shrink-0 rounded-xl flex items-center justify-center transition-all bg-indigo-600 hover:bg-indigo-500 disabled:opacity-35 disabled:pointer-events-none text-white shadow-[0_8px_24px_-12px_rgba(79,70,229,0.9)]"
+          class="w-11 h-11 shrink-0 rounded-xl flex items-center justify-center transition-all bg-blue hover:bg-blue/90 disabled:opacity-35 disabled:pointer-events-none text-text0 shadow-[0_8px_24px_-12px_rgba(70,33,255,0.7)]"
           disabled={loading || (!input.trim() && pendingImageUrls.length === 0)}
           onclick={send}
           aria-label="Send message"
