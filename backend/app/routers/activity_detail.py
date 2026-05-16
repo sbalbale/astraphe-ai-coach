@@ -81,6 +81,16 @@ async def hydrate_streams(
     return await strava_service.hydrate_workout_streams(db, athlete_id, workout_id)
 
 
+@router.post("/{workout_id}/refetch-strava")
+async def refetch_strava(
+    workout_id: str,
+    athlete_id: str = Depends(get_current_athlete),
+    db=Depends(get_user_db),
+):
+    """Re-ingest this workout from Strava (activity, streams, laps, rowing intervals)."""
+    return await strava_service.refetch_workout_from_strava(db, athlete_id, workout_id, delay=True)
+
+
 @router.get("/{workout_id}/zones")
 async def get_workout_zones(
     workout_id: str,

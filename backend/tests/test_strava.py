@@ -1,7 +1,11 @@
 """Tests for Strava helpers (rowing intervals, stream-derived splits)."""
 from __future__ import annotations
 
-from app.services.strava import compute_500m_splits_from_streams, get_rowing_intervals
+from app.services.strava import (
+    _pick_best_laps,
+    compute_500m_splits_from_streams,
+    get_rowing_intervals,
+)
 
 
 def test_compute_500m_splits_empty_streams():
@@ -69,8 +73,19 @@ def test_get_rowing_intervals_stream_fallback_no_laps():
     assert intervals[0]["source"] == "stream_derived"
 
 
-def test_get_rowing_intervals_stream_fallback_non_500_laps():
-    # Laps are 2k pieces — not in 450–550m band → no work_laps → streams
+def test_pick_best_laps_prefers_embedded_over_synthetic_api_lap():
+    api_laps = [{"distance": 0, "elapsed_time": 3599, "average_speed": 0}]
+    embedded = [
+        {"distance": 500.0, "elapsed_time": 120, "average_speed": 2.0},
+        {"distance": 500.0, "elapsed_time": 130, "average_speed": 1.9},
+    ]
+    picked = _pick_best_laps(api_laps, embedded)
+    assert len(picked) == 2
+    assert picked[0]["distance"] == 500.0
+
+
+def test_get_rowing_intervals_uses_all_device_laps():
+    # 2k pieces are kept as-is (no filtering to 500m-only)
     laps = [
         {
             "distance": 2000.0,
@@ -83,5 +98,6 @@ def test_get_rowing_intervals_stream_fallback_non_500_laps():
     time_s = list(range(101))
     streams = {"distance": {"data": dist}, "time": {"data": time_s}}
     intervals, source = get_rowing_intervals({"laps": laps}, streams)
-    assert source == "stream_derived"
-    assert len(intervals) >= 1
+    assert source == "laps"
+    assert len(intervals) == 4
+    assert intervals[0]["pace_per_500m"] == 200
