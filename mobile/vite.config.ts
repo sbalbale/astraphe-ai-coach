@@ -8,7 +8,7 @@ export default defineConfig({
   },
   // Pre-bundle Iconify so lazy route chunks don’t hit flaky "Outdated Optimize Dep" (504) after dep / lockfile changes.
   optimizeDeps: {
-    include: ["@iconify/svelte"]
+    include: ["@iconify/svelte", "maplibre-gl"],
   },
   ssr: {
     noExternal: ["@iconify/svelte"]
