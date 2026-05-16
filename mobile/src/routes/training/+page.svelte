@@ -30,10 +30,12 @@
     getActivityStreams,
     getActivityLaps,
     getActivityIntervals,
+    getActivityZones,
     hydrateActivityStreams,
     type ActivityStreams,
     type ActivityLap,
     type ActivityIntervals,
+    type ActivityZones,
   } from '$lib/services/activityService';
   import { stravaPolylineFromPayload } from '$lib/utils/polyline';
   import StreamCharts from '$lib/components/workout/StreamCharts.svelte';
@@ -64,6 +66,7 @@
   let detailStreams = $state<ActivityStreams | null>(null);
   let detailLaps = $state<ActivityLap[]>([]);
   let detailIntervals = $state<ActivityIntervals | null>(null);
+  let detailZones = $state<ActivityZones | null>(null);
   let detailLoading = $state(false);
   let detailHydrating = $state(false);
   let detailError = $state<string | null>(null);
@@ -312,6 +315,7 @@
     detailStreams = null;
     detailLaps = [];
     detailIntervals = null;
+    detailZones = null;
     detailError = null;
     detailLoading = false;
     detailHydrating = false;
@@ -323,10 +327,11 @@
 
     (async () => {
       try {
-        let [streams, laps, intervals] = await Promise.all([
+        let [streams, laps, intervals, zones] = await Promise.all([
           getActivityStreams(w.id),
           getActivityLaps(w.id),
           getActivityIntervals(w.id),
+          getActivityZones(w.id),
         ]);
 
         if (cancelled) return;
@@ -337,6 +342,9 @@
           if (cancelled) return;
           if (hydrated && (hydrated.status === 'hydrated' || hydrated.status === 'already_stored')) {
             streams = await getActivityStreams(w.id);
+            if (!zones || (zones.data_points === 0 && zones.source !== 'summary')) {
+              zones = await getActivityZones(w.id);
+            }
           }
         }
 
@@ -344,6 +352,7 @@
         detailStreams = streams;
         detailLaps = laps ?? [];
         detailIntervals = intervals;
+        detailZones = zones;
       } catch (e: unknown) {
         if (!cancelled) detailError = e instanceof Error ? e.message : 'Failed to load workout details';
       } finally {
@@ -704,7 +713,8 @@
                     latlng={detailStreams?.time_series?.latlng}
                     polyline={detailStravaPolyline}
                     velocity={detailStreams?.time_series?.velocity_smooth}
-                    time={detailStreams?.time_series?.time}
+                    heartrate={detailStreams?.time_series?.heartrate}
+                    zones={detailZones?.zones}
                     moving={detailStreams?.time_series?.moving}
                   />
                 </div>
