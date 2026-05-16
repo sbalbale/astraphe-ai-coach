@@ -5,6 +5,7 @@
   import Icon from '@iconify/svelte';
   import Card from '$lib/components/Card.svelte';
   import { goto } from '$app/navigation';
+  import { page } from '$app/stores';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { HealthIntegration } from '$lib/integrations/health';
   import { api } from '$lib/api';
@@ -53,10 +54,26 @@
     };
   });
 
+  $effect(() => {
+    const provider = $page.url.searchParams.get('provider');
+    const status = $page.url.searchParams.get('status');
+    if (provider && status === 'success') {
+      void refreshSyncAfterOAuth();
+      void goto('/profile/connections', { replaceState: true });
+    }
+  });
+
   async function openOAuthAuthorize(providerPath: 'whoop' | 'strava') {
     const aid = athleteStore.profile?.id || '';
-    const url = `${API_URL}/v1/sync/oauth/${providerPath}/authorize?athlete_id=${encodeURIComponent(aid)}`;
-    if (Capacitor.isNativePlatform()) {
+    const isNative = Capacitor.isNativePlatform();
+
+    let url = `${API_URL}/v1/sync/oauth/${providerPath}/authorize?athlete_id=${encodeURIComponent(aid)}`;
+
+    if (!isNative) {
+      url += `&web_return=${encodeURIComponent(window.location.origin + '/profile/connections')}`;
+    }
+
+    if (isNative) {
       await Browser.open({ url });
     } else {
       window.location.href = url;

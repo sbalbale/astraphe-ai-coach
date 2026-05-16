@@ -570,13 +570,15 @@ async def strava_webhook(
 
 
 @router.get("/oauth/whoop/authorize")
-async def whoop_oauth_authorize(athlete_id: str = None):
+async def whoop_oauth_authorize(athlete_id: str = None, web_return: str = None):
     """Step 1: Redirect user to WHOOP for authorization."""
     if athlete_id == "undefined" or not athlete_id:
         athlete_id = None
         
     redirect_url = get_clean_redirect_url()
     state = athlete_id or settings.TEST_ATHLETE_ID or secrets.token_urlsafe(16)
+    if web_return:
+        state = f"{state}|{web_return}"
     print(f"[whoop.oauth.authorize] redirect_uri={redirect_url} state={state}")
     
     params = {
@@ -607,8 +609,11 @@ async def whoop_oauth_callback(
         access_token = token_data.get("access_token")
         print(f"[whoop.oauth.callback] Token exchange SUCCESS")
         
-        # Handle state correctly
-        athlete_id = state if state != "undefined" else None
+        web_return = None
+        if state and "|" in state:
+            athlete_id, web_return = state.split("|", 1)
+        else:
+            athlete_id = state if state != "undefined" else None
         if not athlete_id:
              print(f"[whoop.oauth.callback] ERROR: athlete_id is missing or undefined")
              raise HTTPException(status_code=400, detail="Missing athlete_id")
@@ -628,18 +633,16 @@ async def whoop_oauth_callback(
         # When this handler is called without an injected instance (e.g. mis-configured signature),
         # fall back to running the backfill asynchronously in-process so we still populate data.
         print(f"[whoop.oauth.callback] Scheduling background backfill task (90d)...")
-        if background_tasks is not None:
-            background_tasks.add_task(backfill_historical_data, athlete_id, access_token, None, 90)
-        else:
-            # Last-resort for environments where BackgroundTasks isn't injected.
-            asyncio.create_task(backfill_historical_data(athlete_id, access_token, None, 90))
+        # Fire-and-forget: backfill catches its own errors so OAuth redirect is never blocked.
+        asyncio.create_task(backfill_historical_data(athlete_id, access_token, None, 90))
         print(f"[whoop.oauth.callback] Backfill scheduled")
         
         print(f"[whoop.oauth.callback] Sending HTML response...")
         
         
         deep_link = f"{settings.MOBILE_DEEP_LINK_SCHEME}://connected?provider=whoop&status=success"
-        # When this flow runs in a desktop browser, custom URI schemes won't open reliably.
+        if web_return:
+            return RedirectResponse(url=f"{web_return}?provider=whoop&status=success")
         return _oauth_connected_success_response(deep_link, "whoop")
 
     except Exception as e:
@@ -648,20 +651,23 @@ async def whoop_oauth_callback(
 
 
 @router.get("/oauth/strava/authorize")
-async def strava_oauth_authorize(athlete_id: str | None = None):
+async def strava_oauth_authorize(athlete_id: str | None = None, web_return: str = None):
     """Redirect user to Strava for authorization."""
     if not athlete_id or athlete_id == "undefined":
         raise HTTPException(status_code=400, detail="athlete_id required")
     if not settings.STRAVA_CLIENT_ID or not settings.STRAVA_CLIENT_SECRET:
         raise HTTPException(status_code=503, detail="Strava OAuth is not configured")
     callback_url = get_clean_strava_redirect_url()
+    state = athlete_id
+    if web_return:
+        state = f"{state}|{web_return}"
     params = {
         "client_id": settings.STRAVA_CLIENT_ID,
         "response_type": "code",
         "redirect_uri": callback_url,
         "approval_prompt": "auto",
         "scope": "activity:read_all,profile:read_all",
-        "state": athlete_id,
+        "state": state,
     }
     return RedirectResponse(
         url=f"https://www.strava.com/oauth/authorize?{urllib.parse.urlencode(params)}"
@@ -678,7 +684,11 @@ async def strava_oauth_callback(
     """Exchange code for tokens, store, and kick off backfill."""
     callback_url = get_clean_strava_redirect_url()
     try:
-        athlete_id = state
+        web_return = None
+        if state and "|" in state:
+            athlete_id, web_return = state.split("|", 1)
+        else:
+            athlete_id = state
         if not athlete_id or athlete_id == "undefined":
             raise HTTPException(status_code=400, detail="Missing athlete_id in state")
 
@@ -741,6 +751,8 @@ async def strava_oauth_callback(
             )
 
         deep_link = f"{settings.MOBILE_DEEP_LINK_SCHEME}://connected?provider=strava&status=success"
+        if web_return:
+            return RedirectResponse(url=f"{web_return}?provider=strava&status=success")
         return _oauth_connected_success_response(deep_link, "strava")
     except HTTPException:
         raise
