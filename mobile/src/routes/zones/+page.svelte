@@ -155,7 +155,8 @@
     maxHRKnown != null && restingHRKnown != null ? maxHRKnown - restingHRKnown : null
   );
 
-  let zones = $derived(hrZones);
+  /** Zone Definitions card: high intensity first (Z5 → Z1). */
+  let zones = $derived([...hrZones].sort((a, b) => b.zone - a.zone));
 
   
   // Filter activities
@@ -359,14 +360,6 @@
         onclick={() => goto('/profile/training-settings')}
       >
         Add your resting heart rate to get more personalized zones →
-      </button>
-    {:else if zoneMethod === 'hrr'}
-      <button
-        type="button"
-        class="text-left text-[11px] text-text2 font-mono"
-        onclick={() => goto('/profile/training-settings#threshold-hr')}
-      >
-        Run a threshold test to unlock Coggan zones →
       </button>
     {/if}
 

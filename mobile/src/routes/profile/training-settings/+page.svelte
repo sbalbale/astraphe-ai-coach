@@ -7,6 +7,9 @@
   import { onMount } from 'svelte';
 
   let maxHR = $state(185);
+  let restingHR = $state<number | null>(null);
+  /** Writable preference — use profile.hr_zone_method, not generated profile.zone_method */
+  let hrZoneMethod = $state('lthr');
   let thresholdHR = $state<number | null>(null);
   let ftp = $state(280);
   let pace = $state('5:00');
@@ -32,6 +35,12 @@
   let saved = $state(false);
   let saveError = $state<string | null>(null);
 
+  const hrZoneMethodOptions: { value: string; label: string }[] = [
+    { value: 'lthr', label: 'LTHR (Coggan)' },
+    { value: 'hrr', label: 'Karvonen %HRR' },
+    { value: 'max_hr', label: 'Max HR %' }
+  ];
+
   const sportOptions = [
     { value: 'triathlon', label: 'Triathlon' },
     { value: 'run', label: 'Run' },
@@ -51,6 +60,12 @@
 
     if (initialized) return;
     maxHR = athleteStore.profile?.max_hr ?? 185;
+    restingHR =
+      typeof athleteStore.profile?.resting_hr === 'number' ? athleteStore.profile.resting_hr : null;
+    const hm = (athleteStore.profile as { hr_zone_method?: string })?.hr_zone_method;
+    if (hm === 'hrr' || hm === 'max_hr' || hm === 'lthr') {
+      hrZoneMethod = hm;
+    }
     thresholdHR = athleteStore.profile?.threshold_hr ?? null;
     ftp = athleteStore.profile?.ftp_watts ?? 280;
     pace = athleteStore.profile?.threshold_pace || '5:00';
@@ -81,8 +96,13 @@
       threshold_pace: pace,
       sport_focus: [sport.toLowerCase()],
       measurement_units: units,
-      time_format: timeFormat
+      time_format: timeFormat,
+      hr_zone_method: hrZoneMethod
     };
+
+    if (restingHR != null && restingHR > 0) {
+      updates.resting_hr = restingHR;
+    }
 
     if (thresholdHR != null && thresholdHR > 0) {
       updates.threshold_hr = thresholdHR;
@@ -158,48 +178,96 @@
       <div class="flex flex-col gap-4">
         <div class="flex items-center justify-between gap-3 flex-wrap">
           <div class="flex-1 min-w-[120px]">
-            <label for="maxhr" class="block text-[11px] text-text2 mb-1">Max HR (bpm)</label>
-            <input id="maxhr" type="number" bind:value={maxHR} class="w-full p-2 bg-glass2 border border-border rounded-lg text-sm text-text0 font-mono outline-none focus:border-red" />
+            <label for="maxhr" class="block text-[11px] text-text2 mb-1">Max HR</label>
+            <div class="relative">
+              <input
+                id="maxhr"
+                type="number"
+                bind:value={maxHR}
+                class="w-full p-2 pr-10 bg-glass2 border border-border rounded-lg text-sm text-text0 font-mono outline-none focus:border-red"
+              />
+              <span class="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[11px] text-text2 font-mono">bpm</span>
+            </div>
           </div>
           <div class="flex-1 min-w-[120px]">
-            <label for="ftp" class="block text-[11px] text-text2 mb-1">Cycling FTP (W)</label>
-            <input id="ftp" type="number" bind:value={ftp} class="w-full p-2 bg-glass2 border border-border rounded-lg text-sm text-text0 font-mono outline-none focus:border-[#4621FF]" />
+            <label for="restinghr" class="block text-[11px] text-text2 mb-1">Resting HR</label>
+            <div class="relative">
+              <input
+                id="restinghr"
+                type="number"
+                min="30"
+                max="120"
+                value={restingHR ?? ''}
+                oninput={(e) => {
+                  const v = e.currentTarget.value;
+                  restingHR = v === '' ? null : Number(v);
+                }}
+                class="w-full p-2 pr-10 bg-glass2 border border-border rounded-lg text-sm text-text0 font-mono outline-none focus:border-teal placeholder:text-text2"
+                placeholder="Optional"
+              />
+              <span class="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[11px] text-text2 font-mono">bpm</span>
+            </div>
+          </div>
+        </div>
+        <div class="flex items-center justify-between gap-3 flex-wrap">
+          <div class="flex-1 min-w-[120px]">
+            <label for="lthr" class="block text-[11px] text-text2 mb-1">Lactate Threshold HR</label>
+            <div class="relative">
+              <input
+                id="lthr"
+                type="number"
+                min="100"
+                max="220"
+                step="1"
+                bind:value={thresholdHR}
+                class="w-full p-2 pr-10 bg-glass2 border border-border rounded-lg text-sm text-text0 font-mono outline-none focus:border-amber"
+              />
+              <span class="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[11px] text-text2 font-mono">bpm</span>
+            </div>
+          </div>
+          <div class="flex-1 min-w-[120px]">
+            <label for="ftp" class="block text-[11px] text-text2 mb-1">Cycling FTP</label>
+            <div class="relative">
+              <input
+                id="ftp"
+                type="number"
+                bind:value={ftp}
+                class="w-full p-2 pr-10 bg-glass2 border border-border rounded-lg text-sm text-text0 font-mono outline-none focus:border-[#4621FF]"
+              />
+              <span class="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[11px] text-text2 font-mono">W</span>
+            </div>
           </div>
         </div>
         <div>
-          <label for="pace" class="block text-[11px] text-text2 mb-1">Threshold Pace ({units === 'metric' ? '/km' : '/mile'})</label>
-          <input id="pace" type="text" bind:value={pace} class="w-full p-2.5 bg-glass2 border border-border rounded-lg text-sm text-text0 font-mono outline-none focus:border-teal" />
+          <label for="pace" class="block text-[11px] text-text2 mb-1">Threshold Pace</label>
+          <div class="relative">
+            <input
+              id="pace"
+              type="text"
+              bind:value={pace}
+              class="w-full p-2.5 pr-14 bg-glass2 border border-border rounded-lg text-sm text-text0 font-mono outline-none focus:border-teal"
+            />
+            <span class="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[11px] text-text2 font-mono">{units === 'metric' ? '/km' : '/mile'}</span>
+          </div>
         </div>
       </div>
     </Card>
 
     <Card>
-      <p class="text-[13px] font-semibold mb-3">Threshold</p>
-      <div id="threshold-hr" class="flex flex-col gap-1">
-        <label for="lthr" class="inline-flex flex-wrap items-center text-[11px] text-text2 mb-1">
-          <span>Lactate Threshold HR</span>
-          {#if athleteStore.profile?.threshold_hr_source === 'manual'}
-            <span class="text-[9px] font-mono bg-teal/10 text-teal border border-teal/20 rounded px-1.5 py-0.5 ml-1.5">CONFIRMED</span>
-          {:else if athleteStore.profile?.threshold_hr_source === 'estimated' || athleteStore.profile?.threshold_hr_source == null}
-            <span class="text-[9px] font-mono bg-amber/10 text-amber border border-amber/20 rounded px-1.5 py-0.5 ml-1.5">ESTIMATED</span>
-          {/if}
-        </label>
-        <div class="bg-glass2 border border-border rounded-xl p-3">
-          <div class="relative">
-            <input
-              id="lthr"
-              type="number"
-              min="100"
-              max="220"
-              step="1"
-              bind:value={thresholdHR}
-              class="w-full bg-transparent border-none p-0 pr-10 text-sm text-text0 font-mono outline-none focus:ring-0"
-            />
-            <span class="pointer-events-none absolute right-0 top-1/2 -translate-y-1/2 text-[11px] text-text2 font-mono">bpm</span>
-          </div>
+      <p class="text-[13px] font-semibold mb-3">Heart rate zones</p>
+      <div class="flex flex-col gap-3 mb-4">
+        <div>
+          <label for="hrzone-method" class="block text-[11px] text-text2 mb-1">Zone calculation</label>
+          <SelectMenu
+            id="hrzone-method"
+            bind:value={hrZoneMethod}
+            options={hrZoneMethodOptions}
+            ariaLabel="Heart rate zone calculation method"
+            buttonClass="w-full p-2.5 pr-2 bg-glass2 border border-border rounded-lg text-sm text-text0 outline-none focus:border-red"
+          />
         </div>
-        <p class="text-[10px] text-text2 mt-1">
-          Best measured from the avg HR of the final 20 min of a 30-min all-out effort.
+        <p class="text-[10px] text-text2 leading-relaxed">
+          %HRR (Karvonen) needs max HR and resting HR. LTHR (Coggan) uses lactate threshold HR from Performance Anchors.
         </p>
       </div>
     </Card>

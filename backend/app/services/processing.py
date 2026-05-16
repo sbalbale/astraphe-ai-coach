@@ -364,7 +364,7 @@ async def find_or_create_canonical_workout(
 def _fetch_athlete_for_workout_sync(db: Any, athlete_id: str) -> dict[str, Any]:
     athlete_res = (
         db.table("athletes")
-        .select("max_hr,resting_hr,threshold_hr,threshold_hr_source,threshold_pace,gender")
+        .select("max_hr,resting_hr,threshold_hr,threshold_hr_source,threshold_pace,gender,hr_zone_method")
         .eq("id", athlete_id)
         .single()
         .execute()
@@ -564,6 +564,9 @@ async def process_and_save_workout(payload: WorkoutPayload, athlete_id: str, db:
         zone_minutes = {
             k: (v / 100.0) * (payload.duration_seconds / 60.0) for k, v in safe_hr_zones.items()
         }
+        # hr_zone_N_pct came from the device using its own zone boundaries at sync time.
+        # If the athlete later changes hr_zone_method, these percents are not recomputed (staleness);
+        # stream-derived zone analysis still uses current athlete zones.
         tss = compute_hrss_from_zones(
             zone_minutes=zone_minutes,
             max_hr=int(anchor_max_hr or 0),
@@ -572,6 +575,7 @@ async def process_and_save_workout(payload: WorkoutPayload, athlete_id: str, db:
             sport=mapped_sport,
             gender=str(anchor_gender),
             threshold_hr_source=anchor_threshold_hr_source,
+            hr_zone_method=athlete.get("hr_zone_method"),
         )
     elif canonical == "row" and hasattr(payload, "avg_power") and payload.avg_power:
         norm_watts = normalize_rowing_watts(payload.avg_power)

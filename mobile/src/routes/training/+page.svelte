@@ -24,7 +24,7 @@
   import { page } from '$app/stores';
   import { addDays, endOfWeek, format, startOfWeek } from 'date-fns';
   import { boundedScoreCssColor } from '$lib/colorSystem';
-  import { mergeWorkoutZoneDefs, HR_ZONE_HEX } from '$lib/hrZoneDisplay';
+  import { mergeWorkoutZoneDefs, HR_ZONE_HEX, formatZoneBpmRange } from '$lib/hrZoneDisplay';
   import { formCssColor, getWeeklyLoadDeltaColor } from '$lib/scoreColors';
   import { Lightbulb } from 'lucide-svelte';
   import {
@@ -593,35 +593,42 @@
             </div>
           </div>
 
-          <div class="mb-5 bg-glass2 p-3 rounded-xl border border-border">
+          <div class="mb-5 min-w-0 bg-glass2 p-3 rounded-xl border border-border">
             <p class="text-[11px] font-semibold mb-2">Heart-rate zones</p>
 
             {#if hasAnyHrZone(selectedWorkout)}
-              <div class="flex flex-col gap-2">
+              <div class="flex w-full min-w-0 flex-col gap-2">
                 {#each getHrZonePctsTopDown(selectedWorkout) as pct, topIdx (topIdx)}
                   {@const zone = 5 - topIdx}
                   {@const color = HR_ZONE_HEX[zone]}
-                  <div class="flex items-center gap-3">
-                    <div class="w-9 shrink-0 flex items-center gap-2">
-                      <span class="w-2 h-2 rounded-full shrink-0" style="background: {color};"></span>
-                      <p class="text-[11px] text-text1 font-mono uppercase">Z{zone}</p>
-                    </div>
-
-                    <div class="flex-1">
-                      <div class="h-2.5 rounded-full bg-glass border border-border overflow-hidden">
-                        <div
-                          class="h-full rounded-full"
-                          style="width: {pct == null ? 0 : Math.max(0, Math.min(100, pct))}%; background: {color};"
-                        ></div>
+                  {@const zDef = mergedHrZoneDefs.find((d) => d.zone === zone)}
+                  <div class="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] gap-x-1.5 gap-y-1.5">
+                    <div class="flex min-w-0 gap-2 self-start pt-0.5">
+                      <span class="mt-1 h-2 w-2 shrink-0 rounded-full" style="background: {color};"></span>
+                      <div class="min-w-0 flex-1">
+                        <div class="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                          <span class="text-[11px] text-text0 font-mono uppercase shrink-0">Z{zone}</span>
+                          {#if zDef?.name}
+                            <span class="text-[11px] text-text1 font-sans font-medium leading-snug">{zDef.name}</span>
+                          {/if}
+                          <span class="text-[10px] text-text2 font-mono">{formatZoneBpmRange(zDef)}</span>
+                        </div>
                       </div>
                     </div>
-
-                    <div class="w-[92px] shrink-0 text-right">
-                      <p class="text-[11px] text-text2 font-mono">{pct == null ? '--' : `${Math.round(pct)}%`}</p>
-                      <p class="text-[11px] text-text1 font-semibold tabular-nums">
-                        {pct == null ? '--' : formatMMSS((getDurationSecs(selectedWorkout) * pct) / 100)}
-                      </p>
+                    <p class="self-start text-right text-[11px] font-mono tabular-nums leading-none text-text2">
+                      {pct == null ? '--' : `${Math.round(pct)}%`}
+                    </p>
+                    <div
+                      class="h-2.5 min-w-0 w-full max-w-full self-center overflow-hidden rounded-full border border-border bg-glass"
+                    >
+                      <div
+                        class="h-full max-w-full rounded-full"
+                        style="width: {pct == null ? 0 : Math.max(0, Math.min(100, pct))}%; background: {color};"
+                      ></div>
                     </div>
+                    <p class="self-center text-right text-[11px] font-semibold tabular-nums leading-none text-text1">
+                      {pct == null ? '--' : formatMMSS((getDurationSecs(selectedWorkout) * pct) / 100)}
+                    </p>
                   </div>
                 {/each}
               </div>
