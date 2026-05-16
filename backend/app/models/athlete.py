@@ -35,6 +35,8 @@ class AthleteProfileUpdate(BaseModel):
     height_cm: Optional[float] = None
     ftp_watts: Optional[int] = None
     max_hr: Optional[int] = None
+    resting_hr: Optional[int] = None
+    hr_zone_method: Optional[str] = None
     threshold_hr: Optional[int] = None
     threshold_pace: Optional[str] = None # String format like "5:00"
     sport_focus: Optional[List[str]] = None

@@ -119,6 +119,7 @@ def compute_hrss_from_zones(
     sport: str = "other",
     gender: str = "male",
     threshold_hr_source: Optional[str] = None,
+    hr_zone_method: Optional[str] = None,
 ) -> float:
     """
     Estimates HRSS for historical workouts where only aggregated time-in-zone is available.
@@ -142,6 +143,7 @@ def compute_hrss_from_zones(
         resting_hr if resting_hr > 0 else None,
         threshold_hr if threshold_hr > 0 else None,
         threshold_hr_source,
+        hr_zone_method=hr_zone_method,
     )
     if zone_result is None:
         return 0.0

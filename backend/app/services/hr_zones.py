@@ -1,10 +1,13 @@
 """
 Canonical HR zone calculation for Astrape.
 
-Priority:
+Priority (when `hr_zone_method` is not set on the athlete):
   1. Coggan LTHR  (threshold_hr > 0 AND threshold_hr_source == 'manual')
   2. Karvonen HRR (max_hr + resting_hr set)
   3. Max HR %     (max_hr only)
+
+When `hr_zone_method` is set (lthr | hrr | max_hr), that method is used if inputs allow,
+otherwise falls back to the automatic priority above.
 
 All public functions return a consistent ZoneResult with a `method` field
 so callers can surface which method was used in the UI.
@@ -16,6 +19,30 @@ from dataclasses import dataclass
 from typing import Any, Literal, Optional
 
 ZoneMethod = Literal["lthr", "hrr", "max_hr"]
+
+VALID_ZONE_METHODS = frozenset({"lthr", "hrr", "max_hr"})
+METHOD_ALIASES = {"max_hr_percent": "max_hr"}
+
+
+def canonical_hr_zone_method(raw: object) -> str:
+    """Normalize a non-empty client value to lthr|hrr|max_hr."""
+    s = str(raw).strip().lower()
+    if not s:
+        raise ValueError("hr_zone_method must be lthr, hrr, or max_hr")
+    m = METHOD_ALIASES.get(s, s)
+    if m not in VALID_ZONE_METHODS:
+        raise ValueError("hr_zone_method must be lthr, hrr, or max_hr")
+    return m
+
+
+def optional_canonical_hr_zone_method(raw: Optional[object]) -> Optional[str]:
+    """None or blank -> None. Otherwise same as canonical_hr_zone_method."""
+    if raw is None:
+        return None
+    s = str(raw).strip().lower()
+    if not s:
+        return None
+    return canonical_hr_zone_method(s)
 
 
 @dataclass
@@ -52,7 +79,7 @@ def _hrr_zones(max_hr: int, resting_hr: int) -> list[HRZone]:
         return int(resting_hr + hrr * pct)
 
     return [
-        HRZone(1, "Recovery", z(0.50), z(0.60)),
+        HRZone(1, "Recovery", 0, z(0.60)),
         HRZone(2, "Aerobic", z(0.60), z(0.70)),
         HRZone(3, "Tempo", z(0.70), z(0.80)),
         HRZone(4, "Threshold", z(0.80), z(0.90)),
@@ -71,16 +98,13 @@ def _max_hr_zones(max_hr: int) -> list[HRZone]:
     ]
 
 
-def compute_hr_zones(
+def _compute_hr_zones_auto(
     max_hr: Optional[int],
     resting_hr: Optional[int],
     threshold_hr: Optional[int],
     threshold_hr_source: Optional[str] = None,
 ) -> Optional[ZoneResult]:
-    """
-    Returns a ZoneResult using the most accurate method available,
-    or None if there is insufficient data for any method.
-    """
+    """Automatic tier: manual LTHR -> HRR -> % max."""
     lthr_confirmed = bool(
         threshold_hr
         and threshold_hr > 0
@@ -107,6 +131,50 @@ def compute_hr_zones(
     return None
 
 
+def compute_hr_zones(
+    max_hr: Optional[int],
+    resting_hr: Optional[int],
+    threshold_hr: Optional[int],
+    threshold_hr_source: Optional[str] = None,
+    hr_zone_method: Optional[str] = None,
+) -> Optional[ZoneResult]:
+    """
+    Returns a ZoneResult using the athlete's preferred method when set and valid,
+    else the automatic priority chain, or None if insufficient data for any method.
+    """
+    pref: Optional[str] = None
+    if hr_zone_method is not None and str(hr_zone_method).strip() != "":
+        try:
+            pref = optional_canonical_hr_zone_method(hr_zone_method)
+        except ValueError:
+            pref = None
+
+    if pref == "lthr":
+        if threshold_hr and int(threshold_hr) > 0:
+            thr = int(threshold_hr)
+            return ZoneResult(
+                method="lthr",
+                zones=_lthr_zones(thr),
+                anchor_label=f"LTHR {thr} bpm",
+            )
+    elif pref == "hrr":
+        if max_hr and resting_hr and max_hr > resting_hr > 0:
+            return ZoneResult(
+                method="hrr",
+                zones=_hrr_zones(int(max_hr), int(resting_hr)),
+                anchor_label=f"Max HR {int(max_hr)} / RHR {int(resting_hr)} bpm",
+            )
+    elif pref == "max_hr":
+        if max_hr and max_hr > 0:
+            return ZoneResult(
+                method="max_hr",
+                zones=_max_hr_zones(int(max_hr)),
+                anchor_label=f"Max HR {int(max_hr)} bpm",
+            )
+
+    return _compute_hr_zones_auto(max_hr, resting_hr, threshold_hr, threshold_hr_source)
+
+
 def classify_hr(bpm: int, zone_result: ZoneResult) -> Optional[int]:
     """Returns the zone number (1–5) for a given heart rate; each zone is [min_bpm, max_bpm)."""
     for z in zone_result.zones:
@@ -120,9 +188,16 @@ def profile_hr_zones_payload(
     resting_hr: Optional[int],
     threshold_hr: Optional[int],
     threshold_hr_source: Optional[str] = None,
+    hr_zone_method: Optional[str] = None,
 ) -> dict[str, Any]:
     """JSON-friendly block for athlete profile API (method, anchor_label, zones)."""
-    zr = compute_hr_zones(max_hr, resting_hr, threshold_hr, threshold_hr_source)
+    zr = compute_hr_zones(
+        max_hr,
+        resting_hr,
+        threshold_hr,
+        threshold_hr_source,
+        hr_zone_method=hr_zone_method,
+    )
     if zr is None:
         return {"method": None, "anchor_label": None, "zones": []}
     return {
@@ -143,6 +218,7 @@ def athlete_dict_with_hr_zones(row: dict[str, Any]) -> dict[str, Any]:
         resting_hr=row.get("resting_hr"),
         threshold_hr=row.get("threshold_hr"),
         threshold_hr_source=row.get("threshold_hr_source"),
+        hr_zone_method=row.get("hr_zone_method"),
     )
     return out
 
@@ -150,20 +226,15 @@ def athlete_dict_with_hr_zones(row: dict[str, Any]) -> dict[str, Any]:
 def get_athlete_zones(athlete: dict) -> list[HRZone]:
     """
     Dispatches to compute_hr_zones using an athlete dict from the athletes table.
-    Priority: lthr (manual) → hrr → max_hr_percent → default LTHR=170.
-    Checks both 'lthr' and 'threshold_hr' columns for the LTHR value.
+    Automatic fallback when unset: lthr (manual) → hrr → max_hr → default LTHR=170.
     """
-    lthr = athlete.get("lthr") or athlete.get("threshold_hr")
-    max_hr = athlete.get("max_hr")
-    resting_hr = athlete.get("resting_hr")
-    # Treat lthr/threshold_hr as manually confirmed for zone purposes
-    threshold_hr_source = "manual" if lthr else athlete.get("threshold_hr_source")
-
+    thr = athlete.get("lthr") or athlete.get("threshold_hr")
     zr = compute_hr_zones(
-        max_hr=max_hr,
-        resting_hr=resting_hr,
-        threshold_hr=lthr,
-        threshold_hr_source=threshold_hr_source,
+        max_hr=athlete.get("max_hr"),
+        resting_hr=athlete.get("resting_hr"),
+        threshold_hr=thr,
+        threshold_hr_source=athlete.get("threshold_hr_source"),
+        hr_zone_method=athlete.get("hr_zone_method"),
     )
     return zr.zones if zr else _lthr_zones(170)
 

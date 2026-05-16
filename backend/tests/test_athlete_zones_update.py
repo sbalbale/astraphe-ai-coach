@@ -1,5 +1,8 @@
 """Unit tests for PUT /v1/athlete/zones payload → DB column mapping."""
 
+import pytest
+from fastapi import HTTPException
+
 from app.routers.athlete import _build_athlete_zones_update
 
 
@@ -20,6 +23,17 @@ def test_threshold_hr_alias_same_as_lthr():
 def test_method_maps_to_hr_zone_method():
     u = _build_athlete_zones_update({"method": "hrr"})
     assert u["hr_zone_method"] == "hrr"
+
+
+def test_max_hr_percent_alias_normalizes_to_max_hr():
+    u = _build_athlete_zones_update({"method": "max_hr_percent"})
+    assert u["hr_zone_method"] == "max_hr"
+
+
+def test_invalid_method_raises_422():
+    with pytest.raises(HTTPException) as exc:
+        _build_athlete_zones_update({"method": "bogus"})
+    assert exc.value.status_code == 422
 
 
 def test_hr_zone_method_wins_over_method():

@@ -6,7 +6,7 @@ import numpy as np
 
 from app.models.athlete import AthleteState, AthleteProfileUpdate
 from app.services.algorithms import compute_z_score
-from app.services.hr_zones import athlete_dict_with_hr_zones, get_athlete_zones
+from app.services.hr_zones import athlete_dict_with_hr_zones, get_athlete_zones, optional_canonical_hr_zone_method
 from app.dependencies import get_current_athlete, get_user_db, get_admin_db
 
 router = APIRouter(prefix="/v1/athlete", tags=["Athlete"])
@@ -257,6 +257,7 @@ def _build_athlete_zones_update(payload: dict) -> dict:
     """
     Map PUT /zones JSON to athletes columns. Never includes `lthr` (GENERATED ALWAYS).
     Client may send `method` (mapped to hr_zone_method) or `lthr` (mapped to threshold_hr).
+    Normalizes hr_zone_method values (e.g. max_hr_percent -> max_hr) for DB CHECK constraint.
     """
     if not isinstance(payload, dict):
         return {}
@@ -282,6 +283,18 @@ def _build_athlete_zones_update(payload: dict) -> dict:
                 out["threshold_hr_source"] = "manual"
         except (TypeError, ValueError):
             pass
+    if "hr_zone_method" in out and out["hr_zone_method"] is not None:
+        try:
+            canon = optional_canonical_hr_zone_method(out["hr_zone_method"])
+            if canon is None:
+                out.pop("hr_zone_method", None)
+            else:
+                out["hr_zone_method"] = canon
+        except ValueError:
+            raise HTTPException(
+                status_code=422,
+                detail="hr_zone_method must be lthr, hrr, or max_hr",
+            )
     return out
 
 
@@ -320,7 +333,7 @@ async def update_zones(
     athlete_id: str = Depends(get_current_athlete),
     db=Depends(get_user_db),
 ):
-    """Update HR zone anchors. method: 'lthr' | 'max_hr_percent' | 'hrr' (stored as hr_zone_method)."""
+    """Update HR zone anchors. method / hr_zone_method: 'lthr' | 'hrr' | 'max_hr' ('max_hr_percent' aliases to 'max_hr')."""
     update = _build_athlete_zones_update(payload)
     if not update:
         raise HTTPException(status_code=400, detail="No valid fields provided")
@@ -391,7 +404,17 @@ async def update_athlete_profile(
         else:
             raise HTTPException(status_code=422, detail="gender must be 'male' or 'female'")
 
-    # Execute update with RLS context.
+    # - hr_zone_method: must match CHECK constraint on athletes (alias max_hr_percent -> max_hr)
+    if "hr_zone_method" in update_data:
+        raw = update_data.get("hr_zone_method")
+        if raw is not None:
+            try:
+                update_data["hr_zone_method"] = optional_canonical_hr_zone_method(raw)
+            except ValueError:
+                raise HTTPException(
+                    status_code=422,
+                    detail="hr_zone_method must be lthr, hrr, or max_hr",
+                )
     # Note: supabase-py/postgrest does not always support chaining `.select()` after `.update()`
     # across versions. We do a follow-up SELECT to return the updated row consistently.
     try:

@@ -69,3 +69,37 @@ def test_lthr_vo2max_plus_zone_unbounded_sentinel():
     assert zr is not None
     assert zr.zones[-1].zone == 5
     assert zr.zones[-1].max_bpm >= 999
+
+
+def test_hrr_z1_starts_at_zero():
+    zr = compute_hr_zones(190, 50, None, None)
+    assert zr is not None
+    assert zr.method == "hrr"
+    assert zr.zones[0].min_bpm == 0
+
+
+def test_explicit_hrr_overrides_auto_lthr_tier():
+    """When preference is HRR, use Karvonen even if manual LTHR exists."""
+    zr = compute_hr_zones(
+        max_hr=190,
+        resting_hr=50,
+        threshold_hr=165,
+        threshold_hr_source="manual",
+        hr_zone_method="hrr",
+    )
+    assert zr is not None
+    assert zr.method == "hrr"
+    assert zr.zones[0].min_bpm == 0
+
+
+def test_explicit_lthr_uses_coggan_even_when_estimated():
+    zr = compute_hr_zones(
+        max_hr=190,
+        resting_hr=50,
+        threshold_hr=165,
+        threshold_hr_source="estimated",
+        hr_zone_method="lthr",
+    )
+    assert zr is not None
+    assert zr.method == "lthr"
+    assert zr.zones[0].max_bpm == int(165 * 0.81)
