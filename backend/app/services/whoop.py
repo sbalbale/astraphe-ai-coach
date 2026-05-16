@@ -189,3 +189,31 @@ async def fetch_collection(
                 break
 
     return records
+
+
+def hr_zone_pct_from_whoop_zone_millis(
+    zone_durations: Optional[dict[str, Any]],
+) -> tuple[Optional[int], Optional[int], Optional[int], Optional[int], Optional[int]]:
+    """
+    Map WHOOP ``zone_durations`` (milliseconds per zone) to five integer percentages Z1-Z5 summing to 100.
+    WHOOP Z0 time is folded into Astrape Z1 (active recovery begins at 0 bpm).
+    """
+    zone = zone_durations or {}
+    hr0 = int(zone.get("zone_zero_milli") or 0)
+    hr1 = int(zone.get("zone_one_milli") or 0)
+    hr2 = int(zone.get("zone_two_milli") or 0)
+    hr3 = int(zone.get("zone_three_milli") or 0)
+    hr4 = int(zone.get("zone_four_milli") or 0)
+    hr5 = int(zone.get("zone_five_milli") or 0)
+
+    raw = [hr0 + hr1, hr2, hr3, hr4, hr5]
+    total_ms = sum(raw)
+    if total_ms <= 0:
+        return (None, None, None, None, None)
+
+    pcts = [round(v / total_ms * 100) for v in raw]
+    diff = 100 - sum(pcts)
+    if diff != 0:
+        pcts[pcts.index(max(pcts))] += diff
+
+    return (pcts[0], pcts[1], pcts[2], pcts[3], pcts[4])

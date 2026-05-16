@@ -24,6 +24,7 @@
   import { page } from '$app/stores';
   import { addDays, endOfWeek, format, startOfWeek } from 'date-fns';
   import { boundedScoreCssColor } from '$lib/colorSystem';
+  import { mergeWorkoutZoneDefs, HR_ZONE_HEX } from '$lib/hrZoneDisplay';
   import { formCssColor, getWeeklyLoadDeltaColor } from '$lib/scoreColors';
   import { Lightbulb } from 'lucide-svelte';
   import {
@@ -75,7 +76,9 @@
     selectedWorkout ? stravaPolylineFromPayload(selectedWorkout.raw_strava_payload) : null
   );
 
-  const zoneColors = ['#AAB3BF', '#4621FF', '#00C8A8', '#FFCB88', '#F07178', '#FF4791'];
+  const mergedHrZoneDefs = $derived(
+    mergeWorkoutZoneDefs(detailZones?.zones, athleteStore.profile?.hr_zones?.zones)
+  );
 
   // Week selector (History tab)
   // Source of truth is the picked day (YYYY-MM-DD). We derive the Monday week start from it.
@@ -235,16 +238,7 @@
   }
 
   function getHrZonePcts(w: any): Array<number | null> {
-    const z1 = w?.hr_zone_1_pct ?? null;
-    const z2 = w?.hr_zone_2_pct ?? null;
-    const z3 = w?.hr_zone_3_pct ?? null;
-    const z4 = w?.hr_zone_4_pct ?? null;
-    const z5 = w?.hr_zone_5_pct ?? null;
-    const z0 =
-      w?.hr_zone_0_pct ?? (z1 == null ? null : Math.max(0, 100 - Number(z1 || 0) - Number(z2 || 0) - Number(z3 || 0) - Number(z4 || 0) - Number(z5 || 0)));
-
     return [
-      z0,
       w?.hr_zone_1_pct ?? null,
       w?.hr_zone_2_pct ?? null,
       w?.hr_zone_3_pct ?? null,
@@ -254,7 +248,7 @@
   }
 
   function getHrZonePctsTopDown(w: any): Array<number | null> {
-    // Display order: Z5 (top) -> Z0 (bottom)
+    // Display order: Z5 (top) → Z1 (bottom); Astrape model is always Z1–Z5 (no WHOOP Z0 bucket).
     return getHrZonePcts(w).slice().reverse();
   }
 
@@ -606,7 +600,7 @@
               <div class="flex flex-col gap-2">
                 {#each getHrZonePctsTopDown(selectedWorkout) as pct, topIdx (topIdx)}
                   {@const zone = 5 - topIdx}
-                  {@const color = zoneColors[zone]}
+                  {@const color = HR_ZONE_HEX[zone]}
                   <div class="flex items-center gap-3">
                     <div class="w-9 shrink-0 flex items-center gap-2">
                       <span class="w-2 h-2 rounded-full shrink-0" style="background: {color};"></span>
@@ -693,7 +687,7 @@
 
               {#if detailLaps.length >= 2}
                 <div class="mt-4">
-                  <LapStrip laps={detailLaps} sport={selectedWorkout.sport} />
+                  <LapStrip laps={detailLaps} sport={selectedWorkout.sport} zones={mergedHrZoneDefs} />
                 </div>
               {/if}
 
@@ -703,7 +697,7 @@
                     streams={detailStreams}
                     laps={detailLaps}
                     sport={selectedWorkout.sport}
-                    zones={detailZones?.zones ?? []}
+                    zones={mergedHrZoneDefs}
                   />
                 </div>
               {/if}
@@ -714,7 +708,7 @@
                     latlng={detailStreams?.time_series?.latlng}
                     polyline={detailStravaPolyline}
                     heartrate={detailStreams?.time_series?.heartrate}
-                    zones={detailZones?.zones}
+                    zones={mergedHrZoneDefs}
                   />
                 </div>
               {/if}

@@ -122,22 +122,8 @@ async def backfill_historical_data(athlete_id: str, access_token: str, db: Any =
         duration_seconds = int(max(0, (end_dt - start_dt).total_seconds()))
 
         score = (w.get("score") or {}) if isinstance(w.get("score"), dict) else {}
-        zone = (score.get("zone_durations") or {}) if isinstance(score.get("zone_durations"), dict) else {}
-
-        total_zone_ms = sum(v for v in zone.values() if isinstance(v, (int, float)))
-        z0 = zone.get("zone_zero_milli")
-        z1 = zone.get("zone_one_milli")
-        z2 = zone.get("zone_two_milli")
-        z3 = zone.get("zone_three_milli")
-        z4 = zone.get("zone_four_milli")
-        z5 = zone.get("zone_five_milli")
-
-        hr0 = int(round(((z0 or 0) / total_zone_ms) * 100)) if total_zone_ms else None
-        hr1 = int(round(((z1 or 0) / total_zone_ms) * 100)) if total_zone_ms else None
-        hr2 = int(round(((z2 or 0) / total_zone_ms) * 100)) if total_zone_ms else None
-        hr3 = int(round(((z3 or 0) / total_zone_ms) * 100)) if total_zone_ms else None
-        hr4 = int(round(((z4 or 0) / total_zone_ms) * 100)) if total_zone_ms else None
-        hr5 = int(round(((z5 or 0) / total_zone_ms) * 100)) if total_zone_ms else None
+        zone = score.get("zone_durations") if isinstance(score.get("zone_durations"), dict) else {}
+        z1_pct, z2_pct, z3_pct, z4_pct, z5_pct = whoop.hr_zone_pct_from_whoop_zone_millis(zone)
 
         external_id = str(w.get("v1_id") or w.get("id"))
         display_name = (w.get("sport_name") or "Workout")
@@ -177,12 +163,12 @@ async def backfill_historical_data(athlete_id: str, access_token: str, db: Any =
             distance_m=score.get("distance_meter"),
             avg_hr=score.get("average_heart_rate"),
             max_hr=score.get("max_heart_rate"),
-            hr_zone_0_pct=hr0,
-            hr_zone_1_pct=hr1,
-            hr_zone_2_pct=hr2,
-            hr_zone_3_pct=hr3,
-            hr_zone_4_pct=hr4,
-            hr_zone_5_pct=hr5,
+            hr_zone_0_pct=None,
+            hr_zone_1_pct=z1_pct,
+            hr_zone_2_pct=z2_pct,
+            hr_zone_3_pct=z3_pct,
+            hr_zone_4_pct=z4_pct,
+            hr_zone_5_pct=z5_pct,
         )
         try:
             await process_and_save_workout(payload, athlete_id, db)
