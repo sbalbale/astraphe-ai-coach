@@ -46,6 +46,8 @@
     type ActivityZones,
   } from '$lib/services/activityService';
   import { stravaPolylineFromPayload } from '$lib/utils/polyline';
+  import { normalizeUnits } from '$lib/utils/units';
+  import { supportsPaceChart } from '$lib/utils/paceChart';
   import StreamCharts from '$lib/components/workout/StreamCharts.svelte';
   import SplitCharts from '$lib/components/workout/SplitCharts.svelte';
   import IntervalsTable from '$lib/components/workout/IntervalsTable.svelte';
@@ -92,6 +94,10 @@
     mergeWorkoutZoneDefs(detailZones?.zones, athleteStore.profile?.hr_zones?.zones)
   );
 
+  const measurementUnits = $derived(
+    normalizeUnits((athleteStore.profile as { measurement_units?: string })?.measurement_units)
+  );
+
   /** True when streams/laps/intervals loaded enough for the detail charts to render. */
   const detailChartsReady = $derived.by(() => {
     const w = selectedWorkout;
@@ -121,7 +127,8 @@
   });
 
   const detailMissingPaceStream = $derived(
-    Boolean(detailStreams) &&
+    Boolean(selectedWorkout && supportsPaceChart(selectedWorkout.sport)) &&
+      Boolean(detailStreams) &&
       !streamsHaveVelocity(detailStreams) &&
       (detailStreams?.time_series?.heartrate?.length ?? 0) > 1
   );
@@ -788,11 +795,16 @@
 
               {#if detailLaps.length >= 2}
                 <div class="mt-4">
-                  <LapStrip laps={detailLaps} sport={selectedWorkout.sport} zones={mergedHrZoneDefs} />
+                  <LapStrip
+                    laps={detailLaps}
+                    sport={selectedWorkout.sport}
+                    zones={mergedHrZoneDefs}
+                    measurementUnits={measurementUnits}
+                  />
                 </div>
               {/if}
 
-              {#if detailMissingPaceStream && selectedWorkout.sport !== 'row'}
+              {#if detailMissingPaceStream}
                 <p class="text-[11px] text-text2 font-mono mt-3 leading-relaxed">
                   Pace stream unavailable from Strava for this activity (heart rate is still shown). Try
                   Repull data if streams were imported incorrectly.
@@ -806,6 +818,7 @@
                     laps={detailLaps}
                     sport={selectedWorkout.sport}
                     zones={mergedHrZoneDefs}
+                    measurementUnits={measurementUnits}
                   />
                 </div>
               {/if}
