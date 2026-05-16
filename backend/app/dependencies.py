@@ -104,15 +104,29 @@ async def get_current_gemini_model(
     db: Client = Depends(get_user_db),
 ) -> str:
     """
-    Returns the Gemini model name to use for this request.
+    Returns the Gemini/Gemma model name to use for this request.
 
-    Primary: Supabase Auth JWT app_metadata.gemini_model (admin-controlled).
-    Fallback: backend .env GEMINI_MODEL.
+    Primary: Supabase Auth JWT app_metadata.gemini_model (admin-controlled),
+    then user_metadata.gemini_model.
+    Fallback: backend .env GEMINI_MODEL, then gemma-4-31b-it.
     """
-    # Force a known-good model name. Some older app_metadata values may reference
-    # model IDs that no longer exist (e.g. "gemini-3-flash-lite"), which causes
-    # generateContent to 404 and silently degrades all premium analysis to fallback.
-    return (settings.GEMINI_MODEL or "").strip() or "gemini-flash-lite-latest"
+    fallback = (settings.GEMINI_MODEL or "").strip() or "gemma-4-31b-it"
+    token = credentials.credentials
+
+    try:
+        user_res = db.auth.get_user(token)
+        u = user_res.user
+        app_meta = getattr(u, "app_metadata", None) or {}
+        user_meta = getattr(u, "user_metadata", None) or {}
+        for raw in (app_meta.get("gemini_model"), user_meta.get("gemini_model")):
+            if isinstance(raw, str):
+                m = raw.strip()
+                if m:
+                    return m
+    except Exception:
+        pass
+
+    return fallback
 
 
 async def get_current_gemini_analysis_model(
