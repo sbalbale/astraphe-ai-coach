@@ -145,10 +145,9 @@
             </div>
           </div>
           <button
-            class="px-3 py-1 rounded-full text-[11px] font-medium cursor-pointer transition-all duration-200 shrink-0"
-            style={integrations.apple.connected
-              ? 'background: var(--color-red-dim); color: var(--color-red); border: 1px solid rgba(240,113,120,0.3)'
-              : 'background: rgba(240,113,120,0.15); color: #F07178; border: 1px solid rgba(240,113,120,0.3)'}
+            class="px-3 py-1 rounded-full text-[11px] font-medium cursor-pointer transition-all duration-200 shrink-0 border {integrations.apple.connected
+              ? 'bg-red-dim text-red border-red/30'
+              : 'bg-red-dim text-red border-red/30'}"
             onclick={() => toggleIntegration('apple')}
           >
             {syncing === 'apple' ? '...' : integrations.apple.connected ? 'Unlink' : 'Connect'}
@@ -179,10 +178,9 @@
             </div>
           </div>
           <button
-            class="px-3 py-1 rounded-full text-[11px] font-medium cursor-pointer transition-all duration-200 shrink-0"
-            style={integrations.garmin.connected
-              ? 'background: var(--color-red-dim); color: var(--color-red); border: 1px solid rgba(240,113,120,0.3)'
-              : 'background: rgba(0, 160, 233, 0.15); color: #00A0E9; border: 1px solid rgba(0, 160, 233, 0.35)'}
+            class="px-3 py-1 rounded-full text-[11px] font-medium cursor-pointer transition-all duration-200 shrink-0 border {integrations.garmin.connected
+              ? 'bg-red-dim text-red border-red/30'
+              : 'border-[rgba(0,160,233,0.35)] bg-[rgba(0,160,233,0.15)] text-[#00A0E9]'}"
             onclick={() => toggleIntegration('garmin')}
           >
             {syncing === 'garmin' ? '...' : integrations.garmin.connected ? 'Unlink' : 'Connect'}
@@ -212,10 +210,9 @@
             </div>
           </div>
           <button
-            class="px-3 py-1 rounded-full text-[11px] font-medium cursor-pointer transition-all duration-200 shrink-0"
-            style={integrations.whoop.connected
-              ? 'background: var(--color-red-dim); color: var(--color-red); border: 1px solid rgba(240,113,120,0.3)'
-              : 'background: rgba(255,203,136,0.15); color: #FFCB88; border: 1px solid rgba(255,203,136,0.3)'}
+            class="px-3 py-1 rounded-full text-[11px] font-medium cursor-pointer transition-all duration-200 shrink-0 border {integrations.whoop.connected
+              ? 'bg-red-dim text-red border-red/30'
+              : 'bg-amber-dim text-amber border-amber/30'}"
             onclick={() => toggleIntegration('whoop')}
           >
             {syncing === 'whoop' ? '...' : integrations.whoop.connected ? 'Unlink' : 'Connect'}
@@ -245,10 +242,9 @@
             </div>
           </div>
           <button
-            class="px-3 py-1 rounded-full text-[11px] font-medium cursor-pointer transition-all duration-200 shrink-0"
-            style={integrations.strava.connected
-              ? 'background: var(--color-red-dim); color: var(--color-red); border: 1px solid rgba(240,113,120,0.3)'
-              : 'background: rgba(252,76,2,0.15); color: #FC4C02; border: 1px solid rgba(252,76,2,0.3)'}
+            class="px-3 py-1 rounded-full text-[11px] font-medium cursor-pointer transition-all duration-200 shrink-0 border {integrations.strava.connected
+              ? 'bg-red-dim text-red border-red/30'
+              : 'border-[rgba(252,76,2,0.3)] bg-[rgba(252,76,2,0.15)] text-[#FC4C02]'}"
             onclick={() => toggleIntegration('strava')}
           >
             {syncing === 'strava' ? '...' : integrations.strava.connected ? 'Unlink' : 'Connect'}

@@ -368,7 +368,7 @@
 
     <!-- Anchor values -->
     <div class="grid grid-cols-2 gap-2.5">
-      <Card style="background: linear-gradient(135deg, rgba(240,113,120,0.12), transparent);">
+      <Card class="!bg-gradient-to-br from-red/10 via-transparent to-transparent">
         <p class="text-[9px] text-text2 font-mono uppercase tracking-[0.08em] mb-1">Max Heart Rate</p>
         <p class="text-[26px] font-bold text-red tracking-[-0.02em] leading-tight">
           {maxHRKnown ?? '—'}
@@ -378,7 +378,7 @@
         </p>
         <p class="text-[10px] text-text2 mt-0.5">Profile Baseline</p>
       </Card>
-      <Card style="background: linear-gradient(135deg, rgba(74,158,255,0.12), transparent);">
+      <Card class="!bg-gradient-to-br from-[rgba(87,155,250,0.12)] via-transparent to-transparent">
         <p class="text-[9px] text-text2 font-mono uppercase tracking-[0.08em] mb-1">Resting Heart Rate</p>
         <p class="text-[26px] font-bold tracking-[-0.02em] leading-tight" style="color: {HR_ZONE_HEX[1]}">
           {restingHRKnown ?? '—'}
@@ -565,7 +565,7 @@
     </Card>
 
     {#if authStore.tier === 'premium' && hasWorkouts}
-      <Card style="background: linear-gradient(135deg, rgba(70,33,255,0.08), transparent); border-color: rgba(70,33,255,0.2);">
+      <Card class="!bg-gradient-to-br from-blue/10 via-transparent to-transparent border-blue/20">
         <div class="flex items-center gap-1.5 mb-2">
           <span class="text-[11px] font-mono uppercase tracking-[0.08em] text-blue">Zone Insight</span>
           <Tag color="var(--blue)">ASTRAPE</Tag>

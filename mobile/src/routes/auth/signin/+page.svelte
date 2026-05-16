@@ -34,7 +34,7 @@
   <div class="w-full max-w-sm z-10">
     <div class="mb-10 text-center">
       <div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue to-teal flex items-center justify-center mx-auto mb-6 shadow-[0_4px_32px_rgba(70,33,255,0.4)]">
-        <span class="text-3xl font-bold text-white">A</span>
+        <span class="text-3xl font-bold text-text0">A</span>
       </div>
       <h1 class="text-3xl font-bold tracking-tight mb-2">Welcome Back</h1>
       <p class="text-text2 text-sm">Sign in to sync your AI coaching data</p>
@@ -77,14 +77,14 @@
       <button 
         type="submit" 
         disabled={loading}
-        class="w-full mt-4 py-3.5 bg-blue text-white font-semibold rounded-xl hover:bg-[#3d1ae6] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        class="w-full mt-4 py-3.5 bg-blue text-text0 font-semibold rounded-xl hover:bg-blue/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
       >
         {loading ? 'Signing In...' : 'Sign In'}
       </button>
     </form>
 
     <p class="text-center text-xs text-text2 mt-8">
-      Don't have an account? <a href="/auth/signup" class="text-white hover:text-teal transition-colors">Sign up</a>
+      Don't have an account? <a href="/auth/signup" class="text-text0 hover:text-teal transition-colors">Sign up</a>
     </p>
   </div>
 </div>

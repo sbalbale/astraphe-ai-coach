@@ -81,10 +81,10 @@
         </label>
         <label class="flex justify-between items-center py-3 cursor-pointer group">
           <div>
-            <p class="text-[13px] font-medium text-text0 group-hover:text-[#4621FF] transition-colors">Weekly Insights</p>
+            <p class="text-[13px] font-medium text-text0 group-hover:text-blue transition-colors">Weekly Insights</p>
             <p class="text-[10px] text-text2 mt-0.5">Summary of your load, form, and sleep trends.</p>
           </div>
-          <input type="checkbox" checked={settings.insights} onchange={() => toggleSetting('insights')} disabled={saving} class="w-4 h-4 accent-[#4621FF]" />
+          <input type="checkbox" checked={settings.insights} onchange={() => toggleSetting('insights')} disabled={saving} class="w-4 h-4 accent-blue" />
         </label>
       </div>
     </Card>

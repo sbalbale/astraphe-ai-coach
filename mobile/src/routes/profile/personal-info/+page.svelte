@@ -126,12 +126,12 @@
 
   <form onsubmit={handleSave} class="flex flex-col gap-3 mt-2">
     {#if saved}
-      <div class="px-3 py-2 rounded-xl border text-[12px] bg-teal-dim border-[rgba(0,200,168,0.35)] text-teal">
+      <div class="px-3 py-2 rounded-xl border text-[12px] bg-teal-dim border-teal/30 text-teal">
         Saved successfully.
       </div>
     {/if}
     {#if saveError}
-      <div class="px-3 py-2 rounded-xl border text-[12px] bg-red-dim border-[rgba(240,113,120,0.35)] text-red">
+      <div class="px-3 py-2 rounded-xl border text-[12px] bg-red-dim border-red/30 text-red">
         {saveError}
       </div>
     {/if}
@@ -239,7 +239,7 @@
       </div>
     </Card>
 
-    <button type="submit" disabled={saving} class="w-full py-3.5 bg-blue text-white font-semibold rounded-xl hover:bg-[#3d1ae6] transition-colors mt-2 disabled:opacity-50">
+    <button type="submit" disabled={saving} class="w-full py-3.5 bg-blue text-text0 font-semibold rounded-xl hover:bg-blue/90 transition-colors mt-2 disabled:opacity-50">
       {saving ? 'Saving...' : 'Save Changes'}
     </button>
   </form>

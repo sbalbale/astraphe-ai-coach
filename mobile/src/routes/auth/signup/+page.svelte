@@ -111,14 +111,14 @@
       <button 
         type="submit" 
         disabled={loading}
-        class="w-full mt-4 py-3.5 bg-teal text-bg1 font-semibold rounded-xl hover:bg-[#00b598] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        class="w-full mt-4 py-3.5 bg-teal text-bg1 font-semibold rounded-xl hover:bg-teal/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
       >
         {loading ? 'Creating Account...' : 'Create Account'}
       </button>
     </form>
 
     <p class="text-center text-xs text-text2 mt-8">
-      Already have an account? <a href="/auth/signin" class="text-white hover:text-blue transition-colors">Sign in</a>
+      Already have an account? <a href="/auth/signin" class="text-text0 hover:text-blue transition-colors">Sign in</a>
     </p>
   </div>
 </div>

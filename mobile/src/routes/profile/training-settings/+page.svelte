@@ -134,12 +134,12 @@
 
   <form onsubmit={handleSave} class="flex flex-col gap-3 mt-2">
     {#if saved}
-      <div class="px-3 py-2 rounded-xl border text-[12px] bg-teal-dim border-[rgba(0,200,168,0.35)] text-teal">
+      <div class="px-3 py-2 rounded-xl border text-[12px] bg-teal-dim border-teal/30 text-teal">
         Saved successfully.
       </div>
     {/if}
     {#if saveError}
-      <div class="px-3 py-2 rounded-xl border text-[12px] bg-red-dim border-[rgba(240,113,120,0.35)] text-red">
+      <div class="px-3 py-2 rounded-xl border text-[12px] bg-red-dim border-red/30 text-red">
         {saveError}
       </div>
     {/if}
@@ -159,15 +159,15 @@
         <div>
           <label for="units" class="block text-[11px] text-text2 mb-1">Measurement Units</label>
           <div class="flex p-1 bg-glass2 rounded-lg border border-border">
-            <button type="button" class="flex-1 py-1.5 text-xs rounded-md transition-colors {units === 'metric' ? 'bg-blue text-white' : 'text-text2 hover:text-text0'}" onclick={() => setUnits('metric')}>Metric</button>
-            <button type="button" class="flex-1 py-1.5 text-xs rounded-md transition-colors {units === 'imperial' ? 'bg-blue text-white' : 'text-text2 hover:text-text0'}" onclick={() => setUnits('imperial')}>Imperial</button>
+            <button type="button" class="flex-1 py-1.5 text-xs rounded-md transition-colors {units === 'metric' ? 'bg-blue text-text0' : 'text-text2 hover:text-text0'}" onclick={() => setUnits('metric')}>Metric</button>
+            <button type="button" class="flex-1 py-1.5 text-xs rounded-md transition-colors {units === 'imperial' ? 'bg-blue text-text0' : 'text-text2 hover:text-text0'}" onclick={() => setUnits('imperial')}>Imperial</button>
           </div>
         </div>
         <div>
           <label for="timeformat" class="block text-[11px] text-text2 mb-1">Time Format</label>
           <div class="flex p-1 bg-glass2 rounded-lg border border-border">
-            <button type="button" class="flex-1 py-1.5 text-xs rounded-md transition-colors {timeFormat === '12h' ? 'bg-blue text-white' : 'text-text2 hover:text-text0'}" onclick={() => timeFormat = '12h'}>12-Hour</button>
-            <button type="button" class="flex-1 py-1.5 text-xs rounded-md transition-colors {timeFormat === '24h' ? 'bg-blue text-white' : 'text-text2 hover:text-text0'}" onclick={() => timeFormat = '24h'}>24-Hour</button>
+            <button type="button" class="flex-1 py-1.5 text-xs rounded-md transition-colors {timeFormat === '12h' ? 'bg-blue text-text0' : 'text-text2 hover:text-text0'}" onclick={() => timeFormat = '12h'}>12-Hour</button>
+            <button type="button" class="flex-1 py-1.5 text-xs rounded-md transition-colors {timeFormat === '24h' ? 'bg-blue text-text0' : 'text-text2 hover:text-text0'}" onclick={() => timeFormat = '24h'}>24-Hour</button>
           </div>
         </div>
       </div>
@@ -232,7 +232,7 @@
                 id="ftp"
                 type="number"
                 bind:value={ftp}
-                class="w-full p-2 pr-10 bg-glass2 border border-border rounded-lg text-sm text-text0 font-mono outline-none focus:border-[#4621FF]"
+                class="w-full p-2 pr-10 bg-glass2 border border-border rounded-lg text-sm text-text0 font-mono outline-none focus:border-blue"
               />
               <span class="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[11px] text-text2 font-mono">W</span>
             </div>
@@ -272,7 +272,7 @@
       </div>
     </Card>
 
-    <button type="submit" disabled={saving} class="w-full py-3.5 bg-blue text-white font-semibold rounded-xl hover:bg-[#3d1ae6] transition-colors mt-2 disabled:opacity-50">
+    <button type="submit" disabled={saving} class="w-full py-3.5 bg-blue text-text0 font-semibold rounded-xl hover:bg-blue/90 transition-colors mt-2 disabled:opacity-50">
       {saving ? 'Saving...' : 'Save Configuration'}
     </button>
   </form>

@@ -30,7 +30,7 @@
     formatZoneBpmRange,
     canonicalHrZoneShortName,
   } from '$lib/hrZoneDisplay';
-  import { formCssColor, getWeeklyLoadDeltaColor } from '$lib/scoreColors';
+  import { CHART_ATL_STROKE, CHART_CTL_STROKE, formCssColor, getWeeklyLoadDeltaColor } from '$lib/scoreColors';
   import { Lightbulb } from 'lucide-svelte';
   import {
     getActivityStreams,
@@ -50,8 +50,8 @@
   import LapStrip from '$lib/components/workout/LapStrip.svelte';
   import DataSources from '$lib/components/workout/DataSources.svelte';
 
-  const CTL_IDENTITY_HEX = '#3b82f6';
-  const ATL_IDENTITY_HEX = '#64748b';
+  const CTL_IDENTITY_HEX = CHART_CTL_STROKE;
+  const ATL_IDENTITY_HEX = CHART_ATL_STROKE;
 
   let metric = $state('load');
   const tabs = ['load', 'history']; // Simplified tabs for now as pace/zones need complex processing
@@ -159,7 +159,7 @@
     if (t === 'run' || t === 'running') return 'var(--blue)';
     if (t === 'bike' || t === 'cycling') return 'var(--teal)';
     if (t === 'row' || t === 'rowing') return 'var(--amber)';
-    if (t === 'mobility') return '#a855f7';
+    if (t === 'mobility') return '#a855f7'; // sport-type color, no design token
     if (t === 'other') return 'var(--amber)';
     return 'var(--text2)';
   }
@@ -167,8 +167,8 @@
   function getWorkoutBg(type: string) {
     const t = type?.toLowerCase();
     if (t === 'run' || t === 'running') return 'bg-blue-dim border-blue-glow';
-    if (t === 'bike' || t === 'cycling') return 'bg-teal-dim border-[rgba(0,200,168,0.3)]';
-    if (t === 'row' || t === 'rowing') return 'bg-amber-dim border-[rgba(255,203,136,0.3)]';
+    if (t === 'bike' || t === 'cycling') return 'bg-teal-dim border-teal/30';
+    if (t === 'row' || t === 'rowing') return 'bg-amber-dim border-amber/30';
     if (t === 'mobility') return 'bg-glass border-[rgba(168,85,247,0.35)]';
     if (t === 'other') return 'bg-glass border-[rgba(234,179,8,0.35)]';
     return 'bg-glass border-border';
@@ -409,7 +409,7 @@
 </script>
 
 <div class="flex flex-col gap-3">
-  <h1 class="text-[20px] font-bold tracking-[-0.02em] text-slate-200 pt-1">Training Analysis</h1>
+  <h1 class="text-[20px] font-bold tracking-[-0.02em] text-text0 pt-1">Training Analysis</h1>
 
   {#if showNoTrainingData}
     <EmptyState 
@@ -441,8 +441,8 @@
               value={Math.round(athleteStore.ctl)}
               color={CTL_IDENTITY_HEX}
               sub="Long-term load"
-              labelClass="text-[10px] text-slate-400 uppercase tracking-[0.08em] font-mono"
-              subClass="text-[10px] text-slate-400"
+              labelClass="text-[10px] text-text1 uppercase tracking-[0.08em] font-mono"
+              subClass="text-[10px] text-text1"
             />
           </div>
         </Card>
@@ -453,9 +453,9 @@
               value={Math.round(athleteStore.atl)}
               color={ATL_IDENTITY_HEX}
               sub="Short-term load"
-              labelClass="text-[10px] text-slate-400 uppercase tracking-[0.08em] font-mono"
-              subClass="text-[10px] text-slate-400"
-              valueClassName="text-slate-200"
+              labelClass="text-[10px] text-text1 uppercase tracking-[0.08em] font-mono"
+              subClass="text-[10px] text-text1"
+              valueClassName="text-text0"
             />
           </div>
         </Card>
@@ -466,23 +466,23 @@
               value={athleteStore.tsb > 0 ? `+${Math.round(athleteStore.tsb)}` : Math.round(athleteStore.tsb)}
               color={formCssColor(athleteStore.tsb)}
               sub="Training balance"
-              labelClass="text-[10px] text-slate-400 uppercase tracking-[0.08em] font-mono"
-              subClass="text-[10px] text-slate-400"
+              labelClass="text-[10px] text-text1 uppercase tracking-[0.08em] font-mono"
+              subClass="text-[10px] text-text1"
             />
           </div>
         </Card>
         <Card paddingClass="px-6 py-5">
           <div class="flex flex-col justify-start items-start w-full leading-tight">
             <div class="flex flex-col gap-0.5 w-full">
-              <span class="text-[10px] font-mono uppercase tracking-wide text-slate-400">Weekly TSS</span>
+              <span class="text-[10px] font-mono uppercase tracking-wide text-text1">Weekly TSS</span>
               <div class="flex flex-col gap-1">
-                <p class="text-[22px] font-semibold tabular-nums leading-none text-slate-200 tracking-[-0.02em]">
+                <p class="text-[22px] font-semibold tabular-nums leading-none text-text0 tracking-[-0.02em]">
                   {weeklyRollingContext.weekSum}
                 </p>
                 {#if weeklyRollingContext.baseline !== null && weeklyRollingContext.delta !== null && weeklyRollingContext.pct !== null}
                   {@const delta = weeklyRollingContext.delta}
                   <div class="flex flex-row flex-wrap items-baseline gap-x-2 gap-y-0">
-                    <span class="text-[10px] font-mono tabular-nums text-slate-400">
+                    <span class="text-[10px] font-mono tabular-nums text-text1">
                       Baseline: {weeklyRollingContext.baseline}
                     </span>
                     <span class="text-[10px] font-mono tabular-nums {getWeeklyLoadDeltaColor(weeklyRollingContext.pct)}">
@@ -504,23 +504,23 @@
       
       {#if athleteStore.metrics?.trainingLoadData?.length > 0}
         <Card>
-          <p class="text-[13px] font-semibold mb-3 text-slate-200">Training Load Trend</p>
+          <p class="text-[13px] font-semibold mb-3 text-text0">Training Load Trend</p>
           <MultiLineChart data={athleteStore.metrics.trainingLoadData} height={120} />
         </Card>
       {/if}
       
       <Card
         paddingClass="px-6 py-4"
-        style="background: linear-gradient(135deg, rgba(70,33,255,0.12), transparent);"
+        class="!bg-gradient-to-br from-blue/10 via-transparent to-transparent"
       >
         <div class="flex gap-3 items-start">
-          <Lightbulb class="w-4 h-4 shrink-0 text-slate-500 mt-0.5" strokeWidth={1.5} aria-hidden="true" />
+          <Lightbulb class="w-4 h-4 shrink-0 text-text2 mt-0.5" strokeWidth={1.5} aria-hidden="true" />
           <div class="flex-1 min-w-0">
-            <p class="text-[13px] font-semibold mb-1.5 text-slate-400">Load Insight</p>
+            <p class="text-[13px] font-semibold mb-1.5 text-text1">Load Insight</p>
             {#if analysisLoading && analysisText === null}
               <p class="text-xs text-text2 animate-pulse">Analyzing...</p>
             {:else}
-              <p class="text-xs text-slate-300 leading-relaxed">
+              <p class="text-xs text-text1 leading-relaxed">
                 {analysisText ??
                   (athleteStore.tsb > 10
                     ? `You have significant freshness (TSB +${Math.round(athleteStore.tsb)}). Excellent time for a peak performance or hard test.`
@@ -644,8 +644,7 @@
           </div>
 
           {#if authStore.tier === 'premium'}
-            <div class="mt-4 pt-4 border-t border-border/40"
-                 style="background: linear-gradient(135deg, rgba(70,33,255,0.08), transparent); border-radius: 12px; padding: 12px;">
+            <div class="mt-4 pt-4 border-t border-border/40 rounded-xl p-3 bg-gradient-to-br from-blue/10 via-transparent to-transparent">
               <div class="flex items-center gap-1.5 mb-2">
                 <span class="text-[11px] font-mono uppercase tracking-[0.08em] text-blue">AI Insight</span>
                 <Tag color="var(--blue)">ASTRAPE</Tag>
