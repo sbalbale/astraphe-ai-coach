@@ -1,5 +1,7 @@
 <script lang="ts">
   import '../app.css';
+  import { onMount } from 'svelte';
+  import { App } from '@capacitor/app';
   import { page } from '$app/stores';
   import { afterNavigate, goto } from '$app/navigation';
   import Sidebar from '$lib/components/Sidebar.svelte';
@@ -19,8 +21,35 @@
   let wide = $derived(innerWidth >= 768);
   
   let isAuthRoute = $derived($page.url.pathname.startsWith('/auth'));
+  let isAuthFlowRoute = $derived(
+    ['/auth/callback', '/auth/reset-password'].includes($page.url.pathname)
+  );
   let isOnboardingRoute = $derived($page.url.pathname === '/onboarding');
   let isNoShellRoute = $derived(isAuthRoute || isOnboardingRoute);
+
+  onMount(() => {
+    const listener = App.addListener('appUrlOpen', ({ url }) => {
+      try {
+        const parsed = new URL(url);
+        const hash = parsed.hash ?? '';
+        if (parsed.host === 'auth' && parsed.pathname === '/callback') {
+          goto('/auth/callback' + hash);
+        } else if (parsed.host === 'auth' && parsed.pathname === '/reset-password') {
+          goto('/auth/reset-password' + hash);
+        } else if (parsed.pathname.startsWith('/auth/callback')) {
+          goto('/auth/callback' + hash);
+        } else if (parsed.pathname.startsWith('/auth/reset-password')) {
+          goto('/auth/reset-password' + hash);
+        }
+      } catch {
+        // Malformed URL — ignore
+      }
+    });
+
+    return () => {
+      void listener.then((h) => h.remove());
+    };
+  });
 
   const profileComplete = $derived.by(() => {
     const p = athleteStore.profile;
@@ -60,7 +89,8 @@
     const complete = profileComplete;
 
     // Signed in but on an auth route: onboarding until profile is complete, then home.
-    if (isAuthRoute) {
+    // Exempt callback/reset-password so email deep-link flows can complete.
+    if (isAuthRoute && !isAuthFlowRoute) {
       goto(complete ? '/dashboard' : '/onboarding', { replaceState: true });
       return;
     }

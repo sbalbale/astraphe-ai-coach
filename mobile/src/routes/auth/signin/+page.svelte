@@ -1,7 +1,10 @@
 <script lang="ts">
   import { supabase } from '$lib/supabase';
   import { goto } from '$app/navigation';
-  
+  import { page } from '$app/stores';
+
+  let resetSuccess = $derived($page.url.searchParams.get('reset') === 'success');
+
   let email = $state('');
   let password = $state('');
   let loading = $state(false);
@@ -40,6 +43,12 @@
       <p class="text-text2 text-sm">Sign in to sync your AI coaching data</p>
     </div>
 
+    {#if resetSuccess}
+      <div class="p-3 bg-teal-dim border-l-2 border-teal rounded-lg mb-6 text-xs text-text0 leading-relaxed">
+        Password updated. Sign in with your new password.
+      </div>
+    {/if}
+
     {#if errorMsg}
       <div class="p-3 bg-red-dim border-l-2 border-red rounded-lg mb-6 text-xs text-text0 leading-relaxed">
         {errorMsg}
@@ -62,7 +71,7 @@
       <div>
         <div class="flex justify-between items-baseline ml-1 mb-1.5">
           <label for="password" class="block text-[10px] text-text2 font-mono uppercase tracking-widest">Password</label>
-          <button type="button" class="text-[10px] text-teal hover:underline font-mono bg-transparent border-none cursor-pointer">Forgot?</button>
+          <button type="button" onclick={() => goto('/auth/forgot-password')} class="text-[10px] text-teal hover:underline font-mono bg-transparent border-none cursor-pointer">Forgot?</button>
         </div>
         <input 
           id="password" 
