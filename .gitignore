@@ -17,6 +17,10 @@ google-cloud-credentials.json
 # ------------------------------------------
 # 2. Frontend: Svelte 5 & Node.js
 # ------------------------------------------
+# npm lockfile — mobile uses pnpm only (root keeps package-lock.json)
+mobile/package-lock.json
+yarn.lock
+
 node_modules/
 /dist/
 /build/
