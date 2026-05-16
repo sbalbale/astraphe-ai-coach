@@ -522,21 +522,17 @@ async def process_and_save_workout(payload: WorkoutPayload, athlete_id: str, db:
     )
     workout_id = row["id"]
 
+    hr_zone_0_raw = int(getattr(payload, "hr_zone_0_pct", None) or 0)
     hr_zones = {
-        1: payload.hr_zone_1_pct,
+        1: None
+        if (payload.hr_zone_1_pct is None and hr_zone_0_raw == 0)
+        else int(payload.hr_zone_1_pct or 0) + hr_zone_0_raw,
         2: payload.hr_zone_2_pct,
         3: payload.hr_zone_3_pct,
         4: payload.hr_zone_4_pct,
         5: payload.hr_zone_5_pct,
     }
     has_hr_zones = any(v is not None for v in hr_zones.values())
-    hr_zone_0_pct = getattr(payload, "hr_zone_0_pct", None)
-    if hr_zone_0_pct is None and has_hr_zones:
-        try:
-            s = sum(int(v or 0) for v in hr_zones.values())
-            hr_zone_0_pct = max(0, 100 - s)
-        except Exception:
-            hr_zone_0_pct = None
 
     athlete = await asyncio.to_thread(_fetch_athlete_for_workout_sync, db, athlete_id)
 
@@ -564,8 +560,6 @@ async def process_and_save_workout(payload: WorkoutPayload, athlete_id: str, db:
         )
     elif has_hr_zones and payload.duration_seconds:
         safe_hr_zones = {k: float(v or 0.0) for k, v in hr_zones.items()}
-        if hr_zone_0_pct is not None:
-            safe_hr_zones[0] = float(hr_zone_0_pct or 0.0)
 
         zone_minutes = {
             k: (v / 100.0) * (payload.duration_seconds / 60.0) for k, v in safe_hr_zones.items()
@@ -618,12 +612,11 @@ async def process_and_save_workout(payload: WorkoutPayload, athlete_id: str, db:
         "avg_pace_sec_km": payload.avg_pace_sec_km,
         "tss": tss,
         "strain_score": strain_score,
-        "hr_zone_0_pct": hr_zone_0_pct,
-        "hr_zone_1_pct": payload.hr_zone_1_pct,
-        "hr_zone_2_pct": payload.hr_zone_2_pct,
-        "hr_zone_3_pct": payload.hr_zone_3_pct,
-        "hr_zone_4_pct": payload.hr_zone_4_pct,
-        "hr_zone_5_pct": payload.hr_zone_5_pct,
+        "hr_zone_1_pct": hr_zones.get(1),
+        "hr_zone_2_pct": hr_zones.get(2),
+        "hr_zone_3_pct": hr_zones.get(3),
+        "hr_zone_4_pct": hr_zones.get(4),
+        "hr_zone_5_pct": hr_zones.get(5),
     }
 
     await asyncio.to_thread(_workouts_update_by_id_sync, db, workout_id, update_data)

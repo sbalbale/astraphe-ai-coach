@@ -477,11 +477,7 @@ async def whoop_webhook(request: Request, background_tasks: BackgroundTasks, db=
 
             score = workout_data.get("score") if isinstance(workout_data.get("score"), dict) else {}
             zone = score.get("zone_durations") if isinstance(score.get("zone_durations"), dict) else {}
-            total_zone_ms = sum(v for v in zone.values() if isinstance(v, (int, float)))
-            def _pct(ms):
-                if not total_zone_ms or not isinstance(ms, (int, float)):
-                    return None
-                return int(round((ms / total_zone_ms) * 100))
+            z1_pct, z2_pct, z3_pct, z4_pct, z5_pct = whoop.hr_zone_pct_from_whoop_zone_millis(zone)
 
             workout_payload = WorkoutPayload(
                 source="whoop",
@@ -495,12 +491,12 @@ async def whoop_webhook(request: Request, background_tasks: BackgroundTasks, db=
                 distance_m=score.get("distance_meter") or score.get("distance_m") or workout_data.get("distance_m"),
                 avg_hr=score.get("average_heart_rate") or score.get("avg_hr") or workout_data.get("avg_hr"),
                 max_hr=score.get("max_heart_rate") or workout_data.get("max_hr"),
-                hr_zone_0_pct=_pct(zone.get("zone_zero_milli")),
-                hr_zone_1_pct=_pct(zone.get("zone_one_milli")),
-                hr_zone_2_pct=_pct(zone.get("zone_two_milli")),
-                hr_zone_3_pct=_pct(zone.get("zone_three_milli")),
-                hr_zone_4_pct=_pct(zone.get("zone_four_milli")),
-                hr_zone_5_pct=_pct(zone.get("zone_five_milli")),
+                hr_zone_0_pct=None,
+                hr_zone_1_pct=z1_pct,
+                hr_zone_2_pct=z2_pct,
+                hr_zone_3_pct=z3_pct,
+                hr_zone_4_pct=z4_pct,
+                hr_zone_5_pct=z5_pct,
             )
             background_tasks.add_task(process_and_save_workout, workout_payload, athlete_id, db)
             

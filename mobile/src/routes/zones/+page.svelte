@@ -15,6 +15,7 @@
   import { authStore } from '$lib/stores/authStore.svelte';
   import { goto } from '$app/navigation';
   import { api } from '$lib/api';
+  import { HR_ZONE_HEX } from '$lib/hrZoneDisplay';
   import {
     addDays,
     addMonths,
@@ -97,15 +98,7 @@
     max_hr: 'Max HR %'
   };
 
-  /** Colors by zone number — API returns exactly five HR zones for every method */
-  const ZONE_COLORS: Record<number, string> = {
-    1: '#4621FF',
-    2: '#00C8A8',
-    3: '#FFCB88',
-    4: '#F07178',
-    5: '#FF4791'
-  };
-
+  /** Descriptions by zone number — API returns exactly five HR zones for every method */
   const ZONE_DESCRIPTIONS: Record<number, string> = {
     1: 'Easier aerobic work. Active recovery and base.',
     2: 'Steady endurance. Aerobic base and fat metabolism.',
@@ -113,6 +106,15 @@
     4: 'Threshold. Race-pace sustainable intensity.',
     5: 'VO2max and above. Hard intervals and short maximal efforts.'
   };
+
+  /** Time-in-zones stacked bar labels (always Z1-Z5 — no WHOOP-only Z0 bucket) */
+  const TIME_IN_ZONES_LABELS = [
+    'Z1 · Active Recovery',
+    'Z2 · Aerobic Endurance',
+    'Z3 · Tempo',
+    'Z4 · Threshold',
+    'Z5 · VO2max'
+  ];
 
   const hasProfile = $derived(!!athleteStore.profile);
 
@@ -125,7 +127,7 @@
       name: z.name,
       lo: z.min,
       hi: z.max,
-      color: ZONE_COLORS[z.zone] ?? '#AAB3BF',
+      color: HR_ZONE_HEX[z.zone] ?? '#AAB3BF',
       desc: ZONE_DESCRIPTIONS[z.zone] ?? ''
     }))
   );
@@ -274,11 +276,12 @@
 
   // Memoize distribution calculation
   const distribution = $derived.by(() => {
-    if (!hasWorkouts) return { pcts: [0, 0, 0, 0, 0, 0] as number[], validCount: 0, totalCount: 0 };
-    
-    let totals = [0, 0, 0, 0, 0, 0];
+    if (!hasWorkouts)
+      return { pcts: [0, 0, 0, 0, 0] as number[], validCount: 0, totalCount: 0 };
+
+    let totals = [0, 0, 0, 0, 0];
     let validCount = 0;
-    
+
     // Use a single pass over workouts
     for (let i = 0; i < timeAndSportFilteredWorkouts.length; i++) {
       const w = timeAndSportFilteredWorkouts[i];
@@ -288,34 +291,32 @@
         const z3 = Number(w.hr_zone_3_pct || 0);
         const z4 = Number(w.hr_zone_4_pct || 0);
         const z5 = Number(w.hr_zone_5_pct || 0);
-        const z0 = Math.max(0, 100 - (z1 + z2 + z3 + z4 + z5));
 
-        totals[0] += z0;
-        totals[1] += z1;
-        totals[2] += z2;
-        totals[3] += z3;
-        totals[4] += z4;
-        totals[5] += z5;
+        totals[0] += z1;
+        totals[1] += z2;
+        totals[2] += z3;
+        totals[3] += z4;
+        totals[4] += z5;
         validCount++;
       }
     }
-    
+
     if (validCount === 0) {
-      return { pcts: [0, 0, 0, 0, 0, 0] as number[], validCount: 0, totalCount: timeAndSportFilteredWorkouts.length };
+      return { pcts: [0, 0, 0, 0, 0] as number[], validCount: 0, totalCount: timeAndSportFilteredWorkouts.length };
     }
-    
+
     const count = validCount;
-    
+
     // Normalize to sum to exactly 100%
-    let rounded = totals.map(t => Math.round(t / count));
+    let rounded = totals.map((t) => Math.round(t / count));
     let sum = rounded.reduce((a, b) => a + b, 0);
-    
+
     if (sum !== 100 && sum > 0) {
       // Adjust the largest zone to make it exactly 100%
       let maxIdx = rounded.indexOf(Math.max(...rounded));
-      rounded[maxIdx] += (100 - sum);
+      rounded[maxIdx] += 100 - sum;
     }
-    
+
     return { pcts: rounded, validCount, totalCount: timeAndSportFilteredWorkouts.length };
   });
 </script>
@@ -390,9 +391,9 @@
         </p>
         <p class="text-[10px] text-text2 mt-0.5">Profile Baseline</p>
       </Card>
-      <Card style="background: linear-gradient(135deg, rgba(70,33,255,0.12), transparent);">
+      <Card style="background: linear-gradient(135deg, rgba(74,158,255,0.12), transparent);">
         <p class="text-[9px] text-text2 font-mono uppercase tracking-[0.08em] mb-1">Resting Heart Rate</p>
-        <p class="text-[26px] font-bold text-[#4621FF] tracking-[-0.02em] leading-tight">
+        <p class="text-[26px] font-bold tracking-[-0.02em] leading-tight" style="color: {HR_ZONE_HEX[1]}">
           {restingHRKnown ?? '—'}
           {#if restingHRKnown != null}
             <span class="text-[13px] font-normal text-text2 ml-1">bpm</span>
@@ -544,21 +545,27 @@
         <div class="flex flex-col gap-3">
           <div class="h-6 w-full flex rounded-lg overflow-hidden border border-border/50">
             {#each distribution.pcts as pct, i (i)}
-              {@const colors = ['#AAB3BF', '#4621FF', '#00C8A8', '#FFCB88', '#F07178', '#FF4791']}
-              <div class="h-full transition-all duration-500" style="width: {pct}%; background: {colors[i]};" title="Z{i+1}: {pct}%"></div>
+              {@const z = i + 1}
+              {@const color = HR_ZONE_HEX[z]}
+              <div
+                class="h-full transition-all duration-500"
+                style="width: {pct}%; background: {color};"
+                title="Z{z}: {pct}%"
+              ></div>
             {/each}
           </div>
-          
+
           <div class="grid grid-cols-2 gap-x-4 gap-y-2">
             {#each distribution.pcts as pct, i (i)}
-              {@const colors = ['#AAB3BF', '#4621FF', '#00C8A8', '#FFCB88', '#F07178', '#FF4791']}
-              {@const labels = ['Z0 Resting', 'Z1 Recovery', 'Z2 Aerobic', 'Z3 Tempo', 'Z4 Threshold', 'Z5 VO2max']}
+              {@const z = i + 1}
+              {@const color = HR_ZONE_HEX[z]}
+              {@const label = TIME_IN_ZONES_LABELS[i] ?? `Z{z}`}
               <div class="flex items-center justify-between">
                 <div class="flex items-center gap-1.5">
-                  <div class="w-2 h-2 rounded-full" style="background: {colors[i]}"></div>
-                  <span class="text-[10px] text-text1">{labels[i]}</span>
+                  <div class="w-2 h-2 rounded-full" style="background: {color}"></div>
+                  <span class="text-[10px] text-text1">{label}</span>
                 </div>
-                <span class="text-[10px] font-mono font-bold" style="color: {colors[i]}">{pct}%</span>
+                <span class="text-[10px] font-mono font-bold" style="color: {color}">{pct}%</span>
               </div>
             {/each}
           </div>
