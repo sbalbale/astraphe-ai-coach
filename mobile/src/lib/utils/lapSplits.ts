@@ -34,17 +34,53 @@ export function paceFromDistanceTime(
   return null;
 }
 
+/** Lap/split speed in m/s from Strava field, distance/time, or rowing pace. */
+export function splitAverageSpeedMps(split: ActivitySplit): number | null {
+  if (split.average_speed != null && split.average_speed > 0) {
+    return split.average_speed;
+  }
+  if (split.distance > 0 && split.elapsed_time > 0) {
+    return split.distance / split.elapsed_time;
+  }
+  if (split.pace_seconds != null && split.pace_seconds > 0) {
+    return 500 / split.pace_seconds;
+  }
+  return null;
+}
+
+export function averageSpeedFromSplits(splits: ActivitySplit[]): number | null {
+  const speeds = splits
+    .map(splitAverageSpeedMps)
+    .filter((v): v is number => v != null && Number.isFinite(v) && v > 0);
+  if (speeds.length > 0) {
+    return speeds.reduce((a, b) => a + b, 0) / speeds.length;
+  }
+  const totalDist = splits.reduce((s, i) => s + (i.distance ?? 0), 0);
+  const totalTime = splits.reduce((s, i) => s + (i.elapsed_time ?? 0), 0);
+  if (totalDist > 0 && totalTime > 0) return totalDist / totalTime;
+  return null;
+}
+
 export function intervalsToSplits(intervals: RowingInterval[]): ActivitySplit[] {
-  return intervals.map((iv) => ({
-    split_number: iv.split_number,
-    distance: iv.distance ?? 0,
-    elapsed_time: iv.elapsed_time ?? 0,
-    pace_seconds: iv.pace_per_500m,
-    average_heartrate: iv.average_heartrate,
-    average_watts: iv.average_watts,
-    average_cadence: iv.average_cadence,
-    average_speed: null,
-  }));
+  return intervals.map((iv) => {
+    const pace = iv.pace_per_500m;
+    const speed =
+      pace != null && pace > 0
+        ? 500 / pace
+        : iv.distance && iv.elapsed_time
+          ? iv.distance / iv.elapsed_time
+          : null;
+    return {
+      split_number: iv.split_number,
+      distance: iv.distance ?? 0,
+      elapsed_time: iv.elapsed_time ?? 0,
+      pace_seconds: pace,
+      average_heartrate: iv.average_heartrate,
+      average_watts: iv.average_watts,
+      average_cadence: iv.average_cadence,
+      average_speed: speed,
+    };
+  });
 }
 
 export function lapsToSplits(
