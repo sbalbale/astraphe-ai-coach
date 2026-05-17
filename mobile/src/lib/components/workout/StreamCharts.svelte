@@ -28,6 +28,15 @@
   const MIN_SELECTION_SAMPLES = 10;
   const METERS_PER_MILE = 1609.344;
 
+  const STREAM_COLORS = {
+    heartrate: 'var(--red)',
+    pace: 'var(--teal)',
+    speed: 'var(--sky)',
+    power: 'var(--amber)',
+    cadence: 'var(--violet)',
+    elevation: 'var(--green)',
+  } as const;
+
   interface Zone {
     zone: number;
     min_bpm: number;
@@ -387,7 +396,7 @@
         id: 'hr',
         title: 'Heart Rate',
         unitLabel: 'bpm',
-        color: '#F07178',
+        color: STREAM_COLORS.heartrate,
         gradientId: 'grad-hr',
         yScale: yS,
         yTickFormat: (v) => String(Math.round(Number(v))),
@@ -442,7 +451,7 @@
           id: 'pace',
           title: paceChartTitle(sport, measurementUnits),
           unitLabel: paceSuffix,
-          color: '#00C8A8',
+          color: STREAM_COLORS.pace,
           gradientId: 'grad-pace',
           yScale: yS,
           yTickFormat: formatPaceAxisTick,
@@ -491,7 +500,7 @@
           id: 'speed',
           title: `Speed ${speedUnit}`,
           unitLabel: speedUnit,
-          color: '#a855f7',
+          color: STREAM_COLORS.speed,
           gradientId: 'grad-speed',
           yScale: yS,
           yTickFormat: (v) => String(Math.round(Number(v))),
@@ -543,7 +552,7 @@
           id: 'cadence',
           title: cadenceChartTitle(sport),
           unitLabel: unit,
-          color: '#a855f7',
+          color: STREAM_COLORS.cadence,
           gradientId: 'grad-cadence',
           yScale: yS,
           yTickFormat: (v) => String(Math.round(Number(v))),
@@ -595,7 +604,7 @@
           id: 'power',
           title: 'Power',
           unitLabel: 'W',
-          color: '#FFCB88',
+          color: STREAM_COLORS.power,
           gradientId: 'grad-power',
           yScale: yS,
           yTickFormat: (v) => String(Math.round(Number(v))),
@@ -660,7 +669,7 @@
             id: 'elev',
             title: 'Elevation',
             unitLabel: elevUnit,
-            color: '#579BFA',
+            color: STREAM_COLORS.elevation,
             gradientId: 'grad-elev',
             yScale: yS,
             yTickFormat: (v) => String(Math.round(Number(v))),
@@ -811,15 +820,11 @@
       onpointerleave={onChartPointerLeave}
       role="presentation"
     >
-      {#if overlayStyle}
-        <div class="range-overlay" style={overlayStyle} aria-hidden="true"></div>
-      {/if}
-
       {#each chartModels as c (c.id)}
       <div
         data-chart-row
         data-chart-id={c.id}
-        class="relative {hasSelection && interactionChartId === c.id ? 'z-20' : ''}"
+        class="relative"
       >
         <p class="text-[11px] font-semibold text-text0 mb-0.5">{c.title}</p>
         <p class="text-[10px] font-mono text-text2 h-4 mb-0.5">
@@ -888,7 +893,8 @@
                 x2={hoveredX}
                 y1="0"
                 y2={CHART_H}
-                stroke="rgba(255,255,255,0.15)"
+                stroke="white"
+                stroke-opacity="0.15"
                 stroke-width="1"
                 pointer-events="none"
               />
@@ -904,88 +910,89 @@
             transform="translate({MARGIN.left},{MARGIN.top})"
           ></g>
         </svg>
+      </div>
 
-        {#if hasSelection && rangeStats && interactionChartId === c.id}
-          <div
-            class="relative z-20 flex items-center gap-1.5 mt-2 px-2.5 py-2 bg-bg2 border border-border rounded-xl overflow-x-auto shadow-lg"
-            transition:slide={{ duration: 200, axis: 'y' }}
-          >
-            <div class="flex gap-1.5 flex-1 flex-nowrap overflow-x-auto">
-              <div class="flex flex-col items-center px-2.5 py-1 bg-glass rounded-lg shrink-0">
-                <span class="text-[9px] font-mono text-text2 uppercase tracking-wider"
+      {#if hasSelection && rangeStats && interactionChartId === c.id}
+        <div
+          class="relative z-30 flex items-center gap-1.5 mt-2 px-2.5 py-2 bg-bg2 border border-white/[0.12] rounded-xl overflow-x-auto"
+          transition:slide={{ duration: 200, axis: 'y' }}
+        >
+            <div class="flex gap-1.5 flex-1 overflow-x-auto">
+              <div class="flex flex-col items-center px-2.5 py-1 bg-white/[0.07] rounded-lg shrink-0">
+                <span class="font-mono text-[9px] uppercase tracking-widest text-white/[0.45] mb-0.5"
                   >Duration</span
                 >
-                <span class="text-[13px] font-bold font-mono text-text0 tabular-nums"
+                <span class="font-mono text-[13px] font-bold tabular-nums text-text0"
                   >{formatDuration(rangeStats.durationSecs)}</span
                 >
               </div>
 
               {#if rangeStats.distanceM !== null}
-                <div class="flex flex-col items-center px-2.5 py-1 bg-glass rounded-lg shrink-0">
-                  <span class="text-[9px] font-mono text-text2 uppercase tracking-wider"
+                <div class="flex flex-col items-center px-2.5 py-1 bg-white/[0.07] rounded-lg shrink-0">
+                  <span class="font-mono text-[9px] uppercase tracking-widest text-white/[0.45] mb-0.5"
                     >Dist</span
                   >
-                  <span class="text-[13px] font-bold font-mono text-text0 tabular-nums"
+                  <span class="font-mono text-[13px] font-bold tabular-nums text-text0"
                     >{formatRangeDistance(rangeStats.distanceM)}</span
                   >
                 </div>
               {/if}
 
               {#if rangeStats.avgPace !== null}
-                <div class="flex flex-col items-center px-2.5 py-1 bg-glass rounded-lg shrink-0">
-                  <span class="text-[9px] font-mono text-text2 uppercase tracking-wider"
+                <div class="flex flex-col items-center px-2.5 py-1 bg-white/[0.07] rounded-lg shrink-0">
+                  <span class="font-mono text-[9px] uppercase tracking-widest text-white/[0.45] mb-0.5"
                     >Avg pace</span
                   >
-                  <span class="text-[13px] font-bold font-mono text-text0 tabular-nums"
+                  <span class="font-mono text-[13px] font-bold tabular-nums text-text0"
                     >{rangeStats.avgPace}{paceDistanceSuffix(sport, measurementUnits)}</span
                   >
                 </div>
               {/if}
 
               {#if rangeStats.avgHr !== null}
-                <div class="flex flex-col items-center px-2.5 py-1 bg-glass rounded-lg shrink-0">
-                  <span class="text-[9px] font-mono text-text2 uppercase tracking-wider"
+                <div class="flex flex-col items-center px-2.5 py-1 bg-white/[0.07] rounded-lg shrink-0">
+                  <span class="font-mono text-[9px] uppercase tracking-widest text-white/[0.45] mb-0.5"
                     >Avg HR</span
                   >
-                  <span class="text-[13px] font-bold font-mono text-text0 tabular-nums">
+                  <span class="font-mono text-[13px] font-bold tabular-nums text-text0">
                     {rangeStats.avgHr}
-                    <span class="text-[10px] font-normal text-text1">bpm</span>
+                    <span class="text-[10px] font-normal text-text2">bpm</span>
                   </span>
                 </div>
               {/if}
 
               {#if rangeStats.maxHr !== null}
-                <div class="flex flex-col items-center px-2.5 py-1 bg-glass rounded-lg shrink-0">
-                  <span class="text-[9px] font-mono text-text2 uppercase tracking-wider"
+                <div class="flex flex-col items-center px-2.5 py-1 bg-white/[0.07] rounded-lg shrink-0">
+                  <span class="font-mono text-[9px] uppercase tracking-widest text-white/[0.45] mb-0.5"
                     >Max HR</span
                   >
-                  <span class="text-[13px] font-bold font-mono text-text0 tabular-nums">
+                  <span class="font-mono text-[13px] font-bold tabular-nums text-text0">
                     {rangeStats.maxHr}
-                    <span class="text-[10px] font-normal text-text1">bpm</span>
+                    <span class="text-[10px] font-normal text-text2">bpm</span>
                   </span>
                 </div>
               {/if}
 
               {#if rangeStats.avgWatts !== null}
-                <div class="flex flex-col items-center px-2.5 py-1 bg-glass rounded-lg shrink-0">
-                  <span class="text-[9px] font-mono text-text2 uppercase tracking-wider"
+                <div class="flex flex-col items-center px-2.5 py-1 bg-white/[0.07] rounded-lg shrink-0">
+                  <span class="font-mono text-[9px] uppercase tracking-widest text-white/[0.45] mb-0.5"
                     >Avg power</span
                   >
-                  <span class="text-[13px] font-bold font-mono text-text0 tabular-nums">
+                  <span class="font-mono text-[13px] font-bold tabular-nums text-text0">
                     {rangeStats.avgWatts}
-                    <span class="text-[10px] font-normal text-text1">W</span>
+                    <span class="text-[10px] font-normal text-text2">W</span>
                   </span>
                 </div>
               {/if}
 
               {#if rangeStats.avgCadence !== null}
-                <div class="flex flex-col items-center px-2.5 py-1 bg-glass rounded-lg shrink-0">
-                  <span class="text-[9px] font-mono text-text2 uppercase tracking-wider"
+                <div class="flex flex-col items-center px-2.5 py-1 bg-white/[0.07] rounded-lg shrink-0">
+                  <span class="font-mono text-[9px] uppercase tracking-widest text-white/[0.45] mb-0.5"
                     >Cadence</span
                   >
-                  <span class="text-[13px] font-bold font-mono text-text0 tabular-nums">
+                  <span class="font-mono text-[13px] font-bold tabular-nums text-text0">
                     {rangeStats.avgCadence}
-                    <span class="text-[10px] font-normal text-text1"
+                    <span class="text-[10px] font-normal text-text2"
                       >{cadenceUnitLabel(sport)}</span
                     >
                   </span>
@@ -993,13 +1000,13 @@
               {/if}
 
               {#if rangeStats.elevGain !== null && rangeStats.elevGain > 0}
-                <div class="flex flex-col items-center px-2.5 py-1 bg-glass rounded-lg shrink-0">
-                  <span class="text-[9px] font-mono text-text2 uppercase tracking-wider"
+                <div class="flex flex-col items-center px-2.5 py-1 bg-white/[0.07] rounded-lg shrink-0">
+                  <span class="font-mono text-[9px] uppercase tracking-widest text-white/[0.45] mb-0.5"
                     >Elev gain</span
                   >
-                  <span class="text-[13px] font-bold font-mono text-text0 tabular-nums">
+                  <span class="font-mono text-[13px] font-bold tabular-nums text-text0">
                     {rangeStats.elevGain}
-                    <span class="text-[10px] font-normal text-text1">m</span>
+                    <span class="text-[10px] font-normal text-text2">m</span>
                   </span>
                 </div>
               {/if}
@@ -1007,7 +1014,7 @@
 
             <button
               type="button"
-              class="shrink-0 bg-transparent border-none text-text2 text-sm cursor-pointer px-1.5 py-1 rounded-md leading-none hover:bg-glass"
+              class="shrink-0 text-text2 hover:text-text1 hover:bg-white/[0.07] rounded-md px-1.5 py-1 text-sm leading-none transition-colors"
               onclick={clearSelection}
               aria-label="Clear selection"
             >
@@ -1015,8 +1022,15 @@
             </button>
           </div>
         {/if}
-      </div>
     {/each}
+
+      {#if overlayStyle}
+        <div
+          class="absolute top-0 bottom-0 pointer-events-none z-10 bg-white/[0.07] border-l-2 border-r-2 border-white/30"
+          style={overlayStyle}
+          aria-hidden="true"
+        ></div>
+      {/if}
     </div>
   {/if}
 </div>
@@ -1024,19 +1038,9 @@
 <style>
   .chart-interaction-wrapper {
     position: relative;
+    isolation: isolate;
     user-select: none;
     -webkit-user-select: none;
-  }
-
-  .range-overlay {
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    background: rgba(70, 33, 255, 0.1);
-    border-left: 2px solid #4621ff;
-    border-right: 2px solid #4621ff;
-    pointer-events: none;
-    z-index: 5;
   }
 
 </style>

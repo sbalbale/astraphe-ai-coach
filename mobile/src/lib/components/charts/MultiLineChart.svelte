@@ -320,6 +320,7 @@
     <div
       bind:this={chartRoot}
       class="relative group min-w-[600px] w-full snap-start"
+      role="presentation"
       onpointerleave={() => {
         selectedIdx = null;
         tooltipLayout = null;
