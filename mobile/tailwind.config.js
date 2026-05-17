@@ -30,6 +30,22 @@ export default {
           DEFAULT: '#F07178',
           dim: 'rgba(240,113,120,0.15)',
         },
+        sky: {
+          DEFAULT: '#4A9EFF',
+          dim: 'rgba(74,158,255,0.15)',
+        },
+        violet: {
+          DEFAULT: '#A78BFA',
+          dim: 'rgba(167,139,250,0.15)',
+        },
+        steel: {
+          DEFAULT: '#6B7FA3',
+          dim: 'rgba(107,127,163,0.15)',
+        },
+        green: {
+          DEFAULT: '#5BAD6F',
+          dim: 'rgba(91,173,111,0.15)',
+        },
         text0: '#F0F0FF',
         text1: 'rgba(240,240,255,0.65)',
         text2: 'rgba(240,240,255,0.35)',

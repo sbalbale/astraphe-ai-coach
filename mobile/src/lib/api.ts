@@ -1,4 +1,5 @@
 import { getAuthHeaders } from './apiAuth';
+import { supabase } from '$lib/supabase';
 import type { Workout } from './types/training';
 
 const VITE_API_URL = import.meta.env.VITE_API_URL;
@@ -175,7 +176,7 @@ export const api = {
 
   async saveWorkout(workout: Workout): Promise<Workout | null> {
     try {
-      const headers = await getHeaders({ 'Content-Type': 'application/json' });
+      const headers = await getAuthHeaders({ 'Content-Type': 'application/json' });
       const isUuid = (v: string) =>
         /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
       const method = isUuid(workout.id) ? 'PUT' : 'POST';
@@ -234,7 +235,7 @@ export const api = {
 
   async patchAthleteProfile(payload: any) {
     try {
-      const headers = await getHeaders({ 'Content-Type': 'application/json' });
+      const headers = await getAuthHeaders({ 'Content-Type': 'application/json' });
       const res = await fetch(`${API_URL}/v1/athlete/profile`, {
         method: 'PATCH',
         headers,
@@ -309,7 +310,7 @@ export const api = {
 
   async post(path: string, payload: any) {
     try {
-      const headers = await getHeaders({ 'Content-Type': 'application/json' });
+      const headers = await getAuthHeaders({ 'Content-Type': 'application/json' });
       const res = await fetch(`${API_URL}${path}`, {
         method: 'POST',
         headers,
@@ -391,7 +392,7 @@ export const api = {
     reply: string;
     sources?: unknown[];
   }> {
-    const headers = await getHeaders({ 'Content-Type': 'application/json' });
+    const headers = await getAuthHeaders({ 'Content-Type': 'application/json' });
     const response = await fetch(`${API_URL}/v1/coach/message`, {
       method: 'POST',
       headers,
