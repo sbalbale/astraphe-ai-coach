@@ -73,6 +73,13 @@ export function streamsHaveVelocity(streams: ActivityStreams | null): boolean {
   return vel.some((v) => typeof v === 'number' && Number.isFinite(v) && v > 0);
 }
 
+/** True when Strava stored a usable heartrate stream. */
+export function streamsHaveHeartrate(streams: ActivityStreams | null): boolean {
+  const hr = streams?.time_series?.heartrate;
+  if (!Array.isArray(hr)) return false;
+  return hr.some((v) => typeof v === 'number' && Number.isFinite(v) && v > 0);
+}
+
 async function parseApiError(res: Response, fallback: string): Promise<string> {
   try {
     const body = (await res.json()) as { detail?: string };
