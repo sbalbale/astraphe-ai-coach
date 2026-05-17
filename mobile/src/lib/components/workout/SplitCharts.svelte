@@ -1,16 +1,36 @@
 <script lang="ts">
   import * as d3 from 'd3';
-  import type { RowingInterval, ZoneDef } from '$lib/services/activityService';
+  import type { ZoneDef } from '$lib/services/activityService';
   import { formatHR } from '$lib/utils/formatters';
-  import { formatPaceWithSuffix, paceChartTitle } from '$lib/utils/paceChart';
+  import {
+    coercePaceSport,
+    formatPaceWithSuffix,
+    formatSpeedFromMps,
+    paceChartTitle,
+    speedUnitLabel,
+    type Units,
+  } from '$lib/utils/paceChart';
   import { hrZoneColorForBpm } from '$lib/hrZoneDisplay';
   import {
     clampPaceSeries,
     formatPaceAxisTick,
     invertedPaceYScale,
   } from '$lib/utils/paceChart';
+  import { splitsLabel, type ActivitySplit } from '$lib/utils/lapSplits';
 
-  let { intervals, zones = [] }: { intervals: RowingInterval[]; zones?: ZoneDef[] } = $props();
+  let {
+    splits,
+    sport,
+    zones = [],
+    measurementUnits = 'metric',
+    source = 'laps',
+  }: {
+    splits: ActivitySplit[];
+    sport: string;
+    zones?: ZoneDef[];
+    measurementUnits?: Units;
+    source?: string;
+  } = $props();
 
   const MARGIN = { top: 24, right: 8, bottom: 28, left: 40 };
   const CHART_H = 100;
@@ -21,9 +41,11 @@
   let hoveredIdx = $state<number | null>(null);
 
   const innerW = $derived(Math.max(1, chartWidth - MARGIN.left - MARGIN.right));
+  const sportKind = $derived(coercePaceSport(sport));
+  const splitWord = $derived(splitsLabel(sport).toLowerCase());
 
   type BarChartModel = {
-    id: 'pace' | 'hr';
+    id: 'pace' | 'speed' | 'hr';
     title: string;
     unitLabel: string;
     subtitle: string;
@@ -35,29 +57,28 @@
   };
 
   const chartModels = $derived.by((): BarChartModel[] => {
-    if (intervals.length < 2 || innerW <= 0) return [];
+    if (splits.length < 2 || innerW <= 0) return [];
     const list: BarChartModel[] = [];
-    const n = intervals.length;
+    const n = splits.length;
     const xBand = d3
       .scaleBand<number>()
-      .domain(intervals.map((_, i) => i))
+      .domain(splits.map((_, i) => i))
       .range([0, innerW])
       .paddingInner(0.15)
       .paddingOuter(0.08);
     const bw = xBand.bandwidth();
 
-    const paceVals = intervals
-      .map((iv) => iv.pace_per_500m)
+    const paceVals = splits
+      .map((iv) => iv.pace_seconds)
       .filter((p): p is number => p != null && Number.isFinite(p) && p > 0);
-    if (paceVals.length >= 2) {
+    if ((sportKind === 'row' || sportKind === 'run') && paceVals.length >= 2) {
       const { lo: pLo, hi: pHi } = clampPaceSeries(paceVals);
       const yS = invertedPaceYScale(pLo, pHi, CHART_H, 0.12);
       const best = d3.min(paceVals) ?? 0;
       const avg = paceVals.reduce((a, b) => a + b, 0) / paceVals.length;
-      const bars = intervals.map((iv, i) => {
-        const raw = iv.pace_per_500m;
-        const p =
-          raw != null && raw > 0 ? Math.min(pHi, Math.max(pLo, raw)) : null;
+      const bars = splits.map((iv, i) => {
+        const raw = iv.pace_seconds;
+        const p = raw != null && raw > 0 ? Math.min(pHi, Math.max(pLo, raw)) : null;
         const y0 = CHART_H;
         const y1 = p != null ? yS(p) : CHART_H;
         const x = xBand(i) ?? 0;
@@ -71,13 +92,12 @@
       });
       list.push({
         id: 'pace',
-        title: paceChartTitle('row'),
-        unitLabel: '/500m',
-        subtitle: `Best ${formatPaceWithSuffix(best, 'row')} · Avg ${formatPaceWithSuffix(avg, 'row')} · per split`,
+        title: paceChartTitle(sport, measurementUnits),
+        unitLabel: sportKind === 'row' ? '/500m' : measurementUnits === 'imperial' ? '/mi' : '/km',
+        subtitle: `Best ${formatPaceWithSuffix(best, sport, measurementUnits)} · Avg ${formatPaceWithSuffix(avg, sport, measurementUnits)} · per ${splitWord}`,
         hoverLine: (idx) => {
-          const iv = intervals[idx];
-          const p = iv.pace_per_500m;
-          return `Split ${iv.split_number} · ${formatPaceWithSuffix(p, 'row')}`;
+          const iv = splits[idx];
+          return `${splitsLabel(sport)} ${iv.split_number} · ${formatPaceWithSuffix(iv.pace_seconds, sport, measurementUnits)}`;
         },
         bars,
         yScale: yS,
@@ -86,7 +106,48 @@
       });
     }
 
-    const hrVals = intervals
+    const speedVals = splits
+      .map((iv) => iv.average_speed)
+      .filter((v): v is number => v != null && Number.isFinite(v) && v > 0);
+    if (sportKind === 'bike' && speedVals.length >= 2) {
+      let yMin = d3.min(speedVals) ?? 0;
+      let yMax = d3.max(speedVals) ?? 1;
+      const pad = Math.max(0.5, (yMax - yMin) * 0.12);
+      yMin = Math.max(0, yMin - pad);
+      yMax += pad;
+      const yS = d3.scaleLinear().domain([yMin, yMax]).range([CHART_H, 0]);
+      const avg = speedVals.reduce((a, b) => a + b, 0) / speedVals.length;
+      const max = d3.max(speedVals) ?? 0;
+      const bars = splits.map((iv, i) => {
+        const v = iv.average_speed;
+        const y0 = CHART_H;
+        const y1 = v != null ? yS(v) : CHART_H;
+        const x = xBand(i) ?? 0;
+        return {
+          x,
+          width: bw,
+          height: Math.max(0, y0 - y1),
+          color: '#00C8A8',
+          idx: i,
+        };
+      });
+      list.push({
+        id: 'speed',
+        title: 'Speed',
+        unitLabel: speedUnitLabel(measurementUnits),
+        subtitle: `Avg ${formatSpeedFromMps(avg, measurementUnits)} · Max ${formatSpeedFromMps(max, measurementUnits)} · per ${splitWord}`,
+        hoverLine: (idx) => {
+          const iv = splits[idx];
+          return `${splitsLabel(sport)} ${iv.split_number} · ${formatSpeedFromMps(iv.average_speed, measurementUnits)}`;
+        },
+        bars,
+        yScale: yS,
+        yTickFormat: (v) => Number(v).toFixed(1),
+        xLabels: labelTicks(n, xBand),
+      });
+    }
+
+    const hrVals = splits
       .map((iv) => iv.average_heartrate)
       .filter((h): h is number => h != null && Number.isFinite(h));
     if (hrVals.length >= 2) {
@@ -98,7 +159,7 @@
       const yS = d3.scaleLinear().domain([yMin, yMax]).range([CHART_H, 0]);
       const avg = hrVals.reduce((a, b) => a + b, 0) / hrVals.length;
       const max = d3.max(hrVals) ?? 0;
-      const bars = intervals.map((iv, i) => {
+      const bars = splits.map((iv, i) => {
         const h = iv.average_heartrate;
         const y0 = CHART_H;
         const y1 = h != null ? yS(h) : CHART_H;
@@ -115,11 +176,11 @@
         id: 'hr',
         title: 'Heart Rate',
         unitLabel: 'bpm',
-        subtitle: `Avg ${Math.round(avg)} bpm · Max ${Math.round(max)} bpm · per split`,
+        subtitle: `Avg ${Math.round(avg)} bpm · Max ${Math.round(max)} bpm · per ${splitWord}`,
         hoverLine: (idx) => {
-          const iv = intervals[idx];
+          const iv = splits[idx];
           const h = iv.average_heartrate;
-          return `Split ${iv.split_number} · ${h != null ? formatHR(h) : '—'} bpm`;
+          return `${splitsLabel(sport)} ${iv.split_number} · ${h != null ? formatHR(h) : '—'} bpm`;
         },
         bars,
         yScale: yS,
@@ -136,7 +197,7 @@
     xBand: d3.ScaleBand<number>
   ): { x: number; label: string }[] {
     if (n <= 6) {
-      return intervals.map((iv, i) => ({
+      return splits.map((iv, i) => ({
         x: (xBand(i) ?? 0) + xBand.bandwidth() / 2,
         label: String(iv.split_number),
       }));
@@ -144,11 +205,17 @@
     const indices = [0, Math.floor(n / 2), n - 1];
     return indices.map((i) => ({
       x: (xBand(i) ?? 0) + xBand.bandwidth() / 2,
-      label: String(intervals[i].split_number),
+      label: String(splits[i].split_number),
     }));
   }
 
-  let axisYRefs = $state<Partial<Record<'pace' | 'hr', SVGGElement | undefined>>>({});
+  let axisYRefs = $state<Partial<Record<'pace' | 'speed' | 'hr', SVGGElement | undefined>>>({});
+
+  const sourceNote = $derived(
+    source === 'stream_derived'
+      ? 'Charts use stream-derived splits.'
+      : 'Charts use device lap splits.'
+  );
 
   $effect(() => {
     axisYRefs;
@@ -187,20 +254,20 @@
 </script>
 
 <div
-  class="rounded-2xl bg-glass2 border border-border p-3 space-y-4 touch-none select-none"
+  class="w-full rounded-2xl bg-glass2 border border-border p-3 space-y-4 touch-none select-none"
   bind:this={chartEl}
   role="presentation"
 >
   <p class="text-[11px] font-semibold text-text1 flex items-center gap-1.5">
     <span class="w-1.5 h-1.5 rounded-full bg-teal inline-block"></span>
-    Split Charts
+    {sportKind === 'row' ? 'Split Charts' : 'Lap Charts'}
   </p>
   <p class="text-[10px] text-text2 font-mono -mt-2">
-    Strava did not provide usable pace streams for this row; charts use device lap splits.
+    {sourceNote}
   </p>
 
   {#if chartModels.length === 0}
-    <p class="text-[12px] text-text2 font-mono text-center py-6">No split chart data.</p>
+    <p class="text-[12px] text-text2 font-mono text-center py-6">No lap chart data.</p>
   {:else}
     {#each chartModels as c (c.id)}
       <div>

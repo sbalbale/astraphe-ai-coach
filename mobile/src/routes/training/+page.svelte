@@ -42,6 +42,7 @@
     hydrateActivityStreams,
     refetchWorkoutFromStrava,
     streamsHaveVelocity,
+    streamsHaveHeartrate,
     type ActivityStreams,
     type ActivityLap,
     type ActivityIntervals,
@@ -50,6 +51,7 @@
   import { stravaPolylineFromPayload } from '$lib/utils/polyline';
   import { formatWorkoutDistance, normalizeUnits } from '$lib/utils/units';
   import { supportsPaceChart } from '$lib/utils/paceChart';
+  import { intervalsToSplits, lapsToSplits } from '$lib/utils/lapSplits';
   import StreamCharts from '$lib/components/workout/StreamCharts.svelte';
   import SplitCharts from '$lib/components/workout/SplitCharts.svelte';
   import IntervalsTable from '$lib/components/workout/IntervalsTable.svelte';
@@ -133,6 +135,46 @@
       Boolean(detailStreams) &&
       !streamsHaveVelocity(detailStreams) &&
       (detailStreams?.time_series?.heartrate?.length ?? 0) > 1
+  );
+
+  const detailSplits = $derived.by(() => {
+    const w = selectedWorkout;
+    if (!w) return { splits: [], source: 'laps' as string };
+    const sport = w.sport ?? '';
+    if (sport === 'row' && (detailIntervals?.intervals?.length ?? 0) > 0) {
+      return {
+        splits: intervalsToSplits(detailIntervals!.intervals),
+        source: detailIntervals?.source ?? 'laps',
+      };
+    }
+    if (detailLaps.length >= 2) {
+      return {
+        splits: lapsToSplits(detailLaps, sport, measurementUnits),
+        source: 'laps',
+      };
+    }
+    return { splits: [], source: 'laps' };
+  });
+
+  /** Lap bar charts only when streams lack per-second HR or pace/speed. */
+  const hasPerSecondStreamCharts = $derived(
+    Boolean(detailStreams) &&
+      (streamsHaveHeartrate(detailStreams) || streamsHaveVelocity(detailStreams))
+  );
+
+  const showLapSplitCharts = $derived(
+    detailSplits.splits.length >= 2 &&
+      !hasPerSecondStreamCharts &&
+      (selectedWorkout?.sport === 'row' ||
+        selectedWorkout?.sport === 'run' ||
+        selectedWorkout?.sport === 'bike')
+  );
+
+  const showSplitsTable = $derived(
+    detailSplits.splits.length >= 2 &&
+      (selectedWorkout?.sport === 'row' ||
+        selectedWorkout?.sport === 'run' ||
+        selectedWorkout?.sport === 'bike')
   );
 
   $effect(() => {
@@ -865,15 +907,26 @@
                 </div>
               {/if}
 
-              {#if selectedWorkout.sport === 'row' && (detailIntervals?.intervals?.length ?? 0) >= 2 && !streamsHaveVelocity(detailStreams)}
-                <div class="mt-4">
-                  <SplitCharts intervals={detailIntervals?.intervals ?? []} zones={mergedHrZoneDefs} />
+              {#if showLapSplitCharts}
+                <div class="mt-4 w-full">
+                  <SplitCharts
+                    splits={detailSplits.splits}
+                    sport={selectedWorkout.sport}
+                    zones={mergedHrZoneDefs}
+                    measurementUnits={measurementUnits}
+                    source={detailSplits.source}
+                  />
                 </div>
               {/if}
 
-              {#if selectedWorkout.sport === 'row' && detailIntervals?.intervals?.length}
-                <div class="mt-4">
-                  <IntervalsTable data={detailIntervals} />
+              {#if showSplitsTable}
+                <div class="mt-4 w-full">
+                  <IntervalsTable
+                    splits={detailSplits.splits}
+                    sport={selectedWorkout.sport}
+                    source={detailSplits.source}
+                    measurementUnits={measurementUnits}
+                  />
                 </div>
               {/if}
             {/if}
