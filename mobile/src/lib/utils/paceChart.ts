@@ -41,6 +41,20 @@ export function coercePaceSport(sport: string): PaceSportKind {
   return 'other';
 }
 
+/** Row/run: spm (strokes or steps per min). Bike: rpm. */
+export function cadenceUnitLabel(sport: string): string {
+  const k = coercePaceSport(sport);
+  return k === 'row' || k === 'run' ? 'spm' : 'rpm';
+}
+
+export function cadenceChartTitle(sport: string): string {
+  return coercePaceSport(sport) === 'row' ? 'Stroke Rate' : 'Cadence';
+}
+
+export function cadenceColumnHeader(sport: string): string {
+  return `Cadence (${cadenceUnitLabel(sport)})`;
+}
+
 /** Rowing + running only; no pace chart for cycling. */
 export function supportsPaceChart(sport: string): boolean {
   const k = coercePaceSport(sport);
