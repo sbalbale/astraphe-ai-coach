@@ -3,6 +3,8 @@
   import { slide } from 'svelte/transition';
   import { formatHrZoneTitle } from '$lib/hrZoneDisplay';
   import {
+    cadenceChartTitle,
+    cadenceUnitLabel,
     clampPaceSeries,
     coercePaceSport,
     formatPaceAxisTick,
@@ -536,10 +538,10 @@
           .defined((v) => v != null)
           .curve(d3.curveMonotoneX);
         const av = cValid.reduce((a, b) => a + b, 0) / cValid.length;
-        const unit = sport === 'row' ? 'spm' : 'rpm';
+        const unit = cadenceUnitLabel(sport);
         list.push({
           id: 'cadence',
-          title: sport === 'row' ? 'Stroke Rate' : 'Cadence',
+          title: cadenceChartTitle(sport),
           unitLabel: unit,
           color: '#a855f7',
           gradientId: 'grad-cadence',
@@ -984,7 +986,7 @@
                   <span class="text-[13px] font-bold font-mono text-text0 tabular-nums">
                     {rangeStats.avgCadence}
                     <span class="text-[10px] font-normal text-text1"
-                      >{coercePaceSport(sport) === 'row' ? 'spm' : 'rpm'}</span
+                      >{cadenceUnitLabel(sport)}</span
                     >
                   </span>
                 </div>

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { formatHR } from '$lib/utils/formatters';
   import {
+    cadenceColumnHeader,
     coercePaceSport,
     formatPaceWithSuffix,
     formatSpeedFromMps,
@@ -90,6 +91,7 @@
   );
 
   const speedColHeader = $derived(`Avg ${speedUnitLabel(measurementUnits)}`);
+  const cadenceColHeader = $derived(cadenceColumnHeader(sport));
 </script>
 
 <div class="w-full bg-glass2 border border-border rounded-2xl p-4">
@@ -122,7 +124,7 @@
               <th class="text-right py-2 pr-2">Watts</th>
             {/if}
             {#if showCadenceCol}
-              <th class="text-right py-2">Cadence</th>
+              <th class="text-right py-2">{cadenceColHeader}</th>
             {/if}
           </tr>
         </thead>
