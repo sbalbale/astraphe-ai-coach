@@ -5,10 +5,13 @@
     formatPaceWithSuffix,
     formatSpeedFromMps,
     paceDistanceSuffix,
+    speedUnitLabel,
   } from '$lib/utils/paceChart';
   import { formatSegmentDistance, type Units } from '$lib/utils/units';
   import {
     averagePaceFromSplits,
+    averageSpeedFromSplits,
+    splitAverageSpeedMps,
     splitsLabel,
     splitsTableTitle,
     type ActivitySplit,
@@ -37,8 +40,13 @@
     ).split_number;
   });
 
-  const showPaceCol = $derived(sportKind === 'row' || sportKind === 'run');
-  const showSpeedCol = $derived(sportKind === 'bike');
+  const showPaceCol = $derived(
+    (sportKind === 'row' || sportKind === 'run') &&
+      splits.some((i) => i.pace_seconds != null && i.pace_seconds > 0)
+  );
+  const showSpeedCol = $derived(
+    splits.some((i) => splitAverageSpeedMps(i) != null)
+  );
   const showWattsCol = $derived(splits.some((i) => i.average_watts != null));
   const showCadenceCol = $derived(splits.some((i) => i.average_cadence != null));
 
@@ -58,17 +66,12 @@
         ? splits.reduce((s, i) => s + (i.average_cadence ?? 0), 0) /
           splits.filter((i) => i.average_cadence != null).length
         : null;
-    const speedVals = splits
-      .map((i) => i.average_speed)
-      .filter((v): v is number => v != null && v > 0);
-    const avgSpeed =
-      speedVals.length > 0 ? speedVals.reduce((a, b) => a + b, 0) / speedVals.length : null;
     return {
       pace: averagePaceFromSplits(splits, sport, measurementUnits),
       avgHR,
       avgWatts,
       avgCadence,
-      avgSpeed,
+      avgSpeed: averageSpeedFromSplits(splits),
     };
   });
 
@@ -85,6 +88,8 @@
       ? 'Pace /500m'
       : `Pace ${paceDistanceSuffix(sport, measurementUnits)}`
   );
+
+  const speedColHeader = $derived(`Avg ${speedUnitLabel(measurementUnits)}`);
 </script>
 
 <div class="w-full bg-glass2 border border-border rounded-2xl p-4">
@@ -110,7 +115,7 @@
               <th class="text-right py-2 pr-2">{paceColHeader}</th>
             {/if}
             {#if showSpeedCol}
-              <th class="text-right py-2 pr-2">Avg speed</th>
+              <th class="text-right py-2 pr-2">{speedColHeader}</th>
             {/if}
             <th class="text-right py-2 pr-2">Avg HR</th>
             {#if showWattsCol}
@@ -139,7 +144,7 @@
               {/if}
               {#if showSpeedCol}
                 <td class="py-2 pr-2 text-right text-text0 font-semibold"
-                  >{formatSpeedFromMps(row.average_speed, measurementUnits)}</td
+                  >{formatSpeedFromMps(splitAverageSpeedMps(row), measurementUnits)}</td
                 >
               {/if}
               <td class="py-2 pr-2 text-right text-text1">{formatHR(row.average_heartrate)}</td>
