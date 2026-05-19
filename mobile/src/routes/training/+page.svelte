@@ -33,7 +33,7 @@
     canonicalHrZoneShortName,
   } from '$lib/hrZoneDisplay';
   import { CHART_ATL_STROKE, CHART_CTL_STROKE, formCssColor, getWeeklyLoadDeltaColor } from '$lib/scoreColors';
-  import { Lightbulb } from 'lucide-svelte';
+  import { Lightbulb } from '@lucide/svelte';
   import {
     getActivityStreams,
     getActivityLaps,
