@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ArrowUp, ArrowDown, Minus } from 'lucide-svelte';
+  import { ArrowUp, ArrowDown, Minus } from '@lucide/svelte';
   import { zScoreCssColor } from '$lib/scoreColors';
 
   let {
