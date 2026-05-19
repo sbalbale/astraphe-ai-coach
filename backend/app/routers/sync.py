@@ -1,8 +1,11 @@
+import hashlib
+import hmac
 import json
 import urllib.parse
 import secrets
 import asyncio
 from html import escape
+from urllib.parse import urlparse
 from fastapi import APIRouter, Request, Response, HTTPException, Depends, BackgroundTasks, Query
 from fastapi.responses import RedirectResponse, HTMLResponse
 from starlette.requests import ClientDisconnect
@@ -19,6 +22,27 @@ from app.services.processing import process_and_save_workout, process_and_save_b
 from fastapi import status
 
 router = APIRouter(prefix=f"{settings.API_PREFIX}/sync", tags=["Sync & Webhooks"])
+
+# Allowlist of hosts that may be used as a post-OAuth web_return redirect target.
+# Add your production and staging domains here.
+_ALLOWED_RETURN_HOSTS: frozenset[str] = frozenset({
+    "astrape.app",
+    "localhost",
+    "127.0.0.1",
+})
+
+def _safe_web_return(url: str | None) -> str | None:
+    """Returns the URL only if its host is on the allowlist, else None."""
+    if not url:
+        return None
+    try:
+        host = urlparse(url).hostname or ""
+        if host in _ALLOWED_RETURN_HOSTS or host.endswith(".astrape.app"):
+            return url
+    except Exception:
+        pass
+    return None
+
 
 def get_clean_redirect_url():
     """Helper to ensure the redirect URL is consistent across authorize and callback."""
@@ -245,12 +269,20 @@ def _oauth_connected_success_response(deep_link: str, provider: str) -> HTMLResp
 @router.post("/garmin/webhook")
 async def garmin_webhook(request: Request, background_tasks: BackgroundTasks, db=Depends(get_admin_db)):
     """Webhook receiver for Garmin Connect push notifications."""
-    signature = request.headers.get("X-Garmin-Signature")
-    if not signature:
-        # For local testing, we might want to skip this or use a mock
-        pass
-    
-    payload = await request.json()
+    body = await request.body()
+    signature = request.headers.get("X-Garmin-Signature", "")
+    garmin_secret = settings.GARMIN_WEBHOOK_SECRET
+    if garmin_secret and garmin_secret != "your_garmin_webhook_secret":
+        expected = hmac.new(
+            garmin_secret.encode("utf-8"), body, hashlib.sha256
+        ).hexdigest()
+        if not hmac.compare_digest(signature, expected):
+            raise HTTPException(status_code=401, detail="Invalid Garmin signature")
+
+    try:
+        payload = json.loads(body)
+    except Exception:
+        return Response(status_code=400)
     
     if "activities" in payload:
         for activity in payload["activities"]:
@@ -298,18 +330,14 @@ async def garmin_webhook(request: Request, background_tasks: BackgroundTasks, db
 @router.post("/whoop/webhook")
 async def whoop_webhook(request: Request, background_tasks: BackgroundTasks, db=Depends(get_admin_db)):
     """Webhook receiver for WHOOP data push events."""
-    signature = request.headers.get("X-WHOOP-Signature")
-    if not signature:
-        # raise HTTPException(status_code=401, detail="Missing WHOOP signature")
-        pass
-        
     try:
         body = await request.body()
     except ClientDisconnect:
-        # WHOOP (or a proxy) disconnected mid-stream. This is not actionable.
         return Response(status_code=200)
-    # if not whoop.verify_webhook_signature(body, signature):
-    #     raise HTTPException(status_code=401, detail="Invalid WHOOP signature")
+
+    signature = request.headers.get("X-WHOOP-Signature", "")
+    if not signature or not whoop.verify_webhook_signature(body, signature):
+        raise HTTPException(status_code=401, detail="Invalid or missing WHOOP signature")
 
     if settings.WHOOP_WEBHOOK_LOG_RAW:
         try:
@@ -570,14 +598,14 @@ async def strava_webhook(
 
 
 @router.get("/oauth/whoop/authorize")
-async def whoop_oauth_authorize(athlete_id: str = None, web_return: str = None):
-    """Step 1: Redirect user to WHOOP for authorization."""
-    if athlete_id == "undefined" or not athlete_id:
-        athlete_id = None
-        
+async def whoop_oauth_authorize(
+    web_return: str = None,
+    athlete_id: str = Depends(get_current_athlete),
+):
+    """Step 1: Redirect authenticated user to WHOOP for authorization."""
     redirect_url = get_clean_redirect_url()
-    state = athlete_id or settings.TEST_ATHLETE_ID or secrets.token_urlsafe(16)
-    if web_return:
+    state = athlete_id
+    if web_return and _safe_web_return(web_return):
         state = f"{state}|{web_return}"
     print(f"[whoop.oauth.authorize] redirect_uri={redirect_url} state={state}")
     
@@ -641,8 +669,8 @@ async def whoop_oauth_callback(
         
         
         deep_link = f"{settings.MOBILE_DEEP_LINK_SCHEME}://connected?provider=whoop&status=success"
-        if web_return:
-            return RedirectResponse(url=f"{web_return}?provider=whoop&status=success")
+        if safe_url := _safe_web_return(web_return):
+            return RedirectResponse(url=f"{safe_url}?provider=whoop&status=success")
         return _oauth_connected_success_response(deep_link, "whoop")
 
     except Exception as e:
@@ -651,15 +679,16 @@ async def whoop_oauth_callback(
 
 
 @router.get("/oauth/strava/authorize")
-async def strava_oauth_authorize(athlete_id: str | None = None, web_return: str = None):
-    """Redirect user to Strava for authorization."""
-    if not athlete_id or athlete_id == "undefined":
-        raise HTTPException(status_code=400, detail="athlete_id required")
+async def strava_oauth_authorize(
+    web_return: str = None,
+    athlete_id: str = Depends(get_current_athlete),
+):
+    """Redirect authenticated user to Strava for authorization."""
     if not settings.STRAVA_CLIENT_ID or not settings.STRAVA_CLIENT_SECRET:
         raise HTTPException(status_code=503, detail="Strava OAuth is not configured")
     callback_url = get_clean_strava_redirect_url()
     state = athlete_id
-    if web_return:
+    if web_return and _safe_web_return(web_return):
         state = f"{state}|{web_return}"
     params = {
         "client_id": settings.STRAVA_CLIENT_ID,
@@ -751,8 +780,8 @@ async def strava_oauth_callback(
             )
 
         deep_link = f"{settings.MOBILE_DEEP_LINK_SCHEME}://connected?provider=strava&status=success"
-        if web_return:
-            return RedirectResponse(url=f"{web_return}?provider=strava&status=success")
+        if safe_url := _safe_web_return(web_return):
+            return RedirectResponse(url=f"{safe_url}?provider=strava&status=success")
         return _oauth_connected_success_response(deep_link, "strava")
     except HTTPException:
         raise

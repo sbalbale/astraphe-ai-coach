@@ -1,9 +1,71 @@
+import asyncio
+from collections import defaultdict
+from dataclasses import dataclass
+from time import time
+
 from fastapi import Depends, HTTPException, Security
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from supabase import create_client, Client
 from app.config import settings
 
 security = HTTPBearer()
+
+# Per-tier default rate limits for AI endpoints (requests per minute / per hour).
+# Individual users can be given overrides via app_metadata.rate_limit_rpm / rate_limit_rph.
+TIER_DEFAULTS: dict[str, dict[str, int]] = {
+    "free":    {"rpm": 5,  "rph": 20},
+    "trial":   {"rpm": 15, "rph": 75},
+    "premium": {"rpm": 40, "rph": 200},
+}
+
+VALID_TIERS = frozenset(TIER_DEFAULTS.keys())
+
+
+@dataclass
+class UserConfig:
+    """All admin-controlled per-user settings, read from app_metadata in one auth call."""
+    user_id: str
+    tier: str                  # free | trial | premium
+    gemini_model: str          # model for coach chat
+    gemini_analysis_model: str # model for analysis endpoints
+    rate_limit_rpm: int        # AI requests per minute
+    rate_limit_rph: int        # AI requests per hour
+    is_admin: bool
+
+
+# ---------------------------------------------------------------------------
+# In-memory sliding-window rate limiter.
+# Works correctly for single-instance deployments (single Cloud Run container).
+# For horizontally-scaled deployments, replace _rate_limiter with a Redis
+# backend (e.g. redis-py + EXPIRE-based counter or a sliding-log in a sorted set).
+# ---------------------------------------------------------------------------
+
+class RateLimiter:
+    def __init__(self):
+        self._windows: dict[str, list[float]] = defaultdict(list)
+        self._lock = asyncio.Lock()
+
+    async def check(self, key: str, limit: int, window_seconds: int) -> bool:
+        async with self._lock:
+            now = time()
+            cutoff = now - window_seconds
+            self._windows[key] = [t for t in self._windows[key] if t > cutoff]
+            if len(self._windows[key]) >= limit:
+                return False
+            self._windows[key].append(now)
+            return True
+
+    async def require(self, key: str, limit: int, window_seconds: int, detail: str):
+        if not await self.check(key, limit, window_seconds):
+            raise HTTPException(status_code=429, detail=detail)
+
+
+_rate_limiter = RateLimiter()
+
+
+# ---------------------------------------------------------------------------
+# DB helpers
+# ---------------------------------------------------------------------------
 
 def get_db() -> Client:
     return create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
@@ -12,14 +74,9 @@ def get_admin_db() -> Client:
     return create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_ROLE_KEY or settings.SUPABASE_KEY)
 
 def _with_auth_token(db: Client, token: str) -> Client:
-    """
-    Attach the user's JWT so PostgREST queries run with RLS context.
-    supabase-py requires explicitly setting the Authorization header for table queries.
-    """
     try:
         db.postgrest.auth(token)
     except Exception:
-        # Fall back to explicitly setting headers if the underlying client changes.
         try:
             db.postgrest.session.headers.update({"Authorization": f"Bearer {token}"})
         except Exception:
@@ -29,6 +86,11 @@ def _with_auth_token(db: Client, token: str) -> Client:
 async def get_user_db(credentials: HTTPAuthorizationCredentials = Security(security)) -> Client:
     token = credentials.credentials
     return _with_auth_token(get_db(), token)
+
+
+# ---------------------------------------------------------------------------
+# Athlete identity
+# ---------------------------------------------------------------------------
 
 async def get_current_athlete(
     credentials: HTTPAuthorizationCredentials = Security(security),
@@ -40,11 +102,10 @@ async def get_current_athlete(
         user = db.auth.get_user(token)
         user_id = user.user.id
         print(f"Auth DEBUG: user_id={user_id}")
-        
-        # fetch athletes.id
+
         athlete_res = db.table("athletes").select("id").eq("user_id", user_id).execute()
         print(f"Auth DEBUG: athlete_res={athlete_res.data}")
-        
+
         if not athlete_res.data:
             raise HTTPException(status_code=404, detail="Athlete profile not found")
         return athlete_res.data[0]["id"]
@@ -54,7 +115,6 @@ async def get_current_athlete(
         print(f"Auth error: {str(e)}")
         if settings.APP_ENV == "development" and settings.TEST_ATHLETE_ID:
             print(f"WARNING: Falling back to TEST_ATHLETE_ID: {settings.TEST_ATHLETE_ID}")
-            # Only safe if the athlete row actually exists in this database.
             try:
                 exists = (
                     db.table("athletes")
@@ -74,85 +134,123 @@ async def get_current_athlete(
         raise HTTPException(status_code=401, detail=f"Invalid or missing token: {str(e)}")
 
 
-async def get_current_user_tier(
+# ---------------------------------------------------------------------------
+# User config — all admin-controlled fields in a single auth.get_user() call
+# ---------------------------------------------------------------------------
+
+def _resolve_rate_limits(app_meta: dict, tier: str) -> tuple[int, int]:
+    defaults = TIER_DEFAULTS.get(tier, TIER_DEFAULTS["free"])
+    try:
+        rpm = int(app_meta["rate_limit_rpm"]) if app_meta.get("rate_limit_rpm") is not None else defaults["rpm"]
+    except (TypeError, ValueError):
+        rpm = defaults["rpm"]
+    try:
+        rph = int(app_meta["rate_limit_rph"]) if app_meta.get("rate_limit_rph") is not None else defaults["rph"]
+    except (TypeError, ValueError):
+        rph = defaults["rph"]
+    return max(1, rpm), max(1, rph)
+
+
+async def get_user_config(
     credentials: HTTPAuthorizationCredentials = Security(security),
     db: Client = Depends(get_user_db),
-) -> str:
+) -> UserConfig:
     """
-    Returns the authenticated user's tier (free|trial|premium).
-    Source of truth: Supabase Auth app_metadata.tier.
+    Single dependency that reads all admin-controlled fields from app_metadata.
+    Source of truth is always app_metadata — user_metadata is never consulted
+    for tier, model, or rate-limit values because users can write user_metadata
+    themselves via the Supabase client SDK.
     """
     token = credentials.credentials
+    fallback_model = (settings.GEMINI_MODEL or "").strip() or "gemma-4-31b-it"
+    fallback_analysis = (settings.GEMINI_ANALYSIS_MODEL or "").strip() or "gemini-flash-lite-latest"
+
     try:
         user_res = db.auth.get_user(token)
         u = user_res.user
         app_meta = getattr(u, "app_metadata", None) or {}
-        user_meta = getattr(u, "user_metadata", None) or {}
-        tier_raw = (app_meta.get("tier") or user_meta.get("tier") or "free")
-        tier = str(tier_raw).strip().lower()
-        if tier not in ("free", "trial", "premium"):
-            return "free"
-        return tier
-    except Exception:
-        # Tier should never block core flows; treat as free on any auth lookup issues.
-        return "free"
 
+        tier_raw = str(app_meta.get("tier") or "free").strip().lower()
+        tier = tier_raw if tier_raw in VALID_TIERS else "free"
+
+        model_raw = app_meta.get("gemini_model")
+        model = model_raw.strip() if isinstance(model_raw, str) and model_raw.strip() else fallback_model
+
+        analysis_raw = app_meta.get("gemini_analysis_model")
+        analysis_model = (
+            analysis_raw.strip()
+            if isinstance(analysis_raw, str) and analysis_raw.strip()
+            else fallback_analysis
+        )
+
+        rpm, rph = _resolve_rate_limits(app_meta, tier)
+
+        return UserConfig(
+            user_id=u.id,
+            tier=tier,
+            gemini_model=model,
+            gemini_analysis_model=analysis_model,
+            rate_limit_rpm=rpm,
+            rate_limit_rph=rph,
+            is_admin=bool(app_meta.get("is_admin", False)),
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        defaults = TIER_DEFAULTS["free"]
+        return UserConfig(
+            user_id="",
+            tier="free",
+            gemini_model=fallback_model,
+            gemini_analysis_model=fallback_analysis,
+            rate_limit_rpm=defaults["rpm"],
+            rate_limit_rph=defaults["rph"],
+            is_admin=False,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Rate limiting dependency
+# ---------------------------------------------------------------------------
+
+async def require_ai_rate_limit(
+    athlete_id: str = Depends(get_current_athlete),
+    config: UserConfig = Depends(get_user_config),
+):
+    """
+    Enforces per-user sliding-window rate limits on AI endpoints.
+    Limits come from app_metadata overrides or tier defaults.
+    """
+    await _rate_limiter.require(
+        key=f"{athlete_id}:ai:minute",
+        limit=config.rate_limit_rpm,
+        window_seconds=60,
+        detail=f"Rate limit exceeded: max {config.rate_limit_rpm} AI requests per minute.",
+    )
+    await _rate_limiter.require(
+        key=f"{athlete_id}:ai:hour",
+        limit=config.rate_limit_rph,
+        window_seconds=3600,
+        detail=f"Rate limit exceeded: max {config.rate_limit_rph} AI requests per hour.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Backward-compatible single-value helpers
+# (used by analysis.py, plan.py — no changes needed in those routers)
+# ---------------------------------------------------------------------------
+
+async def get_current_user_tier(
+    config: UserConfig = Depends(get_user_config),
+) -> str:
+    return config.tier
 
 async def get_current_gemini_model(
-    credentials: HTTPAuthorizationCredentials = Security(security),
-    athlete_id: str = Depends(get_current_athlete),
-    db: Client = Depends(get_user_db),
+    config: UserConfig = Depends(get_user_config),
 ) -> str:
-    """
-    Returns the Gemini/Gemma model name to use for this request.
-
-    Primary: Supabase Auth JWT app_metadata.gemini_model (admin-controlled),
-    then user_metadata.gemini_model.
-    Fallback: backend .env GEMINI_MODEL, then gemma-4-31b-it.
-    """
-    fallback = (settings.GEMINI_MODEL or "").strip() or "gemma-4-31b-it"
-    token = credentials.credentials
-
-    try:
-        user_res = db.auth.get_user(token)
-        u = user_res.user
-        app_meta = getattr(u, "app_metadata", None) or {}
-        user_meta = getattr(u, "user_metadata", None) or {}
-        for raw in (app_meta.get("gemini_model"), user_meta.get("gemini_model")):
-            if isinstance(raw, str):
-                m = raw.strip()
-                if m:
-                    return m
-    except Exception:
-        pass
-
-    return fallback
-
+    return config.gemini_model
 
 async def get_current_gemini_analysis_model(
-    credentials: HTTPAuthorizationCredentials = Security(security),
-    athlete_id: str = Depends(get_current_athlete),
-    db: Client = Depends(get_user_db),
+    config: UserConfig = Depends(get_user_config),
 ) -> str:
-    """
-    Returns the Gemini model name to use for analysis requests (/v1/analysis/*).
-
-    Primary: Supabase Auth JWT app_metadata.gemini_analysis_model (admin-controlled).
-    Fallback: backend .env GEMINI_ANALYSIS_MODEL (defaults to a fast, no-reasoning model).
-    """
-    fallback = (settings.GEMINI_ANALYSIS_MODEL or "").strip() or "gemini-flash-lite-latest"
-    token = credentials.credentials
-
-    try:
-        user_res = db.auth.get_user(token)
-        u = user_res.user
-        app_meta = getattr(u, "app_metadata", None) or {}
-        raw = app_meta.get("gemini_analysis_model")
-        if isinstance(raw, str):
-            m = raw.strip()
-            if m:
-                return m
-    except Exception:
-        pass
-
-    return fallback
+    return config.gemini_analysis_model

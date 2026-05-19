@@ -12,7 +12,13 @@ from app.services.ai_coach import (
     generate_coach_conversation_title,
     get_coach_response,
 )
-from app.dependencies import get_current_athlete, get_current_gemini_model, get_current_user_tier, get_user_db
+from app.dependencies import (
+    get_current_athlete,
+    get_user_config,
+    get_user_db,
+    require_ai_rate_limit,
+    UserConfig,
+)
 
 class ChatMessage(BaseModel):
     conversation_id: Optional[str] = None
@@ -24,7 +30,6 @@ class CreateConversation(BaseModel):
     title: Optional[str] = None
 
 def _now_iso() -> str:
-    # Timezone-aware UTC; preserve legacy 'Z' suffix on the wire.
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 def _generate_conversation_title(message: str | None, image_urls: Optional[List[str]] = None) -> str:
@@ -33,13 +38,11 @@ def _generate_conversation_title(message: str | None, image_urls: Optional[List[
         return "Images"
     if not base:
         return "New chat"
-    # Compact: 6–8 words, no newlines.
     base = " ".join(base.replace("\n", " ").split())
     words = base.split(" ")
     title = " ".join(words[:8])
     if len(words) > 8:
         title += "…"
-    # Avoid super long titles
     return title[:60]
 
 def _create_conversation(db, athlete_id: str, title: Optional[str]) -> str:
@@ -53,15 +56,9 @@ def _create_conversation(db, athlete_id: str, title: Optional[str]) -> str:
     return res.data[0]["id"]
 
 def _touch_conversation(db, athlete_id: str, conversation_id: str):
-    # RLS will enforce ownership.
     db.table("coach_conversations").update({"updated_at": _now_iso()}).eq("id", conversation_id).eq("athlete_id", athlete_id).execute()
 
 def _maybe_set_conversation_title(db, athlete_id: str, conversation_id: str, title: str):
-    """
-    Sets the title if it's currently null/empty.
-    supabase-py doesn't support SQL COALESCE updates cleanly across versions,
-    so we do a read then a guarded update.
-    """
     try:
         res = (
             db.table("coach_conversations")
@@ -75,26 +72,20 @@ def _maybe_set_conversation_title(db, athlete_id: str, conversation_id: str, tit
         if current and str(current).strip():
             return
     except Exception:
-        # If we can't read, don't block chat.
         return
-
     try:
         db.table("coach_conversations").update({"title": title, "updated_at": _now_iso()}).eq("id", conversation_id).eq("athlete_id", athlete_id).execute()
     except Exception:
         return
 
-
 def _force_set_conversation_title(db, athlete_id: str, conversation_id: str, title: str):
-    """Always overwrite sidebar title (used after each coach reply)."""
-    t = (title or "").strip()
+    t = (title or "").strip()[:80]
     if not t:
         return
-    t = t[:80]
     try:
         db.table("coach_conversations").update({"title": t, "updated_at": _now_iso()}).eq("id", conversation_id).eq("athlete_id", athlete_id).execute()
     except Exception:
         return
-
 
 def _insert_message(db, athlete_id: str, conversation_id: str, role: str, content: str, image_urls: Optional[List[str]] = None):
     db.table("coach_messages").insert({
@@ -105,27 +96,23 @@ def _insert_message(db, athlete_id: str, conversation_id: str, role: str, conten
         "image_urls": image_urls or [],
     }).execute()
     if role == "user":
-        _maybe_set_conversation_title(
-            db,
-            athlete_id,
-            conversation_id,
-            _generate_conversation_title(content, image_urls=image_urls),
-        )
+        _maybe_set_conversation_title(db, athlete_id, conversation_id, _generate_conversation_title(content, image_urls=image_urls))
     _touch_conversation(db, athlete_id, conversation_id)
 
 router = APIRouter(prefix="/v1/coach", tags=["AI Coach"])
 
-def _require_premium(tier: str):
-    if tier != "premium":
+def _require_premium(config: UserConfig):
+    if config.tier != "premium":
         raise HTTPException(status_code=403, detail="Premium membership required for AI Coach.")
+
 
 @router.get("/conversations")
 async def list_conversations(
     athlete_id: str = Depends(get_current_athlete),
-    tier: str = Depends(get_current_user_tier),
+    config: UserConfig = Depends(get_user_config),
     db = Depends(get_user_db),
 ):
-    _require_premium(tier)
+    _require_premium(config)
     res = (
         db.table("coach_conversations")
         .select("id,title,created_at,updated_at")
@@ -140,10 +127,10 @@ async def list_conversations(
 async def create_conversation(
     payload: CreateConversation,
     athlete_id: str = Depends(get_current_athlete),
-    tier: str = Depends(get_current_user_tier),
+    config: UserConfig = Depends(get_user_config),
     db = Depends(get_user_db),
 ):
-    _require_premium(tier)
+    _require_premium(config)
     cid = _create_conversation(db, athlete_id, payload.title)
     return {"status": "success", "conversation": {"id": cid, "title": payload.title}}
 
@@ -151,11 +138,10 @@ async def create_conversation(
 async def get_conversation_messages(
     conversation_id: str,
     athlete_id: str = Depends(get_current_athlete),
-    tier: str = Depends(get_current_user_tier),
+    config: UserConfig = Depends(get_user_config),
     db = Depends(get_user_db),
 ):
-    _require_premium(tier)
-    # Ensure conversation exists + is owned by this athlete (RLS will also enforce)
+    _require_premium(config)
     _ = (
         db.table("coach_conversations")
         .select("id")
@@ -164,7 +150,6 @@ async def get_conversation_messages(
         .maybe_single()
         .execute()
     )
-
     res = (
         db.table("coach_messages")
         .select("id,role,content,image_urls,created_at")
@@ -180,28 +165,27 @@ async def get_conversation_messages(
 async def delete_conversation(
     conversation_id: str,
     athlete_id: str = Depends(get_current_athlete),
-    tier: str = Depends(get_current_user_tier),
+    config: UserConfig = Depends(get_user_config),
     db = Depends(get_user_db),
 ):
-    _require_premium(tier)
-    # Cascades to messages.
+    _require_premium(config)
     db.table("coach_conversations").delete().eq("id", conversation_id).eq("athlete_id", athlete_id).execute()
     return {"status": "success"}
 
 @router.post("/initialize")
 async def initialize_coach(
     athlete_id: str = Depends(get_current_athlete),
-    tier: str = Depends(get_current_user_tier),
-    model_name: str = Depends(get_current_gemini_model),
+    config: UserConfig = Depends(get_user_config),
+    _rl: None = Depends(require_ai_rate_limit),
     db = Depends(get_user_db),
 ):
     """
     Called when the chat UI mounts. Returns a proactive warning if biometrics/load
     anomalies are severe; otherwise a short context-aware greeting.
     """
-    _require_premium(tier)
+    _require_premium(config)
     try:
-        message, is_proactive = build_initialization_message(athlete_id, db, model_name)
+        message, is_proactive = build_initialization_message(athlete_id, db, config.gemini_model)
         return {"status": "success", "message": message, "is_proactive": is_proactive}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -211,11 +195,11 @@ async def initialize_coach(
 async def chat_with_coach(
     payload: ChatMessage,
     athlete_id: str = Depends(get_current_athlete),
-    tier: str = Depends(get_current_user_tier),
-    model_name: str = Depends(get_current_gemini_model),
+    config: UserConfig = Depends(get_user_config),
+    _rl: None = Depends(require_ai_rate_limit),
     db = Depends(get_user_db),
 ):
-    _require_premium(tier)
+    _require_premium(config)
     try:
         conversation_id = payload.conversation_id or _create_conversation(db, athlete_id, title=None)
         _insert_message(db, athlete_id, conversation_id, role="user", content=payload.message, image_urls=payload.image_urls)
@@ -226,13 +210,11 @@ async def chat_with_coach(
             current_tss=payload.recent_tss,
             db=db,
             conversation_id=conversation_id,
-            model_name=model_name,
+            model_name=config.gemini_model,
         )
         _insert_message(db, athlete_id, conversation_id, role="ai", content=coach_reply, image_urls=None)
         try:
-            new_title = generate_coach_conversation_title(
-                db, athlete_id, conversation_id, model_name=model_name
-            )
+            new_title = generate_coach_conversation_title(db, athlete_id, conversation_id, model_name=config.gemini_model)
             _force_set_conversation_title(db, athlete_id, conversation_id, new_title)
         except Exception:
             pass
@@ -252,23 +234,19 @@ async def chat_with_coach(
 async def stream_chat_with_coach(
     payload: ChatMessage,
     athlete_id: str = Depends(get_current_athlete),
-    tier: str = Depends(get_current_user_tier),
-    model_name: str = Depends(get_current_gemini_model),
+    config: UserConfig = Depends(get_user_config),
+    _rl: None = Depends(require_ai_rate_limit),
     db = Depends(get_user_db),
 ):
-    _require_premium(tier)
+    _require_premium(config)
     async def event_generator():
         conversation_id = payload.conversation_id
         if not conversation_id:
             conversation_id = _create_conversation(db, athlete_id, title=None)
-            # Send the new conversation id so the client can persist it.
             yield f"data: {json.dumps({'conversation_id': conversation_id})}\n\n"
 
-        # Persist user message immediately
         _insert_message(db, athlete_id, conversation_id, role="user", content=payload.message, image_urls=payload.image_urls)
 
-        # v1 streaming: run the same agentic tool loop as /message, then stream the final text.
-        # (Tool-call events are intentionally not streamed in this iteration.)
         ai_full = ""
         ai_sources: list = []
         try:
@@ -279,13 +257,12 @@ async def stream_chat_with_coach(
                 payload.recent_tss,
                 db,
                 conversation_id,
-                model_name,
+                config.gemini_model,
             )
             ai_full = (ai_full or "").strip()
             if not ai_full:
                 raise RuntimeError("Model returned an empty response.")
 
-            # Stream in moderately sized chunks so the client UI updates smoothly.
             chunk_size = 600
             for i in range(0, len(ai_full), chunk_size):
                 chunk = ai_full[i : i + chunk_size]
@@ -294,7 +271,6 @@ async def stream_chat_with_coach(
         except Exception as e:
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
         else:
-            # Persist assistant message once response completes
             _insert_message(db, athlete_id, conversation_id, role="ai", content=ai_full, image_urls=None)
             try:
                 new_title = await asyncio.to_thread(
@@ -302,11 +278,11 @@ async def stream_chat_with_coach(
                     db,
                     athlete_id,
                     conversation_id,
-                    model_name,
+                    config.gemini_model,
                 )
                 _force_set_conversation_title(db, athlete_id, conversation_id, new_title)
             except Exception:
                 pass
         yield "data: [DONE]\n\n"
-        
+
     return StreamingResponse(event_generator(), media_type="text/event-stream")
