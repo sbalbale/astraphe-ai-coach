@@ -1,6 +1,6 @@
 # ASTRAPE Production Deployment Guide
 **Date:** 2026-05-20
-**Stack:** FastAPI (GCP Cloud Run) · SvelteKit SPA (Cloudflare Pages) · Supabase · Google Gemini · Upstash Redis
+**Stack:** FastAPI (GCP Cloud Run) · SvelteKit SPA (Firebase Hosting) · Supabase · Google Gemini · Upstash Redis · Firebase (FCM for iOS/Android push)
 
 ---
 
@@ -11,7 +11,7 @@
 3. [Supabase Production Setup](#3-supabase-production-setup)
 4. [Upstash Redis](#4-upstash-redis)
 5. [Backend — GCP Cloud Run](#5-backend--gcp-cloud-run)
-6. [Frontend — Cloudflare Pages](#6-frontend--cloudflare-pages)
+6. [Frontend — Firebase Hosting](#6-frontend--firebase-hosting)
 7. [DNS Configuration](#7-dns-configuration)
 8. [Production Environment Variables](#8-production-environment-variables)
 9. [OAuth App Configuration](#9-oauth-app-configuration)
@@ -27,7 +27,7 @@
 | Subdomain | Purpose | Host |
 |---|---|---|
 | `astrapeai.com` | **Existing waitlist/marketing site — do not touch** | Wherever it currently lives |
-| `app.astrapeai.com` | SvelteKit web app (SPA) | Cloudflare Pages |
+| `app.astrapeai.com` | SvelteKit web app (SPA) | Firebase Hosting |
 | `api.astrapeai.com` | FastAPI backend | GCP Cloud Run |
 
 **Why this split:**
@@ -106,9 +106,32 @@ These must be set correctly in the production environment (checked in section 8)
 | `WHOOP_WEBHOOK_LOG_RAW` | `false` | Avoids flooding Cloud Run logs with raw payloads |
 | `TEST_ATHLETE_ID` | *absent* | Startup validator in `main.py` crashes the server if this is set with `APP_ENV=production` |
 
-### 2e. WHOOP webhook secret — set it equal to the client secret (this is correct)
+### 2e. WHOOP webhook signature verification
 
-WHOOP signs webhook payloads using HMAC-SHA256 with your **OAuth client secret** as the key. There is no separate webhook signing secret from the WHOOP portal — your `WHOOP_WEBHOOK_SECRET` must be the same value as `WHOOP_CLIENT_SECRET`. The incorrect startup warning in `main.py` that flagged them as identical has been removed as part of these pre-deployment changes.
+WHOOP does **not** issue a separate webhook signing secret. Verification uses your **OAuth client secret** from the [WHOOP Developer Dashboard](https://developer-dashboard.whoop.com/), per [WHOOP webhooks security](https://developer.whoop.com/docs/developing/webhooks/#webhooks-security).
+
+**Secret Manager / env**
+
+| Variable | Production value |
+|---|---|
+| `WHOOP_CLIENT_SECRET` | Client secret from the portal (64-char hex string) |
+| `WHOOP_WEBHOOK_SECRET` | Same value as `WHOOP_CLIENT_SECRET`, **or omit** — the server falls back to `WHOOP_CLIENT_SECRET` automatically |
+
+**How the server verifies each POST** (`backend/app/services/whoop.py`):
+
+1. Read raw request body bytes (do not re-serialize JSON).
+2. Read headers `X-WHOOP-Signature` and `X-WHOOP-Signature-Timestamp` (milliseconds since epoch).
+3. Compute `base64(HMAC-SHA256(timestamp_utf8 + raw_body, client_secret_utf8))`.
+4. Compare to `X-WHOOP-Signature` with `hmac.compare_digest`. Mismatch → `401`.
+
+**Important:** The HMAC key is the client secret **as a UTF-8 string** (the literal hex characters from the dashboard). Do **not** `bytes.fromhex()` the secret — that produces the wrong signature and every webhook returns `401`.
+
+**Dev vs prod flags**
+
+| Setting | Dev (local) | Production |
+|---|---|---|
+| `WHOOP_WEBHOOK_SKIP_SIG_CHECK` | `false` once ngrok + secrets are configured | `false` (required) |
+| `WHOOP_WEBHOOK_LOG_RAW` | `true` optional — logs `[whoop.webhook.raw]` for debugging | `false` |
 
 ---
 
@@ -350,46 +373,117 @@ The command outputs A/AAAA DNS records to add to your DNS provider. GCP handles 
 
 ---
 
-## 6. Frontend — Cloudflare Pages
+## 6. Frontend — Firebase Hosting
 
-Your SvelteKit app uses `adapter-static` (confirmed in `svelte.config.js`) and outputs a static SPA to `build/`. Cloudflare Pages provides a global CDN, free custom domain SSL, and automatic GitHub-triggered deploys.
+Your SvelteKit app uses `adapter-static` (`mobile/svelte.config.js`) and outputs a static SPA to `mobile/build/`. **Firebase Hosting** is a good fit here because you are already on GCP for the API and need a **Firebase project for FCM** (iOS/Android push via Capacitor). One Firebase project can cover both the hosted web app and push — see also [docs/PUSH_NOTIFICATIONS.md](docs/PUSH_NOTIFICATIONS.md).
 
-### 6a. Create the Pages project
+**What Firebase is (and is not) responsible for**
 
-1. [cloudflare.com](https://cloudflare.com) → Pages → Create a Project → Connect to Git
-2. Select your GitHub repository
-3. Build settings:
-   - **Root directory:** `mobile`
-   - **Build command:** `pnpm build`
-   - **Build output directory:** `build`
+| Concern | Service |
+|---|---|
+| Web app at `app.astrapeai.com` | Firebase Hosting |
+| REST API, webhooks, AI coach | GCP Cloud Run (`api.astrapeai.com`) — unchanged |
+| Auth + database | Supabase — unchanged |
+| iOS/Android push tokens → FCM | Firebase Cloud Messaging (native app config + backend `FCM_SERVICE_ACCOUNT_JSON`) |
+| Browser/PWA push | VAPID + service worker (not FCM) — backend `VAPID_*` env vars |
 
-### 6b. Set production environment variables
+Hosting the SPA on Firebase is **not** required for App Store push, but using the **same Firebase project** for Hosting + FCM keeps credentials, billing, and console management in one place.
 
-Pages → Settings → Environment Variables → Production:
+### 6a. Create / link the Firebase project
+
+1. [Firebase Console](https://console.firebase.google.com/) → **Add project** (e.g. `astrape-prod`) or use an existing project.
+2. **Link to GCP** (recommended): Project settings → Integrations → link to GCP project `astrape-ai-coach` so Hosting, Cloud Run, and Secret Manager share one billing account.
+3. In the same project, register apps you need:
+   - **Web** — optional label for Hosting; not required for FCM.
+   - **iOS** — bundle ID `com.astrape.coach` → download `GoogleService-Info.plist` → `mobile/ios/App/App/` (see PUSH_NOTIFICATIONS.md).
+   - **Android** — package `com.astrape.coach` → `google-services.json` → `mobile/android/app/` when you ship Android.
+
+4. **APNs for iOS push:** Firebase Console → Project settings → Cloud Messaging → Apple app configuration → upload your APNs Authentication Key (.p8) from Apple Developer. Without this, FCM cannot deliver to iOS devices even if the native app registers tokens.
+
+5. **Backend FCM:** Project settings → Service accounts → **Generate new private key** → store JSON in GCP Secret Manager as `FCM_SERVICE_ACCOUNT_JSON` and mount on Cloud Run (§8).
+
+### 6b. Firebase Hosting config (`mobile/`)
+
+From the repo root, add hosting config under `mobile/` (or run `firebase init hosting` there and accept `build` as the public directory):
+
+**`mobile/firebase.json`**
+```json
+{
+  "hosting": {
+    "public": "build",
+    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+    "rewrites": [{ "source": "**", "destination": "/index.html" }]
+  }
+}
+```
+
+**`mobile/.firebaserc`** (replace with your Firebase project ID)
+```json
+{
+  "projects": {
+    "default": "astrape-prod"
+  }
+}
+```
+
+`svelte.config.js` already sets `fallback: 'index.html'`; the Hosting rewrite above mirrors that for client-side routes (`/auth/callback`, `/dashboard`, etc.).
+
+### 6c. Production build environment variables
+
+Set these when building (local `.env.production`, CI secrets, or `firebase deploy` pre-build step). They are baked into the static bundle at build time:
 
 | Variable | Value |
 |---|---|
 | `VITE_API_URL` | `https://api.astrapeai.com` |
 | `VITE_SUPABASE_URL` | `https://YOUR_REF.supabase.co` |
-| `VITE_SUPABASE_ANON_KEY` | Your Supabase anon key |
-| `VITE_SUPABASE_KEY` | Same as anon key (your `supabase.ts` reads both as a fallback) |
-| `NODE_VERSION` | `20` |
+| `VITE_SUPABASE_KEY` | Supabase anon key (public in browser) |
+| `VITE_VAPID_PUBLIC_KEY` | Same public key as backend `VAPID_PUBLIC_KEY` (web push only) |
 
-> The anon key is intentionally public — it is safe in the browser. Never put `SUPABASE_SERVICE_ROLE_KEY` here.
+> Never put `SUPABASE_SERVICE_ROLE_KEY` or `FCM_SERVICE_ACCOUNT_JSON` in frontend env vars.
 
-### 6c. Add the custom domain
+Example local production build:
 
-Pages → Custom Domains → Add Custom Domain → `app.astrapeai.com`
+```bash
+cd mobile
+pnpm install
+# ensure mobile/.env.production or exported vars contain the table above
+pnpm build
+firebase deploy --only hosting
+```
 
-If `astrapeai.com` nameservers are already on Cloudflare, the DNS record is created automatically. Otherwise Cloudflare gives you a CNAME to add at your registrar.
+### 6d. Custom domain `app.astrapeai.com`
 
-### 6d. SPA routing
+Firebase Console → Hosting → **Add custom domain** → `app.astrapeai.com`.
 
-`svelte.config.js` already sets `fallback: 'index.html'`. Cloudflare Pages serves `index.html` for all unmatched paths on SPAs — no `_redirects` file or additional configuration needed.
+Firebase provides DNS records (often a CNAME to `your-project.web.app` plus a TXT for domain verification). Add them at the same DNS provider that manages `astrapeai.com` — **do not change** existing root/`www` waitlist records.
 
-### 6e. Set a deploy hook (optional, for non-git deploys)
+Allow up to 24 hours for TLS provisioning after DNS propagates.
 
-Pages → Settings → Builds & deployments → Add deploy hook → copy the URL. Useful if you ever need to trigger a deploy without a git push.
+### 6e. Deploy options
+
+**Manual (first deploy):**
+```bash
+npm install -g firebase-tools
+firebase login
+cd mobile
+pnpm build
+firebase deploy --only hosting
+```
+
+**CI (GitHub Actions):** Store `FIREBASE_SERVICE_ACCOUNT` JSON as a repo secret (Firebase Console → Project settings → Service accounts → Generate new private key for CI, or use Workload Identity Federation with GCP). Workflow steps: `pnpm build` in `mobile/` → `firebase deploy --only hosting --project astrape-prod`.
+
+**Preview channels (optional):** `firebase hosting:channel:deploy pr-123` for short-lived preview URLs before merging.
+
+### 6f. Native iOS build (App Store / TestFlight)
+
+The Capacitor shell loads the same SvelteKit UI. Push uses **FCM**, not Hosting:
+
+1. Complete §6a (iOS app in Firebase + APNs key + `GoogleService-Info.plist`).
+2. Xcode → Push Notifications + Background Modes → Remote notifications.
+3. `cd mobile && pnpm build && npx cap sync ios` — point `capacitor.config.ts` server URL at production API or bundled assets for store builds.
+4. Archive in Xcode → TestFlight / App Store.
+
+Store builds talk to `https://api.astrapeai.com`; they do not need the Firebase Hosting URL unless you load the web UI from `app.astrapeai.com` inside the WebView.
 
 ---
 
@@ -401,18 +495,16 @@ Pages → Settings → Builds & deployments → Add deploy hook → copy the URL
 
 | Type | Name | Value | Proxy / TTL |
 |---|---|---|---|
-| CNAME | `app` | `your-project.pages.dev` | Proxied if on Cloudflare, otherwise TTL 300 |
-| A | `api` | *IP(s) from GCP `domain-mappings create` output* | **DNS Only / no proxy** |
+| CNAME | `app` | *Value from Firebase Hosting custom-domain wizard* (often `your-project.web.app`) | TTL 300; follow Firebase console exactly |
+| A | `api` | *IP(s) from GCP `domain-mappings create` output* | **Direct to GCP — no CDN proxy in front** |
 
-**Critical for `api.`:** It must resolve directly — do not proxy it through Cloudflare. GCP Cloud Run provisions its own TLS certificate via Let's Encrypt and requires a clean A record. Proxying through Cloudflare breaks cert provisioning.
+**Critical for `api.`:** Cloud Run domain mapping needs a clean path to Google's load balancer. Do not put `api.` behind a proxy that terminates TLS differently than GCP expects.
 
-### If your DNS is already on Cloudflare
+**For `app.`:** Use only the records Firebase shows when you add `app.astrapeai.com`. Firebase provisions its own CDN and TLS for Hosting.
 
-Just add the two records above. No other changes. The existing `astrapeai.com` and `www` records stay exactly as they are.
+### Registrar vs Cloudflare DNS
 
-### If your DNS is at a registrar (not Cloudflare)
-
-Add the two CNAME/A records through your registrar's DNS management panel. You do **not** need to move nameservers to Cloudflare — Cloudflare Pages works with a CNAME at any registrar.
+Add the `app` and `api` records at whatever currently hosts DNS for `astrapeai.com`. You do **not** need to move the root domain or waitlist site. Existing `astrapeai.com` / `www` records stay unchanged.
 
 ### Verify propagation
 
@@ -456,11 +548,11 @@ GCP_BUCKET_NAME=astrape-workout-files-bucket
 # WHOOP
 WHOOP_CLIENT_ID=ffe39843-d11d-4f54-a828-44dfbcbd1128
 WHOOP_CLIENT_SECRET=YOUR_WHOOP_CLIENT_SECRET       (Secret Manager)
-WHOOP_WEBHOOK_SECRET=SAME_AS_CLIENT_SECRET         (Secret Manager — must equal CLIENT_SECRET; WHOOP uses it as the HMAC key)
+WHOOP_WEBHOOK_SECRET=SAME_AS_CLIENT_SECRET         (Secret Manager — optional duplicate of CLIENT_SECRET; UTF-8 HMAC key, not hex-decoded)
 WHOOP_API_BASE=https://api.prod.whoop.com/developer/v1
 WHOOP_OAUTH_AUTH_URL=https://api.prod.whoop.com/oauth/oauth2/auth
 WHOOP_OAUTH_TOKEN_URL=https://api.prod.whoop.com/oauth/oauth2/token
-WHOOP_WEBHOOK_SKIP_SIG_CHECK=false                 (MUST be false — dev .env has this as true)
+WHOOP_WEBHOOK_SKIP_SIG_CHECK=false                 (MUST be false in production)
 WHOOP_WEBHOOK_LOG_RAW=false
 
 # Strava
@@ -488,7 +580,7 @@ IP_RATE_LIMIT_RPM=100
 VAPID_PUBLIC_KEY=YOUR_VAPID_PUBLIC_KEY
 VAPID_PRIVATE_KEY=YOUR_VAPID_PRIVATE_KEY           (Secret Manager)
 VAPID_SUBJECT=mailto:sean.balbale@gmail.com
-# FCM_SERVICE_ACCOUNT_JSON=                        (Secret Manager — add when Firebase is ready)
+FCM_SERVICE_ACCOUNT_JSON={"type":"service_account",...}  (Secret Manager — Firebase §6a; required for iOS/Android push)
 
 # Must NOT be present in production:
 # TEST_ATHLETE_ID   <-- startup validator in main.py crashes the server if this is set
@@ -506,7 +598,7 @@ Register production redirect URIs in each provider's portal **before** testing a
    ```
    https://api.astrapeai.com/v1/sync/oauth/whoop/callback
    ```
-2. Set `WHOOP_WEBHOOK_SECRET` to the **same value** as `WHOOP_CLIENT_SECRET`. WHOOP uses your client secret as the HMAC-SHA256 signing key for all webhook payloads — there is no separate webhook secret from the portal. With `WHOOP_WEBHOOK_SKIP_SIG_CHECK=false`, your server will verify each incoming webhook using this key.
+2. Store `WHOOP_CLIENT_SECRET` in Secret Manager. Set `WHOOP_WEBHOOK_SECRET` to the **same value** (optional if you rely on the code fallback). With `WHOOP_WEBHOOK_SKIP_SIG_CHECK=false`, each webhook is verified using HMAC-SHA256 over `timestamp + raw_body` with the client secret as UTF-8 (see §2e).
 
 ### Strava — [strava.com/settings/api](https://www.strava.com/settings/api)
 
@@ -532,10 +624,14 @@ Webhooks must be re-registered to point to the production API. Complete this **a
 
 ### WHOOP Webhook
 
-In the WHOOP developer portal → Webhooks:
+In the [WHOOP Developer Dashboard](https://developer-dashboard.whoop.com/) → your app → **Webhooks**:
+
 1. Set the webhook URL to: `https://api.astrapeai.com/v1/sync/whoop/webhook`
-2. The portal pings the URL immediately — your API must be live first
-3. No separate signing secret to copy — WHOOP signs payloads with your OAuth client secret. `WHOOP_WEBHOOK_SECRET` in Secret Manager should already equal `WHOOP_CLIENT_SECRET`.
+2. Choose **Model Version v2** if your API integration uses v2 UUID resource IDs (recommended for new work).
+3. Save — the portal may ping the URL immediately; the API must be live and return `2XX` with valid signature verification enabled.
+4. **Signing:** WHOOP sends `X-WHOOP-Signature` and `X-WHOOP-Signature-Timestamp`. There is no separate webhook secret in the portal — use the same OAuth **client secret** in Secret Manager (see §2e). Ensure `WHOOP_WEBHOOK_SKIP_SIG_CHECK=false` on Cloud Run before go-live.
+
+**Verify delivery (after deploy):** Log a short activity or nudge a sleep in the WHOOP app. In Cloud Run logs you should see `[whoop.webhook] type=workout.updated` (or `sleep.updated` / `recovery.updated`) and **no** `[whoop.sig] MISMATCH`. A `401` on `POST /v1/sync/whoop/webhook` almost always means the secret in Secret Manager does not match the dashboard, or the secret was hex-decoded before HMAC (fixed in code — redeploy required).
 
 ### Strava Webhook
 
@@ -673,9 +769,14 @@ done
 
 ### Step 8: Webhook delivery
 
-Trigger a test event from each provider's developer portal dashboard. Then in GCP Console → Cloud Run → `astrape-api` → Logs, filter for:
-- `[whoop.webhook]` — WHOOP delivery confirmed
-- `[strava.webhook]` — Strava delivery confirmed
+Trigger a test event from each provider (WHOOP: log a short activity or edit a sleep by 1 minute — see [WHOOP webhooks testing](https://developer.whoop.com/docs/developing/webhooks/#webhooks-testing)). Then in GCP Console → Cloud Run → `astrape-api` → Logs:
+
+| Log pattern | Meaning |
+|---|---|
+| `[whoop.webhook] type=...` | WHOOP payload accepted and processing started |
+| `[whoop.sig] MISMATCH` | Signature failed — check Secret Manager secret matches dashboard; redeploy if on an old build that hex-decoded the key |
+| `401` on `/v1/sync/whoop/webhook` | Same as MISMATCH — fix secrets or signature code before go-live |
+| `[strava.webhook]` | Strava delivery confirmed |
 
 ### Step 9: OAuth connection flows
 
@@ -719,16 +820,20 @@ GCP Console → Cloud Monitoring → Uptime Checks → Create:
 - **Check period:** 1 minute
 - **Alert:** if the check fails 2 consecutive times
 
-Cloudflare provides automatic uptime monitoring and alerting for the `app.` frontend under Analytics → Web Analytics — no additional setup needed.
+**Frontend uptime:** GCP Monitoring → Uptime check on `https://app.astrapeai.com` (same pattern as API health in §13), or Firebase Hosting status in the console. Optional: Firebase Performance Monitoring for web vitals after you add the web SDK.
 
 ### Cloud Logging queries
 
 Useful queries in GCP Log Explorer:
 
 ```
-# All WHOOP webhook deliveries
+# All WHOOP webhook deliveries (success path)
 resource.type="cloud_run_revision"
 textPayload=~"\[whoop\.webhook\]"
+
+# WHOOP signature failures (should be empty in production)
+resource.type="cloud_run_revision"
+textPayload=~"\[whoop\.sig\]"
 
 # Strava webhook deliveries
 resource.type="cloud_run_revision"

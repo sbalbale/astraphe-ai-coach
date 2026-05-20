@@ -352,7 +352,9 @@ Webhook receiver for Garmin Connect push notifications.
 
 Webhook receiver for WHOOP data push events (workout, recovery, sleep).
 
-**Headers:** `X-WHOOP-Signature: <hmac-sha256>`
+**Headers:**
+- `X-WHOOP-Signature` — base64 HMAC-SHA256 of `timestamp + raw_body` using your OAuth client secret
+- `X-WHOOP-Signature-Timestamp` — milliseconds since epoch (prepended to body before signing)
 
 ---
 

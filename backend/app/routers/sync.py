@@ -336,10 +336,15 @@ async def whoop_webhook(request: Request, background_tasks: BackgroundTasks, db=
         return Response(status_code=200)
 
     signature = request.headers.get("X-WHOOP-Signature", "")
+    timestamp = request.headers.get("X-WHOOP-Signature-Timestamp", "")
     if settings.WHOOP_WEBHOOK_SKIP_SIG_CHECK:
-        if signature:
-            whoop.verify_webhook_signature(body, signature)  # log mismatch but don't block
-    elif not signature or not whoop.verify_webhook_signature(body, signature):
+        if signature and timestamp:
+            whoop.verify_webhook_signature(body, signature, timestamp)  # log mismatch but don't block
+    elif (
+        not signature
+        or not timestamp
+        or not whoop.verify_webhook_signature(body, signature, timestamp)
+    ):
         raise HTTPException(status_code=401, detail="Invalid or missing WHOOP signature")
 
     if settings.WHOOP_WEBHOOK_LOG_RAW:
