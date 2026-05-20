@@ -1,5 +1,6 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, UploadFile, BackgroundTasks
 from fastapi.responses import StreamingResponse
+from pathlib import Path
 from pydantic import BaseModel, field_validator
 from typing import Optional, List
 import asyncio
@@ -11,7 +12,9 @@ from app.services.ai_coach import (
     build_initialization_message,
     generate_coach_conversation_title,
     get_coach_response,
+    _load_conversation_history,
 )
+from app.services.memory import extract_and_save_memories
 from app.dependencies import (
     get_current_athlete,
     get_user_config,
@@ -20,11 +23,25 @@ from app.dependencies import (
     UserConfig,
 )
 
+_ALLOWED_DOC_EXTENSIONS = {".pdf", ".csv", ".xlsx", ".xls"}
+_MAX_DOC_BYTES = 10 * 1024 * 1024  # 10 MB
+
+
+async def _run_memory_extraction(
+    athlete_id: str,
+    conversation_excerpt: list[dict],
+    db,
+    model_name: str | None,
+) -> None:
+    await asyncio.to_thread(extract_and_save_memories, athlete_id, conversation_excerpt, db, model_name)
+
+
 class ChatMessage(BaseModel):
     conversation_id: Optional[str] = None
     message: str
     recent_tss: Optional[float] = 0.0
     image_urls: Optional[List[str]] = None
+    document_contents: Optional[List[str]] = None
 
     @field_validator("message")
     @classmethod
@@ -32,6 +49,15 @@ class ChatMessage(BaseModel):
         if len(v) > 8000:
             raise ValueError("Message too long (max 8000 characters)")
         return v
+
+    @field_validator("document_contents")
+    @classmethod
+    def validate_document_contents(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        if v is None:
+            return v
+        if len(v) > 3:
+            raise ValueError("Max 3 documents per message")
+        return [c[:10000] for c in v]
 
 class CreateConversation(BaseModel):
     title: Optional[str] = None
@@ -179,6 +205,44 @@ async def delete_conversation(
     db.table("coach_conversations").delete().eq("id", conversation_id).eq("athlete_id", athlete_id).execute()
     return {"status": "success"}
 
+@router.post("/upload-document")
+async def upload_document(
+    file: UploadFile,
+    athlete_id: str = Depends(get_current_athlete),
+    config: UserConfig = Depends(get_user_config),
+    db = Depends(get_user_db),
+):
+    """
+    Parse an uploaded PDF, CSV, or Excel file and return the extracted text.
+    The frontend should include this text in the next message's document_contents field.
+    """
+    _require_premium(config)
+    filename = file.filename or "upload"
+    ext = Path(filename).suffix.lower()
+    if ext not in _ALLOWED_DOC_EXTENSIONS:
+        raise HTTPException(status_code=415, detail=f"Unsupported file type '{ext}'. Allowed: {', '.join(_ALLOWED_DOC_EXTENSIONS)}")
+
+    file_bytes = await file.read()
+    if len(file_bytes) > _MAX_DOC_BYTES:
+        raise HTTPException(status_code=413, detail="File too large (max 10 MB)")
+
+    try:
+        from app.services.file_parser import parse_document
+        text = await asyncio.to_thread(parse_document, file_bytes, filename)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Failed to parse document: {e}")
+
+    if not (text or "").strip():
+        raise HTTPException(status_code=422, detail="No text content could be extracted from this document.")
+
+    return {
+        "status": "success",
+        "filename": filename,
+        "chars": len(text),
+        "content": text,
+    }
+
+
 @router.post("/initialize")
 async def initialize_coach(
     athlete_id: str = Depends(get_current_athlete),
@@ -201,6 +265,7 @@ async def initialize_coach(
 @router.post("/message")
 async def chat_with_coach(
     payload: ChatMessage,
+    background_tasks: BackgroundTasks,
     athlete_id: str = Depends(get_current_athlete),
     config: UserConfig = Depends(get_user_config),
     _rl: None = Depends(require_ai_rate_limit),
@@ -210,16 +275,37 @@ async def chat_with_coach(
     try:
         conversation_id = payload.conversation_id or _create_conversation(db, athlete_id, title=None)
         _insert_message(db, athlete_id, conversation_id, role="user", content=payload.message, image_urls=payload.image_urls)
+
+        # Prepend any uploaded document content to the effective message for the AI.
+        effective_message = payload.message
+        if payload.document_contents:
+            doc_parts = [
+                f"[ATTACHED DOCUMENT {i}]\n{content}"
+                for i, content in enumerate(payload.document_contents, 1)
+            ]
+            effective_message = "\n\n".join(doc_parts) + "\n\n[ATHLETE MESSAGE]\n" + payload.message
+
         coach_reply, coach_sources = await asyncio.to_thread(
             get_coach_response,
             athlete_id=athlete_id,
-            message=payload.message,
+            message=effective_message,
             current_tss=payload.recent_tss,
             db=db,
             conversation_id=conversation_id,
             model_name=config.gemini_model,
         )
         _insert_message(db, athlete_id, conversation_id, role="ai", content=coach_reply, image_urls=None)
+
+        # Extract and persist long-term memories from this exchange (background, non-blocking).
+        recent_history = _load_conversation_history(db, athlete_id, conversation_id, limit=10)
+        background_tasks.add_task(
+            _run_memory_extraction,
+            athlete_id,
+            recent_history,
+            db,
+            config.gemini_analysis_model,
+        )
+
         try:
             new_title = generate_coach_conversation_title(db, athlete_id, conversation_id, model_name=config.gemini_model)
             _force_set_conversation_title(db, athlete_id, conversation_id, new_title)
@@ -253,6 +339,7 @@ async def chat_with_coach(
 @router.post("/stream")
 async def stream_chat_with_coach(
     payload: ChatMessage,
+    background_tasks: BackgroundTasks,
     athlete_id: str = Depends(get_current_athlete),
     config: UserConfig = Depends(get_user_config),
     _rl: None = Depends(require_ai_rate_limit),
@@ -267,13 +354,21 @@ async def stream_chat_with_coach(
 
         _insert_message(db, athlete_id, conversation_id, role="user", content=payload.message, image_urls=payload.image_urls)
 
+        effective_message = payload.message
+        if payload.document_contents:
+            doc_parts = [
+                f"[ATTACHED DOCUMENT {i}]\n{content}"
+                for i, content in enumerate(payload.document_contents, 1)
+            ]
+            effective_message = "\n\n".join(doc_parts) + "\n\n[ATHLETE MESSAGE]\n" + payload.message
+
         ai_full = ""
         ai_sources: list = []
         try:
             ai_full, ai_sources = await asyncio.to_thread(
                 get_coach_response,
                 athlete_id,
-                payload.message,
+                effective_message,
                 payload.recent_tss,
                 db,
                 conversation_id,
@@ -292,6 +387,14 @@ async def stream_chat_with_coach(
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
         else:
             _insert_message(db, athlete_id, conversation_id, role="ai", content=ai_full, image_urls=None)
+            recent_history = _load_conversation_history(db, athlete_id, conversation_id, limit=10)
+            background_tasks.add_task(
+                _run_memory_extraction,
+                athlete_id,
+                recent_history,
+                db,
+                config.gemini_analysis_model,
+            )
             try:
                 new_title = await asyncio.to_thread(
                     generate_coach_conversation_title,

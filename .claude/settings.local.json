@@ -12,7 +12,14 @@
       "Bash(git push:*)",
       "PowerShell(Set-Content *)",
       "Skill(update-config)",
-      "Bash(curl *)"
+      "Bash(curl *)",
+      "Bash(python3 *)",
+      "Bash(python -c ' *)",
+      "Bash(npx supabase *)",
+      "Bash(pip install *)",
+      "Bash(pip3 install *)",
+      "Bash(python -m pip install pypdf openpyxl python-multipart)",
+      "Bash(.venv\\\\Scripts\\\\pip install *)"
     ]
   }
 }

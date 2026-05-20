@@ -3,6 +3,7 @@ from google.genai import types
 from app.config import settings
 from app.services import coach_tools
 from app.services.algorithms import compute_z_score
+from app.services.memory import retrieve_relevant_memories
 import asyncio
 import json
 import re
@@ -16,10 +17,6 @@ from datetime import timedelta
 
 _client = genai.Client(api_key=settings.GEMINI_API_KEY)
 
-def get_embedding_model_name() -> str:
-    embedding_model = settings.GEMINI_EMBEDDING_MODEL
-    return embedding_model if embedding_model.startswith("models/") else f"models/{embedding_model}"
-
 def load_coach_instructions() -> str:
     prompt_file = settings.PROMPTS_DIR / settings.COACH_PROMPT_FILE
     try:
@@ -27,35 +24,6 @@ def load_coach_instructions() -> str:
             return f.read()
     except FileNotFoundError:
         return "You are ASTRAPE, an elite, data-driven performance coach."
-
-async def retrieve_relevant_memories(athlete_id: str, query: str, db: Client, top_k: int = 5) -> list[dict]:
-    resp = _client.models.embed_content(
-        model=get_embedding_model_name(),
-        contents=query,
-    )
-    # Best-effort extraction across SDK versions.
-    query_embedding = None
-    emb = getattr(resp, "embedding", None)
-    if emb is None:
-        emb = getattr(resp, "embeddings", None)
-    if emb is not None:
-        if isinstance(emb, dict):
-            query_embedding = emb.get("values") or emb.get("embedding") or emb.get("vector")
-        elif isinstance(emb, (list, tuple)) and emb:
-            first = emb[0]
-            query_embedding = getattr(first, "values", None) or getattr(first, "embedding", None)
-        else:
-            query_embedding = getattr(emb, "values", None)
-    if query_embedding is None:
-        # Fall back to dict-like behavior if the response supports it.
-        try:
-            query_embedding = resp["embedding"]  # type: ignore[index]
-        except Exception:
-            query_embedding = []
-    result = db.rpc("match_coach_memories", {
-        "athlete_id": athlete_id, "query_embedding": query_embedding, "match_threshold": 0.75, "match_count": top_k
-    }).execute()
-    return result.data
 
 def _safe_float(v: object) -> float | None:
     try:
@@ -229,21 +197,31 @@ def _load_conversation_history(db: Client, athlete_id: str, conversation_id: str
     except Exception as e:
         return [{"role": "system", "content": f"history_load_failed: {str(e)}", "image_urls": []}]
 
-def _build_system_context(db: Client, athlete_id: str, current_tss: float = 0.0, conversation_id: str | None = None) -> str:
+def _build_system_context(
+    db: Client,
+    athlete_id: str,
+    current_tss: float = 0.0,
+    conversation_id: str | None = None,
+    memories: list[dict] | None = None,
+) -> str:
     today = date.today().isoformat()
-    ctx = {
+    ctx: dict = {
         "date": today,
         "athlete_id": athlete_id,
         "training_load": _summarize_training_load(db, athlete_id, current_tss=current_tss),
         "biometrics": _summarize_biometrics(db, athlete_id),
         "athlete_profile": _summarize_athlete_profile(db, athlete_id),
     }
+    if memories:
+        ctx["memories"] = [
+            {"content": m.get("content"), "created_at": m.get("created_at")}
+            for m in memories
+        ]
     if conversation_id:
         ctx["conversation"] = {
             "id": conversation_id,
             "recent_messages": _load_conversation_history(db, athlete_id, conversation_id, limit=24),
         }
-    # Keep prompt reasonably compact; JSON is easiest for LLM to parse reliably.
     return "[SYSTEM CONTEXT - DO NOT SHOW TO USER]\n" + json.dumps(ctx, ensure_ascii=False) + "\n[END CONTEXT]"
 
 
@@ -547,8 +525,9 @@ def get_coach_response_agentic(
     Returns (athlete-facing message, web search citation sources when present).
     """
     system_instruction = load_coach_instructions()
+    memories = retrieve_relevant_memories(athlete_id, message, db, top_k=5) if db else []
     context_block = (
-        _build_system_context(db, athlete_id, current_tss=current_tss, conversation_id=conversation_id)
+        _build_system_context(db, athlete_id, current_tss=current_tss, conversation_id=conversation_id, memories=memories)
         if db
         else f"[SYSTEM CONTEXT - DO NOT SHOW TO USER]\nAthlete ID: {athlete_id}\nMost recent workout TSS: {current_tss}\n[END CONTEXT]"
     )
@@ -715,6 +694,7 @@ async def _build_system_context_string_async(
     athlete_id: str,
     current_tss: float = 0.0,
     conversation_id: str | None = None,
+    query: str | None = None,
 ) -> str:
     """
     Same payload as _build_system_context, but DB reads run in parallel to cut
@@ -729,11 +709,17 @@ async def _build_system_context_string_async(
             _load_conversation_history, db, athlete_id, conversation_id, 24
         )
 
-    training, bio, profile, hist_rows = await asyncio.gather(
+    async def load_memories() -> list[dict]:
+        if not query:
+            return []
+        return await asyncio.to_thread(retrieve_relevant_memories, athlete_id, query, db, 5)
+
+    training, bio, profile, hist_rows, memories = await asyncio.gather(
         asyncio.to_thread(_summarize_training_load, db, athlete_id, current_tss),
         asyncio.to_thread(_summarize_biometrics, db, athlete_id),
         asyncio.to_thread(_summarize_athlete_profile, db, athlete_id),
         load_hist(),
+        load_memories(),
     )
     ctx: dict = {
         "date": today,
@@ -742,6 +728,11 @@ async def _build_system_context_string_async(
         "biometrics": bio,
         "athlete_profile": profile,
     }
+    if memories:
+        ctx["memories"] = [
+            {"content": m.get("content"), "created_at": m.get("created_at")}
+            for m in memories
+        ]
     if conversation_id:
         ctx["conversation"] = {
             "id": conversation_id,
