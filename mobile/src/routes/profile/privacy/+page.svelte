@@ -8,7 +8,7 @@
   import { authStore } from '$lib/stores/authStore.svelte';
 
   const defaultSettings = {
-    share_data: true,
+    share_data: false,
     marketing: false
   };
 
