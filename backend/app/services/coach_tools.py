@@ -645,6 +645,24 @@ def handle_calculate_nutrition(
     }
 
 
+def handle_save_memory(
+    args: dict[str, Any],
+    *,
+    athlete_id: str,
+    db: Client,
+) -> dict[str, Any]:
+    """Persist an important athlete fact to long-term coach memory."""
+    content = str(args.get("content", "")).strip()[:200]
+    if not content:
+        return {"error": "content is required"}
+    try:
+        from app.services.memory import save_coach_memory
+        save_coach_memory(athlete_id, content, db)
+        return {"status": "saved", "content": content}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 def handle_clear_training_plans(
     args: dict[str, Any],
     *,
@@ -783,6 +801,26 @@ _nutrition_decl = types.FunctionDeclaration(
     ),
 )
 
+_save_memory_decl = types.FunctionDeclaration(
+    name="save_memory",
+    description=(
+        "Save an important long-term fact about the athlete to persistent memory. "
+        "Use proactively when the athlete reveals a specific race goal or target date, "
+        "an injury or physical limitation, a dietary restriction, equipment preference, "
+        "or a significant performance milestone. Call once per distinct fact."
+    ),
+    parameters=types.Schema(
+        type=types.Type.OBJECT,
+        properties={
+            "content": types.Schema(
+                type=types.Type.STRING,
+                description="A concise statement of the fact to remember (max 200 chars).",
+            ),
+        },
+        required=["content"],
+    ),
+)
+
 _clear_training_plans_decl = types.FunctionDeclaration(
     name="clear_training_plans",
     description=(
@@ -800,7 +838,7 @@ _clear_training_plans_decl = types.FunctionDeclaration(
 )
 
 TOOLS: list[types.Tool] = [
-    types.Tool(function_declarations=[_simulate_decl, _schedule_decl, _nutrition_decl, _clear_training_plans_decl]),
+    types.Tool(function_declarations=[_simulate_decl, _schedule_decl, _nutrition_decl, _clear_training_plans_decl, _save_memory_decl]),
     types.Tool(google_search=types.GoogleSearch()),
 ]
 
@@ -811,6 +849,7 @@ TOOL_HANDLERS: dict[str, ToolHandler] = {
     "schedule_workout": lambda args, aid, db: handle_schedule_workout(args, athlete_id=aid, db=db),
     "calculate_nutrition": lambda args, aid, db: handle_calculate_nutrition(args, athlete_id=aid, db=db),
     "clear_training_plans": lambda args, aid, db: handle_clear_training_plans(args, athlete_id=aid, db=db),
+    "save_memory": lambda args, aid, db: handle_save_memory(args, athlete_id=aid, db=db),
 }
 
 
