@@ -3,6 +3,7 @@
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
+  import { requestPushPermission, initPushNotifications } from '$lib/services/pushNotifications';
 
   const defaultSettings = {
     readiness: true,
@@ -13,8 +14,8 @@
 
   let settings = $state({ ...defaultSettings });
   let initialized = $state(false);
-  
   let saving = $state(false);
+  let permissionGranted = $state<boolean | null>(null);
 
   onMount(async () => {
     try {
@@ -27,6 +28,13 @@
     const fromProfile = athleteStore.profile?.notification_settings;
     settings = { ...defaultSettings, ...(fromProfile ?? {}) };
     initialized = true;
+
+    // Check current permission state for the UI hint.
+    if ('Notification' in window) {
+      permissionGranted = Notification.permission === 'granted';
+    } else {
+      permissionGranted = true; // native — assume OK until the OS says otherwise
+    }
   });
 
   function goBack() {
@@ -34,12 +42,32 @@
   }
 
   async function toggleSetting(key: keyof typeof settings) {
-    settings[key] = !settings[key];
+    const turningOn = !settings[key];
+    settings[key] = turningOn;
+
+    // If the user is enabling something for the first time, request permission
+    // and register the token so notifications actually arrive.
+    if (turningOn && permissionGranted !== true) {
+      const granted = await requestPushPermission();
+      permissionGranted = granted;
+      if (granted) {
+        await initPushNotifications();
+      }
+    }
+
     saving = true;
     await athleteStore.updateProfile({
       notification_settings: settings
     });
     saving = false;
+  }
+
+  async function enableNotifications() {
+    const granted = await requestPushPermission();
+    permissionGranted = granted;
+    if (granted) {
+      await initPushNotifications();
+    }
   }
 </script>
 
@@ -53,6 +81,16 @@
       <h1 class="text-[22px] font-bold tracking-[-0.02em]">Notifications</h1>
     </div>
   </div>
+
+  {#if permissionGranted === false}
+    <div class="bg-amber/10 border border-amber/30 rounded-xl p-4 flex flex-col gap-2">
+      <p class="text-[13px] font-semibold text-amber">Notifications are blocked</p>
+      <p class="text-[11px] text-text2">Enable notifications in your device or browser settings, then tap below to activate.</p>
+      <button onclick={enableNotifications} class="mt-1 self-start px-3 py-1.5 bg-amber/20 border border-amber/40 rounded-lg text-[12px] font-medium text-amber hover:bg-amber/30 transition-colors cursor-pointer">
+        Enable Notifications
+      </button>
+    </div>
+  {/if}
 
   <div class="flex flex-col gap-3 mt-2">
     <Card>
@@ -90,7 +128,11 @@
     </Card>
 
     <p class="text-center text-xs text-text2 p-4">
-      Ensure push notifications are allowed in your device settings.
+      {#if permissionGranted === true}
+        Push notifications are active on this device.
+      {:else}
+        Ensure push notifications are allowed in your device settings.
+      {/if}
     </p>
   </div>
 </div>
