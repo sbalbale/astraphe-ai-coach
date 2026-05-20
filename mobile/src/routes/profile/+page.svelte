@@ -1,6 +1,5 @@
 <script lang="ts">
   import Card from '$lib/components/Card.svelte';
-  import RacePredictor from '$lib/components/RacePredictor.svelte';
   import Tag from '$lib/components/Tag.svelte';
   import { authStore } from '$lib/stores/authStore.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
@@ -9,7 +8,6 @@
 
   const menu = [
     { label: 'Personal Information', href: '/profile/personal-info' },
-    { label: 'Performance Calculators', href: '/profile/calculators' },
     { label: 'Training Settings', href: '/profile/training-settings' },
     { label: 'Connected Apps', href: '/profile/connections' },
     { label: 'Notifications', href: '/profile/notifications' },
@@ -76,14 +74,8 @@
         </p>
       </div>
 
-      <div class="p-3 rounded-xl bg-glass border border-border">
-        <p class="text-[11px] text-text2 uppercase tracking-wider">VMA (Estimated)</p>
-        <p class="mt-1 text-[16px] font-semibold font-mono text-text0">18.5 km/h</p>
-      </div>
     </div>
   </Card>
-
-  <RacePredictor ctl={Math.round(athleteStore.ctl) || 68} />
 
   <Card>
     <p class="text-[13px] font-semibold mb-3">Account</p>
