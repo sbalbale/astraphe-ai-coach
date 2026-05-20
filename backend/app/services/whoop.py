@@ -6,35 +6,42 @@ from fastapi import HTTPException
 from app.config import settings
 from typing import Any, List, Optional
 
-def verify_webhook_signature(payload_body: bytes, signature_header: str) -> bool:
+def _whoop_hmac_key() -> bytes | None:
+    """WHOOP HMAC key is the client secret string as UTF-8 (not hex-decoded)."""
+    secret = settings.WHOOP_WEBHOOK_SECRET or settings.WHOOP_CLIENT_SECRET
+    if not secret:
+        return None
+    return secret.encode("utf-8")
+
+
+def verify_webhook_signature(
+    payload_body: bytes,
+    signature_header: str,
+    timestamp_header: str | None = None,
+) -> bool:
     """
     Verifies the HMAC-SHA256 signature sent by WHOOP.
-    WHOOP signs webhook payloads with the app's Client Secret as the HMAC key.
-    WHOOP_WEBHOOK_SECRET must equal the Client Secret from the WHOOP Developer Portal.
+
+    WHOOP signs: base64(HMAC-SHA256(timestamp + raw_body, client_secret)).
+    See https://developer.whoop.com/docs/developing/webhooks#webhooks-security
     """
-    if not settings.WHOOP_WEBHOOK_SECRET:
-        print("[whoop.sig] WHOOP_WEBHOOK_SECRET is not set — rejecting")
+    key = _whoop_hmac_key()
+    if key is None:
+        print("[whoop.sig] WHOOP_WEBHOOK_SECRET / WHOOP_CLIENT_SECRET not set — rejecting")
         return False
-    # WHOOP sends a base64-encoded HMAC-SHA256.
-    # The client secret is a hex string; WHOOP uses the raw decoded bytes as the HMAC key.
-    secret = settings.WHOOP_WEBHOOK_SECRET
-    try:
-        key = bytes.fromhex(secret)
-    except ValueError:
-        key = secret.encode('utf-8')
+    if not timestamp_header:
+        print("[whoop.sig] Missing X-WHOOP-Signature-Timestamp — rejecting")
+        return False
+    msg = timestamp_header.encode("utf-8") + payload_body
     expected_signature = base64.b64encode(
-        hmac.new(
-            key=key,
-            msg=payload_body,
-            digestmod=hashlib.sha256
-        ).digest()
-    ).decode('utf-8')
+        hmac.new(key=key, msg=msg, digestmod=hashlib.sha256).digest()
+    ).decode("utf-8")
     match = hmac.compare_digest(expected_signature, signature_header)
     if not match:
         print(
             f"[whoop.sig] MISMATCH — received={signature_header[:16]}... "
             f"expected={expected_signature[:16]}... "
-            f"body_len={len(payload_body)}"
+            f"body_len={len(payload_body)} ts={timestamp_header[:13]}..."
         )
     return match
 
