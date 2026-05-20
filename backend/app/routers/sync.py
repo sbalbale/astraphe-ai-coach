@@ -336,7 +336,10 @@ async def whoop_webhook(request: Request, background_tasks: BackgroundTasks, db=
         return Response(status_code=200)
 
     signature = request.headers.get("X-WHOOP-Signature", "")
-    if not signature or not whoop.verify_webhook_signature(body, signature):
+    if settings.WHOOP_WEBHOOK_SKIP_SIG_CHECK:
+        if signature:
+            whoop.verify_webhook_signature(body, signature)  # log mismatch but don't block
+    elif not signature or not whoop.verify_webhook_signature(body, signature):
         raise HTTPException(status_code=401, detail="Invalid or missing WHOOP signature")
 
     if settings.WHOOP_WEBHOOK_LOG_RAW:
@@ -667,6 +670,15 @@ async def whoop_oauth_callback(
              print(f"[whoop.oauth.callback] ERROR: athlete_id is missing or undefined")
              raise HTTPException(status_code=400, detail="Missing athlete_id")
 
+        # Fetch WHOOP user_id so webhook lookups can find this token record.
+        whoop_user_id = None
+        try:
+            profile = await whoop.fetch_profile(access_token)
+            whoop_user_id = profile.get("user_id")
+            print(f"[whoop.oauth.callback] WHOOP user_id={whoop_user_id}")
+        except Exception as e:
+            print(f"[whoop.oauth.callback] Could not fetch WHOOP profile: {e}")
+
         # Save tokens first (lightweight)
         print(f"[whoop.oauth.callback] Saving tokens to DB for athlete {athlete_id}...")
         db.table("oauth_tokens").upsert({
@@ -674,6 +686,7 @@ async def whoop_oauth_callback(
             "provider": "whoop",
             "access_token": access_token,
             "refresh_token": token_data.get("refresh_token"),
+            "external_user_id": str(whoop_user_id) if whoop_user_id is not None else None,
         }).execute()
         print(f"[whoop.oauth.callback] Token persistence SUCCESS")
 
@@ -861,6 +874,7 @@ async def unlink_integration(
     }
 
 
+
 @router.post("/whoop/backfill")
 async def whoop_backfill_now(
     days: int = 90,
@@ -887,6 +901,46 @@ async def whoop_backfill_now(
 
     asyncio.create_task(backfill_historical_data(athlete_id, access_token, admin_db, d))
     return {"status": "success", "scheduled": True, "days": d}
+
+
+@router.post("/strava/backfill")
+async def strava_backfill_now(
+    days: int = 90,
+    athlete_id: str = Depends(get_current_athlete),
+    admin_db=Depends(get_admin_db),
+):
+    """
+    Manually trigger a Strava backfill for the authenticated athlete.
+    Useful for local/dev recovery or to re-sync after an extended gap.
+    Automatically refreshes an expired access token before starting.
+    """
+    d = max(1, min(int(days), 365))
+
+    # get_valid_token refreshes and persists if expired.
+    access_token = await strava_service.get_valid_token(athlete_id, admin_db)
+    if not access_token:
+        raise HTTPException(status_code=400, detail="Strava not connected")
+
+    tok = (
+        admin_db.table("oauth_tokens")
+        .select("external_user_id")
+        .eq("athlete_id", athlete_id)
+        .eq("provider", "strava")
+        .maybe_single()
+        .execute()
+    )
+    strava_athlete_id = (tok.data or {}).get("external_user_id") if tok else None
+    if not strava_athlete_id:
+        raise HTTPException(status_code=400, detail="Strava athlete ID not found — try re-linking Strava")
+
+    try:
+        owner_strava_id = int(strava_athlete_id)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail=f"Invalid Strava athlete ID: {strava_athlete_id}")
+
+    asyncio.create_task(strava_backfill(athlete_id, owner_strava_id, access_token, admin_db, d))
+    return {"status": "success", "scheduled": True, "days": d}
+
 
 def get_athlete_by_garmin_id(db, garmin_id: str):
     """Looks up internal athlete_id by Garmin ID."""
