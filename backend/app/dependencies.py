@@ -92,6 +92,18 @@ async def get_user_db(credentials: HTTPAuthorizationCredentials = Security(secur
 # Athlete identity
 # ---------------------------------------------------------------------------
 
+async def get_current_user_email(
+    credentials: HTTPAuthorizationCredentials = Security(security),
+    db: Client = Depends(get_user_db),
+) -> str | None:
+    """Returns the authenticated user's email address, or None on failure."""
+    try:
+        user_res = db.auth.get_user(credentials.credentials)
+        return getattr(user_res.user, "email", None)
+    except Exception:
+        return None
+
+
 async def get_current_athlete(
     credentials: HTTPAuthorizationCredentials = Security(security),
     db: Client = Depends(get_user_db),

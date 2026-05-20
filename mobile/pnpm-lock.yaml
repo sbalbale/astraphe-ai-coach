@@ -26,6 +26,9 @@ importers:
       '@capacitor/preferences':
         specifier: 8.0.1
         version: 8.0.1(@capacitor/core@8.3.1)
+      '@capacitor/push-notifications':
+        specifier: 8.1.0
+        version: 8.1.0(@capacitor/core@8.3.1)
       '@iconify/svelte':
         specifier: 5.2.1
         version: 5.2.1(svelte@5.55.5)
@@ -148,6 +151,11 @@ packages:
 
   '@capacitor/preferences@8.0.1':
     resolution: {integrity: sha512-T6no3ebi79XJCk91U3Jp/liJUwgBdvHR+s6vhvPkPxSuch7z3zx5Rv1bdWM6sWruNx+pViuEGqZvbfCdyBvcHQ==}
+    peerDependencies:
+      '@capacitor/core': '>=8.0.0'
+
+  '@capacitor/push-notifications@8.1.0':
+    resolution: {integrity: sha512-c9mwKzImos48KbaN5XgpHk2qQUL853tyZpYlsN9djJ+buPzn5ChkWwHRsQmQczodr7WM+cL64ZN+tHz6ND1xTg==}
     peerDependencies:
       '@capacitor/core': '>=8.0.0'
 
@@ -2287,6 +2295,10 @@ snapshots:
       '@capacitor/core': 8.3.1
 
   '@capacitor/preferences@8.0.1(@capacitor/core@8.3.1)':
+    dependencies:
+      '@capacitor/core': 8.3.1
+
+  '@capacitor/push-notifications@8.1.0(@capacitor/core@8.3.1)':
     dependencies:
       '@capacitor/core': 8.3.1
 
