@@ -272,7 +272,7 @@ async def garmin_webhook(request: Request, background_tasks: BackgroundTasks, db
     body = await request.body()
     signature = request.headers.get("X-Garmin-Signature", "")
     garmin_secret = settings.GARMIN_WEBHOOK_SECRET
-    if garmin_secret and garmin_secret != "your_garmin_webhook_secret":
+    if garmin_secret:
         expected = hmac.new(
             garmin_secret.encode("utf-8"), body, hashlib.sha256
         ).hexdigest()
@@ -582,7 +582,26 @@ async def strava_webhook(
     activity_id = _webhook_int(payload.get("object_id"))
     owner_strava_id = _webhook_int(payload.get("owner_id"))
 
-    if obj_type == "activity" and aspect == "create" and activity_id is not None and owner_strava_id is not None:
+    # Strava does not sign webhook payloads, so we verify ownership against our
+    # own database before acting on any event. This prevents unauthenticated
+    # callers from triggering ingestion or corrupting workout data.
+    if owner_strava_id is None:
+        return Response(status_code=200)
+
+    owner_token = (
+        db.table("oauth_tokens")
+        .select("athlete_id")
+        .eq("provider", "strava")
+        .eq("external_user_id", str(owner_strava_id))
+        .maybe_single()
+        .execute()
+    )
+    if not owner_token.data:
+        return Response(status_code=200)
+
+    athlete_id = owner_token.data["athlete_id"]
+
+    if obj_type == "activity" and aspect == "create" and activity_id is not None:
         background_tasks.add_task(
             strava_service.ingest_strava_activity,
             owner_strava_id,
@@ -590,9 +609,11 @@ async def strava_webhook(
             db,
         )
     elif obj_type == "activity" and aspect == "delete" and activity_id is not None:
+        # Scope the delete to the verified athlete so a spoofed event cannot
+        # null out strava_activity_id on another user's workout.
         db.table("workouts").update({"strava_activity_id": None}).eq(
-            "strava_activity_id", activity_id
-        ).execute()
+            "athlete_id", athlete_id
+        ).eq("strava_activity_id", activity_id).execute()
 
     return Response(status_code=200)
 
@@ -675,7 +696,7 @@ async def whoop_oauth_callback(
 
     except Exception as e:
         print(f"[whoop.oauth.callback] ERROR: {repr(e)}")
-        return {"status": "error", "message": str(e)}
+        return {"status": "error", "message": "WHOOP connection failed. Please try again."}
 
 
 @router.get("/oauth/strava/authorize")
@@ -787,7 +808,7 @@ async def strava_oauth_callback(
         raise
     except Exception as e:
         print(f"[strava.oauth.callback] ERROR: {repr(e)}")
-        return {"status": "error", "message": str(e)}
+        return {"status": "error", "message": "Strava connection failed. Please try again."}
 
 
 @router.get("/status")

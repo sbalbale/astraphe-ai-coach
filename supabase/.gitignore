@@ -2,6 +2,10 @@
 .branches
 .temp
 
+# secrets
+.env
+.env.*
+
 # dotenvx
 .env.keys
 .env.local

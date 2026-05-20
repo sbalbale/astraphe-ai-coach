@@ -107,7 +107,10 @@ async def delete_workout(
         raise HTTPException(status_code=500, detail=f"Failed to delete workout: {str(e)}")
 
 @router.post("/calculate-tss")
-async def process_workout(payload: WorkoutPayload):
+async def process_workout(
+    payload: WorkoutPayload,
+    athlete_id: str = Depends(get_current_athlete),
+):
     if payload.workout_type.lower() == "cycling":
         if not payload.normalized_power:
             raise HTTPException(status_code=400, detail="Normalized power is required for cycling TSS.")
