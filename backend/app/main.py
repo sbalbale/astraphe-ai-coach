@@ -4,7 +4,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 from app.routers import workouts, activity_detail, coach, athlete, biometrics, sync, plan, debug, analysis, training_plans, admin, notifications
 from app.config import settings
-from app.dependencies import RateLimiter
+from app.core.rate_limiter import RateLimiter
+from app.core.redis import close_redis, ping_redis
 
 _ip_rate_limiter = RateLimiter()
 
@@ -13,6 +14,11 @@ app = FastAPI(
     description="Mathematical and AI orchestration core for the ASTRAPE Coach",
     version="1.0.0"
 )
+
+
+@app.on_event("shutdown")
+async def shutdown_redis():
+    await close_redis()
 
 
 @app.on_event("startup")
@@ -109,5 +115,9 @@ app.include_router(notifications.router)
 
 @app.get("/health")
 async def health_check():
-    print("[health] Checked")
-    return {"status": "healthy", "service": "ASTRAPE API"}
+    redis_ok = await ping_redis()
+    return {
+        "status": "healthy",
+        "service": "ASTRAPE API",
+        "redis": "connected" if redis_ok else "unavailable",
+    }
