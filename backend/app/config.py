@@ -38,6 +38,9 @@ class Settings(BaseSettings):
     WHOOP_OAUTH_AUTH_URL: str = "https://api.prod.whoop.com/oauth/oauth2/auth"
     WHOOP_OAUTH_TOKEN_URL: str = "https://api.prod.whoop.com/oauth/oauth2/token"
     WHOOP_WEBHOOK_LOG_RAW: bool = False
+    # Set True to accept webhooks without verifying the signature.
+    # Use only in development when the portal-generated signing secret is not accessible.
+    WHOOP_WEBHOOK_SKIP_SIG_CHECK: bool = False
 
     # --- Garmin API ---
     GARMIN_CONSUMER_KEY: Optional[str] = None

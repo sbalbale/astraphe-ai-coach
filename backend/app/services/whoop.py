@@ -1,3 +1,4 @@
+import base64
 import hmac
 import hashlib
 import httpx
@@ -6,15 +7,36 @@ from app.config import settings
 from typing import Any, List, Optional
 
 def verify_webhook_signature(payload_body: bytes, signature_header: str) -> bool:
-    """Verifies the HMAC-SHA256 signature using the Client Secret."""
+    """
+    Verifies the HMAC-SHA256 signature sent by WHOOP.
+    WHOOP signs webhook payloads with the app's Client Secret as the HMAC key.
+    WHOOP_WEBHOOK_SECRET must equal the Client Secret from the WHOOP Developer Portal.
+    """
     if not settings.WHOOP_WEBHOOK_SECRET:
+        print("[whoop.sig] WHOOP_WEBHOOK_SECRET is not set — rejecting")
         return False
-    expected_signature = hmac.new(
-        key=settings.WHOOP_WEBHOOK_SECRET.encode('utf-8'),
-        msg=payload_body,
-        digestmod=hashlib.sha256
-    ).hexdigest()
-    return hmac.compare_digest(expected_signature, signature_header)
+    # WHOOP sends a base64-encoded HMAC-SHA256.
+    # The client secret is a hex string; WHOOP uses the raw decoded bytes as the HMAC key.
+    secret = settings.WHOOP_WEBHOOK_SECRET
+    try:
+        key = bytes.fromhex(secret)
+    except ValueError:
+        key = secret.encode('utf-8')
+    expected_signature = base64.b64encode(
+        hmac.new(
+            key=key,
+            msg=payload_body,
+            digestmod=hashlib.sha256
+        ).digest()
+    ).decode('utf-8')
+    match = hmac.compare_digest(expected_signature, signature_header)
+    if not match:
+        print(
+            f"[whoop.sig] MISMATCH — received={signature_header[:16]}... "
+            f"expected={expected_signature[:16]}... "
+            f"body_len={len(payload_body)}"
+        )
+    return match
 
 async def exchange_oauth_code(code: str, redirect_url: str) -> dict:
     """Exchanges the code for tokens. Must match the URL sent in the first step."""
@@ -133,6 +155,8 @@ async def fetch_body_measurement(access_token: str) -> dict:
         # v2 docs: GET /v2/user/measurement/body
         response = await client.get(f"{_v2_base()}/user/measurement/body", headers=headers)
         return _json_or_error(response, "fetch_body_measurement(v2)")
+
+
 
 
 def _v2_base() -> str:
