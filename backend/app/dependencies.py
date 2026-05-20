@@ -1,12 +1,10 @@
-import asyncio
-from collections import defaultdict
 from dataclasses import dataclass
-from time import time
 
 from fastapi import Depends, HTTPException, Security
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from supabase import create_client, Client
 from app.config import settings
+from app.core.rate_limiter import RateLimiter
 
 security = HTTPBearer()
 
@@ -31,33 +29,6 @@ class UserConfig:
     rate_limit_rpm: int        # AI requests per minute
     rate_limit_rph: int        # AI requests per hour
     is_admin: bool
-
-
-# ---------------------------------------------------------------------------
-# In-memory sliding-window rate limiter.
-# Works correctly for single-instance deployments (single Cloud Run container).
-# For horizontally-scaled deployments, replace _rate_limiter with a Redis
-# backend (e.g. redis-py + EXPIRE-based counter or a sliding-log in a sorted set).
-# ---------------------------------------------------------------------------
-
-class RateLimiter:
-    def __init__(self):
-        self._windows: dict[str, list[float]] = defaultdict(list)
-        self._lock = asyncio.Lock()
-
-    async def check(self, key: str, limit: int, window_seconds: int) -> bool:
-        async with self._lock:
-            now = time()
-            cutoff = now - window_seconds
-            self._windows[key] = [t for t in self._windows[key] if t > cutoff]
-            if len(self._windows[key]) >= limit:
-                return False
-            self._windows[key].append(now)
-            return True
-
-    async def require(self, key: str, limit: int, window_seconds: int, detail: str):
-        if not await self.check(key, limit, window_seconds):
-            raise HTTPException(status_code=429, detail=detail)
 
 
 _rate_limiter = RateLimiter()

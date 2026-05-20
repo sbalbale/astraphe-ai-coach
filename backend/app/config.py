@@ -55,6 +55,12 @@ class Settings(BaseSettings):
     RESEND_API_KEY: Optional[str] = None
     RESEND_AUDIENCE_ID: Optional[str] = None
 
+    # --- Redis ---
+    # Local dev:  redis://localhost:6379
+    # Upstash:    rediss://default:<token>@<host>.upstash.io:6380
+    # Leave unset to use the in-process memory fallback.
+    REDIS_URL: Optional[str] = None
+
     # --- IP Rate Limiting ---
     IP_RATE_LIMIT_RPM: int = 100  # requests per minute per IP across all endpoints
 
