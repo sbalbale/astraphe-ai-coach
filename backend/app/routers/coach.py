@@ -225,6 +225,19 @@ async def chat_with_coach(
             _force_set_conversation_title(db, athlete_id, conversation_id, new_title)
         except Exception:
             pass
+        try:
+            from app.services.push import send_push_to_athlete
+            preview = (coach_reply or "").strip()[:120]
+            send_push_to_athlete(
+                athlete_id=athlete_id,
+                title="ASTRAPE Coach",
+                body=preview,
+                db=db,
+                data={"url": "/chat"},
+                notification_type="coach",
+            )
+        except Exception:
+            pass
         return {
             "status": "success",
             "conversation_id": conversation_id,

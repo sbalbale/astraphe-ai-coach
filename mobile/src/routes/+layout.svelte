@@ -11,6 +11,7 @@
   import { analysisNavEpoch } from '$lib/analysisNavEpoch.svelte';
   import { authStore } from '$lib/stores/authStore.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
+  import { initPushNotifications } from '$lib/services/pushNotifications';
 
   afterNavigate(() => {
     analysisNavEpoch.bump();
@@ -31,6 +32,7 @@
   
   let innerWidth = $state(0);
   let wide = $derived(innerWidth >= 768);
+  let pushInitialized = false;
   
   let isAuthRoute = $derived($page.url.pathname.startsWith('/auth'));
   let isAuthFlowRoute = $derived(
@@ -97,6 +99,12 @@
     // Signed in: ensure profile loads before deciding redirects.
     athleteStore.fetchAll();
     if (athleteStore.loading || !athleteStore.initialLoadDone) return;
+
+    // Register push token once per session.
+    if (!pushInitialized) {
+      pushInitialized = true;
+      initPushNotifications();
+    }
 
     const complete = profileComplete;
 

@@ -51,6 +51,20 @@ class Settings(BaseSettings):
     STRAVA_WEBHOOK_VERIFY_TOKEN: str = ""  # a static secret string you choose, used to verify Strava's hub challenge
     STRAVA_WEBHOOK_SUBSCRIPTION_ID: int = 0  # filled in after you register the webhook
 
+    # --- Resend Email ---
+    RESEND_API_KEY: Optional[str] = None
+    RESEND_AUDIENCE_ID: Optional[str] = None
+
+    # --- Push Notifications ---
+    # Firebase service account JSON (full JSON string, not a file path).
+    # Generate at: Firebase Console → Project Settings → Service Accounts → Generate new private key
+    FCM_SERVICE_ACCOUNT_JSON: Optional[str] = None
+
+    # VAPID keys for web push. Generate with:  npx web-push generate-vapid-keys
+    VAPID_PUBLIC_KEY: Optional[str] = None
+    VAPID_PRIVATE_KEY: Optional[str] = None
+    VAPID_SUBJECT: str = "mailto:admin@astrape.app"
+
     # --- Manual Testing ---
     TEST_ATHLETE_ID: str | None = None
 
