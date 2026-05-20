@@ -75,7 +75,7 @@ def retrieve_relevant_memories(athlete_id: str, query: str, db: Client, top_k: i
         result = db.rpc("match_coach_memories", {
             "athlete_id": athlete_id,
             "query_embedding": embedding,
-            "match_threshold": 0.75,
+            "match_threshold": 0.50,
             "match_count": top_k,
         }).execute()
         return result.data or []

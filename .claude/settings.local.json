@@ -19,7 +19,8 @@
       "Bash(pip install *)",
       "Bash(pip3 install *)",
       "Bash(python -m pip install pypdf openpyxl python-multipart)",
-      "Bash(.venv\\\\Scripts\\\\pip install *)"
+      "Bash(.venv\\\\Scripts\\\\pip install *)",
+      "Bash(..venvScriptspython.exe -c ' *)"
     ]
   }
 }

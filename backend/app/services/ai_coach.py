@@ -7,6 +7,7 @@ from app.services.memory import retrieve_relevant_memories
 import asyncio
 import json
 import re
+import time
 from datetime import date
 from typing import Any
 
@@ -608,14 +609,28 @@ def get_coach_response_agentic(
 
     last_response = None
     for _hop in range(max_tool_hops + 1):
-        try:
-            last_response = _client.models.generate_content(
-                model=effective_model,
-                contents=contents,
-                config=config,
-            )
-        except Exception as e:
-            print(f"CRITICAL: Final agent summary failed: {e}")
+        _hop_error: Exception | None = None
+        for _attempt in range(2):  # one retry for transient Gemini 500/503
+            try:
+                last_response = _client.models.generate_content(
+                    model=effective_model,
+                    contents=contents,
+                    config=config,
+                )
+                _hop_error = None
+                break
+            except Exception as e:
+                _hop_error = e
+                err_str = str(e)
+                is_transient = any(k in err_str for k in ("500", "503", "INTERNAL", "overloaded"))
+                if _attempt == 0 and is_transient:
+                    print(f"[coach] Gemini transient error (hop {_hop}, attempt 1): {e}. Retrying in 1.5s…")
+                    time.sleep(1.5)
+                    continue
+                break
+
+        if _hop_error is not None:
+            print(f"CRITICAL: generate_content failed after retry (hop {_hop}): {_hop_error}")
             tail = contents[-1] if contents else None
             parts_iter = getattr(tail, "parts", None)
             parts_list = list(parts_iter) if parts_iter else []
@@ -626,7 +641,7 @@ def get_coach_response_agentic(
                     "I have successfully updated your training plan with the requested sessions. Please check your calendar for the details.",
                     [],
                 )
-            raise
+            raise _hop_error
 
         if not last_response.candidates:
             break
