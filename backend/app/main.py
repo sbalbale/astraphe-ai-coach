@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
-from app.routers import workouts, activity_detail, coach, athlete, biometrics, sync, plan, debug, analysis, training_plans, admin
+from app.routers import workouts, activity_detail, coach, athlete, biometrics, sync, plan, debug, analysis, training_plans, admin, notifications
 from app.config import settings
 
 app = FastAPI(
@@ -72,6 +72,7 @@ app.include_router(training_plans.router)
 app.include_router(debug.router)
 app.include_router(analysis.router)
 app.include_router(admin.router)
+app.include_router(notifications.router)
 
 @app.get("/health")
 async def health_check():

@@ -3,7 +3,13 @@
     "allow": [
       "Bash(git check-ignore *)",
       "Bash(Remove-Item \"C:\\\\Users\\\\seanb\\\\Documents\\\\astrape-ai-coach\\\\mobile\\\\src\\\\lib\\\\components\\\\RacePredictor.svelte\")",
-      "Bash(Remove-Item \"C:\\\\Users\\\\seanb\\\\Documents\\\\astrape-ai-coach\\\\mobile\\\\src\\\\routes\\\\profile\\\\calculators\\\\+page.svelte\")"
+      "Bash(Remove-Item \"C:\\\\Users\\\\seanb\\\\Documents\\\\astrape-ai-coach\\\\mobile\\\\src\\\\routes\\\\profile\\\\calculators\\\\+page.svelte\")",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)"
     ]
   }
 }

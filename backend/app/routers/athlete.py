@@ -7,7 +7,8 @@ import numpy as np
 from app.models.athlete import AthleteState, AthleteProfileUpdate
 from app.services.algorithms import compute_z_score
 from app.services.hr_zones import athlete_dict_with_hr_zones, get_athlete_zones, optional_canonical_hr_zone_method
-from app.dependencies import get_current_athlete, get_user_db, get_admin_db
+from app.services.resend_service import sync_marketing_contact
+from app.dependencies import get_current_athlete, get_current_user_email, get_user_db, get_admin_db
 
 router = APIRouter(prefix="/v1/athlete", tags=["Athlete"])
 
@@ -351,7 +352,8 @@ async def update_zones(
 async def update_athlete_profile(
     payload: AthleteProfileUpdate,
     athlete_id: str = Depends(get_current_athlete),
-    db = Depends(get_user_db)
+    db = Depends(get_user_db),
+    user_email: str | None = Depends(get_current_user_email),
 ):
     """
     Update athlete physiological anchors (e.g., FTP, max HR).
@@ -440,6 +442,11 @@ async def update_athlete_profile(
 
     if not getattr(fresh, "data", None):
         raise HTTPException(status_code=500, detail="Updated profile but could not load updated record")
+
+    # Sync marketing opt-in/out with Resend whenever privacy_settings.marketing changes.
+    new_privacy = update_data.get("privacy_settings") or {}
+    if user_email and "marketing" in new_privacy:
+        await sync_marketing_contact(user_email, bool(new_privacy["marketing"]))
 
     return {
         "status": "success",
