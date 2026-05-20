@@ -1,8 +1,12 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import JSONResponse
 from app.routers import workouts, activity_detail, coach, athlete, biometrics, sync, plan, debug, analysis, training_plans, admin, notifications
 from app.config import settings
+from app.dependencies import RateLimiter
+
+_ip_rate_limiter = RateLimiter()
 
 app = FastAPI(
     title="ASTRAPE Backend API",
@@ -41,6 +45,29 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         return response
 
+
+class IPRateLimitMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        # /health is exempt — uptime monitors shouldn't consume quota
+        if request.url.path == "/health":
+            return await call_next(request)
+
+        # Real IP: Cloud Run and ngrok both set X-Forwarded-For; take the first (client) address.
+        forwarded_for = request.headers.get("X-Forwarded-For")
+        if forwarded_for:
+            ip = forwarded_for.split(",")[0].strip()
+        else:
+            ip = request.client.host if request.client else "unknown"
+
+        allowed = await _ip_rate_limiter.check(ip, settings.IP_RATE_LIMIT_RPM, 60)
+        if not allowed:
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "Too many requests. Please slow down and try again."},
+                headers={"Retry-After": "60"},
+            )
+        return await call_next(request)
+
 # Enumerate the actual origins that should be allowed.
 # allow_origins=["*"] is incompatible with allow_credentials=True per the CORS spec.
 ALLOWED_ORIGINS = [
@@ -52,8 +79,14 @@ ALLOWED_ORIGINS = [
     "http://127.0.0.1:5173",
 ]
 
-app.add_middleware(SecurityHeadersMiddleware)
-app.add_middleware(
+# Middleware order matters — Starlette wraps in reverse add order, so the last
+# add_middleware call becomes the outermost layer (first to see incoming requests).
+# Desired request flow: CORS → IPRateLimit → SecurityHeaders → app routes
+# This ensures 429 responses still carry CORS headers, and OPTIONS preflights
+# are resolved by CORS before they ever reach the rate limiter.
+app.add_middleware(SecurityHeadersMiddleware)   # innermost
+app.add_middleware(IPRateLimitMiddleware)        # middle
+app.add_middleware(                             # outermost
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
