@@ -101,10 +101,12 @@ async def get_current_athlete(
     try:
         user = db.auth.get_user(token)
         user_id = user.user.id
-        print(f"Auth DEBUG: user_id={user_id}")
+        if settings.APP_ENV == "development":
+            print(f"Auth DEBUG: user_id={user_id}")
 
         athlete_res = db.table("athletes").select("id").eq("user_id", user_id).execute()
-        print(f"Auth DEBUG: athlete_res={athlete_res.data}")
+        if settings.APP_ENV == "development":
+            print(f"Auth DEBUG: athlete_res={athlete_res.data}")
 
         if not athlete_res.data:
             raise HTTPException(status_code=404, detail="Athlete profile not found")
@@ -196,7 +198,15 @@ async def get_user_config(
         )
     except HTTPException:
         raise
-    except Exception:
+    except Exception as e:
+        # If get_user returned None the token is invalid — fail hard.
+        # For other transient errors (network blip, Supabase unavailable) fall
+        # back to free-tier defaults so the request isn't silently granted
+        # elevated access, but we do NOT suppress a definitive auth failure.
+        err_str = str(e).lower()
+        is_auth_error = any(k in err_str for k in ("invalid", "expired", "unauthorized", "jwt", "token"))
+        if is_auth_error:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
         defaults = TIER_DEFAULTS["free"]
         return UserConfig(
             user_id="",

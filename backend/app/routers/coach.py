@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import Optional, List
 import asyncio
 import json
@@ -25,6 +25,13 @@ class ChatMessage(BaseModel):
     message: str
     recent_tss: Optional[float] = 0.0
     image_urls: Optional[List[str]] = None
+
+    @field_validator("message")
+    @classmethod
+    def validate_message_length(cls, v: str) -> str:
+        if len(v) > 8000:
+            raise ValueError("Message too long (max 8000 characters)")
+        return v
 
 class CreateConversation(BaseModel):
     title: Optional[str] = None
