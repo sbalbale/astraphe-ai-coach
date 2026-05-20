@@ -28,16 +28,12 @@ async def validate_production_config():
             "TEST_ATHLETE_ID must not be set when APP_ENV=production. "
             "Remove it from your environment before starting the server."
         )
-    if (
-        settings.APP_ENV == "production"
-        and settings.WHOOP_CLIENT_SECRET
-        and settings.WHOOP_WEBHOOK_SECRET
-        and settings.WHOOP_CLIENT_SECRET == settings.WHOOP_WEBHOOK_SECRET
-    ):
+    # WHOOP uses the OAuth client secret as the HMAC key for webhook signatures.
+    # WHOOP_WEBHOOK_SECRET must equal WHOOP_CLIENT_SECRET — this is correct by design.
+    if settings.APP_ENV == "production" and not settings.WHOOP_WEBHOOK_SECRET:
         import warnings
         warnings.warn(
-            "WHOOP_CLIENT_SECRET and WHOOP_WEBHOOK_SECRET are identical. "
-            "These should be distinct secrets.",
+            "WHOOP_WEBHOOK_SECRET is not set. Webhook signature verification will reject all WHOOP events.",
             stacklevel=1,
         )
 
