@@ -55,6 +55,9 @@ class Settings(BaseSettings):
     RESEND_API_KEY: Optional[str] = None
     RESEND_AUDIENCE_ID: Optional[str] = None
 
+    # --- IP Rate Limiting ---
+    IP_RATE_LIMIT_RPM: int = 100  # requests per minute per IP across all endpoints
+
     # --- Push Notifications ---
     # Firebase service account JSON (full JSON string, not a file path).
     # Generate at: Firebase Console → Project Settings → Service Accounts → Generate new private key
