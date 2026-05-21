@@ -37,6 +37,15 @@ async def validate_production_config():
             stacklevel=1,
         )
 
+    if settings.APP_ENV == "development":
+        from app.services.strava_webhook_sub import subscription_matches_app_base
+
+        ok, detail = subscription_matches_app_base()
+        if ok:
+            print(f"[startup] {detail}")
+        else:
+            print(f"[startup] WARNING: {detail}")
+
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):

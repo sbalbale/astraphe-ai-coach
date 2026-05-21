@@ -221,9 +221,14 @@ async def get_valid_token(athlete_id: str, db: Any, delay: bool = False) -> str 
         return access_token if isinstance(access_token, str) else None
 
     if not refresh_token:
+        print(f"[strava.token] No refresh_token for athlete_id={athlete_id}")
         return None
 
-    token_data = await refresh_oauth_token(refresh_token, delay=False)
+    try:
+        token_data = await refresh_oauth_token(refresh_token, delay=False)
+    except HTTPException as e:
+        print(f"[strava.token] Refresh failed for athlete_id={athlete_id}: {e.detail}")
+        return None
     new_access = token_data.get("access_token")
     new_refresh = token_data.get("refresh_token") or refresh_token
     expires_iso = _expires_at_iso_from_strava(token_data)
@@ -643,6 +648,23 @@ async def resolve_canonical_workout_for_strava_activity(
     )
 
 
+def _strava_activity_is_primary(workout: dict, activity_id: int) -> bool:
+    """True when this Strava activity should receive streams/detail writes on the row."""
+    try:
+        primary = int(workout["strava_activity_id"])
+        if primary == int(activity_id):
+            return True
+    except (TypeError, ValueError, KeyError):
+        pass
+    raw = (workout.get("source_ids") or {}).get("strava")
+    sid = str(int(activity_id))
+    if isinstance(raw, list):
+        return sid in {str(int(x)) for x in raw if x is not None}
+    if isinstance(raw, str):
+        return raw == sid
+    return False
+
+
 async def ingest_strava_activity(
     owner_strava_id: int,
     activity_id: int,
@@ -650,30 +672,42 @@ async def ingest_strava_activity(
     delay: bool = False,
     access_token: str | None = None,
     force_refresh: bool = False,
+    athlete_id: str | None = None,
 ) -> dict | None:
     """
     Full pipeline: fetch -> deduplicate -> store streams/laps -> compute zones -> return workout.
     Called by both the webhook handler and the backfill task.
     If access_token is set, skips get_valid_token (avoids redundant DB reads during backfill).
+    ``athlete_id`` may be passed from the webhook (oauth_tokens) when ``athletes.strava_athlete_id`` is unset.
     """
-    athlete_res = (
-        db.table("athletes")
-        .select("*")
-        .eq("strava_athlete_id", owner_strava_id)
-        .maybe_single()
-        .execute()
-    )
-    if not athlete_res.data:
-        print(f"[strava.ingest] No athlete found for strava_id={owner_strava_id}")
+    athlete = None
+    if athlete_id:
+        athlete_res = (
+            db.table("athletes").select("*").eq("id", athlete_id).maybe_single().execute()
+        )
+        athlete = athlete_res.data if athlete_res else None
+    if not athlete:
+        athlete_res = (
+            db.table("athletes")
+            .select("*")
+            .eq("strava_athlete_id", owner_strava_id)
+            .maybe_single()
+            .execute()
+        )
+        athlete = athlete_res.data if athlete_res else None
+    if not athlete:
+        print(f"[strava.ingest] No athlete for strava_id={owner_strava_id} athlete_id={athlete_id}")
         return None
 
-    athlete = athlete_res.data
     athlete_id = athlete["id"]
 
     if not access_token:
         access_token = await get_valid_token(athlete_id, db)
     if not access_token:
-        print(f"[strava.ingest] No valid token for athlete_id={athlete_id}")
+        print(
+            f"[strava.ingest] No valid Strava token for athlete_id={athlete_id} "
+            f"(re-connect Strava if refresh failed)"
+        )
         return None
 
     activity = await get_activity(activity_id, access_token, delay=delay)
@@ -703,12 +737,19 @@ async def ingest_strava_activity(
         primary_int = int(primary_aid) if primary_aid is not None else None
     except (TypeError, ValueError):
         primary_int = None
-    is_primary_strava = primary_int is not None and primary_int == int(activity_id)
+    is_primary_strava = _strava_activity_is_primary(workout, activity_id)
+    needs_enrichment = force_refresh or not workout.get("strava_streams_fetched")
 
     if not is_primary_strava:
         print(
-            f"[strava.ingest] activity_id={activity_id} merged as duplicate; "
-            f"canonical primary strava_activity_id={primary_int}"
+            f"[strava.ingest] activity_id={activity_id} not primary on workout {workout_id}; "
+            f"primary strava_activity_id={primary_int}"
+        )
+        return workout
+
+    if not needs_enrichment and not was_created:
+        print(
+            f"[strava.ingest] activity_id={activity_id} already enriched on workout {workout_id}; skip"
         )
         return workout
 

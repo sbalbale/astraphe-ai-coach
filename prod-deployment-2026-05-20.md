@@ -635,32 +635,32 @@ In the [WHOOP Developer Dashboard](https://developer-dashboard.whoop.com/) → y
 
 ### Strava Webhook
 
-Strava webhooks are registered via API call. The current dev subscription (ID 345477) must be deleted and re-registered pointing to production. Run these from your local terminal (not the server):
+Strava webhooks are **not** configured in the Strava website UI. They are **push subscriptions** registered via API, tied to your app’s `callback_url`. WHOOP lets you paste a URL in the dashboard; Strava does not — you must register through the API (or the helper script below).
+
+**Production (register once):** With `api.astrapeai.com` live:
 
 ```bash
-CLIENT_ID="238216"
-CLIENT_SECRET="YOUR_STRAVA_CLIENT_SECRET"
-VERIFY_TOKEN="YOUR_STRAVA_VERIFY_TOKEN"
-
-# Check existing subscription
-curl -G "https://www.strava.com/api/v3/push_subscriptions" \
-  -d "client_id=$CLIENT_ID" \
-  -d "client_secret=$CLIENT_SECRET"
-
-# Delete the dev subscription
-curl -X DELETE \
-  "https://www.strava.com/api/v3/push_subscriptions/345477?client_id=$CLIENT_ID&client_secret=$CLIENT_SECRET"
-
-# Register production subscription
-curl -X POST "https://www.strava.com/api/v3/push_subscriptions" \
-  -F "client_id=$CLIENT_ID" \
-  -F "client_secret=$CLIENT_SECRET" \
-  -F "callback_url=https://api.astrapeai.com/v1/sync/strava/webhook" \
-  -F "verify_token=$VERIFY_TOKEN"
-# Response includes "id" — update STRAVA_WEBHOOK_SUBSCRIPTION_ID in Cloud Run env vars
+cd backend
+# uvicorn must be running; production URL must answer GET hub.challenge
+python scripts/register_strava_webhook.py
 ```
 
-Strava sends a GET `hub.challenge` request to your callback URL. The `strava_webhook_verify` handler in `sync.py` responds automatically. On success, Strava returns a `subscription_id` — update `STRAVA_WEBHOOK_SUBSCRIPTION_ID` in your Cloud Run env vars.
+Set `APP_BASE_URL=https://api.astrapeai.com` in `.env` (or export it) before running the script so it registers the production callback. The script deletes stale subscriptions, registers the URL from `APP_BASE_URL`, and writes `STRAVA_WEBHOOK_SUBSCRIPTION_ID` into `backend/.env`.
+
+**Local dev (re-register whenever ngrok changes):**
+
+1. Start ngrok → copy the new HTTPS URL into `APP_BASE_URL` in `backend/.env`.
+2. Start uvicorn (Strava verifies the callback with a GET `hub.challenge` during registration).
+3. Run:
+   ```bash
+   cd backend
+   python scripts/register_strava_webhook.py
+   ```
+4. On backend startup (`APP_ENV=development`), the server prints either `Strava webhook OK` or a **WARNING** with the same fix command if the subscription still points at an old tunnel.
+
+**Optional — stable ngrok hostname:** A reserved ngrok domain (paid) avoids re-registration on every restart. Point it at `:8000`, set `APP_BASE_URL` to that fixed host, and run `register_strava_webhook.py` once.
+
+Strava sends a GET `hub.challenge` during registration; `GET /v1/sync/strava/webhook` in `sync.py` handles it. After registration, activity events POST to the same URL.
 
 ### Garmin Webhook
 
