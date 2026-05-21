@@ -183,6 +183,20 @@ export class AthleteState {
     return false;
   }
 
+  async addWorkout(payload: object): Promise<boolean> {
+    const result = await api.post('/v1/workouts', payload);
+    if (!result) return false;
+    await this.fetchAll(true);
+    return true;
+  }
+
+  async addSleep(payload: object): Promise<boolean> {
+    const result = await api.post('/v1/biometrics/daily', payload);
+    if (!result) return false;
+    await this.fetchAll(true);
+    return true;
+  }
+
   async unlinkIntegration(provider: string) {
     console.log(`[AthleteStore] unlinkIntegration(${provider})`);
     const res = await api.unlinkIntegration(provider);

@@ -49,18 +49,6 @@ async def onboard_athlete(athlete_id: str = Depends(get_current_athlete), db = D
     """Seeds initial sample data for a newly registered athlete."""
     today = date.today()
     
-    # Seed 7 days of TSS history
-    tss_entries = [
-        {"athlete_id": athlete_id, "date": (today - timedelta(days=6)).isoformat(), "daily_tss": 61, "ctl": 61, "atl": 55, "tsb": 6},
-        {"athlete_id": athlete_id, "date": (today - timedelta(days=5)).isoformat(), "daily_tss": 72, "ctl": 62, "atl": 65, "tsb": -3},
-        {"athlete_id": athlete_id, "date": (today - timedelta(days=4)).isoformat(), "daily_tss": 55, "ctl": 62, "atl": 58, "tsb": 4},
-        {"athlete_id": athlete_id, "date": (today - timedelta(days=3)).isoformat(), "daily_tss": 88, "ctl": 64, "atl": 72, "tsb": -8},
-        {"athlete_id": athlete_id, "date": (today - timedelta(days=2)).isoformat(), "daily_tss": 110, "ctl": 65, "atl": 88, "tsb": -23},
-        {"athlete_id": athlete_id, "date": (today - timedelta(days=1)).isoformat(), "daily_tss": 130, "ctl": 67, "atl": 95, "tsb": -28},
-        {"athlete_id": athlete_id, "date": today.isoformat(), "daily_tss": 0, "ctl": 68, "atl": 38, "tsb": 28},
-    ]
-    db.table("tss_history").upsert(tss_entries).execute()
-    
     # Seed today's biometrics
     db.table("biometrics").upsert([{
         "athlete_id": athlete_id,
