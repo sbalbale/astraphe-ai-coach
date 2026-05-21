@@ -27,6 +27,7 @@
   import { calculateSleepScore } from "$lib/utils/biometrics";
   import { onMount } from "svelte";
   import { page } from "$app/stores";
+  import AddSleepModal from "$lib/components/AddSleepModal.svelte";
 
   const isConnected = $derived(
     Object.values(athleteStore.syncStatus?.integrations || {}).some(
@@ -273,6 +274,12 @@
     return unsub;
   });
 
+  let addSleepOpen = $state(false);
+
+  async function handleSleepSaved(payload: object) {
+    await athleteStore.addSleep(payload);
+  }
+
   let selectedPeriod = $state<any>(null);
   let showPeriodModal = $state(false);
 
@@ -321,12 +328,25 @@
   });
 </script>
 
+<AddSleepModal
+  show={addSleepOpen}
+  onClose={() => (addSleepOpen = false)}
+  onSaved={handleSleepSaved}
+/>
+
 <div class="flex flex-col gap-3">
-  <div>
-    <p class="text-xs text-text2 font-mono uppercase tracking-[0.1em]">
-      Nightly Analysis
-    </p>
-    <h1 class="text-[22px] font-bold tracking-[-0.02em]">Sleep</h1>
+  <div class="flex items-start justify-between">
+    <div>
+      <p class="text-xs text-text2 font-mono uppercase tracking-[0.1em]">
+        Nightly Analysis
+      </p>
+      <h1 class="text-[22px] font-bold tracking-[-0.02em]">Sleep</h1>
+    </div>
+    <button
+      onclick={() => (addSleepOpen = true)}
+      class="w-8 h-8 flex items-center justify-center rounded-full bg-glass border border-border text-text2 hover:text-text0 hover:border-blue/50 transition-colors text-lg leading-none mt-1"
+      aria-label="Log sleep"
+    >+</button>
   </div>
 
   {#if !isConnected}
@@ -334,6 +354,8 @@
       title="No Sleep Data"
       message="Connect WHOOP, Garmin, or Apple Health to track your sleep architecture and recovery."
       icon="🌙"
+      secondaryLabel="Log Sleep"
+      onSecondaryAction={() => (addSleepOpen = true)}
     />
   {:else if !hasData}
     <EmptyState

@@ -491,7 +491,9 @@ def recalculate_tss_history(athlete_id: str, db):
 
     # 4. Save to tss_history table
     if records:
-        # PostgREST upsert handles batches well
+        # Remove any stale rows that predate the earliest real workout (e.g. onboarding seeds).
+        # The upsert below covers start_date..today; anything before start_date is orphaned mock data.
+        db.table("tss_history").delete().eq("athlete_id", athlete_id).lt("date", start_date.isoformat()).execute()
         db.table("tss_history").upsert(records, on_conflict="athlete_id,date").execute()
 
 async def process_and_save_workout(payload: WorkoutPayload, athlete_id: str, db: Any) -> None:

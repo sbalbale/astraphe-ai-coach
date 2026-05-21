@@ -58,9 +58,20 @@
   import GpsTrace from '$lib/components/workout/GpsTrace.svelte';
   import LapStrip from '$lib/components/workout/LapStrip.svelte';
   import DataSources from '$lib/components/workout/DataSources.svelte';
+  import AddActivityModal from '$lib/components/AddActivityModal.svelte';
 
   const CTL_IDENTITY_HEX = CHART_CTL_STROKE;
   const ATL_IDENTITY_HEX = CHART_ATL_STROKE;
+
+  let addActivityOpen = $state(false);
+
+  const measurementUnitsForModal = $derived(
+    (athleteStore.profile as any)?.measurement_units === 'imperial' ? 'imperial' : 'metric'
+  );
+
+  async function handleActivitySaved(payload: object) {
+    await athleteStore.addWorkout(payload);
+  }
 
   let metric = $state('load');
   const tabs = ['load', 'history']; // Simplified tabs for now as pace/zones need complex processing
@@ -307,7 +318,13 @@
     return 'bg-glass border-border';
   }
 
-  const weeklyTss = $derived(athleteStore.workouts?.slice(0, 7).reduce((acc, w) => acc + (w.tss || 0), 0) || 0);
+  /** TSS from workouts started in the last 7 days — source of truth for the Weekly TSS card. */
+  const weeklyTss = $derived.by(() => {
+    const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    return (athleteStore.workouts || [])
+      .filter((w: any) => w?.started_at && new Date(w.started_at).getTime() >= cutoff)
+      .reduce((acc: number, w: any) => acc + (w.tss || 0), 0);
+  });
 
   /** Oldest→newest daily rows for baseline math */
   const trainingLoadSorted = $derived.by(() =>
@@ -316,7 +333,7 @@
       .sort((a: any, b: any) => String(a.date).localeCompare(String(b.date)))
   );
 
-  /** Rolling 7-day TSS vs mean of prior (up to six) trailing 7-day windows */
+  /** Current week TSS vs mean of prior (up to six) trailing 7-day windows from tss_history. */
   const weeklyRollingContext = $derived.by(() => {
     const rows = trainingLoadSorted;
     const n = rows.length;
@@ -327,8 +344,9 @@
       return s;
     };
 
-    if (n >= 7) {
-      const current = sumWindowEnding(n)!;
+    // weekSum always comes from actual workouts so it's never sourced from stale tss_history.
+    // Historical baseline/delta still use tss_history rows which represent longer-term trends.
+    if (n >= 14) {
       const historics: number[] = [];
       for (let end = n - 7; end >= 14 && historics.length < 8; end -= 7) {
         const v = sumWindowEnding(end);
@@ -336,16 +354,15 @@
       }
       if (historics.length > 0) {
         const baseline = historics.reduce((a, b) => a + b, 0) / historics.length;
-        const delta = current - baseline;
+        const delta = weeklyTss - baseline;
         const pct = delta / Math.max(baseline, 1e-6);
         return {
-          weekSum: Math.round(current),
+          weekSum: Math.round(weeklyTss),
           baseline: Math.round(baseline),
           delta: Math.round(delta),
           pct
         };
       }
-      return { weekSum: Math.round(current), baseline: null, delta: null, pct: null as number | null };
     }
 
     return {
@@ -561,13 +578,29 @@
   });
 </script>
 
+<AddActivityModal
+  show={addActivityOpen}
+  onClose={() => (addActivityOpen = false)}
+  units={measurementUnitsForModal}
+  onSaved={handleActivitySaved}
+/>
+
 <div class="flex flex-col gap-3">
-  <h1 class="text-[20px] font-bold tracking-[-0.02em] text-text0 pt-1">Training Analysis</h1>
+  <div class="flex items-center justify-between pt-1">
+    <h1 class="text-[20px] font-bold tracking-[-0.02em] text-text0">Training Analysis</h1>
+    <button
+      onclick={() => (addActivityOpen = true)}
+      class="w-8 h-8 flex items-center justify-center rounded-full bg-glass border border-border text-text2 hover:text-text0 hover:border-blue/50 transition-colors text-lg leading-none"
+      aria-label="Log activity"
+    >+</button>
+  </div>
 
   {#if showNoTrainingData}
-    <EmptyState 
-      title="No Training Data" 
+    <EmptyState
+      title="No Training Data"
       message="Connect your training apps to analyze your performance trends and history."
+      secondaryLabel="Log Activity"
+      onSecondaryAction={() => (addActivityOpen = true)}
     />
   {:else if !hasWorkouts}
     <EmptyState 
@@ -675,11 +708,9 @@
             {:else}
               <p class="text-xs text-text1 leading-relaxed">
                 {analysisText ??
-                  (athleteStore.tsb > 10
-                    ? `You have significant freshness (TSB +${Math.round(athleteStore.tsb)}). Excellent time for a peak performance or hard test.`
-                    : athleteStore.tsb < -20
-                      ? 'High fatigue detected. Consider a deload week to allow CTL to catch up to ATL safely.'
-                      : 'Your training load is stable. Continue with your planned progression.')}
+                  (!isConnected
+                    ? 'Keep logging activities to build your training picture. Connect a device for automatic sync and deeper metrics.'
+                    : 'No insight available right now. Check back after your next sync.')}
               </p>
             {/if}
           </div>
