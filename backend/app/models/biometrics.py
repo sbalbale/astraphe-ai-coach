@@ -5,6 +5,7 @@ from datetime import date, datetime
 class DailyBiometrics(BaseModel):
     date: date
     source: str
+    external_id: Optional[str] = None
     hrv_rmssd: Optional[float] = None
     resting_hr: Optional[int] = None
     sleep_duration_min: Optional[int] = None

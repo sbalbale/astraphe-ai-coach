@@ -4,6 +4,7 @@ import json
 import urllib.parse
 import secrets
 import asyncio
+from typing import Any
 from html import escape
 from urllib.parse import urlparse
 from fastapi import APIRouter, Request, Response, HTTPException, Depends, BackgroundTasks, Query
@@ -15,7 +16,7 @@ from app.services import strava as strava_service
 from app.services.strava import backfill_historical_data as strava_backfill
 from app.services.whoop_backfill import backfill_historical_data
 from app.config import settings
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from app.models.workout import WorkoutPayload
 from app.models.biometrics import DailyBiometrics
 from app.services.processing import process_and_save_workout, process_and_save_biometrics
@@ -327,6 +328,116 @@ async def garmin_webhook(request: Request, background_tasks: BackgroundTasks, db
 
     return Response(status_code=200)
 
+
+WHOOP_RECOVERY_RETRY_DELAYS_SEC = (120, 600)
+
+
+def _apply_whoop_recovery_vitals(bio_payload: DailyBiometrics, recovery_data: dict) -> None:
+    """Merge scored recovery vitals into an existing DailyBiometrics payload."""
+    vitals = whoop.build_whoop_vitals_from_recovery(recovery_data)
+    for field in ("hrv_rmssd", "resting_hr", "spo2_pct", "skin_temp_deviation", "recovery_score"):
+        val = vitals.get(field)
+        if val is not None:
+            setattr(bio_payload, field, val)
+
+
+def _whoop_wake_date(sleep_data: dict, offset_min: int) -> date:
+    wake_dt = datetime.fromisoformat(sleep_data["end"].replace("Z", "+00:00"))
+    local_wake = wake_dt + timedelta(minutes=offset_min)
+    return local_wake.date()
+
+
+async def _whoop_fetch_recovery_with_refresh(
+    access_token: str,
+    refresh_token: str | None,
+    event_id: Any,
+    refresh_fn,
+    *,
+    sleep_data: dict | None = None,
+) -> dict | None:
+    """Fetch recovery; refresh OAuth token on 401. Returns None on 404 or not yet scored."""
+    token = access_token
+    for attempt in range(2):
+        try:
+            if sleep_data is not None and not str(event_id).isdigit():
+                return await whoop.fetch_recovery_for_sleep(token, event_id, sleep_data=sleep_data)
+            return await whoop.fetch_recovery_for_event_id(token, event_id)
+        except HTTPException as e:
+            if e.status_code == status.HTTP_401_UNAUTHORIZED and attempt == 0:
+                new_access = await refresh_fn()
+                if not new_access:
+                    return None
+                token = new_access
+                continue
+            if e.status_code == 404:
+                return None
+            raise
+    return None
+
+
+async def _whoop_retry_recovery_vitals(
+    athlete_id: str,
+    sleep_id: str,
+    bio_date: date,
+    access_token: str,
+    refresh_token: str | None,
+    external_user_id: str,
+    db,
+) -> None:
+    """Delayed retries when recovery is not SCORED at sleep webhook time."""
+    token = access_token
+
+    async def _refresh() -> str | None:
+        nonlocal token
+        if not refresh_token:
+            return None
+        token_data = await whoop.refresh_oauth_token(refresh_token)
+        new_access = token_data.get("access_token")
+        new_refresh = token_data.get("refresh_token") or refresh_token
+        if new_access:
+            db.table("oauth_tokens").update(
+                {"access_token": new_access, "refresh_token": new_refresh}
+            ).eq("provider", "whoop").eq("external_user_id", str(external_user_id)).execute()
+            token = new_access
+        return new_access
+
+    for delay_sec in WHOOP_RECOVERY_RETRY_DELAYS_SEC:
+        await asyncio.sleep(delay_sec)
+        try:
+            recovery_data = await whoop.fetch_recovery_for_sleep(token, sleep_id)
+        except HTTPException as e:
+            if e.status_code == status.HTTP_401_UNAUTHORIZED:
+                if not await _refresh():
+                    continue
+                try:
+                    recovery_data = await whoop.fetch_recovery_for_sleep(token, sleep_id)
+                except HTTPException as retry_e:
+                    if retry_e.status_code == 404:
+                        recovery_data = None
+                    else:
+                        print(f"[whoop.recovery.retry] error athlete_id={athlete_id}: {retry_e}")
+                        continue
+            elif e.status_code == 404:
+                recovery_data = None
+            else:
+                print(f"[whoop.recovery.retry] error athlete_id={athlete_id}: {e}")
+                continue
+        if not recovery_data:
+            continue
+        bio_payload = DailyBiometrics(date=bio_date, source="whoop")
+        _apply_whoop_recovery_vitals(bio_payload, recovery_data)
+        process_and_save_biometrics(bio_payload, athlete_id, db)
+        print(
+            f"[whoop.recovery.retry] success after {delay_sec}s "
+            f"athlete_id={athlete_id} sleep_id={sleep_id}"
+        )
+        return
+
+    print(
+        f"[whoop.recovery.retry] exhausted retries athlete_id={athlete_id} sleep_id={sleep_id}"
+    )
+
+
 @router.post("/whoop/webhook")
 async def whoop_webhook(request: Request, background_tasks: BackgroundTasks, db=Depends(get_admin_db)):
     """Webhook receiver for WHOOP data push events."""
@@ -404,32 +515,39 @@ async def whoop_webhook(request: Request, background_tasks: BackgroundTasks, db=
         if event_type == "recovery.updated":
             if not event_id:
                 return Response(status_code=200)
-            try:
-                recovery_data = await whoop.fetch_recovery_data(access_token, event_id)
-            except HTTPException as e:
-                if e.status_code == status.HTTP_401_UNAUTHORIZED:
-                    new_access = await _refresh_and_persist_token()
-                    if new_access:
-                        recovery_data = await whoop.fetch_recovery_data(new_access, event_id)
-                    else:
-                        raise
-                else:
-                    raise
-            # Fetch athlete timezone for correct date mapping
             athlete_res = db.table("athletes").select("timezone_offset_min").eq("id", athlete_id).single().execute()
             offset = (athlete_res.data.get("timezone_offset_min") or 0) if athlete_res.data else 0
-            
-            # For recovery, created_at is usually the wake-up morning
-            utc_created = datetime.fromisoformat(recovery_data["created_at"].replace("Z", "+00:00"))
-            local_created = utc_created + timedelta(minutes=offset)
 
-            bio_payload = DailyBiometrics(
-                date=local_created.date(),
-                source="whoop",
-                hrv_rmssd=recovery_data["score"]["hrv_rmssd_ms"],
-                resting_hr=recovery_data["score"]["resting_heart_rate"],
-                recovery_score=recovery_data["score"]["recovery_score"]
+            sleep_data_for_date: dict | None = None
+            if not str(event_id).isdigit():
+                try:
+                    sleep_data_for_date = await whoop.fetch_sleep_data(access_token, event_id)
+                except HTTPException as e:
+                    if e.status_code == status.HTTP_401_UNAUTHORIZED:
+                        new_access = await _refresh_and_persist_token()
+                        if new_access:
+                            sleep_data_for_date = await whoop.fetch_sleep_data(new_access, event_id)
+                    elif e.status_code != 404:
+                        raise
+
+            recovery_data = await _whoop_fetch_recovery_with_refresh(
+                access_token,
+                refresh_token,
+                event_id,
+                _refresh_and_persist_token,
+                sleep_data=sleep_data_for_date,
             )
+            if not recovery_data:
+                return Response(status_code=200)
+
+            if sleep_data_for_date and sleep_data_for_date.get("end"):
+                bio_date = _whoop_wake_date(sleep_data_for_date, offset)
+            else:
+                utc_created = datetime.fromisoformat(recovery_data["created_at"].replace("Z", "+00:00"))
+                bio_date = (utc_created + timedelta(minutes=offset)).date()
+
+            bio_payload = DailyBiometrics(date=bio_date, source="whoop")
+            _apply_whoop_recovery_vitals(bio_payload, recovery_data)
             background_tasks.add_task(process_and_save_biometrics, bio_payload, athlete_id, db)
             
         elif event_type == "sleep.updated":
@@ -483,7 +601,39 @@ async def whoop_webhook(request: Request, background_tasks: BackgroundTasks, db=
                 sleep_wakeup=sleep_data.get("end"),
                 is_nap=sleep_data.get("nap", False)
             )
+
+            is_nap = bool(sleep_data.get("nap", False))
+            recovery_merged = False
+            if not is_nap:
+                recovery_data = await _whoop_fetch_recovery_with_refresh(
+                    access_token,
+                    refresh_token,
+                    event_id,
+                    _refresh_and_persist_token,
+                    sleep_data=sleep_data,
+                )
+                if recovery_data:
+                    _apply_whoop_recovery_vitals(bio_payload, recovery_data)
+                    recovery_merged = True
+                else:
+                    sleep_id = str(sleep_data.get("id") or event_id)
+                    background_tasks.add_task(
+                        _whoop_retry_recovery_vitals,
+                        athlete_id,
+                        sleep_id,
+                        local_wake_dt.date(),
+                        access_token,
+                        refresh_token,
+                        str(user_id),
+                        db,
+                    )
+
             background_tasks.add_task(process_and_save_biometrics, bio_payload, athlete_id, db)
+            if not is_nap and not recovery_merged:
+                print(
+                    f"[whoop.sleep] recovery pending — scheduled retries "
+                    f"athlete_id={athlete_id} sleep_id={sleep_data.get('id') or event_id}"
+                )
             
         elif event_type == "workout.updated":
             if not event_id:
@@ -609,12 +759,15 @@ async def strava_webhook(
 
     athlete_id = owner_token.data["athlete_id"]
 
-    if obj_type == "activity" and aspect == "create" and activity_id is not None:
+    # Strava sends ``create`` on first upload and ``update`` when metadata/streams change.
+    # WHOOP often creates the canonical row first; Strava enrichment usually arrives as ``update``.
+    if obj_type == "activity" and aspect in ("create", "update") and activity_id is not None:
         background_tasks.add_task(
             strava_service.ingest_strava_activity,
             owner_strava_id,
             activity_id,
             db,
+            athlete_id=athlete_id,
         )
     elif obj_type == "activity" and aspect == "delete" and activity_id is not None:
         # Scope the delete to the verified athlete so a spoofed event cannot
@@ -894,13 +1047,14 @@ async def whoop_backfill_now(
     d = max(1, min(int(days), 365))
     tok = (
         admin_db.table("oauth_tokens")
-        .select("access_token")
+        .select("access_token, refresh_token")
         .eq("athlete_id", athlete_id)
         .eq("provider", "whoop")
         .maybe_single()
         .execute()
     )
-    access_token = (tok.data or {}).get("access_token") if tok else None
+    row = tok.data if tok else None
+    access_token = (row or {}).get("access_token")
     if not access_token:
         raise HTTPException(status_code=400, detail="WHOOP not connected")
 

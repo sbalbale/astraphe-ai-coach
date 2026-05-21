@@ -249,7 +249,11 @@ def _find_or_create_canonical_workout_sync(
         existing_duration = row.get("duration_seconds") or 0
         if existing_duration > 0 and dur_i > 0:
             ratio = abs(existing_duration - dur_i) / max(existing_duration, dur_i)
-            if ratio <= DURATION_TOLERANCE:
+            tol = DURATION_TOLERANCE
+            # WHOOP vs Strava often disagree on elapsed vs moving time for the same session.
+            if row.get("source") == "whoop" and source == "strava":
+                tol = 0.35
+            if ratio <= tol:
                 matched = row
                 break
         elif existing_duration == 0 or dur_i == 0:
@@ -259,6 +263,8 @@ def _find_or_create_canonical_workout_sync(
     if matched:
         workout_id = matched["id"]
         existing_source_ids = dict(matched.get("source_ids") or {})
+        if matched.get("source") == "whoop" and matched.get("external_id"):
+            existing_source_ids.setdefault("whoop", str(matched["external_id"]))
         if external_id and source != "strava":
             existing_source_ids[source] = external_id
         if strava_activity_id is not None:

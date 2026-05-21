@@ -4,6 +4,8 @@ import asyncio
 from datetime import datetime, timedelta, timezone, date as date_type
 from typing import Any, Optional
 
+from fastapi import HTTPException, status
+
 from app.services import whoop
 from app.models.biometrics import DailyBiometrics
 from app.models.workout import WorkoutPayload
@@ -24,6 +26,59 @@ def _pct(part_ms: Optional[float], total_ms: Optional[float]) -> Optional[float]
     return round((part_ms / total_ms) * 100.0, 1)
 
 
+def _load_whoop_tokens(db: Any, athlete_id: str) -> tuple[str | None, str | None]:
+    res = (
+        db.table("oauth_tokens")
+        .select("access_token, refresh_token")
+        .eq("athlete_id", athlete_id)
+        .eq("provider", "whoop")
+        .maybe_single()
+        .execute()
+    )
+    row = res.data if res else None
+    if not row:
+        return None, None
+    return row.get("access_token"), row.get("refresh_token")
+
+
+async def _ensure_valid_whoop_access_token(
+    athlete_id: str,
+    access_token: str,
+    refresh_token: str | None,
+    db: Any,
+) -> str:
+    """
+    Return a working WHOOP access token. Refresh and persist when the stored token expired.
+    """
+    try:
+        await whoop.fetch_profile(access_token)
+        return access_token
+    except HTTPException as e:
+        if e.status_code != status.HTTP_401_UNAUTHORIZED:
+            raise
+
+    if not refresh_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="WHOOP access token expired; reconnect WHOOP in profile settings",
+        )
+
+    token_data = await whoop.refresh_oauth_token(refresh_token)
+    new_access = token_data.get("access_token")
+    new_refresh = token_data.get("refresh_token") or refresh_token
+    if not new_access:
+        raise HTTPException(
+            status_code=502,
+            detail="WHOOP token refresh returned no access_token",
+        )
+
+    db.table("oauth_tokens").update(
+        {"access_token": new_access, "refresh_token": new_refresh}
+    ).eq("athlete_id", athlete_id).eq("provider", "whoop").execute()
+    print(f"[whoop.backfill] refreshed access token athlete_id={athlete_id}")
+    return new_access
+
+
 async def backfill_historical_data(athlete_id: str, access_token: str, db: Any = None, days: int = 90) -> None:
     """
     Pull historical WHOOP sleep/recovery/workouts and persist into Supabase.
@@ -41,6 +96,14 @@ async def _backfill_historical_data_impl(
     # If no DB provided (common for background tasks), create one.
     if db is None:
         db = get_admin_db()
+
+    stored_access, refresh_token = _load_whoop_tokens(db, athlete_id)
+    if stored_access:
+        access_token = stored_access
+
+    access_token = await _ensure_valid_whoop_access_token(
+        athlete_id, access_token, refresh_token, db
+    )
 
     # 0) Fetch Profile & Update Athlete (moved from sync.py for speed)
     print(f"[whoop.backfill] Fetching profile for athlete_id={athlete_id}")

@@ -90,13 +90,88 @@ async def refresh_oauth_token(refresh_token: str) -> dict:
             snippet = body[:300] if body else "<empty body>"
             raise HTTPException(status_code=502, detail=f"WHOOP refresh returned non-JSON: {snippet}")
 
-async def fetch_recovery_data(access_token: str, cycle_id: int) -> dict:
+async def fetch_recovery_data(access_token: str, cycle_id: int | str) -> dict:
     """Fetches recovery metrics for a specific cycle."""
     headers = {"Authorization": f"Bearer {access_token}"}
     async with httpx.AsyncClient(timeout=30.0) as client:
         # v2 docs: GET /v2/cycle/{cycleId}/recovery
         response = await client.get(f"{_v2_base()}/cycle/{cycle_id}/recovery", headers=headers)
         return _json_or_error(response, "fetch_recovery_data(v2)")
+
+
+def recovery_is_scored(recovery_data: dict | None) -> bool:
+    """True when WHOOP has finished scoring this recovery (safe to persist vitals)."""
+    if not recovery_data:
+        return False
+    state = recovery_data.get("score_state")
+    if state and state != "SCORED":
+        return False
+    score = recovery_data.get("score")
+    return isinstance(score, dict) and bool(score)
+
+
+def recovery_score_to_vitals(score: dict) -> dict[str, Any]:
+    """Normalize WHOOP recovery score fields into DailyBiometrics-compatible keys."""
+    hrv = score.get("hrv_rmssd_milli")
+    if hrv is None:
+        hrv = score.get("hrv_rmssd_ms")
+    return {
+        "hrv_rmssd": hrv,
+        "resting_hr": score.get("resting_heart_rate"),
+        "spo2_pct": score.get("spo2_percentage"),
+        "skin_temp_deviation": score.get("skin_temp_celsius"),
+        "recovery_score": score.get("recovery_score"),
+    }
+
+
+def build_whoop_vitals_from_recovery(recovery_data: dict) -> dict[str, Any]:
+    """Extract vitals from a scored recovery document."""
+    score = recovery_data.get("score") if isinstance(recovery_data.get("score"), dict) else {}
+    return recovery_score_to_vitals(score)
+
+
+async def fetch_recovery_for_sleep(
+    access_token: str,
+    sleep_id: Any,
+    *,
+    sleep_data: dict | None = None,
+) -> dict | None:
+    """
+    Resolve recovery for a sleep record via its cycle_id.
+    Returns None if recovery is missing or not yet SCORED.
+    """
+    sleep = sleep_data if sleep_data is not None else await fetch_sleep_data(access_token, sleep_id)
+    cycle_id = sleep.get("cycle_id")
+    if cycle_id is None:
+        return None
+    try:
+        recovery = await fetch_recovery_data(access_token, cycle_id)
+    except HTTPException as e:
+        if e.status_code == 404:
+            return None
+        raise
+    if not recovery_is_scored(recovery):
+        return None
+    return recovery
+
+
+async def fetch_recovery_for_event_id(access_token: str, event_id: Any) -> dict | None:
+    """
+    Fetch recovery for a webhook event id.
+    v1 webhooks use numeric cycle ids; v2 recovery.updated uses sleep UUIDs.
+    """
+    eid = str(event_id)
+    if eid.isdigit():
+        try:
+            recovery = await fetch_recovery_data(access_token, int(eid))
+        except HTTPException as e:
+            if e.status_code == 404:
+                return None
+            raise
+        if not recovery_is_scored(recovery):
+            return None
+        return recovery
+    return await fetch_recovery_for_sleep(access_token, eid)
 
 async def fetch_sleep_data(access_token: str, sleep_id: Any) -> dict:
     """Fetches sleep performance data (v2 uses UUID ids)."""
