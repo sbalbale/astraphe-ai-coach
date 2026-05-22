@@ -1,3 +1,4 @@
+import asyncio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
@@ -7,6 +8,7 @@ from app.routers import workouts, activity_detail, coach, athlete, biometrics, s
 from app.config import settings
 from app.core.rate_limiter import RateLimiter
 from app.core.redis import close_redis, ping_redis
+from app.services.token_refresh import token_refresh_loop
 
 _ip_rate_limiter = RateLimiter()
 
@@ -15,6 +17,11 @@ app = FastAPI(
     description="Mathematical and AI orchestration core for the ASTRAPE Coach",
     version="1.0.0"
 )
+
+
+@app.on_event("startup")
+async def start_token_refresh_loop():
+    asyncio.create_task(token_refresh_loop())
 
 
 @app.on_event("shutdown")
@@ -37,6 +44,25 @@ async def validate_production_config():
             "WHOOP_WEBHOOK_SECRET is not set. Webhook signature verification will reject all WHOOP events.",
             stacklevel=1,
         )
+
+    # Diagnostic: log which secret is used for WHOOP HMAC so misconfigs are obvious at startup.
+    from app.services.whoop import _whoop_hmac_key
+    _hmac_key = _whoop_hmac_key()
+    if _hmac_key:
+        _source = "WHOOP_WEBHOOK_SECRET" if settings.WHOOP_WEBHOOK_SECRET else "WHOOP_CLIENT_SECRET"
+        _preview = _hmac_key[:4].decode("utf-8", errors="replace") + "..." + _hmac_key[-4:].decode("utf-8", errors="replace")
+        print(f"[startup] WHOOP HMAC key from {_source}: '{_preview}' (len={len(_hmac_key)})")
+        if settings.WHOOP_WEBHOOK_SECRET and settings.WHOOP_CLIENT_SECRET:
+            ws = settings.WHOOP_WEBHOOK_SECRET.strip()
+            cs = settings.WHOOP_CLIENT_SECRET.strip()
+            if ws != cs:
+                print(
+                    "[startup] WARNING: WHOOP_WEBHOOK_SECRET and WHOOP_CLIENT_SECRET differ. "
+                    "WHOOP signs webhooks with the client_secret from your Developer Dashboard. "
+                    "Set WHOOP_WEBHOOK_SECRET to the same value as WHOOP_CLIENT_SECRET."
+                )
+    else:
+        print("[startup] WARNING: No WHOOP HMAC key — webhook signatures will be rejected")
 
     if settings.APP_ENV == "development":
         from app.services.strava_webhook_sub import subscription_matches_app_base

@@ -11,7 +11,7 @@ def _whoop_hmac_key() -> bytes | None:
     secret = settings.WHOOP_WEBHOOK_SECRET or settings.WHOOP_CLIENT_SECRET
     if not secret:
         return None
-    return secret.encode("utf-8")
+    return secret.strip().encode("utf-8")
 
 
 def verify_webhook_signature(
