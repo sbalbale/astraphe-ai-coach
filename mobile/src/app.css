@@ -2,6 +2,20 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Space Grotesk's U+0022 glyph looks like a curly close-quote. Override quote
+   characters to use the system sans-serif (Arial / SF Pro / etc.) which all have
+   clean straight-quote glyphs, while Space Grotesk handles everything else. */
+@font-face {
+  font-family: 'ChatSans';
+  src: local('Arial'), local('Helvetica Neue'), local('Helvetica'), local('Liberation Sans');
+  unicode-range: U+0022, U+0027; /* " and ' */
+}
+@font-face {
+  font-family: 'ChatSans';
+  src: local('Space Grotesk');
+  unicode-range: U+0020-0021, U+0023-0026, U+0028-FFFF; /* Everything except " and ' */
+}
+
 @layer base {
   :root {
     --bg0: #08080F;

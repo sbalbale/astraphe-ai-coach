@@ -273,8 +273,8 @@ export function renderCoachMarkdownToSafeHtml(text: string): string {
   const src = normalizeTightInlineDollarMath(normalizeTypographyForWrap(text ?? ''));
   const html = coachMd.parse(src, { async: false }) as string;
   const lifted = liftTablePostscripts(html);
-  return DOMPurify.sanitize(lifted, {
+  return normalizeTypographyForWrap(DOMPurify.sanitize(lifted, {
     ...PURIFY_MATH,
     ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel):|\/)/i
-  });
+  }));
 }
