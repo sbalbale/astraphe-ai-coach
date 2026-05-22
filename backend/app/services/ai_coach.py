@@ -348,13 +348,13 @@ def build_initialization_message(
             "[PROACTIVE CHECK]\nThe following severe anomalies were detected (JSON):\n"
             + json.dumps(anomalies, ensure_ascii=False)
             + "\n\nWrite exactly 2–3 sentences. Name the triggering metric(s). Recommend a decisive action. "
-            "ASTRAPE voice: clinical, no emojis. Wrap your final message in <response> ... </response> tags."
+            "ASTRAPE voice: conversational and supportive. You may use a relevant emoji. Wrap your final message in <response> ... </response> tags."
         )
     else:
         directive = (
             "[INITIAL GREETING]\nNo severe anomaly triggers fired. "
             "Write at most 2 sentences, context-aware, and cite TSB or HRV from the context. "
-            "ASTRAPE voice: clinical, no emojis. Wrap your final message in <response> ... </response> tags."
+            "ASTRAPE voice: conversational and supportive. You may use a relevant emoji. Wrap your final message in <response> ... </response> tags."
         )
 
     prompt = f"{instructions}\n\n{context_block}\n\n{directive}"
@@ -610,7 +610,7 @@ def get_coach_response_agentic(
     last_response = None
     for _hop in range(max_tool_hops + 1):
         _hop_error: Exception | None = None
-        for _attempt in range(2):  # one retry for transient Gemini 500/503
+        for _attempt in range(3):  # Increased to 3 attempts for larger models
             try:
                 last_response = _client.models.generate_content(
                     model=effective_model,
@@ -622,10 +622,15 @@ def get_coach_response_agentic(
             except Exception as e:
                 _hop_error = e
                 err_str = str(e)
-                is_transient = any(k in err_str for k in ("500", "503", "INTERNAL", "overloaded"))
-                if _attempt == 0 and is_transient:
-                    print(f"[coach] Gemini transient error (hop {_hop}, attempt 1): {e}. Retrying in 1.5s…")
-                    time.sleep(1.5)
+                # Catch broad transient errors and connection-level failures
+                is_transient = any(
+                    k in err_str 
+                    for k in ("500", "503", "INTERNAL", "overloaded", "Server disconnected", "RemoteProtocolError", "EOF")
+                )
+                if _attempt < 2 and is_transient:
+                    wait = 1.5 * (_attempt + 1)
+                    print(f"[coach] Gemini transient error (hop {_hop}, attempt {_attempt + 1}): {e}. Retrying in {wait}s…")
+                    time.sleep(wait)
                     continue
                 break
 

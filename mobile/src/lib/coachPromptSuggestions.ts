@@ -69,6 +69,8 @@ function extractRaceKind(lowerBlob: string): string | null {
   if (/\b140\.6\b|\bfull\s+iron\b|\bironman\b/.test(lowerBlob) && /\btriathlon\b/.test(lowerBlob))
     return 'full-distance triathlon';
   if (/\bmarathon\b/.test(lowerBlob)) return 'marathon';
+  if (/\bbackpacking\b|\bhiking\b|\btrip\b/.test(lowerBlob)) return 'backpacking trip';
+  if (/\bpemi\s?loop\b/.test(lowerBlob)) return 'Pemi Loop trip';
   return null;
 }
 
@@ -99,40 +101,46 @@ export function buildCoachPromptSuggestions(input: Omit<CoachSuggestionInputs, '
   const out: string[] = [];
 
   const tsbRounded = Number.isFinite(tsb) ? Math.round(tsb) : null;
-
-  if (tsbRounded !== null && tsbRounded < -25) {
-    out.push(`My Form (TSB) is tanking to ${tsbRounded}. Am I overreaching?`);
-  }
-
-  if (sleepScore !== null && Number.isFinite(sleepScore) && sleepScore < 60) {
-    const s = Math.round(sleepScore);
-    out.push(`My sleep score was ${s} today. How should I adjust my training?`);
-  }
-
-  if (hrvZScore !== null && Number.isFinite(hrvZScore) && hrvZScore > 0.5) {
-    out.push(`My HRV is up today. Should I push for a breakthrough workout?`);
-  }
-
   const ctlRounded = Number.isFinite(ctl) ? Math.round(ctl) : 0;
 
-  if (out.length < 2 && ctlRounded > 0) {
-    out.push(`My CTL is ${ctlRounded}. What should I prioritize in training right now?`);
+  // 1. High Fatigue / Recovery (TSB)
+  if (tsbRounded !== null && tsbRounded < -20) {
+    out.push(`My Form is down to ${tsbRounded}. Should I pivot tomorrow's session to active recovery?`);
+  } else if (tsbRounded !== null && tsbRounded > 15) {
+    out.push(`My TSB is +${tsbRounded}. Is this a good window to push a breakthrough workout?`);
   }
 
-  if (out.length < 2 && hrvZScore !== null && Number.isFinite(hrvZScore) && hrvZScore < -0.5) {
-    out.push(`My HRV Z-score is ${hrvZScore.toFixed(1)}. Should I take an easy day?`);
+  // 2. Autonomic Strain (HRV)
+  if (hrvZScore !== null && Number.isFinite(hrvZScore)) {
+    if (hrvZScore < -1.5) {
+      out.push(`My HRV is deeply suppressed (${hrvZScore.toFixed(1)} SD). Am I at risk of overtraining?`);
+    } else if (hrvZScore > 1.0) {
+      out.push(`My HRV is up today! Should I take advantage of this recovery window for extra intensity?`);
+    }
   }
 
-  if (out.length < 2 && tsbRounded !== null && tsbRounded > 15) {
-    out.push(`My TSB is +${tsbRounded}. Is this a good window for a hard session?`);
+  // 3. Fitness Level (CTL) - Contextualized
+  if (ctlRounded > 0) {
+    if (ctlRounded < 40) {
+      out.push(`With my CTL at ${ctlRounded}, how should I safely ramp up volume for my upcoming goals?`);
+    } else if (ctlRounded > 80) {
+      out.push(`My fitness is high (CTL: ${ctlRounded}). How do I maintain this without accumulating too much fatigue?`);
+    } else {
+      out.push(`Given my current fitness and recovery, what's the best focus for my training this week?`);
+    }
   }
 
-  if (out.length === 0) {
-    out.push(`Given my CTL and recovery data, what's one adjustment you'd make this week?`);
+  // 4. Sleep
+  if (sleepScore !== null && Number.isFinite(sleepScore) && sleepScore < 60) {
+    out.push(`I had a rough night (Sleep Score: ${Math.round(sleepScore)}). How does this change today's plan?`);
   }
 
-  if (out.length === 1 && ctlRounded <= 0) {
-    out.push(`How should I build sustainable volume as I ramp up training?`);
+  // Fallbacks if we still have space or nothing matched
+  if (out.length < 3) {
+    out.push(`Look at my last 7 days of data—what's one specific adjustment you'd recommend?`);
+  }
+  if (out.length < 3 && ctlRounded <= 0) {
+    out.push(`I'm just starting out. How do I build a sustainable aerobic foundation?`);
   }
 
   return out.slice(0, 3);
