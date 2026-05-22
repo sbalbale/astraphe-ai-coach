@@ -8,7 +8,7 @@
 
 1. [Domain Architecture](#1-domain-architecture)
 2. [Pre-Deployment Code Changes](#2-pre-deployment-code-changes)
-3. [Supabase Production Setup](#3-supabase-production-setup)
+3. [Supabase Production Setup](#3-supabase-production-setup) *(includes admin user grant, §3f)*
 4. [Upstash Redis](#4-upstash-redis)
 5. [Backend — GCP Cloud Run](#5-backend--gcp-cloud-run)
 6. [Frontend — Firebase Hosting](#6-frontend--firebase-hosting)
@@ -105,6 +105,8 @@ These must be set correctly in the production environment (checked in section 8)
 | `WHOOP_WEBHOOK_SKIP_SIG_CHECK` | `false` | Enforces HMAC signature verification on incoming webhooks |
 | `WHOOP_WEBHOOK_LOG_RAW` | `false` | Avoids flooding Cloud Run logs with raw payloads |
 | `TEST_ATHLETE_ID` | *absent* | Startup validator in `main.py` crashes the server if this is set with `APP_ENV=production` |
+
+**FastAPI interactive docs (`/docs` and `/redoc`):** By default FastAPI serves a public Swagger UI at `https://api.astrapeai.com/docs`. This exposes every endpoint, request/response schema, and authorization flow to anyone. If you want to disable it before go-live, add `docs_url=None, redoc_url=None` to the `FastAPI(...)` constructor in `main.py`. If you keep it open, be aware it is indexed by search engines and exposes your API surface area publicly.
 
 ### 2e. WHOOP webhook signature verification
 
@@ -219,7 +221,26 @@ CREATE POLICY "Public read coach uploads" ON storage.objects
 FOR SELECT USING (bucket_id = 'coach-uploads');
 ```
 
-### 3f. Configure Supabase email provider (Resend)
+### 3f. Grant admin access to the first user
+
+The backend exposes `/v1/admin/users` endpoints that allow listing users and updating their tier, model overrides, and rate limits. These endpoints require `is_admin: true` in the user's Supabase `app_metadata`. There is no UI for this — you must set it directly via the SQL Editor using the service role.
+
+1. Sign up with your admin email address through the normal auth flow so the user exists in Supabase Auth.
+2. Find your `user_id` in Supabase → Authentication → Users.
+3. Run in the SQL Editor (Supabase Dashboard → SQL Editor):
+
+```sql
+UPDATE auth.users
+SET raw_app_meta_data = raw_app_meta_data || '{"is_admin": true, "tier": "premium"}'::jsonb
+WHERE id = 'YOUR_USER_ID';
+```
+
+4. Sign out and sign back in so the refreshed JWT carries the updated `app_metadata`.
+5. Verify: `GET https://api.astrapeai.com/v1/admin/users` with your Bearer token should return a user list, not a `403`.
+
+> **Note:** Only users with `is_admin: true` in `app_metadata` (not `user_metadata`) can call admin endpoints. Users can write their own `user_metadata` via the Supabase client SDK, so the admin check deliberately reads only from `app_metadata`, which requires the service role or a SQL editor change to modify.
+
+### 3g. Configure Supabase email provider (Resend)
 
 By default Supabase uses its own email service with low rate limits. Since you have Resend configured, connect it:
 
@@ -277,8 +298,11 @@ for SECRET in \
   WHOOP_CLIENT_SECRET \
   WHOOP_WEBHOOK_SECRET \
   STRAVA_CLIENT_SECRET \
+  GARMIN_CONSUMER_SECRET \
+  GARMIN_WEBHOOK_SECRET \
   RESEND_API_KEY \
-  VAPID_PRIVATE_KEY
+  VAPID_PRIVATE_KEY \
+  FCM_SERVICE_ACCOUNT_JSON
 do
   printf "Enter value for %s: " "$SECRET"
   read -rs VALUE
@@ -331,8 +355,8 @@ steps:
       - --max-instances=10
       - --memory=512Mi
       - --cpu=1
-      - --set-secrets=SUPABASE_SERVICE_ROLE_KEY=SUPABASE_SERVICE_ROLE_KEY:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest,REDIS_URL=REDIS_URL:latest,WHOOP_CLIENT_SECRET=WHOOP_CLIENT_SECRET:latest,WHOOP_WEBHOOK_SECRET=WHOOP_WEBHOOK_SECRET:latest,STRAVA_CLIENT_SECRET=STRAVA_CLIENT_SECRET:latest,RESEND_API_KEY=RESEND_API_KEY:latest,VAPID_PRIVATE_KEY=VAPID_PRIVATE_KEY:latest
-      - --set-env-vars=APP_ENV=production,APP_BASE_URL=https://api.astrapeai.com,SUPABASE_URL=https://YOUR_REF.supabase.co,SUPABASE_KEY=YOUR_ANON_KEY,GCP_PROJECT_ID=astrape-ai-coach,GCP_BUCKET_NAME=astrape-workout-files-bucket,WHOOP_CLIENT_ID=ffe39843-d11d-4f54-a828-44dfbcbd1128,WHOOP_WEBHOOK_SKIP_SIG_CHECK=false,STRAVA_CLIENT_ID=238216,STRAVA_WEBHOOK_VERIFY_TOKEN=YOUR_VERIFY_TOKEN,STRAVA_WEBHOOK_SUBSCRIPTION_ID=0,IP_RATE_LIMIT_RPM=100,VAPID_SUBJECT=mailto:sean.balbale@gmail.com,RESEND_AUDIENCE_ID=bc1ae29b-dec7-43d7-8d4d-8a9f70864d93
+      - --set-secrets=SUPABASE_SERVICE_ROLE_KEY=SUPABASE_SERVICE_ROLE_KEY:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest,REDIS_URL=REDIS_URL:latest,WHOOP_CLIENT_SECRET=WHOOP_CLIENT_SECRET:latest,WHOOP_WEBHOOK_SECRET=WHOOP_WEBHOOK_SECRET:latest,STRAVA_CLIENT_SECRET=STRAVA_CLIENT_SECRET:latest,GARMIN_CONSUMER_SECRET=GARMIN_CONSUMER_SECRET:latest,GARMIN_WEBHOOK_SECRET=GARMIN_WEBHOOK_SECRET:latest,RESEND_API_KEY=RESEND_API_KEY:latest,VAPID_PRIVATE_KEY=VAPID_PRIVATE_KEY:latest,FCM_SERVICE_ACCOUNT_JSON=FCM_SERVICE_ACCOUNT_JSON:latest
+      - --set-env-vars=APP_ENV=production,APP_BASE_URL=https://api.astrapeai.com,SUPABASE_URL=https://YOUR_REF.supabase.co,SUPABASE_KEY=YOUR_ANON_KEY,GCP_PROJECT_ID=astrape-ai-coach,GCP_BUCKET_NAME=astrape-workout-files-bucket,WHOOP_CLIENT_ID=ffe39843-d11d-4f54-a828-44dfbcbd1128,WHOOP_WEBHOOK_SKIP_SIG_CHECK=false,STRAVA_CLIENT_ID=238216,STRAVA_WEBHOOK_VERIFY_TOKEN=YOUR_VERIFY_TOKEN,STRAVA_WEBHOOK_SUBSCRIPTION_ID=0,GARMIN_CONSUMER_KEY=YOUR_GARMIN_CONSUMER_KEY,IP_RATE_LIMIT_RPM=100,VAPID_PUBLIC_KEY=YOUR_VAPID_PUBLIC_KEY,VAPID_SUBJECT=mailto:sean.balbale@gmail.com,RESEND_AUDIENCE_ID=bc1ae29b-dec7-43d7-8d4d-8a9f70864d93
 
 images:
   - gcr.io/$PROJECT_ID/astrape-api:$COMMIT_SHA
@@ -537,9 +561,9 @@ SUPABASE_SERVICE_ROLE_KEY=YOUR_SERVICE_ROLE_KEY    (Secret Manager)
 
 # Google Gemini
 GEMINI_API_KEY=YOUR_PROD_GEMINI_KEY                (Secret Manager)
-GEMINI_MODEL=gemini-flash-lite-latest
-GEMINI_ANALYSIS_MODEL=gemini-flash-lite-latest
-GEMINI_EMBEDDING_MODEL=gemini-embedding-001
+GEMINI_MODEL=gemma-4-26b-a4b-it
+GEMINI_ANALYSIS_MODEL=gemini-3-flash-lite
+GEMINI_EMBEDDING_MODEL=gemini-embedding-2
 
 # GCP
 GCP_PROJECT_ID=astrape-ai-coach
@@ -788,8 +812,8 @@ Trigger a test event from each provider (WHOOP: log a short activity or edit a s
 ### Step 10: Debug router is blocked
 
 ```powershell
-curl.exe -s -o NUL -w "%{http_code}" https://api.astrapeai.com/debug
-# Expected: 404
+curl.exe -s -o NUL -w "%{http_code}" https://api.astrapeai.com/v1/debug/connection
+# Expected: 404 (the endpoint checks APP_ENV and refuses to respond outside development)
 ```
 
 ### Step 11: Startup validator confirmed clean
