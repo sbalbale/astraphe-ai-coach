@@ -11,6 +11,7 @@ from app.models.biometrics import DailyBiometrics
 from app.models.workout import WorkoutPayload
 from app.services.processing import process_and_save_biometrics, process_and_save_workout, recalculate_tss_history
 from app.dependencies import get_admin_db
+from app.services.token_refresh import token_expires_at
 
 
 def _parse_dt(value: str) -> datetime:
@@ -72,9 +73,11 @@ async def _ensure_valid_whoop_access_token(
             detail="WHOOP token refresh returned no access_token",
         )
 
-    db.table("oauth_tokens").update(
-        {"access_token": new_access, "refresh_token": new_refresh}
-    ).eq("athlete_id", athlete_id).eq("provider", "whoop").execute()
+    new_expires = token_expires_at(token_data)
+    bf_update: dict = {"access_token": new_access, "refresh_token": new_refresh}
+    if new_expires:
+        bf_update["expires_at"] = new_expires
+    db.table("oauth_tokens").update(bf_update).eq("athlete_id", athlete_id).eq("provider", "whoop").execute()
     print(f"[whoop.backfill] refreshed access token athlete_id={athlete_id}")
     return new_access
 

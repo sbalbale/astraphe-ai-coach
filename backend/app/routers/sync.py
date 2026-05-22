@@ -16,7 +16,8 @@ from app.services import strava as strava_service
 from app.services.strava import backfill_historical_data as strava_backfill
 from app.services.whoop_backfill import backfill_historical_data
 from app.config import settings
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
+from app.services.token_refresh import token_expires_at
 from app.models.workout import WorkoutPayload
 from app.models.biometrics import DailyBiometrics
 from app.services.processing import process_and_save_workout, process_and_save_biometrics
@@ -369,7 +370,11 @@ async def _whoop_fetch_recovery_with_refresh(
             return await whoop.fetch_recovery_for_event_id(token, event_id)
         except HTTPException as e:
             if e.status_code == status.HTTP_401_UNAUTHORIZED and attempt == 0:
-                new_access = await refresh_fn()
+                try:
+                    new_access = await refresh_fn()
+                except Exception as refresh_err:
+                    print(f"[whoop.recovery] token refresh failed, skipping recovery merge: {refresh_err}")
+                    return None
                 if not new_access:
                     return None
                 token = new_access
@@ -394,15 +399,34 @@ async def _whoop_retry_recovery_vitals(
 
     async def _refresh() -> str | None:
         nonlocal token
-        if not refresh_token:
-            return None
-        token_data = await whoop.refresh_oauth_token(refresh_token)
+        # Re-read current token from DB to avoid using a stale refresh token
+        # (the main handler may have already rotated it before the retry fires).
+        try:
+            cur = (
+                db.table("oauth_tokens")
+                .select("access_token,refresh_token")
+                .eq("provider", "whoop")
+                .eq("external_user_id", str(external_user_id))
+                .single()
+                .execute()
+            )
+            cur_data = cur.data or {}
+        except Exception:
+            cur_data = {}
+        cur_access = cur_data.get("access_token")
+        cur_refresh = cur_data.get("refresh_token") or refresh_token
+        if cur_access and cur_access != token:
+            token = cur_access
+            return cur_access
+        token_data = await whoop.refresh_oauth_token(cur_refresh)
         new_access = token_data.get("access_token")
-        new_refresh = token_data.get("refresh_token") or refresh_token
+        new_refresh = token_data.get("refresh_token") or cur_refresh
+        new_expires = token_expires_at(token_data)
         if new_access:
-            db.table("oauth_tokens").update(
-                {"access_token": new_access, "refresh_token": new_refresh}
-            ).eq("provider", "whoop").eq("external_user_id", str(external_user_id)).execute()
+            update: dict = {"access_token": new_access, "refresh_token": new_refresh}
+            if new_expires:
+                update["expires_at"] = new_expires
+            db.table("oauth_tokens").update(update).eq("provider", "whoop").eq("external_user_id", str(external_user_id)).execute()
             token = new_access
         return new_access
 
@@ -509,13 +533,34 @@ async def whoop_webhook(request: Request, background_tasks: BackgroundTasks, db=
     async def _refresh_and_persist_token() -> str | None:
         if not refresh_token:
             return None
-        token_data = await whoop.refresh_oauth_token(refresh_token)
+        # Re-read from DB first: WHOOP sends sleep.updated + recovery.updated
+        # simultaneously, so two handlers race to refresh the same token.
+        # If the DB access_token has already changed, another handler won the
+        # race — return the new token without attempting a second refresh.
+        try:
+            cur = (
+                db.table("oauth_tokens")
+                .select("access_token,refresh_token")
+                .eq("provider", "whoop")
+                .eq("external_user_id", str(user_id))
+                .single()
+                .execute()
+            )
+            cur_data = cur.data or {}
+        except Exception:
+            cur_data = {}
+        if cur_data.get("access_token") and cur_data["access_token"] != access_token:
+            return cur_data["access_token"]
+        current_refresh = cur_data.get("refresh_token") or refresh_token
+        token_data = await whoop.refresh_oauth_token(current_refresh)
         new_access = token_data.get("access_token")
-        new_refresh = token_data.get("refresh_token") or refresh_token
+        new_refresh = token_data.get("refresh_token") or current_refresh
+        new_expires = token_expires_at(token_data)
         if new_access:
-            db.table("oauth_tokens").update(
-                {"access_token": new_access, "refresh_token": new_refresh}
-            ).eq("provider", "whoop").eq("external_user_id", str(user_id)).execute()
+            update: dict = {"access_token": new_access, "refresh_token": new_refresh}
+            if new_expires:
+                update["expires_at"] = new_expires
+            db.table("oauth_tokens").update(update).eq("provider", "whoop").eq("external_user_id", str(user_id)).execute()
         return new_access
 
     try:
@@ -846,13 +891,17 @@ async def whoop_oauth_callback(
 
         # Save tokens first (lightweight)
         print(f"[whoop.oauth.callback] Saving tokens to DB for athlete {athlete_id}...")
-        db.table("oauth_tokens").upsert({
+        initial_expires = token_expires_at(token_data)
+        _upsert: dict = {
             "athlete_id": athlete_id,
             "provider": "whoop",
             "access_token": access_token,
             "refresh_token": token_data.get("refresh_token"),
             "external_user_id": str(whoop_user_id) if whoop_user_id is not None else None,
-        }).execute()
+        }
+        if initial_expires:
+            _upsert["expires_at"] = initial_expires
+        db.table("oauth_tokens").upsert(_upsert).execute()
         print(f"[whoop.oauth.callback] Token persistence SUCCESS")
 
         # Everything else in background.

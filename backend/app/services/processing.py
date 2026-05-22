@@ -898,7 +898,7 @@ def process_and_save_biometrics(payload: DailyBiometrics, athlete_id: str, db):
         "athlete_id": athlete_id,
         "date": payload.date.isoformat(),
         "hrv_rmssd": final_hrv,
-        "resting_hr": final_rhr,
+        "resting_hr": int(round(final_rhr)) if final_rhr is not None else None,
         "sleep_duration_min": total_sleep_min,
         "sleep_in_bed_min": total_in_bed_min,
         "sleep_score": sleep_score, # Astrape Score
