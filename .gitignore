@@ -13,6 +13,7 @@
 *.pem
 *.key
 google-cloud-credentials.json
+astrape-ai-coach-firebase-*.json
 
 # ------------------------------------------
 # 2. Frontend: Svelte 5 & Node.js

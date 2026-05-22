@@ -1,4 +1,5 @@
 # ASTRAPE Production Deployment Guide
+
 **Date:** 2026-05-20
 **Stack:** FastAPI (GCP Cloud Run) · SvelteKit SPA (Firebase Hosting) · Supabase · Google Gemini · Upstash Redis · Firebase (FCM for iOS/Android push)
 
@@ -24,11 +25,13 @@
 
 ## 1. Domain Architecture
 
-| Subdomain | Purpose | Host |
-|---|---|---|
-| `astrapeai.com` | **Existing waitlist/marketing site — do not touch** | Wherever it currently lives |
-| `app.astrapeai.com` | SvelteKit web app (SPA) | Firebase Hosting |
-| `api.astrapeai.com` | FastAPI backend | GCP Cloud Run |
+
+| Subdomain           | Purpose                                             | Host                        |
+| ------------------- | --------------------------------------------------- | --------------------------- |
+| `astrapeai.com`     | **Existing waitlist/marketing site — do not touch** | Wherever it currently lives |
+| `app.astrapeai.com` | SvelteKit web app (SPA)                             | Firebase Hosting            |
+| `api.astrapeai.com` | FastAPI backend                                     | GCP Cloud Run               |
+
 
 **Why this split:**
 
@@ -38,6 +41,7 @@
 - Webhook endpoints live at `api.astrapeai.com/v1/sync/<provider>/webhook` — no separate `webhooks.` subdomain needed.
 
 **Optional future subdomains to consider:**
+
 - `status.astrapeai.com` — uptime status page (Instatus or Better Uptime, both have free tiers)
 - `docs.astrapeai.com` — redirect to `api.astrapeai.com/docs` (FastAPI auto-generates interactive Swagger docs)
 
@@ -99,12 +103,14 @@ if settings.APP_ENV != "production":
 
 These must be set correctly in the production environment (checked in section 8):
 
-| Setting | Production value | Why |
-|---|---|---|
-| `APP_ENV` | `production` | Activates startup validators |
-| `WHOOP_WEBHOOK_SKIP_SIG_CHECK` | `false` | Enforces HMAC signature verification on incoming webhooks |
-| `WHOOP_WEBHOOK_LOG_RAW` | `false` | Avoids flooding Cloud Run logs with raw payloads |
-| `TEST_ATHLETE_ID` | *absent* | Startup validator in `main.py` crashes the server if this is set with `APP_ENV=production` |
+
+| Setting                        | Production value | Why                                                                                        |
+| ------------------------------ | ---------------- | ------------------------------------------------------------------------------------------ |
+| `APP_ENV`                      | `production`     | Activates startup validators                                                               |
+| `WHOOP_WEBHOOK_SKIP_SIG_CHECK` | `false`          | Enforces HMAC signature verification on incoming webhooks                                  |
+| `WHOOP_WEBHOOK_LOG_RAW`        | `false`          | Avoids flooding Cloud Run logs with raw payloads                                           |
+| `TEST_ATHLETE_ID`              | *absent*         | Startup validator in `main.py` crashes the server if this is set with `APP_ENV=production` |
+
 
 **FastAPI interactive docs (`/docs` and `/redoc`):** By default FastAPI serves a public Swagger UI at `https://api.astrapeai.com/docs`. This exposes every endpoint, request/response schema, and authorization flow to anyone. If you want to disable it before go-live, add `docs_url=None, redoc_url=None` to the `FastAPI(...)` constructor in `main.py`. If you keep it open, be aware it is indexed by search engines and exposes your API surface area publicly.
 
@@ -114,10 +120,12 @@ WHOOP does **not** issue a separate webhook signing secret. Verification uses yo
 
 **Secret Manager / env**
 
-| Variable | Production value |
-|---|---|
-| `WHOOP_CLIENT_SECRET` | Client secret from the portal (64-char hex string) |
+
+| Variable               | Production value                                                                                                |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `WHOOP_CLIENT_SECRET`  | Client secret from the portal (64-char hex string)                                                              |
 | `WHOOP_WEBHOOK_SECRET` | Same value as `WHOOP_CLIENT_SECRET`, **or omit** — the server falls back to `WHOOP_CLIENT_SECRET` automatically |
+
 
 **How the server verifies each POST** (`backend/app/services/whoop.py`):
 
@@ -130,10 +138,12 @@ WHOOP does **not** issue a separate webhook signing secret. Verification uses yo
 
 **Dev vs prod flags**
 
-| Setting | Dev (local) | Production |
-|---|---|---|
-| `WHOOP_WEBHOOK_SKIP_SIG_CHECK` | `false` once ngrok + secrets are configured | `false` (required) |
-| `WHOOP_WEBHOOK_LOG_RAW` | `true` optional — logs `[whoop.webhook.raw]` for debugging | `false` |
+
+| Setting                        | Dev (local)                                                | Production         |
+| ------------------------------ | ---------------------------------------------------------- | ------------------ |
+| `WHOOP_WEBHOOK_SKIP_SIG_CHECK` | `false` once ngrok + secrets are configured                | `false` (required) |
+| `WHOOP_WEBHOOK_LOG_RAW`        | `true` optional — logs `[whoop.webhook.raw]` for debugging | `false`            |
+
 
 ---
 
@@ -171,11 +181,13 @@ supabase db push
 
 From Supabase dashboard → Project Settings → API:
 
-| Variable | Where to find it |
-|---|---|
-| `SUPABASE_URL` | Project URL — looks like `https://xyzxyzxyz.supabase.co` |
-| `SUPABASE_KEY` | `anon` `public` key |
-| `SUPABASE_SERVICE_ROLE_KEY` | `service_role` key — never expose this to a browser |
+
+| Variable                    | Where to find it                                         |
+| --------------------------- | -------------------------------------------------------- |
+| `SUPABASE_URL`              | Project URL — looks like `https://xyzxyzxyz.supabase.co` |
+| `SUPABASE_KEY`              | `anon` `public` key                                      |
+| `SUPABASE_SERVICE_ROLE_KEY` | `service_role` key — never expose this to a browser      |
+
 
 ### 3d. Verify Row Level Security on all tables
 
@@ -235,8 +247,8 @@ SET raw_app_meta_data = raw_app_meta_data || '{"is_admin": true, "tier": "premiu
 WHERE id = 'YOUR_USER_ID';
 ```
 
-4. Sign out and sign back in so the refreshed JWT carries the updated `app_metadata`.
-5. Verify: `GET https://api.astrapeai.com/v1/admin/users` with your Bearer token should return a user list, not a `403`.
+1. Sign out and sign back in so the refreshed JWT carries the updated `app_metadata`.
+2. Verify: `GET https://api.astrapeai.com/v1/admin/users` with your Bearer token should return a user list, not a `403`.
 
 > **Note:** Only users with `is_admin: true` in `app_metadata` (not `user_metadata`) can call admin endpoints. Users can write their own `user_metadata` via the Supabase client SDK, so the admin check deliberately reads only from `app_metadata`, which requires the service role or a SQL editor change to modify.
 
@@ -262,6 +274,7 @@ Your rate limiter gracefully falls back to in-memory when `REDIS_URL` is unset, 
 5. After creation, click the database → Details tab → copy the `REDIS_URL`
 
 The URL format is:
+
 ```
 rediss://default:YOUR_TOKEN@YOUR_HOST.upstash.io:6380
 ```
@@ -403,13 +416,15 @@ Your SvelteKit app uses `adapter-static` (`mobile/svelte.config.js`) and outputs
 
 **What Firebase is (and is not) responsible for**
 
-| Concern | Service |
-|---|---|
-| Web app at `app.astrapeai.com` | Firebase Hosting |
-| REST API, webhooks, AI coach | GCP Cloud Run (`api.astrapeai.com`) — unchanged |
-| Auth + database | Supabase — unchanged |
-| iOS/Android push tokens → FCM | Firebase Cloud Messaging (native app config + backend `FCM_SERVICE_ACCOUNT_JSON`) |
-| Browser/PWA push | VAPID + service worker (not FCM) — backend `VAPID_*` env vars |
+
+| Concern                        | Service                                                                           |
+| ------------------------------ | --------------------------------------------------------------------------------- |
+| Web app at `app.astrapeai.com` | Firebase Hosting                                                                  |
+| REST API, webhooks, AI coach   | GCP Cloud Run (`api.astrapeai.com`) — unchanged                                   |
+| Auth + database                | Supabase — unchanged                                                              |
+| iOS/Android push tokens → FCM  | Firebase Cloud Messaging (native app config + backend `FCM_SERVICE_ACCOUNT_JSON`) |
+| Browser/PWA push               | VAPID + service worker (not FCM) — backend `VAPID_*` env vars                     |
+
 
 Hosting the SPA on Firebase is **not** required for App Store push, but using the **same Firebase project** for Hosting + FCM keeps credentials, billing, and console management in one place.
 
@@ -418,19 +433,18 @@ Hosting the SPA on Firebase is **not** required for App Store push, but using th
 1. [Firebase Console](https://console.firebase.google.com/) → **Add project** (e.g. `astrape-prod`) or use an existing project.
 2. **Link to GCP** (recommended): Project settings → Integrations → link to GCP project `astrape-ai-coach` so Hosting, Cloud Run, and Secret Manager share one billing account.
 3. In the same project, register apps you need:
-   - **Web** — optional label for Hosting; not required for FCM.
-   - **iOS** — bundle ID `com.astrape.coach` → download `GoogleService-Info.plist` → `mobile/ios/App/App/` (see PUSH_NOTIFICATIONS.md).
-   - **Android** — package `com.astrape.coach` → `google-services.json` → `mobile/android/app/` when you ship Android.
-
+  - **Web** — optional label for Hosting; not required for FCM.
+  - **iOS** — bundle ID `com.astrape.coach` → download `GoogleService-Info.plist` → `mobile/ios/App/App/` (see PUSH_NOTIFICATIONS.md).
+  - **Android** — package `com.astrape.coach` → `google-services.json` → `mobile/android/app/` when you ship Android.
 4. **APNs for iOS push:** Firebase Console → Project settings → Cloud Messaging → Apple app configuration → upload your APNs Authentication Key (.p8) from Apple Developer. Without this, FCM cannot deliver to iOS devices even if the native app registers tokens.
-
 5. **Backend FCM:** Project settings → Service accounts → **Generate new private key** → store JSON in GCP Secret Manager as `FCM_SERVICE_ACCOUNT_JSON` and mount on Cloud Run (§8).
 
 ### 6b. Firebase Hosting config (`mobile/`)
 
 From the repo root, add hosting config under `mobile/` (or run `firebase init hosting` there and accept `build` as the public directory):
 
-**`mobile/firebase.json`**
+`**mobile/firebase.json`**
+
 ```json
 {
   "hosting": {
@@ -441,7 +455,8 @@ From the repo root, add hosting config under `mobile/` (or run `firebase init ho
 }
 ```
 
-**`mobile/.firebaserc`** (replace with your Firebase project ID)
+`**mobile/.firebaserc**` (replace with your Firebase project ID)
+
 ```json
 {
   "projects": {
@@ -456,12 +471,14 @@ From the repo root, add hosting config under `mobile/` (or run `firebase init ho
 
 Set these when building (local `.env.production`, CI secrets, or `firebase deploy` pre-build step). They are baked into the static bundle at build time:
 
-| Variable | Value |
-|---|---|
-| `VITE_API_URL` | `https://api.astrapeai.com` |
-| `VITE_SUPABASE_URL` | `https://YOUR_REF.supabase.co` |
-| `VITE_SUPABASE_KEY` | Supabase anon key (public in browser) |
+
+| Variable                | Value                                                         |
+| ----------------------- | ------------------------------------------------------------- |
+| `VITE_API_URL`          | `https://api.astrapeai.com`                                   |
+| `VITE_SUPABASE_URL`     | `https://YOUR_REF.supabase.co`                                |
+| `VITE_SUPABASE_KEY`     | Supabase anon key (public in browser)                         |
 | `VITE_VAPID_PUBLIC_KEY` | Same public key as backend `VAPID_PUBLIC_KEY` (web push only) |
+
 
 > Never put `SUPABASE_SERVICE_ROLE_KEY` or `FCM_SERVICE_ACCOUNT_JSON` in frontend env vars.
 
@@ -486,6 +503,7 @@ Allow up to 24 hours for TLS provisioning after DNS propagates.
 ### 6e. Deploy options
 
 **Manual (first deploy):**
+
 ```bash
 npm install -g firebase-tools
 firebase login
@@ -517,10 +535,12 @@ Store builds talk to `https://api.astrapeai.com`; they do not need the Firebase 
 
 ### DNS records to add
 
-| Type | Name | Value | Proxy / TTL |
-|---|---|---|---|
-| CNAME | `app` | *Value from Firebase Hosting custom-domain wizard* (often `your-project.web.app`) | TTL 300; follow Firebase console exactly |
-| A | `api` | *IP(s) from GCP `domain-mappings create` output* | **Direct to GCP — no CDN proxy in front** |
+
+| Type  | Name  | Value                                                                             | Proxy / TTL                               |
+| ----- | ----- | --------------------------------------------------------------------------------- | ----------------------------------------- |
+| CNAME | `app` | *Value from Firebase Hosting custom-domain wizard* (often `your-project.web.app`) | TTL 300; follow Firebase console exactly  |
+| A     | `api` | *IP(s) from GCP `domain-mappings create` output*                                  | **Direct to GCP — no CDN proxy in front** |
+
 
 **Critical for `api.`:** Cloud Run domain mapping needs a clean path to Google's load balancer. Do not put `api.` behind a proxy that terminates TLS differently than GCP expects.
 
@@ -619,23 +639,24 @@ Register production redirect URIs in each provider's portal **before** testing a
 ### WHOOP — [developer.whoop.com](https://developer.whoop.com)
 
 1. Open your app → Redirect URIs → Add:
-   ```
+  ```
    https://api.astrapeai.com/v1/sync/oauth/whoop/callback
-   ```
+  ```
 2. Store `WHOOP_CLIENT_SECRET` in Secret Manager. Set `WHOOP_WEBHOOK_SECRET` to the **same value** (optional if you rely on the code fallback). With `WHOOP_WEBHOOK_SKIP_SIG_CHECK=false`, each webhook is verified using HMAC-SHA256 over `timestamp + raw_body` with the client secret as UTF-8 (see §2e).
 
 ### Strava — [strava.com/settings/api](https://www.strava.com/settings/api)
 
-1. Update **Authorization Callback Domain** to: `api.astrapeai.com`  
-   Strava validates only the domain, not the full path, so you only need to set this once.
+1. Update **Authorization Callback Domain** to: `api.astrapeai.com`
+  Strava validates only the domain, not the full path, so you only need to set this once.
 2. The full callback URL used in your code is:
-   ```
+  ```
    https://api.astrapeai.com/v1/sync/oauth/strava/callback
-   ```
+  ```
 
 ### Garmin — Garmin Health API portal
 
 Update the callback URL to:
+
 ```
 https://api.astrapeai.com/v1/sync/oauth/garmin/callback
 ```
@@ -676,10 +697,10 @@ Set `APP_BASE_URL=https://api.astrapeai.com` in `.env` (or export it) before run
 1. Start ngrok → copy the new HTTPS URL into `APP_BASE_URL` in `backend/.env`.
 2. Start uvicorn (Strava verifies the callback with a GET `hub.challenge` during registration).
 3. Run:
-   ```bash
+  ```bash
    cd backend
    python scripts/register_strava_webhook.py
-   ```
+  ```
 4. On backend startup (`APP_ENV=development`), the server prints either `Strava webhook OK` or a **WARNING** with the same fix command if the subscription still points at an old tunnel.
 
 **Optional — stable ngrok hostname:** A reserved ngrok domain (paid) avoids re-registration on every restart. Point it at `:8000`, set `APP_BASE_URL` to that fixed host, and run `register_strava_webhook.py` once.
@@ -689,6 +710,7 @@ Strava sends a GET `hub.challenge` during registration; `GET /v1/sync/strava/web
 ### Garmin Webhook
 
 Register in the Garmin Health API developer portal:
+
 - **Webhook URL:** `https://api.astrapeai.com/v1/sync/garmin/webhook`
 
 ---
@@ -700,16 +722,15 @@ Supabase validates redirect URLs on every auth operation to prevent open redirec
 1. Supabase Dashboard → Authentication → URL Configuration
 2. **Site URL:** `https://app.astrapeai.com`
 3. **Redirect URLs** — add all of the following:
-   ```
+  ```
    https://app.astrapeai.com/auth/callback
    https://app.astrapeai.com/auth/reset-password
    astrape://auth/callback
    astrape://auth/reset-password
    http://localhost:5173/auth/callback
    http://localhost:5173/auth/reset-password
-   ```
+  ```
    The `astrape://` entries are for your Capacitor mobile app (the deep link scheme is set in `capacitor.config.ts` as `com.astrape.coach` and the scheme `astrape` is in your `MOBILE_DEEP_LINK_SCHEME` setting). The `redirectUrl.ts` utility already handles selecting the correct URL based on whether the app is running natively or in a web browser.
-
 4. **Email Templates** — update the Confirm Signup and Reset Password templates to use `https://app.astrapeai.com` in any redirect links. Check for any hardcoded localhost URLs in the default templates.
 
 ---
@@ -725,6 +746,7 @@ curl https://api.astrapeai.com/health
 ```
 
 Expected response:
+
 ```json
 { "status": "healthy", "service": "ASTRAPE API", "redis": "connected" }
 ```
@@ -738,6 +760,7 @@ curl.exe -I https://api.astrapeai.com/health
 ```
 
 Must see all of these response headers:
+
 - `Strict-Transport-Security: max-age=31536000; includeSubDomains`
 - `X-Content-Type-Options: nosniff`
 - `X-Frame-Options: DENY`
@@ -795,12 +818,14 @@ done
 
 Trigger a test event from each provider (WHOOP: log a short activity or edit a sleep by 1 minute — see [WHOOP webhooks testing](https://developer.whoop.com/docs/developing/webhooks/#webhooks-testing)). Then in GCP Console → Cloud Run → `astrape-api` → Logs:
 
-| Log pattern | Meaning |
-|---|---|
-| `[whoop.webhook] type=...` | WHOOP payload accepted and processing started |
-| `[whoop.sig] MISMATCH` | Signature failed — check Secret Manager secret matches dashboard; redeploy if on an old build that hex-decoded the key |
-| `401` on `/v1/sync/whoop/webhook` | Same as MISMATCH — fix secrets or signature code before go-live |
-| `[strava.webhook]` | Strava delivery confirmed |
+
+| Log pattern                       | Meaning                                                                                                                |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `[whoop.webhook] type=...`        | WHOOP payload accepted and processing started                                                                          |
+| `[whoop.sig] MISMATCH`            | Signature failed — check Secret Manager secret matches dashboard; redeploy if on an old build that hex-decoded the key |
+| `401` on `/v1/sync/whoop/webhook` | Same as MISMATCH — fix secrets or signature code before go-live                                                        |
+| `[strava.webhook]`                | Strava delivery confirmed                                                                                              |
+
 
 ### Step 9: OAuth connection flows
 
@@ -829,17 +854,20 @@ If Steps 1–10 all pass, the startup validator in `main.py` confirmed that `TES
 GCP Console → Cloud Monitoring → Alerting → Create Policy:
 
 **5xx error rate policy:**
+
 - Metric: `run.googleapis.com/request_count` filtered by `response_code_class = 5xx`
 - Condition: ratio exceeds 5% of total requests over a 5-minute window
 - Notification: email to `sean.balbale@gmail.com`
 
 **High latency policy:**
+
 - Metric: `run.googleapis.com/request_latencies` (percentile: p99)
 - Condition: exceeds 5,000 ms over a 5-minute window
 
 ### Uptime check
 
 GCP Console → Cloud Monitoring → Uptime Checks → Create:
+
 - **Target:** `https://api.astrapeai.com/health`
 - **Check period:** 1 minute
 - **Alert:** if the check fails 2 consecutive times
@@ -886,16 +914,19 @@ textPayload=~"oauth\.callback"
 
 ## Quick Reference: Production URLs and Endpoints
 
-| Resource | URL |
-|---|---|
-| Web app | `https://app.astrapeai.com` |
-| API base | `https://api.astrapeai.com` |
-| API interactive docs (Swagger) | `https://api.astrapeai.com/docs` |
-| Health check | `https://api.astrapeai.com/health` |
-| WHOOP OAuth authorize | `https://api.astrapeai.com/v1/sync/oauth/whoop/authorize` |
-| WHOOP OAuth callback | `https://api.astrapeai.com/v1/sync/oauth/whoop/callback` |
-| WHOOP webhook | `https://api.astrapeai.com/v1/sync/whoop/webhook` |
-| Strava OAuth authorize | `https://api.astrapeai.com/v1/sync/oauth/strava/authorize` |
-| Strava OAuth callback | `https://api.astrapeai.com/v1/sync/oauth/strava/callback` |
-| Strava webhook | `https://api.astrapeai.com/v1/sync/strava/webhook` |
-| Garmin webhook | `https://api.astrapeai.com/v1/sync/garmin/webhook` |
+
+| Resource                       | URL                                                        |
+| ------------------------------ | ---------------------------------------------------------- |
+| Web app                        | `https://app.astrapeai.com`                                |
+| API base                       | `https://api.astrapeai.com`                                |
+| API interactive docs (Swagger) | `https://api.astrapeai.com/docs`                           |
+| Health check                   | `https://api.astrapeai.com/health`                         |
+| WHOOP OAuth authorize          | `https://api.astrapeai.com/v1/sync/oauth/whoop/authorize`  |
+| WHOOP OAuth callback           | `https://api.astrapeai.com/v1/sync/oauth/whoop/callback`   |
+| WHOOP webhook                  | `https://api.astrapeai.com/v1/sync/whoop/webhook`          |
+| Strava OAuth authorize         | `https://api.astrapeai.com/v1/sync/oauth/strava/authorize` |
+| Strava OAuth callback          | `https://api.astrapeai.com/v1/sync/oauth/strava/callback`  |
+| Strava webhook                 | `https://api.astrapeai.com/v1/sync/strava/webhook`         |
+| Garmin webhook                 | `https://api.astrapeai.com/v1/sync/garmin/webhook`         |
+
+

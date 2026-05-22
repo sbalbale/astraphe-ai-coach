@@ -1,18 +1,33 @@
 steps:
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['build', '-t', 'gcr.io/$PROJECT_ID/astrape-api:latest', '.']
+    args:
+      - build
+      - -t
+      - gcr.io/$PROJECT_ID/astrape-api:$COMMIT_SHA
+      - -t
+      - gcr.io/$PROJECT_ID/astrape-api:latest
+      - .
+    dir: backend
+
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'gcr.io/$PROJECT_ID/astrape-api:latest']
+    args: [push, --all-tags, gcr.io/$PROJECT_ID/astrape-api]
+
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
     args:
-      - 'run'
-      - 'deploy'
-      - 'astrape-api'
-      - '--image'
-      - 'gcr.io/$PROJECT_ID/astrape-api:latest'
-      - '--region'
-      - 'us-central1'
-      - '--allow-unauthenticated'
+      - run
+      - deploy
+      - astrape-api
+      - --image=gcr.io/$PROJECT_ID/astrape-api:$COMMIT_SHA
+      - --region=us-central1
+      - --allow-unauthenticated
+      - --min-instances=0
+      - --max-instances=10
+      - --memory=512Mi
+      - --cpu=1
+      - --set-secrets=SUPABASE_SERVICE_ROLE_KEY=SUPABASE_SERVICE_ROLE_KEY:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest,REDIS_URL=REDIS_URL:latest,WHOOP_CLIENT_SECRET=WHOOP_CLIENT_SECRET:latest,WHOOP_WEBHOOK_SECRET=WHOOP_WEBHOOK_SECRET:latest,STRAVA_CLIENT_SECRET=STRAVA_CLIENT_SECRET:latest,GARMIN_CONSUMER_SECRET=GARMIN_CONSUMER_SECRET:latest,GARMIN_WEBHOOK_SECRET=GARMIN_WEBHOOK_SECRET:latest,RESEND_API_KEY=RESEND_API_KEY:latest,VAPID_PRIVATE_KEY=VAPID_PRIVATE_KEY:latest,FCM_SERVICE_ACCOUNT_JSON=FCM_SERVICE_ACCOUNT_JSON:latest
+      - --set-env-vars=APP_ENV=production,APP_BASE_URL=https://api.astrapeai.com,SUPABASE_URL=https://wtwzzjjsbkungugtcyte.supabase.co,SUPABASE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind0d3p6ampzYmt1bmd1Z3RjeXRlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk0ODQ5MjAsImV4cCI6MjA5NTA2MDkyMH0.WFHxBcOO9DW5XIW7vkoHL77pUgRuUAjCRGE8ddZsqG0,GCP_PROJECT_ID=astrape-ai-coach,GCP_BUCKET_NAME=astrape-workout-files-bucket,WHOOP_CLIENT_ID=ffe39843-d11d-4f54-a828-44dfbcbd1128,WHOOP_WEBHOOK_SKIP_SIG_CHECK=false,STRAVA_CLIENT_ID=238216,STRAVA_WEBHOOK_VERIFY_TOKEN=y97hxkfuA7t07IP8so9V5jvQ5r_99PxqS-J0ZNsP8VU,STRAVA_WEBHOOK_SUBSCRIPTION_ID=0,GARMIN_CONSUMER_KEY=YOUR_GARMIN_CONSUMER_KEY,IP_RATE_LIMIT_RPM=100,VAPID_PUBLIC_KEY=BDxK3t8XeX7Hebit4Kq38ub8BVks_VmHtqhSOoQUX--fQlGPbmhRbxtynnDaieUnTlGO2OMLdMOeyaIwpK9PUQw,VAPID_SUBJECT=mailto:support@astrapeai.com,RESEND_AUDIENCE_ID=bc1ae29b-dec7-43d7-8d4d-8a9f70864d93
+
 images:
-  - 'gcr.io/$PROJECT_ID/astrape-api:latest'
+  - gcr.io/$PROJECT_ID/astrape-api:$COMMIT_SHA
+  - gcr.io/$PROJECT_ID/astrape-api:latest
