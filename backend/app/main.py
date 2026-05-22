@@ -12,10 +12,14 @@ from app.services.token_refresh import token_refresh_loop
 
 _ip_rate_limiter = RateLimiter()
 
+_docs_enabled = settings.APP_ENV != "production"
+
 app = FastAPI(
     title="ASTRAPE Backend API",
     description="Mathematical and AI orchestration core for the ASTRAPE Coach",
-    version="1.0.0"
+    version="1.0.0",
+    docs_url="/docs" if _docs_enabled else None,
+    redoc_url="/redoc" if _docs_enabled else None,
 )
 
 
@@ -109,7 +113,7 @@ class IPRateLimitMiddleware(BaseHTTPMiddleware):
 # Enumerate the actual origins that should be allowed.
 # allow_origins=["*"] is incompatible with allow_credentials=True per the CORS spec.
 ALLOWED_ORIGINS = [
-    "https://astrape.app",
+    "https://app.astrapeai.com",
     "capacitor://localhost",   # Capacitor iOS webview
     "http://localhost",        # Capacitor Android webview
     "http://localhost:5173",   # local dev (vite)
@@ -141,7 +145,8 @@ app.include_router(coach.router)
 app.include_router(sync.router)
 app.include_router(plan.router)
 app.include_router(training_plans.router)
-app.include_router(debug.router)
+if settings.APP_ENV != "production":
+    app.include_router(debug.router)
 app.include_router(analysis.router)
 app.include_router(admin.router)
 app.include_router(notifications.router)
