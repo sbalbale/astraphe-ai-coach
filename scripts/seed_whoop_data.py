@@ -287,7 +287,7 @@ def ingest_biometrics(db: Client, athlete_id: str):
             "sleep_awake_pct":    detail.get("awake_pct"),
             "sleep_bedtime":      detail.get("bedtime"),
             "sleep_wakeup":       detail.get("wakeup"),
-            "skin_temp_deviation": to_float(row.get("Skin temp (celsius)", "")),
+            "skin_temp": to_float(row.get("Skin temp (celsius)", "")),
             "spo2_pct":           to_float(row.get("Blood oxygen %", "")),
         })
 

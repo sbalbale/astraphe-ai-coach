@@ -1,6 +1,6 @@
 <script lang="ts">
   import { api } from '$lib/api';
-  import { renderCoachMarkdownToSafeHtml } from '$lib/coachMarkdown';
+  import { renderCoachMarkdownToSafeHtml, normalizeTypographyForWrap } from '$lib/coachMarkdown';
   import { buildMergedCoachPromptSuggestions } from '$lib/coachPromptSuggestions';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { authStore } from '$lib/stores/authStore.svelte';
@@ -18,11 +18,13 @@
     streaming?: boolean;
   };
   
-  const initialText = $derived(`Hey ${authStore.user?.user_metadata?.full_name?.split(' ')[0] || 'there'}! I'm your ASTRAPE Coach. ${athleteStore.ctl > 0 ? `I've analyzed your current fitness (CTL: ${Math.round(athleteStore.ctl)}).` : "Link your data so I can start analyzing your training."} How can I help you today?`);
+  const initialText = $derived(greetingMessage || `Hey ${authStore.user?.user_metadata?.full_name?.split(' ')[0] || 'there'}! I'm your ASTRAPE Coach. ${athleteStore.ctl > 0 ? `I've analyzed your current fitness (CTL: ${Math.round(athleteStore.ctl)}).` : "Link your data so I can start analyzing your training."} How can I help you today?`);
   
   let conversations = $state<Conversation[]>([]);
   let conversationId = $state<string | null>(null);
   let messages = $state<Message[]>([]);
+  let aiMemories = $state<string[]>([]);
+  let greetingMessage = $state<string>('');
   
   let input = $state('');
   let loading = $state(false);
@@ -78,12 +80,29 @@
     if (historyLoading || historyLoaded) return;
     historyLoading = true;
     try {
-      const res = await api.getCoachConversations();
-      conversations = res?.conversations || [];
+      // 1. Load conversations list FIRST (so menu works immediately)
+      const convoRes = await api.getCoachConversations();
+      conversations = convoRes?.conversations || [];
+      historyLoaded = true;
+
+      // 2. Load initialization data in the background (greeting + memories)
+      api.initializeCoach().then((initRes) => {
+        if (initRes?.status === 'success' || initRes?.status === 'partial_success') {
+          greetingMessage = initRes.message || '';
+          aiMemories = initRes.memories || [];
+          
+          // If we are still in a new chat (no conversationId), update the greeting text
+          if (!conversationId && messages.length > 0 && messages[0].id === 'local-greeting') {
+            messages[0].text = initialText;
+          }
+        }
+      }).catch(err => {
+        console.warn("[coach.initialize] Failed in background:", err);
+      });
+
       // Default to a new chat on first entry
       conversationId = null;
       messages = [{ id: 'local-greeting', role: 'ai', text: initialText }];
-      historyLoaded = true;
     } finally {
       historyLoading = false;
     }
@@ -235,7 +254,8 @@
       tsb: athleteStore.tsb,
       sleepScore: contextSleepScore,
       hrvZScore: contextHrvZ,
-      recentMessages: recentTurnsForSuggestions
+      recentMessages: recentTurnsForSuggestions,
+      memories: aiMemories
     })
   );
 
@@ -412,7 +432,7 @@
               AI
             </div>
             <div
-              class="max-w-[min(92%,28rem)] px-[14px] py-[10px] text-[13px] leading-[1.55] text-text0 rounded-2xl rounded-bl-md border border-border bg-glass2"
+              class="max-w-[min(92%,28rem)] min-w-0 overflow-hidden px-[14px] py-[10px] text-[13px] leading-[1.55] text-text0 rounded-2xl rounded-bl-md border border-border bg-glass2 break-words"
             >
               {#if msg.image_urls && msg.image_urls.length > 0}
                 <div class="flex gap-2 flex-wrap mb-2">
@@ -444,7 +464,7 @@
         {:else}
           <div class="flex gap-2.5 items-end justify-end">
             <div
-              class="max-w-[min(92%,28rem)] px-[14px] py-[10px] text-[13px] leading-[1.55] text-text0 rounded-2xl rounded-br-md border border-blue/30 bg-blue-dim"
+              class="max-w-[min(92%,28rem)] min-w-0 px-[14px] py-[10px] text-[13px] leading-[1.55] text-text0 rounded-2xl rounded-br-md border border-blue/30 bg-blue-dim break-words whitespace-pre-wrap"
             >
               {#if msg.image_urls && msg.image_urls.length > 0}
                 <div class="flex gap-2 flex-wrap mb-2 justify-end">
@@ -459,7 +479,7 @@
                   {/each}
                 </div>
               {/if}
-              {msg.text}
+              {normalizeTypographyForWrap(msg.text)}
             </div>
             <div
               class="w-8 h-8 shrink-0 rounded-full bg-bg0 border border-border flex items-center justify-center text-[10px] font-semibold text-text1 select-none uppercase"
@@ -567,6 +587,10 @@
   /* Markdown styles scoped to AI message bubbles */
   :global(.chat-md) {
     word-break: break-word;
+    overflow-wrap: break-word;
+  }
+  :global(.chat-md :where(p, li, blockquote)) {
+    overflow-wrap: break-word;
   }
   :global(.chat-md :where(p, ul, ol, pre, blockquote)) {
     margin: 0.4rem 0;

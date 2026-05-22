@@ -339,7 +339,7 @@ WHOOP_RECOVERY_RETRY_DELAYS_SEC = (120, 600)
 def _apply_whoop_recovery_vitals(bio_payload: DailyBiometrics, recovery_data: dict) -> None:
     """Merge scored recovery vitals into an existing DailyBiometrics payload."""
     vitals = whoop.build_whoop_vitals_from_recovery(recovery_data)
-    for field in ("hrv_rmssd", "resting_hr", "spo2_pct", "skin_temp_deviation", "recovery_score"):
+    for field in ("hrv_rmssd", "resting_hr", "spo2_pct", "skin_temp", "recovery_score"):
         val = vitals.get(field)
         if val is not None:
             setattr(bio_payload, field, val)

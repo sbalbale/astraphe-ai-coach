@@ -237,11 +237,11 @@
     };
   });
   
-  // NOTE: `skin_temp_deviation` is stored as *skin/body temperature in °C* for WHOOP recovery payloads.
+  // NOTE: `skin_temp` stores *skin/body temperature in °C*.
   // We treat it as an actual temperature measurement and show deviation vs baseline.
-  const bodyTempCToday = $derived(isFiniteNumber(d?.data?.skin_temp_deviation) ? Number(d.data.skin_temp_deviation) : null);
+  const bodyTempCToday = $derived(isFiniteNumber(d?.data?.skin_temp) ? Number(d.data.skin_temp) : null);
   const bodyTempCBaseline = $derived.by(() => {
-    const base = baselineAvg7d(biometricsSeries, d.date, 'skin_temp_deviation');
+    const base = baselineAvg7d(biometricsSeries, d.date, 'skin_temp');
     if (!isFiniteNumber(base)) return null;
     return Math.round(base * 10) / 10;
   });
@@ -278,7 +278,7 @@
   // Locally-computed z-scores for vitals the backend doesn't ship explicit
   // `*_z` fields for. Used to drive the colored deviation track + delta
   // coloring on the Contributing Factors panel.
-  const bodyTempZ = $derived(zScoreFromSeries(biometricsSeries, d.date, 'skin_temp_deviation', bodyTempCToday));
+  const bodyTempZ = $derived(zScoreFromSeries(biometricsSeries, d.date, 'skin_temp', bodyTempCToday));
   const spo2Z = $derived(zScoreFromSeries(biometricsSeries, d.date, 'spo2_pct', spo2Pct));
 
   // Prior day's strain score (0-100) drives the bar fill + delta color for

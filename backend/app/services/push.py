@@ -103,6 +103,9 @@ def send_push_to_athlete(
     Returns the count of successful sends (0 means nothing was sent,
     which is not an error when the user has no tokens registered).
     """
+    from app.services.text_format import markdown_to_plain_text
+
+    body = markdown_to_plain_text(body)
     try:
         if notification_type:
             profile_res = (

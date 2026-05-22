@@ -42,17 +42,18 @@ def _safe_int(v: object) -> int | None:
     except Exception:
         return None
 
-def _summarize_biometrics(db: Client, athlete_id: str) -> dict:
+def _summarize_biometrics(db: Client, athlete_id: str, units: str = "metric") -> dict:
     """
     Pull a compact biometrics summary for LLM context.
     Keeps payload small: latest day + 7-day averages where possible.
+    Converts units if necessary.
     """
     try:
         bio_res = (
             db.table("biometrics")
             .select(
                 "date,hrv_rmssd,resting_hr,sleep_duration_min,sleep_score,recovery_score,readiness_score,"
-                "strain_score,spo2_pct,skin_temp_deviation"
+                "strain_score,spo2_pct,skin_temp"
             )
             .eq("athlete_id", athlete_id)
             .order("date", desc=True)
@@ -66,6 +67,12 @@ def _summarize_biometrics(db: Client, athlete_id: str) -> dict:
     if not rows:
         return {"available": False}
 
+    def _convert_temp(c: float | None) -> float | None:
+        if c is None: return None
+        if units == "imperial":
+            return round((c * 9/5) + 32, 2)
+        return round(c, 2)
+
     latest = rows[0]
     # Compute 7d averages (use available values only)
     def avg(key: str) -> float | None:
@@ -78,6 +85,7 @@ def _summarize_biometrics(db: Client, athlete_id: str) -> dict:
 
     summary = {
         "available": True,
+        "units": "Fahrenheit (°F)" if units == "imperial" else "Celsius (°C)",
         "latest": {
             "date": latest.get("date"),
             "hrv_rmssd": _safe_float(latest.get("hrv_rmssd")),
@@ -88,7 +96,7 @@ def _summarize_biometrics(db: Client, athlete_id: str) -> dict:
             "readiness_score": _safe_int(latest.get("readiness_score")),
             "strain_score": _safe_int(latest.get("strain_score")),
             "spo2_pct": _safe_float(latest.get("spo2_pct")),
-            "skin_temp_deviation": _safe_float(latest.get("skin_temp_deviation")),
+            "skin_temp": _convert_temp(_safe_float(latest.get("skin_temp"))),
         },
         "avg_7d": {
             "hrv_rmssd": avg("hrv_rmssd"),
@@ -99,12 +107,12 @@ def _summarize_biometrics(db: Client, athlete_id: str) -> dict:
             "readiness_score": avg("readiness_score"),
             "strain_score": avg("strain_score"),
             "spo2_pct": avg("spo2_pct"),
-            "skin_temp_deviation": avg("skin_temp_deviation"),
+            "skin_temp": _convert_temp(avg("skin_temp")),
         },
     }
 
     # Add simple deltas vs 7d avg for the most important signals
-    for k in ("hrv_rmssd", "resting_hr", "sleep_duration_min", "sleep_score", "recovery_score", "spo2_pct", "skin_temp_deviation"):
+    for k in ("hrv_rmssd", "resting_hr", "sleep_duration_min", "sleep_score", "recovery_score", "spo2_pct", "skin_temp"):
         lv = _safe_float(summary["latest"].get(k))
         av = _safe_float(summary["avg_7d"].get(k))
         if lv is not None and av is not None:
@@ -146,7 +154,7 @@ def _summarize_athlete_profile(db: Client, athlete_id: str) -> dict:
     try:
         res = (
             db.table("athletes")
-            .select("display_name,gender,timezone_offset_min,resting_hr,hrv_baseline,rhr_baseline,max_hr,threshold_hr,threshold_pace")
+            .select("display_name,gender,timezone_offset_min,resting_hr,hrv_baseline,rhr_baseline,max_hr,threshold_hr,threshold_pace,measurement_units")
             .eq("id", athlete_id)
             .maybe_single()
             .execute()
@@ -158,6 +166,7 @@ def _summarize_athlete_profile(db: Client, athlete_id: str) -> dict:
     return {
         "display_name": row.get("display_name"),
         "gender": row.get("gender"),
+        "measurement_units": row.get("measurement_units", "metric"),
         "timezone_offset_min": row.get("timezone_offset_min"),
         "anchors": {
             "resting_hr": _safe_int(row.get("resting_hr")),
@@ -229,7 +238,7 @@ def _build_system_context(
 def detect_anomalies(db: Client, athlete_id: str) -> dict[str, Any] | None:
     """
     Returns a dict with triggered signals if any severe rule fires; otherwise None.
-    Thresholds: HRV z < -1.5, sleep_debt > 90 min, RHR > 7d avg + 5, TSB < -30, skin_temp > 0.6°C.
+    Thresholds: HRV z < -1.5, sleep_debt > 90 min, RHR > 7d avg + 5, TSB < -30, skin_temp_dev > 0.6°C.
     """
     signals: list[dict[str, Any]] = []
 
@@ -237,7 +246,7 @@ def detect_anomalies(db: Client, athlete_id: str) -> dict[str, Any] | None:
     try:
         bio_window_res = (
             db.table("biometrics")
-            .select("date,hrv_rmssd,resting_hr,sleep_duration_min,sleep_debt_min,skin_temp_deviation")
+            .select("date,hrv_rmssd,resting_hr,sleep_duration_min,sleep_debt_min,skin_temp")
             .eq("athlete_id", athlete_id)
             .order("date", desc=True)
             .limit(30)
@@ -293,9 +302,14 @@ def detect_anomalies(db: Client, athlete_id: str) -> dict[str, Any] | None:
             "threshold": 90,
         })
 
-    # --- RHR vs 7d average ---
-    bio_summary = _summarize_biometrics(db, athlete_id)
+    # --- RHR & Skin Temp vs 7d average ---
+    # Fetch athlete units to report anomalies correctly
+    profile = _summarize_athlete_profile(db, athlete_id)
+    units = profile.get("measurement_units", "metric")
+    
+    bio_summary = _summarize_biometrics(db, athlete_id, units=units)
     if bio_summary.get("available"):
+        # RHR Check
         lr = _safe_int(bio_summary["latest"].get("resting_hr"))
         av = _safe_float(bio_summary["avg_7d"].get("resting_hr"))
         if lr is not None and av is not None and lr > av + 5:
@@ -305,13 +319,33 @@ def detect_anomalies(db: Client, athlete_id: str) -> dict[str, Any] | None:
                 "avg_7d_rhr": round(av, 1),
                 "threshold_bpm_above_avg": 5,
             })
-        st = _safe_float(bio_summary["latest"].get("skin_temp_deviation"))
-        if st is not None and st > 0.6:
-            signals.append({
-                "metric": "skin_temp_deviation_c",
-                "value": round(st, 3),
-                "threshold": 0.6,
-            })
+            
+        # Skin Temp Check (Actual Deviation)
+        # We compare absolute values in Celsius to maintain scientific threshold of 0.6°C
+        # but the bio_summary "latest" and "avg_7d" keys are already unit-converted.
+        # So we fetch raw values from rows for calculation.
+        def _get_raw_avg(key: str) -> float | None:
+            vals = [_safe_float(r.get(key)) for r in window_rows[-7:] if _safe_float(r.get(key)) is not None]
+            return sum(vals) / len(vals) if vals else None
+
+        raw_latest = _safe_float(latest_row.get("skin_temp"))
+        raw_avg = _get_raw_avg("skin_temp")
+        
+        if raw_latest is not None and raw_avg is not None:
+            deviation_c = raw_latest - raw_avg
+            if deviation_c > 0.6:
+                # Reporting unit-aware values for the LLM
+                reported_latest = bio_summary["latest"]["skin_temp"]
+                reported_avg = bio_summary["avg_7d"]["skin_temp"]
+                reported_unit = "°F" if units == "imperial" else "°C"
+                
+                signals.append({
+                    "metric": "skin_temp_deviation",
+                    "deviation_celsius": round(deviation_c, 3),
+                    "latest_value": f"{reported_latest}{reported_unit}",
+                    "baseline_avg": f"{reported_avg}{reported_unit}",
+                    "threshold_celsius": 0.6,
+                })
 
     # --- TSB ---
     tl = _summarize_training_load(db, athlete_id, 0.0)
@@ -423,44 +457,126 @@ def _extract_athlete_message_from_model_output(response: Any) -> str:
     return _extract_athlete_message_from_text(raw_text)
 
 
+_SCRATCHPAD_RE = re.compile(r"<scratchpad>.*?</scratchpad>", re.DOTALL | re.IGNORECASE)
+_READY_MARKER_RE = re.compile(r"\*Ready\.\*", re.IGNORECASE)
+_COACH_REPLY_START_RE = re.compile(
+    r"(?:^|\n)\s*(?:"
+    r"Because (?:the |your |with |how )|"
+    r"Given how (?:much |your )|"
+    r"Hey \w|"
+    r"Here is how (?:I )?recommend|"
+    r"Here are|"
+    r"Looking at your|"
+    r"I would (?:actually )?recommend|"
+    r"I'd (?:actually )?recommend|"
+    r"Light spin only|"
+    r"Rest today"
+    r")",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
 def _extract_athlete_message_from_text(raw_text: str) -> str:
-    """Parse XML <response> tags from model text; fall back to legacy sanitizer on failure."""
+    """
+    Cleaner extraction: strips any lingering XML scratchpad tags but otherwise 
+    treats the terminal output as the athlete message.
+    """
     raw = (raw_text or "").strip()
     if not raw:
         return ""
 
-    match = re.search(r'<response>(.*?)</response>', raw, re.DOTALL | re.IGNORECASE)
+    # Strip legacy or hallucinated scratchpad tags
+    raw = _SCRATCHPAD_RE.sub("", raw).strip()
+
+    # Legacy XML response support (backwards compatibility)
+    match = re.search(r"<response>(.*?)</response>", raw, re.DOTALL | re.IGNORECASE)
     if match:
         return match.group(1).strip()
 
-    print("Warning: Model missed <response> tags. Falling back to sanitizer.")
-    stripped = _strip_internal_reasoning(raw)
-    return stripped if stripped else "I encountered an error processing your request."
+    # In the new Agentic Scratchpad pattern, the raw text IS the response
+    return raw if raw else "I encountered an error processing your request."
 
 
 def _strip_internal_reasoning(text: str) -> str:
     """
     Backstop sanitizer: if the model emits chain-of-thought style scaffolding, drop it.
-    We keep this conservative to avoid harming normal coaching output.
     """
-    t = (text or "").strip()
+    t = _SCRATCHPAD_RE.sub("", (text or "")).strip()
     if not t:
         return ""
 
-    # Common "thinking dump" patterns we never want to show.
+    # Model sometimes ends planning with *Ready.* immediately before the athlete reply.
+    ready_parts = _READY_MARKER_RE.split(t)
+    if len(ready_parts) > 1:
+        t = ready_parts[-1].strip()
+
+    # Long inline dumps: jump to the first coach-voice paragraph.
+    start = _COACH_REPLY_START_RE.search(t)
+    if start and start.start() > 80:
+        t = t[start.start() :].strip()
+
     bad_prefixes = (
         "user goal:",
         "user wants to",
+        "the user is",
+        "user is asking",
         "current date",
+        "current tsb",
+        "current hrv",
+        "current ctl",
+        "current atl",
+        "target race",
+        "upcoming load",
         "constraint check",
         "role:",
         "wait,",
         "actually,",
         "self-correction",
+        "drafting the response",
         "drafting final response",
         "response structure:",
         "final check",
         "final response construction",
+        "final polish",
+        "final plan:",
+        "one more thing:",
+        "let's double check",
+        "let's say they",
+        "refining the",
+        "table construction:",
+        "step 1:",
+        "step 2:",
+        "step 3:",
+        "the priority is",
+        "since i don't",
+        "i will advise",
+        "i'll structure",
+        "plan:",
+        "the pemi loop will likely",
+    )
+
+    planning_bullet_markers = (
+        "current date",
+        "current tsb",
+        "current hrv",
+        "current ctl",
+        "current atl",
+        "target race",
+        "upcoming load",
+        "step 1",
+        "step 2",
+        "step 3",
+        "the user",
+        "wait,",
+        "constraint check",
+        "final check",
+        "final plan",
+        "drafting",
+        "self-correction",
+        "one more thing",
+        "let's double",
+        "pemi loop will likely",
+        "simulate the",
     )
 
     lines = [ln.rstrip() for ln in t.splitlines()]
@@ -471,18 +587,15 @@ def _strip_internal_reasoning(text: str) -> str:
             return False
         if any(low.startswith(p) for p in bad_prefixes):
             return True
-        # Heuristic: lines that look like internal planning fields.
         if low.startswith(("current metrics:", "target date:", "timeframe:", "persona:", "rule:", "action requested:")):
+            return True
+        if re.match(r"^\*\s+", ln.strip()):
+            if any(m in low for m in planning_bullet_markers):
+                return True
+        if re.match(r"^step\s+\d+:", low):
             return True
         return False
 
-    # Strip leading meta blocks.
-    i = 0
-    while i < len(lines) and (not lines[i].strip() or is_meta_line(lines[i])):
-        i += 1
-
-    # If we still have a long meta paragraph (common in dumps), keep advancing until we hit
-    # something that looks like a real coach reply (table header or a sentence with metrics).
     def looks_like_reply(ln: str) -> bool:
         s = ln.strip()
         if not s:
@@ -491,18 +604,40 @@ def _strip_internal_reasoning(text: str) -> str:
             return True
         if s.startswith("Day\tDiscipline") or s.startswith("Day |"):
             return True
-        # Metric anchored sentence: contains CTL/ATL/TSB/HRV and punctuation.
         low = s.lower()
+        coach_openings = (
+            "because the ",
+            "because your ",
+            "because with ",
+            "given how ",
+            "hey ",
+            "here is how",
+            "here are",
+            "looking at your",
+            "i would ",
+            "i'd ",
+            "light spin",
+            "rest today",
+        )
+        if any(low.startswith(o) for o in coach_openings):
+            return True
         if any(k in low for k in ("ctl", "atl", "tsb", "hrv", "rmssd", "sleep score")) and (("." in s) or (":" in s)):
             return True
         return False
 
-    while i < len(lines) and not looks_like_reply(lines[i]):
-        # If it keeps being meta, advance.
-        if is_meta_line(lines[i]) or lines[i].strip().lower().startswith(("wait", "actually", "final", "draft")):
+    i = 0
+    while i < len(lines):
+        if looks_like_reply(lines[i]):
+            break
+        if not lines[i].strip() or is_meta_line(lines[i]):
             i += 1
             continue
-        # If we hit something not meta but also not reply, stop (avoid eating legit content).
+        low = lines[i].strip().lower()
+        if low.startswith(("wait", "actually", "final", "draft")) or (
+            low.startswith("the user") and "asking" in low
+        ):
+            i += 1
+            continue
         break
 
     out = "\n".join(ln for ln in lines[i:] if ln.strip()).strip()
@@ -596,6 +731,9 @@ def get_coach_response_agentic(
             )
 
     effective_model = model_name or settings.GEMINI_MODEL
+    # Only use ThinkingConfig for models that specifically support it
+    is_thinking_model = "thinking" in effective_model.lower()
+    
     config = types.GenerateContentConfig(
         system_instruction=system_with_ctx,
         tools=coach_tools.TOOLS,
@@ -603,14 +741,16 @@ def get_coach_response_agentic(
         tool_config=types.ToolConfig(
             include_server_side_tool_invocations=True
         ),
-        thinking_config=types.ThinkingConfig(include_thoughts=False),
         temperature=0.4,
     )
+    if is_thinking_model:
+        config.thinking_config = types.ThinkingConfig(include_thoughts=False)
 
     last_response = None
-    for _hop in range(max_tool_hops + 1):
+    # Reduced max hops to prevent long hangs on heavy models or tool-call oscillations
+    for _hop in range(8):
         _hop_error: Exception | None = None
-        for _attempt in range(3):  # Increased to 3 attempts for larger models
+        for _attempt in range(3):  # 3 attempts for larger models
             try:
                 last_response = _client.models.generate_content(
                     model=effective_model,
@@ -643,7 +783,7 @@ def get_coach_response_agentic(
                 getattr(p, "function_response", None) for p in parts_list
             ):
                 return (
-                    "I have successfully updated your training plan with the requested sessions. Please check your calendar for the details.",
+                    "I have successfully processed your data and updated your status. Please let me know if you need anything else!",
                     [],
                 )
             raise _hop_error
@@ -797,14 +937,19 @@ async def get_coach_response_stream(
         )
     final_prompt = f"{system_instruction}\n\n{context_block}\n\nAthlete Message: {message}"
     effective_model = (model_name or settings.GEMINI_MODEL)
+    is_thinking_model = "thinking" in effective_model.lower()
+    
+    config = types.GenerateContentConfig(
+        temperature=0.35,
+    )
+    if is_thinking_model:
+        config.thinking_config = types.ThinkingConfig(include_thoughts=False)
+
     collected: list[str] = []
     for chunk in _client.models.generate_content_stream(
         model=effective_model,
         contents=final_prompt,
-        config=types.GenerateContentConfig(
-            thinking_config=types.ThinkingConfig(include_thoughts=False),
-            temperature=0.35,
-        ),
+        config=config,
     ):
         t = getattr(chunk, "text", None)
         if t:

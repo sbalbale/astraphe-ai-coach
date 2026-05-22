@@ -119,7 +119,7 @@ def recovery_score_to_vitals(score: dict) -> dict[str, Any]:
         "hrv_rmssd": hrv,
         "resting_hr": score.get("resting_heart_rate"),
         "spo2_pct": score.get("spo2_percentage"),
-        "skin_temp_deviation": score.get("skin_temp_celsius"),
+        "skin_temp": score.get("skin_temp_celsius"),
         "recovery_score": score.get("recovery_score"),
     }
 

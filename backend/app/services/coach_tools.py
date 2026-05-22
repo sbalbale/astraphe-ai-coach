@@ -837,8 +837,48 @@ _clear_training_plans_decl = types.FunctionDeclaration(
     ),
 )
 
+def handle_internal_scratchpad(
+    args: dict[str, Any],
+    *,
+    athlete_id: str,
+    db: Client,
+) -> dict[str, Any]:
+    """
+    Sinks internal AI reasoning and planning into a tool call to hide it from the user.
+    """
+    # Simply log and return success; the thinking is preserved in the tool call itself.
+    print(f"\n--- [AI SCRATCHPAD] ---\n{args.get('thought', 'No thought provided')}\n")
+    return {"status": "success", "message": "Thought recorded in scratchpad."}
+
+
+_scratchpad_decl = types.FunctionDeclaration(
+    name="internal_scratchpad",
+    description=(
+        "Use this tool to record your internal reasoning, planning, and draft responses. "
+        "Content sent here will be hidden from the user. Use this BEFORE calling other tools "
+        "or generating your final message to the athlete."
+    ),
+    parameters=types.Schema(
+        type=types.Type.OBJECT,
+        properties={
+            "thought": types.Schema(
+                type=types.Type.STRING,
+                description="Your detailed reasoning, step-by-step plan, or draft content.",
+            ),
+        },
+        required=["thought"],
+    ),
+)
+
 TOOLS: list[types.Tool] = [
-    types.Tool(function_declarations=[_simulate_decl, _schedule_decl, _nutrition_decl, _clear_training_plans_decl, _save_memory_decl]),
+    types.Tool(function_declarations=[
+        _simulate_decl, 
+        _schedule_decl, 
+        _nutrition_decl, 
+        _clear_training_plans_decl, 
+        _save_memory_decl,
+        _scratchpad_decl
+    ]),
     types.Tool(google_search=types.GoogleSearch()),
 ]
 
@@ -850,6 +890,7 @@ TOOL_HANDLERS: dict[str, ToolHandler] = {
     "calculate_nutrition": lambda args, aid, db: handle_calculate_nutrition(args, athlete_id=aid, db=db),
     "clear_training_plans": lambda args, aid, db: handle_clear_training_plans(args, athlete_id=aid, db=db),
     "save_memory": lambda args, aid, db: handle_save_memory(args, athlete_id=aid, db=db),
+    "internal_scratchpad": lambda args, aid, db: handle_internal_scratchpad(args, athlete_id=aid, db=db),
 }
 
 

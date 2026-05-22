@@ -253,13 +253,37 @@ async def initialize_coach(
     """
     Called when the chat UI mounts. Returns a proactive warning if biometrics/load
     anomalies are severe; otherwise a short context-aware greeting.
+    Also returns the athlete's top contextual memories for frontend suggestions.
     """
     _require_premium(config)
     try:
-        message, is_proactive = build_initialization_message(athlete_id, db, config.gemini_model)
-        return {"status": "success", "message": message, "is_proactive": is_proactive}
+        from app.services.memory import retrieve_relevant_memories
+        from app.services.ai_coach import build_initialization_message
+        
+        # Parallelize the slow Gemini-based tasks
+        msg_task = asyncio.to_thread(build_initialization_message, athlete_id, db, config.gemini_model)
+        mem_task = asyncio.to_thread(retrieve_relevant_memories, athlete_id, "upcoming races, goals, trips, and injuries", db, top_k=5)
+        
+        [msg_res, memories] = await asyncio.gather(msg_task, mem_task)
+        
+        message, is_proactive = msg_res
+        memory_strings = [m.get("content") for m in memories if m.get("content")]
+
+        return {
+            "status": "success", 
+            "message": message, 
+            "is_proactive": is_proactive,
+            "memories": memory_strings
+        }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        # Log error but don't 500 if initialization fails; allow the chat to load with fallbacks
+        print(f"[coach.initialize] Failed: {e}")
+        return {
+            "status": "partial_success",
+            "message": None,
+            "is_proactive": False,
+            "memories": []
+        }
 
 
 @router.post("/message")
@@ -313,7 +337,9 @@ async def chat_with_coach(
             pass
         try:
             from app.services.push import send_push_to_athlete
-            preview = (coach_reply or "").strip()[:120]
+            from app.services.text_format import notification_preview
+
+            preview = notification_preview(coach_reply or "")
             send_push_to_athlete(
                 athlete_id=athlete_id,
                 title="ASTRAPE Coach",
