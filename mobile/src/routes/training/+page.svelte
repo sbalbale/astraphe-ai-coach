@@ -48,6 +48,12 @@
     type ActivityIntervals,
     type ActivityZones,
   } from '$lib/services/activityService';
+  import {
+    loadWorkoutDetailCache,
+    saveWorkoutDetailToCache,
+    clearWorkoutDetailFromCache,
+    preloadWorkoutDetail,
+  } from '$lib/stores/workoutDetailCache';
   import { stravaPolylineFromPayload } from '$lib/utils/polyline';
   import { formatWorkoutDistance, normalizeUnits } from '$lib/utils/units';
   import { supportsPaceChart } from '$lib/utils/paceChart';
@@ -86,6 +92,23 @@
   const showNoTrainingData = $derived(athleteStore.initialLoadDone && !athleteStore.loading && !isConnected && !hasWorkouts);
 
   let selectedWorkout = $state<any>(null);
+  $effect(() => {
+    const workouts = athleteStore.workouts;
+    if (!workouts?.length) return;
+
+    // Background preload the most recent workout
+    const latest = [...workouts].sort(
+      (a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime()
+    )[0];
+    if (latest?.id) {
+      void preloadWorkoutDetail(latest.id);
+    }
+  });
+
+  function onWorkoutCardIntent(workoutId: string) {
+    void preloadWorkoutDetail(workoutId);
+  }
+
   let workoutAnalysisText = $state<string | null>(null);
   let workoutAnalysisLoading = $state(false);
 
@@ -468,6 +491,7 @@
       const result = await refetchWorkoutFromStrava(w.id);
       if (result.workout) {
         selectedWorkout = { ...w, ...result.workout };
+        clearWorkoutDetailFromCache(w.id);
       }
       detailReloadEpoch += 1;
     } catch (e: unknown) {
@@ -481,47 +505,91 @@
     const w = selectedWorkout;
     void detailReloadEpoch;
 
-    detailStreams = null;
-    detailLaps = [];
-    detailIntervals = null;
-    detailZones = null;
     detailError = null;
     detailLoading = false;
     detailHydrating = false;
 
-    if (!w?.id || !w.strava_activity_id) return;
+    if (!w?.id || !w.strava_activity_id) {
+      detailStreams = null;
+      detailLaps = [];
+      detailIntervals = null;
+      detailZones = null;
+      return;
+    }
 
     let cancelled = false;
-    detailLoading = true;
+
+    // SWR: Try cache first
+    const cache = loadWorkoutDetailCache();
+    const cached = cache[w.id];
+    if (cached) {
+      detailStreams = cached.streams;
+      detailLaps = cached.laps ?? [];
+      detailIntervals = cached.intervals;
+      detailZones = cached.zones;
+      // We still "load" in background, but don't show the skeleton if we have cached data
+    } else {
+      detailStreams = null;
+      detailLaps = [];
+      detailIntervals = null;
+      detailZones = null;
+      detailLoading = true;
+    }
 
     (async () => {
       try {
-        let [streams, laps, intervals, zones] = await Promise.all([
-          getActivityStreams(w.id),
-          getActivityLaps(w.id),
-          getActivityIntervals(w.id),
-          getActivityZones(w.id),
+        const fetchStreams = getActivityStreams(w.id).then(async (s) => {
+          if (cancelled) return;
+          if (!s && w.strava_activity_id && w.strava_streams_fetched === false) {
+            detailHydrating = true;
+            const hydrated = await hydrateActivityStreams(w.id);
+            if (cancelled) return;
+            if (hydrated.status === 'hydrated' || hydrated.status === 'already_stored') {
+              s = await getActivityStreams(w.id);
+              clearWorkoutDetailFromCache(w.id); // Invalidate cache so we save the new hydrated data
+            }
+            detailHydrating = false;
+          }
+          if (cancelled) return;
+          detailStreams = s;
+          detailLoading = false; // Primary visual centerpiece landed
+          return s;
+        });
+
+        const fetchLaps = getActivityLaps(w.id).then((l) => {
+          if (cancelled) return;
+          detailLaps = l ?? [];
+          return l;
+        });
+
+        const fetchIntervals = getActivityIntervals(w.id).then((i) => {
+          if (cancelled) return;
+          detailIntervals = i;
+          return i;
+        });
+
+        const fetchZones = getActivityZones(w.id).then((z) => {
+          if (cancelled) return;
+          detailZones = z;
+          return z;
+        });
+
+        const [streams, laps, intervals, zones] = await Promise.all([
+          fetchStreams,
+          fetchLaps,
+          fetchIntervals,
+          fetchZones,
         ]);
 
         if (cancelled) return;
 
-        if (!streams && w.strava_activity_id && w.strava_streams_fetched === false) {
-          detailHydrating = true;
-          const hydrated = await hydrateActivityStreams(w.id);
-          if (cancelled) return;
-          if (hydrated.status === 'hydrated' || hydrated.status === 'already_stored') {
-            streams = await getActivityStreams(w.id);
-            if (!zones || (zones.data_points === 0 && zones.source !== 'summary')) {
-              zones = await getActivityZones(w.id);
-            }
-          }
-        }
-
-        if (cancelled) return;
-        detailStreams = streams;
-        detailLaps = laps ?? [];
-        detailIntervals = intervals;
-        detailZones = zones;
+        // Save to cache
+        saveWorkoutDetailToCache(w.id, {
+          streams,
+          laps: laps ?? [],
+          intervals,
+          zones,
+        });
       } catch (e: unknown) {
         if (!cancelled) detailError = e instanceof Error ? e.message : 'Failed to load workout details';
       } finally {
@@ -915,7 +983,7 @@
               {/if}
 
               {#if detailStreams}
-                <div class="mt-4">
+                <div class="mt-4 min-h-[260px]">
                   <StreamCharts
                     streams={detailStreams}
                     laps={detailLaps}
@@ -927,7 +995,7 @@
               {/if}
 
               {#if (detailStreams?.time_series?.latlng && detailStreams.time_series.latlng.length > 1) || detailStravaPolyline}
-                <div class="mt-4">
+                <div class="mt-4 min-h-[300px]">
                   <GpsTrace
                     latlng={detailStreams?.time_series?.latlng}
                     polyline={detailStravaPolyline}
@@ -1021,7 +1089,12 @@
           {#each weekWorkouts as w (w?.id ?? w?.started_at)}
             {@const strainVal = Number.isFinite(Number(w?.strain_score)) ? Math.round(Number(w.strain_score)) : null}
             {@const tssVal = Number.isFinite(Number(w?.tss)) ? Math.round(Number(w.tss)) : null}
-            <button class="text-left bg-transparent border-none p-0 cursor-pointer w-full" onclick={() => openWorkout(w)}>
+            <button
+              class="text-left bg-transparent border-none p-0 cursor-pointer w-full"
+              onclick={() => openWorkout(w)}
+              onmouseenter={() => w.id && onWorkoutCardIntent(w.id)}
+              ontouchstart={() => w.id && onWorkoutCardIntent(w.id)}
+            >
               <Card style="padding: 12px 14px;">
                 <div class="flex items-center gap-3">
                   <div class="w-10 h-10 rounded-xl shrink-0 flex items-center justify-center text-[18px] {getWorkoutBg(w.sport)}">
