@@ -29,7 +29,8 @@ router = APIRouter(prefix=f"{settings.API_PREFIX}/sync", tags=["Sync & Webhooks"
 # Allowlist of hosts that may be used as a post-OAuth web_return redirect target.
 # Add your production and staging domains here.
 _ALLOWED_RETURN_HOSTS: frozenset[str] = frozenset({
-    "astrape.app",
+    "astrapeai.com",
+    "app.astrapeai.com",
     "localhost",
     "127.0.0.1",
 })
@@ -40,7 +41,7 @@ def _safe_web_return(url: str | None) -> str | None:
         return None
     try:
         host = urlparse(url).hostname or ""
-        if host in _ALLOWED_RETURN_HOSTS or host.endswith(".astrape.app"):
+        if host in _ALLOWED_RETURN_HOSTS or host.endswith(".astrapeai.com"):
             return url
     except Exception:
         pass
