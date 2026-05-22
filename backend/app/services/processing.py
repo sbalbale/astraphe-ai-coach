@@ -796,8 +796,11 @@ def process_and_save_biometrics(payload: DailyBiometrics, athlete_id: str, db):
             if recent_hrvs:
                 hrv_avg_30d, hrv_std_30d = compute_ewma_stats(np.array(recent_hrvs, dtype=float), span=30)
 
-    # 4.5 Update Athlete Profile with latest physiological state
-    # Fetch current CTL for TSS target calculation
+    # 4.5 Rebuild PMC first so today's CTL/ATL exist before readiness is computed.
+    # Without this, tss_history has no row for today → current_ctl=0 → TSB = -ATL → readiness≈3.
+    recalculate_tss_history(athlete_id, db)
+
+    # Fetch current CTL for TSS target calculation (now guaranteed to exist for today)
     ctl_res = db.table("tss_history").select("ctl").eq("athlete_id", athlete_id).eq("date", payload.date.isoformat()).maybe_single().execute()
     current_ctl = ctl_res.data["ctl"] if (ctl_res and ctl_res.data) else 0.0
     
@@ -877,17 +880,23 @@ def process_and_save_biometrics(payload: DailyBiometrics, athlete_id: str, db):
     final_source = payload.source if payload.hrv_rmssd is not None else existing.get("hrv_source", payload.source)
 
     # 8. Process Recovery (Autonomic Repair)
-    recovery_score = compute_recovery_score(
-        hrv_today=final_hrv or 0.0,
-        hrv_avg_30d=hrv_avg_30d,
-        hrv_std_30d=hrv_std_30d,
-        rhr_today=final_rhr or 0,
-        rhr_avg_30d=rhr_avg_30d,
-        rhr_std_30d=rhr_std_30d,
-        sleep_score=sleep_score,
-        prior_day_atl=prior_day_atl,
-        prior_day_atl_max_30d=prior_day_atl_max_30d,
-    )
+    # Only recompute when HRV data is present — defaulting to 0.0 produces z_hrv≈-65
+    # which collapses the score to near zero and would overwrite a good recovery score
+    # from a race-condition where sleep.updated fires before recovery.updated.
+    if final_hrv is not None and final_rhr is not None:
+        recovery_score = compute_recovery_score(
+            hrv_today=final_hrv,
+            hrv_avg_30d=hrv_avg_30d,
+            hrv_std_30d=hrv_std_30d,
+            rhr_today=final_rhr,
+            rhr_avg_30d=rhr_avg_30d,
+            rhr_std_30d=rhr_std_30d,
+            sleep_score=sleep_score,
+            prior_day_atl=prior_day_atl,
+            prior_day_atl_max_30d=prior_day_atl_max_30d,
+        )
+    else:
+        recovery_score = existing.get("recovery_score")
     
     # 9. Process Readiness (Capacity to Train)
     # TSB based readiness
@@ -918,6 +927,3 @@ def process_and_save_biometrics(payload: DailyBiometrics, athlete_id: str, db):
         "spo2_pct": final_spo2
         }, on_conflict="athlete_id,date").execute()
 
-    # Extend the PMC (tss_history) through the biometrics date so today's CTL/ATL
-    # row exists after a morning sleep sync, not just after the next workout.
-    recalculate_tss_history(athlete_id, db)
