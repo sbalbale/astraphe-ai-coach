@@ -266,13 +266,25 @@ def compute_strain_score(zone_minutes: Dict[int, float], sport: str = "other") -
     score = 100 * (math.log(raw_strain + 1) / math.log(MAX_RAW_STRAIN_24H + 1))
     return int(round(np.clip(score, 0, 100)))
 
-def compute_readiness_score(tsb: float) -> int:
+def compute_readiness_score(
+    tsb: float,
+    recovery_score: Optional[int] = None,
+) -> int:
     """
-    Compute Race Readiness / Form (0-100) using a logistic (sigmoid) function.
-    Maps TSB (-inf to +inf) to a bounded 0-100 scale where TSB 0 = 50.
+    Compute Readiness Score (0-100).
+    Blends TSB-based form with the Astrape Recovery Score (ANS + sleep + load).
+    When recovery_score is unavailable, falls back to TSB-only sigmoid.
     """
-    k = 0.088  # Growth rate: sets TSB +25 to roughly 90/100
-    score = 100 / (1 + math.exp(-k * tsb))
+    # Softer slope: TSB ±20 → ~40–60 range, not near extremes
+    k = 0.055
+    tsb_component = 100.0 / (1.0 + math.exp(-k * tsb))
+
+    if recovery_score is None:
+        return int(round(np.clip(tsb_component, 0, 100)))
+
+    # Recovery already captures HRV, RHR, sleep, and load — let it dominate.
+    # TSB adds the longer-horizon training form signal recovery doesn't have.
+    score = (float(recovery_score) * 0.70) + (tsb_component * 0.30)
     return int(round(np.clip(score, 0, 100)))
 
 def calculate_astrape_sleep_score(
