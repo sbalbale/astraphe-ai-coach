@@ -18,8 +18,9 @@ ZONE_STRAIN_COEFFICIENTS = {
     5: 8.0,    # Z5 VO2max+
 }
 
-# The absolute maximum theoretical strain (24 hours at pure Zone 5)
-MAX_RAW_STRAIN_24H = 1440 * 8.0  # 11,520
+# Exponential saturation constant for strain scoring.
+# Increase to compress scores downward; decrease to spread them upward.
+STRAIN_SATURATION_CONSTANT = 150.0
 
 # Multiplier to account for central nervous system fatigue in non-aerobic sports
 NEUROMUSCULAR_MULTIPLIER = 1.7
@@ -249,21 +250,21 @@ def compute_atl(tss_series: np.ndarray, time_constant: int = 7) -> np.ndarray:
 
 def compute_strain_score(zone_minutes: Dict[int, float], sport: str = "other") -> int:
     """
-    Compute Strain Score (0-100) using natural logarithmic scaling.
-    100 is anchored to 24 hours of pure maximum HR output.
+    Compute Strain Score (0-100) using exponential saturation scaling.
+    STRAIN_SATURATION_CONSTANT is the characteristic load at which score ≈ 63 (the 1/e point).
     """
     raw_strain = sum(
         minutes * ZONE_STRAIN_COEFFICIENTS.get(zone, 0.0)
         for zone, minutes in zone_minutes.items()
     )
-    
-    if sport == 'strength':
+
+    if sport == "strength":
         raw_strain *= NEUROMUSCULAR_MULTIPLIER
-        
+
     if raw_strain <= 0:
         return 0
-        
-    score = 100 * (math.log(raw_strain + 1) / math.log(MAX_RAW_STRAIN_24H + 1))
+
+    score = 100.0 * (1.0 - math.exp(-raw_strain / STRAIN_SATURATION_CONSTANT))
     return int(round(np.clip(score, 0, 100)))
 
 def compute_readiness_score(
