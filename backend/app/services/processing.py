@@ -1,4 +1,5 @@
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta, datetime, timezone
 from typing import Any
 
@@ -496,7 +497,12 @@ def recalculate_tss_history(athlete_id: str, db):
         db.table("tss_history").delete().eq("athlete_id", athlete_id).lt("date", start_date.isoformat()).execute()
         db.table("tss_history").upsert(records, on_conflict="athlete_id,date").execute()
 
-async def process_and_save_workout(payload: WorkoutPayload, athlete_id: str, db: Any) -> None:
+async def process_and_save_workout(
+    payload: WorkoutPayload,
+    athlete_id: str,
+    db: Any,
+    skip_tss_recalc: bool = False,
+) -> None:
     tss = 0.0
     wt_raw = (payload.workout_type or "").strip()
     low = wt_raw.lower()
@@ -632,7 +638,9 @@ async def process_and_save_workout(payload: WorkoutPayload, athlete_id: str, db:
     }
 
     await asyncio.to_thread(_workouts_update_by_id_sync, db, workout_id, update_data)
-    asyncio.ensure_future(asyncio.to_thread(recalculate_tss_history, athlete_id, db))
+    # In batch contexts (Strava/WHOOP backfill) the caller recalculates TSS once at the end.
+    if not skip_tss_recalc:
+        asyncio.ensure_future(asyncio.to_thread(recalculate_tss_history, athlete_id, db))
 
 
 def process_and_save_biometrics(payload: DailyBiometrics, athlete_id: str, db):
@@ -724,21 +732,42 @@ def process_and_save_biometrics(payload: DailyBiometrics, athlete_id: str, db):
     rem_sleep_min = float(weighted_rem) / 100.0 if total_in_bed_min > 0 else 0.0
     deep_sleep_min = float(weighted_deep) / 100.0 if total_in_bed_min > 0 else 0.0
 
-    # 3. Fetch Previous Day's Biometrics (for sleep debt/strain)
+    # 3 + 4. Fetch prev day's biometrics, 42d history, and athlete profile in parallel.
+    # These three reads are fully independent, so we fan them out across a small
+    # ThreadPoolExecutor and gather. Cuts ~2x off the wall time of this section.
     prev_date = payload.date - timedelta(days=1)
-    prev_res = db.table("biometrics").select("sleep_debt_min, strain_score").eq("athlete_id", athlete_id).eq("date", prev_date.isoformat()).maybe_single().execute()
-    
+    start_date_42d = (payload.date - timedelta(days=42)).isoformat()
+
+    with ThreadPoolExecutor(max_workers=3) as _ex:
+        _prev_fut = _ex.submit(
+            db.table("biometrics")
+            .select("sleep_debt_min, strain_score")
+            .eq("athlete_id", athlete_id)
+            .eq("date", prev_date.isoformat())
+            .maybe_single()
+            .execute
+        )
+        _history_fut = _ex.submit(
+            db.table("biometrics")
+            .select("resting_hr, hrv_rmssd")
+            .eq("athlete_id", athlete_id)
+            .gte("date", start_date_42d)
+            .order("date")
+            .execute
+        )
+        _athlete_fut = _ex.submit(
+            db.table("athletes").select("*").eq("id", athlete_id).single().execute
+        )
+        prev_res = _prev_fut.result()
+        history_res = _history_fut.result()
+        athlete_res = _athlete_fut.result()
+
     prev_debt = 0.0
     prev_strain = 0
     if prev_res and prev_res.data:
         prev_debt = prev_res.data.get("sleep_debt_min") or 0.0
         # Priority: Astrape Custom Strain Score
         prev_strain = prev_res.data.get("strain_score") or 0
-        
-    # 4. Calculate Dynamic Baselines & Targets
-    start_date_42d = (payload.date - timedelta(days=42)).isoformat()
-    history_res = db.table("biometrics").select("resting_hr, hrv_rmssd").eq("athlete_id", athlete_id).gte("date", start_date_42d).order("date").execute()
-    athlete_res = db.table("athletes").select("*").eq("id", athlete_id).single().execute()
     
     baseline_rhr = 50.0
     baseline_hrv = 65.0

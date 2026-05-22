@@ -45,9 +45,8 @@ async def reprocess_athlete(athlete_id: str):
                 hr_zone_4_pct=w.get("hr_zone_4_pct"),
                 hr_zone_5_pct=w.get("hr_zone_5_pct")
             )
-            # Note: process_and_save_workout internally calls recalculate_tss_history
-            # We'll let it do that for simplicity, though it's less efficient.
-            await process_and_save_workout(payload, athlete_id, db)
+            # Skip per-workout TSS recalc; we rebuild once at the end (step 3).
+            await process_and_save_workout(payload, athlete_id, db, skip_tss_recalc=True)
         print("Workouts reprocessed.")
     else:
         print("No workouts found.")
