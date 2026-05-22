@@ -19,7 +19,7 @@ steps:
       - deploy
       - astrape-api
       - --image=gcr.io/$PROJECT_ID/astrape-api:$COMMIT_SHA
-      - --region=us-central1
+      - --region=us-east4
       - --allow-unauthenticated
       - --min-instances=0
       - --max-instances=10
