@@ -8,6 +8,8 @@ const API_URL = VITE_API_URL && VITE_API_URL !== 'undefined' ? VITE_API_URL : 'h
 const ISO_DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 console.log(`[API] Initialized with API_URL: ${API_URL}`);
 
+let _initCache: { result: unknown; expiresAt: number } | null = null;
+
 export const api = {
   async getDashboardSummary(day?: string) {
     try {
@@ -335,12 +337,17 @@ export const api = {
   },
 
   async initializeCoach() {
+    if (_initCache && Date.now() < _initCache.expiresAt) return _initCache.result;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 12000);
     try {
       const headers = await getAuthHeaders();
       const res = await fetch(`${API_URL}/v1/coach/initialize`, { method: 'POST', headers, signal: controller.signal });
-      if (res.ok) return await res.json();
+      if (res.ok) {
+        const data = await res.json();
+        _initCache = { result: data, expiresAt: Date.now() + 10 * 60 * 1000 };
+        return data;
+      }
     } catch (e) {
       if (e instanceof Error && e.name !== 'AbortError') console.warn("Failed to initialize coach.", e);
     } finally {
