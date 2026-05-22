@@ -1,7 +1,42 @@
 <script module lang="ts">
   import { SvelteMap } from 'svelte/reactivity';
 
-  const dashboardAiSummaryMemo = new SvelteMap<string, string | null>();
+  const AI_SUMMARY_CACHE_KEY = 'astrape:dashboard-ai-summary:v1';
+
+  function _loadAiSummaryCache(): Record<string, string> {
+    if (typeof localStorage === 'undefined') return {};
+    try {
+      const raw = localStorage.getItem(AI_SUMMARY_CACHE_KEY);
+      if (!raw) return {};
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') return {};
+      const out: Record<string, string> = {};
+      for (const [k, v] of Object.entries(parsed)) {
+        if (typeof v === 'string') out[k] = v;
+      }
+      return out;
+    } catch {
+      return {};
+    }
+  }
+
+  function _persistAiSummary(day: string, content: string) {
+    if (typeof localStorage === 'undefined') return;
+    try {
+      const current = _loadAiSummaryCache();
+      current[day] = content;
+      // Keep only the last 14 days to bound size.
+      const keys = Object.keys(current).sort();
+      while (keys.length > 14) delete current[keys.shift()!];
+      localStorage.setItem(AI_SUMMARY_CACHE_KEY, JSON.stringify(current));
+    } catch {
+      // ignore quota errors
+    }
+  }
+
+  const dashboardAiSummaryMemo = new SvelteMap<string, string | null>(
+    Object.entries(_loadAiSummaryCache())
+  );
 </script>
 
 <script lang="ts">
@@ -30,7 +65,7 @@
   const props = $props();
 
   onMount(() => {
-    athleteStore.fetchAll(true);
+    athleteStore.fetchAll();
   });
 
   const isCalibrating = $derived(
@@ -124,7 +159,10 @@
         const content = typeof res?.analysis?.content === 'string' ? res.analysis.content.trim() : '';
         const next = content ? content : null;
         // Only memoize successful content so transient 401s/network hiccups don't permanently lock us into null.
-        if (next) dashboardAiSummaryMemo.set(endDay, next);
+        if (next) {
+          dashboardAiSummaryMemo.set(endDay, next);
+          _persistAiSummary(endDay, next);
+        }
 
         if (activeAnalysisKey !== requestKey) return;
         analysisText = next;

@@ -1,6 +1,8 @@
 from fastapi import APIRouter, HTTPException, Depends, Query
 from datetime import date, datetime, timedelta
 from typing import Optional, List
+import asyncio
+import json
 
 import numpy as np
 
@@ -9,6 +11,7 @@ from app.services.algorithms import compute_z_score
 from app.services.hr_zones import athlete_dict_with_hr_zones, get_athlete_zones, optional_canonical_hr_zone_method
 from app.services.resend_service import sync_marketing_contact
 from app.dependencies import get_current_athlete, get_current_user_email, get_user_db, get_admin_db
+from app.core.redis import get_redis
 
 router = APIRouter(prefix="/v1/athlete", tags=["Athlete"])
 
@@ -75,33 +78,70 @@ async def onboard_athlete(athlete_id: str = Depends(get_current_athlete), db = D
 
 
 
-@router.get("/state", response_model=AthleteState)
-async def get_athlete_state(athlete_id: str = Depends(get_current_athlete), db = Depends(get_user_db)):
-    """
-    Returns the athlete's current physiological state including computed CTL, ATL, TSB, and readiness score.
-    """
-    # Fetch athlete
-    athlete_res = db.table("athletes").select("display_name").eq("id", athlete_id).execute()
-    if not athlete_res.data:
-        raise HTTPException(status_code=404, detail="Athlete not found")
-    display_name = athlete_res.data[0]["display_name"]
-    
-    # Fetch latest tss_history
-    tss_res = db.table("tss_history").select("*").eq("athlete_id", athlete_id).order("date", desc=True).limit(1).execute()
-    ctl, atl, tsb = 0.0, 0.0, 0.0
-    if tss_res.data:
-        tss = tss_res.data[0]
-        ctl = tss.get("ctl") or 0.0
-        atl = tss.get("atl") or 0.0
-        tsb = tss.get("tsb") or 0.0
+_STATE_CACHE_TTL = 60    # 1 minute — state changes on workout/biometrics saves
+_CACHE_TTL = 300         # 5 minutes — profile and zones change rarely
 
-    # Fetch latest biometrics
-    bio_res = db.table("biometrics").select("*").eq("athlete_id", athlete_id).order("date", desc=True).limit(1).execute()
-    bio = bio_res.data[0] if bio_res.data else {}
 
-    # Pull last ~30 biometrics rows (date asc) for HRV/RHR EWMA z-scores.
-    # We want a stable rolling window; 30 samples is plenty for a span=7 EWMA.
-    bio_window_res = (
+async def _cache_get(key: str) -> dict | None:
+    r = get_redis()
+    if r is None:
+        return None
+    try:
+        raw = await r.get(key)
+        return json.loads(raw) if raw else None
+    except Exception:
+        return None
+
+
+async def _cache_set(key: str, data: dict) -> None:
+    r = get_redis()
+    if r is None:
+        return
+    try:
+        await r.setex(key, _CACHE_TTL, json.dumps(data, default=str))
+    except Exception:
+        pass
+
+
+async def _cache_del(key: str) -> None:
+    r = get_redis()
+    if r is None:
+        return
+    try:
+        await r.delete(key)
+    except Exception:
+        pass
+
+
+async def _cache_set_state(key: str, data: dict) -> None:
+    r = get_redis()
+    if r is None:
+        return
+    try:
+        await r.setex(key, _STATE_CACHE_TTL, json.dumps(data, default=str))
+    except Exception:
+        pass
+
+
+def _fetch_athlete_name_sync(db, athlete_id: str) -> str | None:
+    res = db.table("athletes").select("display_name").eq("id", athlete_id).execute()
+    if not res.data:
+        return None
+    return res.data[0]["display_name"]
+
+
+def _fetch_latest_tss_sync(db, athlete_id: str) -> dict:
+    res = db.table("tss_history").select("*").eq("athlete_id", athlete_id).order("date", desc=True).limit(1).execute()
+    return res.data[0] if res.data else {}
+
+
+def _fetch_latest_bio_sync(db, athlete_id: str) -> dict:
+    res = db.table("biometrics").select("*").eq("athlete_id", athlete_id).order("date", desc=True).limit(1).execute()
+    return res.data[0] if res.data else {}
+
+
+def _fetch_bio_window_sync(db, athlete_id: str) -> list:
+    res = (
         db.table("biometrics")
         .select("date,hrv_rmssd,resting_hr")
         .eq("athlete_id", athlete_id)
@@ -109,7 +149,44 @@ async def get_athlete_state(athlete_id: str = Depends(get_current_athlete), db =
         .limit(30)
         .execute()
     )
-    window_rows = list(reversed(bio_window_res.data or []))
+    return list(reversed(res.data or []))
+
+
+def _fetch_bio_hist_sync(db, athlete_id: str) -> list:
+    res = (
+        db.table("biometrics")
+        .select("date")
+        .eq("athlete_id", athlete_id)
+        .order("date", desc=True)
+        .limit(70)
+        .execute()
+    )
+    return res.data or []
+
+
+@router.get("/state", response_model=AthleteState)
+async def get_athlete_state(athlete_id: str = Depends(get_current_athlete), db = Depends(get_user_db)):
+    """
+    Returns the athlete's current physiological state including computed CTL, ATL, TSB, and readiness score.
+    """
+    cached = await _cache_get(f"state:{athlete_id}")
+    if cached is not None:
+        return cached
+
+    display_name, tss_row, bio, window_rows, bio_hist_data = await asyncio.gather(
+        asyncio.to_thread(_fetch_athlete_name_sync, db, athlete_id),
+        asyncio.to_thread(_fetch_latest_tss_sync, db, athlete_id),
+        asyncio.to_thread(_fetch_latest_bio_sync, db, athlete_id),
+        asyncio.to_thread(_fetch_bio_window_sync, db, athlete_id),
+        asyncio.to_thread(_fetch_bio_hist_sync, db, athlete_id),
+    )
+
+    if display_name is None:
+        raise HTTPException(status_code=404, detail="Athlete not found")
+
+    ctl = tss_row.get("ctl") or 0.0
+    atl = tss_row.get("atl") or 0.0
+    tsb = tss_row.get("tsb") or 0.0
 
     def _series(field: str) -> np.ndarray:
         vals: list[float] = []
@@ -143,19 +220,9 @@ async def get_athlete_state(athlete_id: str = Depends(get_current_athlete), db =
         else (None, None, None)
     )
 
-    # Calibration / history: compute consecutive-day biometrics streak up to ~2 months.
-    # This is more meaningful than "account age" for model readiness.
-    bio_hist_res = (
-        db.table("biometrics")
-        .select("date")
-        .eq("athlete_id", athlete_id)
-        .order("date", desc=True)
-        .limit(70)
-        .execute()
-    )
-    days_on_platform = _calc_biometrics_streak_days(bio_hist_res.data or [])
+    days_on_platform = _calc_biometrics_streak_days(bio_hist_data)
 
-    return {
+    state_response = {
         "athlete_id": athlete_id,
         "display_name": display_name,
         "date": date.today(),
@@ -180,6 +247,8 @@ async def get_athlete_state(athlete_id: str = Depends(get_current_athlete), db =
         "readiness_label": "Optimal" if (bio.get("readiness_score") or 0) > 70 else "Moderate",
         "readiness_recommendation": "Calculated by Astrape Intelligence."
     }
+    await _cache_set_state(f"state:{athlete_id}", state_response)
+    return state_response
 
 @router.get("/metrics")
 async def get_athlete_metrics(
@@ -232,14 +301,20 @@ async def get_athlete_profile(
     db = Depends(get_user_db)
 ):
     """Fetch current athlete physiological anchors."""
+    cached = await _cache_get(f"profile:{athlete_id}")
+    if cached is not None:
+        return cached
+
     try:
         res = db.table("athletes").select("*").eq("id", athlete_id).maybe_single().execute()
     except Exception:
-        # Keep error surface clean; auth issues are handled in dependency.
         raise HTTPException(status_code=500, detail="Failed to load athlete profile")
     if not res or not res.data:
         raise HTTPException(status_code=404, detail="Athlete not found")
-    return athlete_dict_with_hr_zones(res.data)
+
+    result = athlete_dict_with_hr_zones(res.data)
+    await _cache_set(f"profile:{athlete_id}", result)
+    return result
 
 
 def _build_athlete_zones_update(payload: dict) -> dict:
@@ -293,6 +368,10 @@ async def get_zones(
     db=Depends(get_user_db),
 ):
     """Returns the athlete's current HR zone definitions."""
+    cached = await _cache_get(f"zones:{athlete_id}")
+    if cached is not None:
+        return cached
+
     res = (
         db.table("athletes")
         .select("lthr, threshold_hr, max_hr, resting_hr, hr_zone_method")
@@ -302,7 +381,7 @@ async def get_zones(
     )
     athlete = res.data or {}
     zones = get_athlete_zones(athlete)
-    return {
+    result = {
         "zones": [
             {"zone": z.zone, "name": z.name, "min_bpm": z.min_bpm, "max_bpm": z.max_bpm}
             for z in zones
@@ -314,6 +393,8 @@ async def get_zones(
             "method": athlete.get("hr_zone_method") or "lthr",
         },
     }
+    await _cache_set(f"zones:{athlete_id}", result)
+    return result
 
 
 @router.put("/zones")
@@ -333,6 +414,8 @@ async def update_zones(
         raise HTTPException(status_code=500, detail=f"Failed to update zones: {str(e)}")
     if getattr(update_res, "data", None) == []:
         raise HTTPException(status_code=403, detail="Zones update was not permitted")
+    await _cache_del(f"zones:{athlete_id}")
+    await _cache_del(f"profile:{athlete_id}")
     return {"status": "updated", "fields": list(update.keys())}
 
 
@@ -430,6 +513,9 @@ async def update_athlete_profile(
 
     if not getattr(fresh, "data", None):
         raise HTTPException(status_code=500, detail="Updated profile but could not load updated record")
+
+    await _cache_del(f"profile:{athlete_id}")
+    await _cache_del(f"zones:{athlete_id}")
 
     # Sync marketing opt-in/out with Resend whenever privacy_settings.marketing changes.
     new_privacy = update_data.get("privacy_settings") or {}
