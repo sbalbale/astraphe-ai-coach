@@ -80,13 +80,8 @@
     try {
       const res = await api.getCoachConversations();
       conversations = res?.conversations || [];
-      const latest = conversations[0]?.id;
-      if (latest) {
-        conversationId = latest;
-        await loadConversationMessages(latest);
-        historyLoaded = true;
-        return;
-      }
+      // Default to a new chat on first entry
+      conversationId = null;
       messages = [{ id: 'local-greeting', role: 'ai', text: initialText }];
       historyLoaded = true;
     } finally {
@@ -111,12 +106,9 @@
     loading = false;
     input = '';
     pendingImageUrls = [];
-    const created = await api.createCoachConversation();
-    const cid = created?.conversation?.id;
-    if (!cid) return;
-    conversationId = cid;
-    conversations = [{ id: cid, title: created?.conversation?.title }, ...conversations];
+    conversationId = null;
     messages = [{ id: 'local-greeting', role: 'ai', text: initialText }];
+    convoMenuOpen = false;
     await scrollToBottom();
   }
 
