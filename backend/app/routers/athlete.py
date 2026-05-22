@@ -123,6 +123,16 @@ async def _cache_set_state(key: str, data: dict) -> None:
         pass
 
 
+async def _increment_zones_version(athlete_id: str) -> None:
+    r = get_redis()
+    if r is None:
+        return
+    try:
+        await r.incr(f"zones_version:{athlete_id}")
+    except Exception:
+        pass
+
+
 def _fetch_athlete_name_sync(db, athlete_id: str) -> str | None:
     res = db.table("athletes").select("display_name").eq("id", athlete_id).execute()
     if not res.data:
@@ -419,6 +429,7 @@ async def update_zones(
         raise HTTPException(status_code=403, detail="Zones update was not permitted")
     await _cache_del(f"zones:{athlete_id}")
     await _cache_del(f"profile:{athlete_id}")
+    await _increment_zones_version(athlete_id)
     return {"status": "updated", "fields": list(update.keys())}
 
 
@@ -521,6 +532,7 @@ async def update_athlete_profile(
 
     await _cache_del(f"profile:{athlete_id}")
     await _cache_del(f"zones:{athlete_id}")
+    await _increment_zones_version(athlete_id)
 
     # Sync marketing opt-in/out with Resend whenever privacy_settings.marketing changes.
     new_privacy = update_data.get("privacy_settings") or {}

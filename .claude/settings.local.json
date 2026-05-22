@@ -24,7 +24,9 @@
       "Bash(npx tsc *)",
       "Bash(npm run *)",
       "Bash(python -c \"from app.routers import analysis; print\\('OK'\\)\")",
-      "Bash(python -c \"from app.routers import athlete, sync, analysis; from app.services import processing, strava, whoop_backfill; print\\('ALL OK'\\)\")"
+      "Bash(python -c \"from app.routers import athlete, sync, analysis; from app.services import processing, strava, whoop_backfill; print\\('ALL OK'\\)\")",
+      "Bash(xargs grep -l \"workout\")",
+      "Bash(grep -E \"\\\\.\\(ts|tsx|svelte\\)$\")"
     ]
   }
 }
