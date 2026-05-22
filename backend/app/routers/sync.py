@@ -20,6 +20,7 @@ from datetime import date, datetime, timedelta
 from app.models.workout import WorkoutPayload
 from app.models.biometrics import DailyBiometrics
 from app.services.processing import process_and_save_workout, process_and_save_biometrics
+from app.services.ai_coach import invalidate_context_cache
 from fastapi import status
 
 router = APIRouter(prefix=f"{settings.API_PREFIX}/sync", tags=["Sync & Webhooks"])
@@ -502,6 +503,8 @@ async def whoop_webhook(request: Request, background_tasks: BackgroundTasks, db=
     access_token = token_row.get("access_token")
     refresh_token = token_row.get("refresh_token")
     athlete_id = token_row.get("athlete_id")
+    if athlete_id:
+        invalidate_context_cache(athlete_id)  # bust 5-min coach context cache on any data event
 
     async def _refresh_and_persist_token() -> str | None:
         if not refresh_token:

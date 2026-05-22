@@ -25,6 +25,8 @@ from app.services.analysis_cache import (
 
 router = APIRouter(prefix="/v1/analysis", tags=["Analysis"])
 
+_regen_in_flight: set[str] = set()
+
 
 def _parse_day(day: Optional[str]) -> date:
     if not day:
@@ -847,12 +849,17 @@ async def dashboard_summary_analysis(
     fp = fingerprint_context(ctx)
 
     cached = get_cached_analysis(db, athlete_id, "dashboard_summary", scope_key)
+    flight_key = f"{athlete_id}:{scope_key}"
     if cached and cached.get("content"):
         stale = cached.get("fingerprint") != fp
-        if stale and tier in ("trial", "premium"):
-            asyncio.ensure_future(asyncio.to_thread(
-                _compute_and_store, db, athlete_id, tier, "dashboard_summary", scope_key, ctx, model_name
-            ))
+        if stale and tier in ("trial", "premium") and flight_key not in _regen_in_flight:
+            _regen_in_flight.add(flight_key)
+            async def _run_stale():
+                try:
+                    await asyncio.to_thread(_compute_and_store, db, athlete_id, tier, "dashboard_summary", scope_key, ctx, model_name)
+                finally:
+                    _regen_in_flight.discard(flight_key)
+            asyncio.ensure_future(_run_stale())
         return {
             "status": "success",
             "analysis": {
@@ -866,10 +873,14 @@ async def dashboard_summary_analysis(
     # No cached content yet. Return a fast fallback now and let the LLM warm the
     # cache for the next page load — never block the dashboard for ~2-5s on a
     # first-time Gemini call.
-    if tier in ("trial", "premium"):
-        asyncio.ensure_future(asyncio.to_thread(
-            _compute_and_store, db, athlete_id, tier, "dashboard_summary", scope_key, ctx, model_name
-        ))
+    if tier in ("trial", "premium") and flight_key not in _regen_in_flight:
+        _regen_in_flight.add(flight_key)
+        async def _run_cold():
+            try:
+                await asyncio.to_thread(_compute_and_store, db, athlete_id, tier, "dashboard_summary", scope_key, ctx, model_name)
+            finally:
+                _regen_in_flight.discard(flight_key)
+        asyncio.ensure_future(_run_cold())
 
     fb = _fallback_content("dashboard_summary", ctx)
     return {

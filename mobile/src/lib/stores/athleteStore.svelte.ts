@@ -80,6 +80,7 @@ export class AthleteState {
   // Non-reactive dedup flag so two simultaneous fetchAll() calls don't trigger
   // duplicate background refreshes (layout effect + dashboard onMount fire in quick succession).
   private _refreshing = false;
+  private _lastRefreshAt = 0; // timestamp of last completed background refresh
 
   update(data: Partial<AthleteState>) {
     if (data.ctl !== undefined) this.ctl = data.ctl;
@@ -170,7 +171,8 @@ export class AthleteState {
     // 2. If we already have data (cache hit or previous fetch) and caller didn't force,
     //    refresh in background without blocking. This is the SWR path.
     if (this.initialLoadDone && !force) {
-      if (!this._refreshing) void this.refreshInBackground(athleteId);
+      const staleness = Date.now() - this._lastRefreshAt;
+      if (!this._refreshing && staleness > 60_000) void this.refreshInBackground(athleteId);
       return;
     }
 
@@ -256,6 +258,7 @@ export class AthleteState {
       console.error('[AthleteStore] Background refresh error:', e);
     } finally {
       this._refreshing = false;
+      this._lastRefreshAt = Date.now();
     }
   }
 

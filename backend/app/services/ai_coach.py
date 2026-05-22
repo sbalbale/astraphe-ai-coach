@@ -207,6 +207,30 @@ def _load_conversation_history(db: Client, athlete_id: str, conversation_id: str
     except Exception as e:
         return [{"role": "system", "content": f"history_load_failed: {str(e)}", "image_urls": []}]
 
+# Per-athlete context cache — avoids 3 repeated DB queries across chat messages.
+# Keys: athlete_id → (bio, profile, tss_base_dict, expires_at)
+_context_parts_cache: dict[str, tuple[dict, dict, dict, float]] = {}
+_CONTEXT_CACHE_TTL = 300.0  # 5 minutes
+
+
+def _get_context_parts_cached(db: Client, athlete_id: str) -> tuple[dict, dict, dict]:
+    """Return (biometrics, profile, training_load_base) from cache or fetch fresh."""
+    now = time.time()
+    cached = _context_parts_cache.get(athlete_id)
+    if cached and now < cached[3]:
+        return cached[0], cached[1], cached[2]
+    bio = _summarize_biometrics(db, athlete_id)
+    profile = _summarize_athlete_profile(db, athlete_id)
+    tss_base = _summarize_training_load(db, athlete_id, current_tss=0.0)
+    _context_parts_cache[athlete_id] = (bio, profile, tss_base, now + _CONTEXT_CACHE_TTL)
+    return bio, profile, tss_base
+
+
+def invalidate_context_cache(athlete_id: str) -> None:
+    """Call after a data sync so the next message rebuilds context from fresh DB rows."""
+    _context_parts_cache.pop(athlete_id, None)
+
+
 def _build_system_context(
     db: Client,
     athlete_id: str,
@@ -215,12 +239,15 @@ def _build_system_context(
     memories: list[dict] | None = None,
 ) -> str:
     today = date.today().isoformat()
+    bio, profile, tss_base = _get_context_parts_cached(db, athlete_id)
+    # Patch current workout TSS (varies per message) into the cached training load dict.
+    training_load = {**tss_base, "most_recent_workout_tss": _safe_float(current_tss) or 0.0}
     ctx: dict = {
         "date": today,
         "athlete_id": athlete_id,
-        "training_load": _summarize_training_load(db, athlete_id, current_tss=current_tss),
-        "biometrics": _summarize_biometrics(db, athlete_id),
-        "athlete_profile": _summarize_athlete_profile(db, athlete_id),
+        "training_load": training_load,
+        "biometrics": bio,
+        "athlete_profile": profile,
     }
     if memories:
         ctx["memories"] = [
