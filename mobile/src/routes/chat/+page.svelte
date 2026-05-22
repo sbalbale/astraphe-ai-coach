@@ -588,6 +588,7 @@
   :global(.chat-md) {
     word-break: break-word;
     overflow-wrap: break-word;
+    font-family: 'ChatSans', 'Space Grotesk', sans-serif;
   }
   :global(.chat-md :where(p, li, blockquote)) {
     overflow-wrap: break-word;

@@ -335,12 +335,16 @@ export const api = {
   },
 
   async initializeCoach() {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 12000);
     try {
       const headers = await getAuthHeaders();
-      const res = await fetch(`${API_URL}/v1/coach/initialize`, { method: 'POST', headers });
+      const res = await fetch(`${API_URL}/v1/coach/initialize`, { method: 'POST', headers, signal: controller.signal });
       if (res.ok) return await res.json();
     } catch (e) {
-      console.warn("Failed to initialize coach.", e);
+      if (e instanceof Error && e.name !== 'AbortError') console.warn("Failed to initialize coach.", e);
+    } finally {
+      clearTimeout(timer);
     }
     return null;
   },
