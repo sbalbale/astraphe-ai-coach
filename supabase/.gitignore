@@ -10,3 +10,12 @@
 .env.keys
 .env.local
 .env.*.local
+
+# Supabase
+.branches
+.temp
+
+# dotenvx
+.env.keys
+.env.local
+.env.*.local

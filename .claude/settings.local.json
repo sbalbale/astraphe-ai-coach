@@ -34,7 +34,13 @@
       "Bash(supabase *)",
       "PowerShell(supabase *)",
       "PowerShell(npx supabase status 2>&1)",
-      "PowerShell(npx supabase db diff --schema public,storage,extensions 2>&1)"
+      "PowerShell(npx supabase db diff --schema public,storage,extensions 2>&1)",
+      "Bash(claude mcp *)",
+      "Bash(npx skills *)"
     ]
-  }
+  },
+  "enabledMcpjsonServers": [
+    "supabase"
+  ],
+  "enableAllProjectMcpServers": true
 }
