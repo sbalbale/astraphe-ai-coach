@@ -92,6 +92,7 @@
 
     // Signed out: everything except /auth/* requires signin.
     if (!authStore.user) {
+      if (athleteStore.initialLoadDone) athleteStore.reset();
       if (!isAuthRoute) goto('/auth/signin', { replaceState: true });
       return;
     }

@@ -632,7 +632,7 @@ async def process_and_save_workout(payload: WorkoutPayload, athlete_id: str, db:
     }
 
     await asyncio.to_thread(_workouts_update_by_id_sync, db, workout_id, update_data)
-    await asyncio.to_thread(recalculate_tss_history, athlete_id, db)
+    asyncio.ensure_future(asyncio.to_thread(recalculate_tss_history, athlete_id, db))
 
 
 def process_and_save_biometrics(payload: DailyBiometrics, athlete_id: str, db):

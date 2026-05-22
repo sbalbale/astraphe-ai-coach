@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, Optional
 
@@ -807,6 +808,25 @@ async def training_load_analysis(
     return {"status": "success", "analysis": _get_or_compute(db, athlete_id, tier, "training_load", d.isoformat(), ctx, model_name=model_name)}
 
 
+def _compute_and_store(
+    db: Client,
+    athlete_id: str,
+    tier: str,
+    analysis_type: str,
+    scope_key: str,
+    context: Dict[str, Any],
+    model_name: str,
+) -> None:
+    """Synchronous worker for background regeneration. Errors are swallowed."""
+    try:
+        _get_or_compute(db, athlete_id, tier, analysis_type, scope_key, context, model_name=model_name)
+    except Exception as e:
+        try:
+            print(f"[analysis] background_regen_error type={analysis_type} scope={scope_key} err={e}")
+        except Exception:
+            pass
+
+
 @router.get("/dashboard-summary")
 async def dashboard_summary_analysis(
     day: Optional[str] = Query(None, description="YYYY-MM-DD"),
@@ -815,11 +835,51 @@ async def dashboard_summary_analysis(
     model_name: str = Depends(get_current_gemini_analysis_model),
     db: Client = Depends(get_user_db),
 ):
+    """
+    Dashboard summary is on the critical render path, so we serve cached content
+    immediately (even if the context fingerprint has drifted) and queue a
+    background regeneration. Worst case the user sees yesterday's wording for
+    one extra page load.
+    """
     d = _parse_day(day)
+    scope_key = d.isoformat()
     ctx = _load_dashboard_context(db, athlete_id, d)
+    fp = fingerprint_context(ctx)
+
+    cached = get_cached_analysis(db, athlete_id, "dashboard_summary", scope_key)
+    if cached and cached.get("content"):
+        stale = cached.get("fingerprint") != fp
+        if stale and tier in ("trial", "premium"):
+            asyncio.ensure_future(asyncio.to_thread(
+                _compute_and_store, db, athlete_id, tier, "dashboard_summary", scope_key, ctx, model_name
+            ))
+        return {
+            "status": "success",
+            "analysis": {
+                "content": cached["content"],
+                "fingerprint": cached.get("fingerprint"),
+                "cached": True,
+                "stale": stale,
+            },
+        }
+
+    # No cached content yet. Return a fast fallback now and let the LLM warm the
+    # cache for the next page load — never block the dashboard for ~2-5s on a
+    # first-time Gemini call.
+    if tier in ("trial", "premium"):
+        asyncio.ensure_future(asyncio.to_thread(
+            _compute_and_store, db, athlete_id, tier, "dashboard_summary", scope_key, ctx, model_name
+        ))
+
+    fb = _fallback_content("dashboard_summary", ctx)
     return {
         "status": "success",
-        "analysis": _get_or_compute(db, athlete_id, tier, "dashboard_summary", d.isoformat(), ctx, model_name=model_name),
+        "analysis": {
+            "content": fb,
+            "fingerprint": fp,
+            "cached": False,
+            "fallback": True,
+        },
     }
 
 
