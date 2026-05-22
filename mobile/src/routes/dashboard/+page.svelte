@@ -97,13 +97,16 @@
     return null;
   };
 
-  const todayReadiness = $derived(firstPositiveFiniteNumber(todayBio?.readiness_score, todayBio?.recovery_score));
+  const todayReadiness = $derived(firstPositiveFiniteNumber(todayBio?.readiness_score, todayBio?.recovery_score, latestBio?.readiness_score, latestBio?.recovery_score));
   const todayRecoveryScore = $derived(firstPositiveFiniteNumber(todayBio?.recovery_score, todayBio?.readiness_score));
   const todayHrv = $derived(todayBio?.hrv_rmssd ?? null);
   const todaySleepMin = $derived(todayBio?.sleep_duration_min ?? null);
   const todaySleepScore = $derived(todayBio?.sleep_score ?? null);
 
   const latestBio = $derived(athleteStore.biometrics?.series?.[athleteStore.biometrics.series.length - 1]);
+  const latestLoad = $derived(
+    athleteStore.metrics?.trainingLoadData?.[athleteStore.metrics.trainingLoadData.length - 1]
+  );
   const latestHrv = $derived(todayHrv ?? latestBio?.hrv_rmssd ?? null);
   const latestSleepMin = $derived(todaySleepMin ?? latestBio?.sleep_duration_min ?? null);
   const latestSleepScore = $derived(todaySleepScore ?? latestBio?.sleep_score ?? null);
@@ -128,9 +131,9 @@
     firstPositiveFiniteNumber(todayRecoveryScore, latestBio?.recovery_score, latestBio?.readiness_score)
   );
 
-  const todayCtl = $derived(todayLoad?.ctl ?? null);
-  const todayAtl = $derived(todayLoad?.atl ?? null);
-  const todayTsb = $derived(todayLoad?.tsb ?? null);
+  const todayCtl = $derived(todayLoad?.ctl ?? latestLoad?.ctl ?? null);
+  const todayAtl = $derived(todayLoad?.atl ?? latestLoad?.atl ?? null);
+  const todayTsb = $derived(todayLoad?.tsb ?? latestLoad?.tsb ?? null);
 
   function isFiniteNumber(v: unknown): v is number {
     return typeof v === 'number' && Number.isFinite(v);
