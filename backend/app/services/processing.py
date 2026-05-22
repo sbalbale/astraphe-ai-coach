@@ -917,3 +917,7 @@ def process_and_save_biometrics(payload: DailyBiometrics, athlete_id: str, db):
         "skin_temp": final_temp,
         "spo2_pct": final_spo2
         }, on_conflict="athlete_id,date").execute()
+
+    # Extend the PMC (tss_history) through the biometrics date so today's CTL/ATL
+    # row exists after a morning sleep sync, not just after the next workout.
+    recalculate_tss_history(athlete_id, db)
