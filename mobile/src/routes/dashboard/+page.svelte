@@ -48,6 +48,7 @@
   import TrendBars from '$lib/components/charts/TrendBars.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import CalibrationBadge from '$lib/components/CalibrationBadge.svelte';
+  import Modal from '$lib/components/Modal.svelte';
   import { onMount } from 'svelte';
   import { analysisNavEpoch } from '$lib/analysisNavEpoch.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
@@ -63,6 +64,8 @@
   const ATL_IDENTITY_HEX = CHART_ATL_STROKE;
 
   const props = $props();
+
+  let showReadinessModal = $state(false);
 
   onMount(() => {
     athleteStore.fetchAll();
@@ -317,47 +320,54 @@
     />
   {:else}
     <!-- Readiness Card -->
-    <Card class="!bg-gradient-to-br from-blue/15 to-teal/10 border-blue/30">
-      <div class="flex items-center gap-4">
-        <RadialProgress
-          value={todayReadiness ?? 0}
-          max={100}
-          size={64}
-          color={todayReadiness === null ? 'var(--text2)' : boundedScoreCssColor(todayReadiness)}
-          label={(todayReadiness ?? null) === null ? 'N/A' : String(todayReadiness)}
-          sub="RDY"
-        />
-        <div class="flex-1">
-          <div class="flex items-center gap-2 mb-1">
-            <span class="font-semibold text-[15px]">Readiness Score</span>
-            {#if isCalibrating}
-              <CalibrationBadge />
-            {/if}
-            {#if todayReadiness === null}
-              <Tag color="var(--text2)">NO DATA</Tag>
-            {:else if todayReadiness >= 67}
-              <Tag color="var(--teal)">OPTIMAL</Tag>
-            {:else if todayReadiness >= 34}
-              <Tag color="var(--amber)">MODERATE</Tag>
-            {:else}
-              <Tag color="var(--red)">RECOVERY</Tag>
-            {/if}
+    <Card class="!bg-gradient-to-br from-blue/15 to-teal/10 border-blue/30 !p-0">
+      <button 
+        type="button" 
+        class="w-full text-left p-4 cursor-pointer focus:outline-none"
+        onclick={() => showReadinessModal = true}
+        aria-label="Explain readiness score"
+      >
+        <div class="flex items-center gap-4">
+          <RadialProgress
+            value={todayReadiness ?? 0}
+            max={100}
+            size={64}
+            color={todayReadiness === null ? 'var(--text2)' : boundedScoreCssColor(todayReadiness)}
+            label={(todayReadiness ?? null) === null ? 'N/A' : String(todayReadiness)}
+            sub="RDY"
+          />
+          <div class="flex-1">
+            <div class="flex items-center gap-2 mb-1">
+              <span class="font-semibold text-[15px]">Readiness Score</span>
+              {#if isCalibrating}
+                <CalibrationBadge />
+              {/if}
+              {#if todayReadiness === null}
+                <Tag color="var(--text2)">NO DATA</Tag>
+              {:else if todayReadiness >= 67}
+                <Tag color="var(--teal)">OPTIMAL</Tag>
+              {:else if todayReadiness >= 34}
+                <Tag color="var(--amber)">MODERATE</Tag>
+              {:else}
+                <Tag color="var(--red)">RECOVERY</Tag>
+              {/if}
+            </div>
+            <p class="text-xs text-text1 leading-relaxed">
+              HRV
+              <span
+                class={todayHrv === null ? 'text-text2' : getZScoreColor(latestHrvZ)}
+                >{todayHrv === null ? 'Data not found' : `${Math.round(todayHrv)}ms`}</span>
+              · Sleep
+              <span
+                style="color: {todaySleepMin === null || latestSleepScore === null || latestSleepScore <= 0
+                  ? 'var(--text2)'
+                  : boundedScoreCssColor(latestSleepScore)}"
+                >{todaySleepMin === null ? 'Data not found' : sleepHM(todaySleepMin)}</span>
+            </p>
+            <p class="text-[11px] text-text2 mt-1">Data synced from your connected services.</p>
           </div>
-          <p class="text-xs text-text1 leading-relaxed">
-            HRV
-            <span
-              class={todayHrv === null ? 'text-text2' : getZScoreColor(latestHrvZ)}
-              >{todayHrv === null ? 'Data not found' : `${Math.round(todayHrv)}ms`}</span>
-            · Sleep
-            <span
-              style="color: {todaySleepMin === null || latestSleepScore === null || latestSleepScore <= 0
-                ? 'var(--text2)'
-                : boundedScoreCssColor(latestSleepScore)}"
-              >{todaySleepMin === null ? 'Data not found' : sleepHM(todaySleepMin)}</span>
-          </p>
-          <p class="text-[11px] text-text2 mt-1">Data synced from your connected services.</p>
         </div>
-      </div>
+      </button>
     </Card>
 
     <!-- Metric Row: CTL/ATL use chart identity colors; TSB uses form/status bands -->
@@ -577,3 +587,35 @@
     {/if}
   {/if}
 </div>
+
+<Modal 
+  show={showReadinessModal} 
+  title="Readiness vs. Recovery" 
+  onClose={() => showReadinessModal = false}
+>
+  <div class="space-y-4">
+    <p class="text-[14px] leading-relaxed text-text1">
+      While often used interchangeably, <span class="font-bold text-text0">Readiness</span> and <span class="font-bold text-text0">Recovery</span> measure two different aspects of your training capacity in Astrape.
+    </p>
+
+    <div class="space-y-3">
+      <div class="p-4 rounded-2xl bg-glass border border-border">
+        <h3 class="text-[13px] font-bold text-text0 mb-1">Recovery (Physiological)</h3>
+        <p class="text-[12px] text-text1 leading-relaxed">
+          Driven by your Autonomic Nervous System. We combine your <strong>Heart Rate Variability (HRV)</strong>, <strong>Resting Heart Rate</strong>, and <strong>Sleep Quality</strong> against your 30-day baselines to determine how your body bounced back from yesterday's strain.
+        </p>
+      </div>
+
+      <div class="p-4 rounded-2xl bg-glass border border-border">
+        <h3 class="text-[13px] font-bold text-text0 mb-1">Readiness (Training Load)</h3>
+        <p class="text-[12px] text-text1 leading-relaxed">
+          Also known as "Form," this is driven by your Training Stress Balance (TSB). It compares your long-term <strong>Fitness</strong> against your short-term <strong>Fatigue</strong>. You can be fully <em>recovered</em> (slept well) but have low <em>readiness</em> if you are deep in a heavy training block.
+        </p>
+      </div>
+    </div>
+
+    <p class="text-[12px] text-text2 italic border-t border-border pt-4">
+      Your dashboard highlights whichever score provides the clearest signal for your daily training capacity. Scores above 67 indicate an optimal state for hard training, while scores below 34 suggest focusing on active recovery.
+    </p>
+  </div>
+</Modal>
