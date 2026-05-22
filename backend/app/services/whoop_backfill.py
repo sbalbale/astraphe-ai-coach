@@ -247,7 +247,7 @@ async def _backfill_historical_data_impl(
             sleep_rem_pct=None,
             sleep_need_min=None,
             sleep_debt_min=None,
-            skin_temp_deviation=score.get("skin_temp_celsius"),
+            skin_temp=score.get("skin_temp_celsius"),
             spo2_pct=score.get("spo2_percentage"),
             recovery_score=rec.get("score", {}).get("recovery_score") if isinstance(rec.get("score"), dict) else None,
         )
@@ -301,7 +301,7 @@ async def _backfill_historical_data_impl(
             is_nap=slp.get("nap", False),
             sleep_need_min=None,
             sleep_debt_min=None,
-            skin_temp_deviation=None,
+            skin_temp=None,
             spo2_pct=None,
         )
         try:

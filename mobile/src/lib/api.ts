@@ -334,6 +334,17 @@ export const api = {
     return null;
   },
 
+  async initializeCoach() {
+    try {
+      const headers = await getAuthHeaders();
+      const res = await fetch(`${API_URL}/v1/coach/initialize`, { method: 'POST', headers });
+      if (res.ok) return await res.json();
+    } catch (e) {
+      console.warn("Failed to initialize coach.", e);
+    }
+    return null;
+  },
+
   async createCoachConversation(title?: string) {
     return await this.post('/v1/coach/conversations', { title: title ?? null });
   },

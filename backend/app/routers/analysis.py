@@ -81,7 +81,7 @@ def _load_biometrics_context(db: Client, athlete_id: str, day: date) -> Dict[str
         db.table("biometrics")
         .select(
             "date,hrv_rmssd,resting_hr,sleep_duration_min,sleep_score,sleep_deep_pct,sleep_rem_pct,sleep_light_pct,sleep_awake_pct,"
-            "sleep_bedtime,sleep_wakeup,spo2_pct,skin_temp_deviation,recovery_score,strain_score,sleep_need_min,sleep_debt_min"
+            "sleep_bedtime,sleep_wakeup,spo2_pct,skin_temp,recovery_score,strain_score,sleep_need_min,sleep_debt_min"
         )
         .eq("athlete_id", athlete_id)
         .eq("date", day_str)
@@ -95,7 +95,7 @@ def _load_biometrics_context(db: Client, athlete_id: str, day: date) -> Dict[str
     base_end = (day - timedelta(days=1)).isoformat()
     base_rows_res = (
         db.table("biometrics")
-        .select("date,hrv_rmssd,resting_hr,sleep_score,spo2_pct,skin_temp_deviation")
+        .select("date,hrv_rmssd,resting_hr,sleep_score,spo2_pct,skin_temp")
         .eq("athlete_id", athlete_id)
         .gte("date", base_start)
         .lte("date", base_end)
@@ -130,7 +130,7 @@ def _load_biometrics_context(db: Client, athlete_id: str, day: date) -> Dict[str
             "resting_hr": _baseline_30d(base_rows, "resting_hr"),
             "sleep_score": _baseline_30d(base_rows, "sleep_score"),
             "spo2_pct": _baseline_30d(base_rows, "spo2_pct"),
-            "skin_temp_deviation": _baseline_30d(base_rows, "skin_temp_deviation"),
+            "skin_temp": _baseline_30d(base_rows, "skin_temp"),
         },
         "ewma_7d": {
             "hrv_baseline_7d": hrv_base_7d,

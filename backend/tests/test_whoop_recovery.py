@@ -36,7 +36,7 @@ def test_recovery_score_to_vitals_milli():
     assert vitals["hrv_rmssd"] == 31.8
     assert vitals["resting_hr"] == 64
     assert vitals["spo2_pct"] == 95.7
-    assert vitals["skin_temp_deviation"] == 33.7
+    assert vitals["skin_temp"] == 33.7
     assert vitals["recovery_score"] == 72
 
 
@@ -66,7 +66,7 @@ def test_apply_whoop_recovery_vitals_merges_into_payload():
     assert bio.hrv_rmssd == 31.8
     assert bio.resting_hr == 64
     assert bio.spo2_pct == 95.7
-    assert bio.skin_temp_deviation == 33.7
+    assert bio.skin_temp == 33.7
     assert bio.sleep_duration_min == 420
 
 

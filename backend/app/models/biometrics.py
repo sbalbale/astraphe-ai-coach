@@ -20,7 +20,7 @@ class DailyBiometrics(BaseModel):
     sleep_need_min: Optional[int] = None
     sleep_debt_min: Optional[int] = None
     strain_score: Optional[int] = None # Astrape proprietary
-    skin_temp_deviation: Optional[float] = None
+    skin_temp: Optional[float] = None
     spo2_pct: Optional[float] = None
     recovery_score: Optional[int] = None # Astrape proprietary
     readiness_score: Optional[int] = None # Astrape proprietary

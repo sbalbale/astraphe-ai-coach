@@ -27,6 +27,11 @@ function escapeHtmlText(value: string) {
   return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 }
 
+/** Display-only: straight quotes wrap reliably in narrow chat bubbles. */
+export function normalizeTypographyForWrap(text: string): string {
+  return text.replace(/[\u201C\u201D]/g, '"').replace(/[\u2018\u2019]/g, "'");
+}
+
 /**
  * marked sometimes pulls a trailing paragraph into the last tbody row when
  * the AI response has no blank line between the table and the footnote text.
@@ -265,7 +270,7 @@ const PURIFY_MATH: Parameters<typeof DOMPurify.sanitize>[1] = {
  * Coach reply markdown → sanitized HTML (GFM + line breaks + KaTeX + safe links).
  */
 export function renderCoachMarkdownToSafeHtml(text: string): string {
-  const src = normalizeTightInlineDollarMath(text ?? '');
+  const src = normalizeTightInlineDollarMath(normalizeTypographyForWrap(text ?? ''));
   const html = coachMd.parse(src, { async: false }) as string;
   const lifted = liftTablePostscripts(html);
   return DOMPurify.sanitize(lifted, {

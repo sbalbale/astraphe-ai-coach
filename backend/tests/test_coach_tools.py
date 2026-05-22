@@ -334,7 +334,7 @@ def test_detect_anomalies_hrv_suppressed():
                 "resting_hr": 50,
                 "sleep_duration_min": 480,
                 "sleep_debt_min": 0,
-                "skin_temp_deviation": 0.0,
+                "skin_temp": 0.0,
             }
         )
     db = MockCoachDB()

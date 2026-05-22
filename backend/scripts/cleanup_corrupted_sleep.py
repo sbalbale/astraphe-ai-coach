@@ -68,7 +68,7 @@ def cleanup_sleep_data():
                     sleep_awake_pct=float(b["sleep_awake_pct"]) if b.get("sleep_awake_pct") is not None else None,
                     sleep_bedtime=None,
                     sleep_wakeup=None,
-                    skin_temp_deviation=float(b["skin_temp_deviation"]) if b.get("skin_temp_deviation") is not None else None,
+                    skin_temp=float(b["skin_temp"]) if b.get("skin_temp") is not None else None,
                     spo2_pct=float(b["spo2_pct"]) if b.get("spo2_pct") is not None else None,
                     recovery_score=b.get("recovery_score")
                 )

@@ -18,7 +18,7 @@ class MockPayload:
         self.sleep_bedtime = kwargs.get('sleep_bedtime')
         self.sleep_wakeup = kwargs.get('sleep_wakeup')
         self.is_nap = kwargs.get('is_nap', False)
-        self.skin_temp_deviation = kwargs.get('skin_temp_deviation')
+        self.skin_temp = kwargs.get('skin_temp')
         self.spo2_pct = kwargs.get('spo2_pct')
 
 # I'll manually test the logic by calling the db directly or simulating the processing service

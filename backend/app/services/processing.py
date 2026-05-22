@@ -872,7 +872,7 @@ def process_and_save_biometrics(payload: DailyBiometrics, athlete_id: str, db):
 
     final_hrv = payload.hrv_rmssd if payload.hrv_rmssd is not None else existing.get("hrv_rmssd")
     final_rhr = payload.resting_hr if payload.resting_hr is not None else existing.get("resting_hr")
-    final_temp = payload.skin_temp_deviation if payload.skin_temp_deviation is not None else existing.get("skin_temp_deviation")
+    final_temp = payload.skin_temp if payload.skin_temp is not None else existing.get("skin_temp")
     final_spo2 = payload.spo2_pct if payload.spo2_pct is not None else existing.get("spo2_pct")
     final_source = payload.source if payload.hrv_rmssd is not None else existing.get("hrv_source", payload.source)
 
@@ -914,6 +914,6 @@ def process_and_save_biometrics(payload: DailyBiometrics, athlete_id: str, db):
         "sleep_awake_pct": agg_awake,
         "sleep_bedtime": main_sleep.get("started_at") if main_sleep else None,
         "sleep_wakeup": main_sleep.get("ended_at") if main_sleep else None,
-        "skin_temp_deviation": final_temp,
+        "skin_temp": final_temp,
         "spo2_pct": final_spo2
-    }, on_conflict="athlete_id,date").execute()
+        }, on_conflict="athlete_id,date").execute()
