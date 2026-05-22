@@ -213,13 +213,13 @@ async def _backfill_historical_data_impl(
             hr_zone_5_pct=z5_pct,
         )
         try:
-            await process_and_save_workout(payload, athlete_id, db)
+            await process_and_save_workout(payload, athlete_id, db, skip_tss_recalc=True)
         except Exception as e:
             # Don't let a single bad record kill the whole backfill.
             print(f"[whoop.backfill] workout_upsert_failed external_id={external_id} sport={sport_name}: {e}")
             continue
-    
-    # Recalculate TSS history once after all workouts are in
+
+    # Recalculate TSS history once after all workouts are in (single rebuild beats N fire-and-forget).
     recalculate_tss_history(athlete_id, db)
 
     # 2) Recovery (HRV, RHR, spo2, skin temp, recovery score)

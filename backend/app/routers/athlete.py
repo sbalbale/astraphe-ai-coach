@@ -261,16 +261,15 @@ async def get_athlete_metrics(
     """Returns computed metrics over a date range."""
     start_date = start_date or (date.today() - timedelta(days=42))
     end_date = end_date or date.today()
-    
-    # Query recent tss_history
-    tss_res = (
+
+    tss_res = await asyncio.to_thread(
         db.table("tss_history")
         .select("date,daily_tss,ctl,atl,tsb")
         .eq("athlete_id", athlete_id)
         .gte("date", start_date.isoformat())
         .lte("date", end_date.isoformat())
         .order("date")
-        .execute()
+        .execute
     )
     
     training_load_data = []
@@ -306,7 +305,9 @@ async def get_athlete_profile(
         return cached
 
     try:
-        res = db.table("athletes").select("*").eq("id", athlete_id).maybe_single().execute()
+        res = await asyncio.to_thread(
+            db.table("athletes").select("*").eq("id", athlete_id).maybe_single().execute
+        )
     except Exception:
         raise HTTPException(status_code=500, detail="Failed to load athlete profile")
     if not res or not res.data:
@@ -372,12 +373,12 @@ async def get_zones(
     if cached is not None:
         return cached
 
-    res = (
+    res = await asyncio.to_thread(
         db.table("athletes")
         .select("lthr, threshold_hr, max_hr, resting_hr, hr_zone_method")
         .eq("id", athlete_id)
         .maybe_single()
-        .execute()
+        .execute
     )
     athlete = res.data or {}
     zones = get_athlete_zones(athlete)
@@ -408,7 +409,9 @@ async def update_zones(
     if not update:
         raise HTTPException(status_code=400, detail="No valid fields provided")
     try:
-        update_res = db.table("athletes").update(update).eq("id", athlete_id).execute()
+        update_res = await asyncio.to_thread(
+            db.table("athletes").update(update).eq("id", athlete_id).execute
+        )
     except Exception as e:
         print(f"[athlete.zones.put] update failed: {repr(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to update zones: {str(e)}")
@@ -491,11 +494,11 @@ async def update_athlete_profile(
     # Note: supabase-py/postgrest does not always support chaining `.select()` after `.update()`
     # across versions. We do a follow-up SELECT to return the updated row consistently.
     try:
-        update_res = (
+        update_res = await asyncio.to_thread(
             db.table("athletes")
             .update(update_data)
             .eq("id", athlete_id)
-            .execute()
+            .execute
         )
     except Exception as e:
         print(f"[athlete.profile.patch] update failed: {repr(e)}")
@@ -506,7 +509,9 @@ async def update_athlete_profile(
         raise HTTPException(status_code=403, detail="Profile update was not permitted")
 
     try:
-        fresh = db.table("athletes").select("*").eq("id", athlete_id).single().execute()
+        fresh = await asyncio.to_thread(
+            db.table("athletes").select("*").eq("id", athlete_id).single().execute
+        )
     except Exception as e:
         print(f"[athlete.profile.patch] fetch after update failed: {repr(e)}")
         raise HTTPException(status_code=500, detail=f"Updated profile but failed to re-fetch: {str(e)}")

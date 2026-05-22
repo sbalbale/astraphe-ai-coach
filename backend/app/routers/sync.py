@@ -288,11 +288,13 @@ async def garmin_webhook(request: Request, background_tasks: BackgroundTasks, db
     if "activities" in payload:
         for activity in payload["activities"]:
             try:
-                athlete_id = get_athlete_by_garmin_id(db, activity.get("userId"))
+                athlete_id = await asyncio.to_thread(get_athlete_by_garmin_id, db, activity.get("userId"))
                 if not athlete_id: continue
 
                 # Fetch athlete timezone for correct date mapping
-                athlete_res = db.table("athletes").select("timezone_offset_min").eq("id", athlete_id).single().execute()
+                athlete_res = await asyncio.to_thread(
+                    db.table("athletes").select("timezone_offset_min").eq("id", athlete_id).single().execute
+                )
                 offset = (athlete_res.data.get("timezone_offset_min") or 0) if athlete_res.data else 0
                 
                 utc_start = datetime.utcfromtimestamp(activity.get("startTimeInSeconds"))
@@ -315,14 +317,16 @@ async def garmin_webhook(request: Request, background_tasks: BackgroundTasks, db
     if "bodyComps" in payload:
         for comp in payload["bodyComps"]:
             try:
-                athlete_id = get_athlete_by_garmin_id(db, comp.get("userId"))
+                athlete_id = await asyncio.to_thread(get_athlete_by_garmin_id, db, comp.get("userId"))
                 if not athlete_id: continue
-                
+
                 weight_in_grams = comp.get("weightInGrams")
                 if weight_in_grams:
-                    db.table("athletes").update({
-                        "weight_kg": round(weight_in_grams / 1000, 2)
-                    }).eq("id", athlete_id).execute()
+                    await asyncio.to_thread(
+                        db.table("athletes").update({
+                            "weight_kg": round(weight_in_grams / 1000, 2)
+                        }).eq("id", athlete_id).execute
+                    )
             except Exception as e:
                 print(f"Failed to process Garmin body comp: {e}")
 
@@ -985,8 +989,9 @@ async def strava_oauth_callback(
 @router.get("/status")
 async def get_sync_status(athlete_id: str = Depends(get_current_athlete), db=Depends(get_user_db)):
     """Returns connection status for all integrations."""
-    # This should check oauth_tokens table for existence
-    tokens = db.table("oauth_tokens").select("provider").eq("athlete_id", athlete_id).execute()
+    tokens = await asyncio.to_thread(
+        db.table("oauth_tokens").select("provider").eq("athlete_id", athlete_id).execute
+    )
     providers = [t["provider"] for t in tokens.data]
     
     return {
@@ -1011,16 +1016,17 @@ async def unlink_integration(
     if not prov:
         raise HTTPException(status_code=400, detail="Missing provider")
 
-    # Delete tokens owned by this athlete for the provider.
-    db.table("oauth_tokens").delete().eq("athlete_id", athlete_id).eq("provider", prov).execute()
-
-    # Return whether anything remains (helps clients update UI deterministically).
-    remaining = (
+    # Delete tokens owned by this athlete for the provider, then verify in parallel
+    # whether any remain (helps clients update UI deterministically).
+    await asyncio.to_thread(
+        db.table("oauth_tokens").delete().eq("athlete_id", athlete_id).eq("provider", prov).execute
+    )
+    remaining = await asyncio.to_thread(
         db.table("oauth_tokens")
         .select("id")
         .eq("athlete_id", athlete_id)
         .eq("provider", prov)
-        .execute()
+        .execute
     )
     still_connected = bool(getattr(remaining, "data", None))
 

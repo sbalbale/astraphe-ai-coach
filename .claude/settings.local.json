@@ -23,7 +23,8 @@
       "Bash(..venvScriptspython.exe -c ' *)",
       "Bash(npx tsc *)",
       "Bash(npm run *)",
-      "Bash(python -c \"from app.routers import analysis; print\\('OK'\\)\")"
+      "Bash(python -c \"from app.routers import analysis; print\\('OK'\\)\")",
+      "Bash(python -c \"from app.routers import athlete, sync, analysis; from app.services import processing, strava, whoop_backfill; print\\('ALL OK'\\)\")"
     ]
   }
 }
