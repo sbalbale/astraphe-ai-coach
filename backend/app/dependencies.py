@@ -80,43 +80,56 @@ async def get_current_athlete(
     db: Client = Depends(get_user_db),
 ) -> str:
     """Extracts athlete_id from Supabase JWT."""
+    import asyncio as _asyncio
     token = credentials.credentials
-    try:
-        user = db.auth.get_user(token)
-        user_id = user.user.id
-        if settings.APP_ENV == "development":
-            print(f"Auth DEBUG: user_id={user_id}")
+    last_exc: Exception | None = None
+    for attempt in range(2):
+        try:
+            user = db.auth.get_user(token)
+            user_id = user.user.id
+            if settings.APP_ENV == "development":
+                print(f"Auth DEBUG: user_id={user_id}")
 
-        athlete_res = db.table("athletes").select("id").eq("user_id", user_id).execute()
-        if settings.APP_ENV == "development":
-            print(f"Auth DEBUG: athlete_res={athlete_res.data}")
+            athlete_res = db.table("athletes").select("id").eq("user_id", user_id).execute()
+            if settings.APP_ENV == "development":
+                print(f"Auth DEBUG: athlete_res={athlete_res.data}")
 
-        if not athlete_res.data:
-            raise HTTPException(status_code=404, detail="Athlete profile not found")
-        return athlete_res.data[0]["id"]
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"Auth error: {str(e)}")
-        if settings.APP_ENV == "development" and settings.TEST_ATHLETE_ID:
-            print(f"WARNING: Falling back to TEST_ATHLETE_ID: {settings.TEST_ATHLETE_ID}")
-            try:
-                exists = (
-                    db.table("athletes")
-                    .select("id")
-                    .eq("id", settings.TEST_ATHLETE_ID)
-                    .maybe_single()
-                    .execute()
-                )
-                if exists and exists.data and exists.data.get("id"):
-                    return settings.TEST_ATHLETE_ID
-            except Exception:
-                pass
-            raise HTTPException(
-                status_code=401,
-                detail="Invalid or stale auth token (local Supabase was likely reset). Please sign out and sign in again.",
+            if not athlete_res.data:
+                raise HTTPException(status_code=404, detail="Athlete profile not found")
+            return athlete_res.data[0]["id"]
+        except HTTPException:
+            raise
+        except Exception as e:
+            # PGRST002 = PostgREST schema cache not yet loaded (transient on cold start).
+            # Retry once after a short wait; on second failure fall through to 401.
+            if "PGRST002" in str(e) and attempt == 0:
+                print(f"Auth: PostgREST schema cache miss, retrying… ({e})")
+                await _asyncio.sleep(0.5)
+                last_exc = e
+                continue
+            last_exc = e
+            break
+
+    print(f"Auth error: {last_exc}")
+    if settings.APP_ENV == "development" and settings.TEST_ATHLETE_ID:
+        print(f"WARNING: Falling back to TEST_ATHLETE_ID: {settings.TEST_ATHLETE_ID}")
+        try:
+            exists = (
+                db.table("athletes")
+                .select("id")
+                .eq("id", settings.TEST_ATHLETE_ID)
+                .maybe_single()
+                .execute()
             )
-        raise HTTPException(status_code=401, detail=f"Invalid or missing token: {str(e)}")
+            if exists and exists.data and exists.data.get("id"):
+                return settings.TEST_ATHLETE_ID
+        except Exception:
+            pass
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or stale auth token (local Supabase was likely reset). Please sign out and sign in again.",
+        )
+    raise HTTPException(status_code=401, detail=f"Invalid or missing token: {last_exc}")
 
 
 # ---------------------------------------------------------------------------
