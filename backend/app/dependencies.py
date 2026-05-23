@@ -83,7 +83,10 @@ async def get_current_athlete(
     import asyncio as _asyncio
     token = credentials.credentials
     last_exc: Exception | None = None
-    for attempt in range(2):
+    _retry_delays = [1.0, 2.0, 3.0]  # wait up to 6s total for PostgREST schema reload
+    for attempt, delay in enumerate([0.0] + _retry_delays):
+        if delay:
+            await _asyncio.sleep(delay)
         try:
             user = db.auth.get_user(token)
             user_id = user.user.id
@@ -100,17 +103,17 @@ async def get_current_athlete(
         except HTTPException:
             raise
         except Exception as e:
-            # PGRST002 = PostgREST schema cache not yet loaded (transient on cold start).
-            # Retry once after a short wait; on second failure fall through to 401.
-            if "PGRST002" in str(e) and attempt == 0:
-                print(f"Auth: PostgREST schema cache miss, retrying… ({e})")
-                await _asyncio.sleep(0.5)
+            # PGRST002 = PostgREST schema cache reloading (transient). Retry with backoff.
+            if "PGRST002" in str(e) and attempt < len(_retry_delays):
+                print(f"Auth: PGRST002 schema cache miss (attempt {attempt + 1}), retrying in {_retry_delays[attempt]}s…")
                 last_exc = e
                 continue
             last_exc = e
             break
 
     print(f"Auth error: {last_exc}")
+    if "PGRST002" in str(last_exc):
+        raise HTTPException(status_code=503, detail="Database schema cache unavailable, please retry.")
     if settings.APP_ENV == "development" and settings.TEST_ATHLETE_ID:
         print(f"WARNING: Falling back to TEST_ATHLETE_ID: {settings.TEST_ATHLETE_ID}")
         try:

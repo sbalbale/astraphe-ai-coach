@@ -236,16 +236,20 @@ export const api = {
   },
 
   async patchAthleteProfile(payload: any) {
-    try {
-      const headers = await getAuthHeaders({ 'Content-Type': 'application/json' });
-      const res = await fetch(`${API_URL}/v1/athlete/profile`, {
-        method: 'PATCH',
-        headers,
-        body: JSON.stringify(payload)
-      });
-      if (res.ok) return await res.json();
-    } catch (e) {
-      console.warn("Failed to patch athlete profile.", e);
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        if (attempt > 0) await new Promise(r => setTimeout(r, attempt * 2000));
+        const headers = await getAuthHeaders({ 'Content-Type': 'application/json' });
+        const res = await fetch(`${API_URL}/v1/athlete/profile`, {
+          method: 'PATCH',
+          headers,
+          body: JSON.stringify(payload)
+        });
+        if (res.ok) return await res.json();
+        if (res.status === 503 && attempt < 2) continue;
+      } catch (e) {
+        console.warn("Failed to patch athlete profile.", e);
+      }
     }
     return null;
   },
