@@ -8,6 +8,7 @@ from app.routers import workouts, activity_detail, coach, athlete, biometrics, s
 from app.config import settings
 from app.core.rate_limiter import RateLimiter
 from app.core.redis import close_redis, ping_redis
+from app.core.supabase_health import ping_supabase
 from app.services.token_refresh import token_refresh_loop
 
 _ip_rate_limiter = RateLimiter()
@@ -156,8 +157,11 @@ app.include_router(notifications.router)
 @app.get("/health")
 async def health_check():
     redis_ok = await ping_redis()
+    supabase_ok = await ping_supabase()
+    overall = "healthy" if supabase_ok else "degraded"
     return {
-        "status": "healthy",
+        "status": overall,
         "service": "ASTRAPE API",
         "redis": "connected" if redis_ok else "unavailable",
+        "supabase": "connected" if supabase_ok else "unavailable",
     }

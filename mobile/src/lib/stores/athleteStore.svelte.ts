@@ -76,6 +76,7 @@ export class AthleteState {
   loading = $state(false);
   initialLoadDone = $state(false);
   biometricsLoadingMore = $state(false);
+  lastProfileSaveError = $state<string | null>(null);
 
   // Non-reactive dedup flag so two simultaneous fetchAll() calls don't trigger
   // duplicate background refreshes (layout effect + dashboard onMount fire in quick succession).
@@ -329,15 +330,22 @@ export class AthleteState {
     }
   }
 
-  async updateProfile(payload: any) {
+  async updateProfile(payload: any): Promise<boolean> {
+    this.lastProfileSaveError = null;
     const res = await api.patchAthleteProfile(payload);
-    if (res && res.status === 'success') {
+    if (!res.ok) {
+      this.lastProfileSaveError = res.error;
+      return false;
+    }
+    const data = res.data as { status?: string };
+    if (data?.status === 'success') {
       const fresh = await api.getAthleteProfile();
       if (fresh) this.profile = fresh;
       const athleteId = authStore.user?.id ?? null;
       if (athleteId) this.persistCurrent(athleteId);
       return true;
     }
+    this.lastProfileSaveError = 'Failed to save changes. Please try again.';
     return false;
   }
 

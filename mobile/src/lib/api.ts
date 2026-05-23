@@ -235,7 +235,7 @@ export const api = {
     return null;
   },
 
-  async patchAthleteProfile(payload: any) {
+  async patchAthleteProfile(payload: any): Promise<{ ok: true; data: unknown } | { ok: false; error: string }> {
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         if (attempt > 0) await new Promise(r => setTimeout(r, attempt * 2000));
@@ -245,13 +245,30 @@ export const api = {
           headers,
           body: JSON.stringify(payload)
         });
-        if (res.ok) return await res.json();
-        if (res.status === 503 && attempt < 2) continue;
+        if (res.ok) return { ok: true, data: await res.json() };
+        if (res.status === 503 || res.status === 504) {
+          if (attempt < 2) continue;
+          return {
+            ok: false,
+            error: 'Server is temporarily unavailable. Please try again in a minute.'
+          };
+        }
+        let detail = `Save failed (${res.status})`;
+        try {
+          const body = await res.json();
+          if (body?.detail) detail = typeof body.detail === 'string' ? body.detail : detail;
+        } catch {
+          /* ignore */
+        }
+        return { ok: false, error: detail };
       } catch (e) {
         console.warn("Failed to patch athlete profile.", e);
+        if (attempt === 2) {
+          return { ok: false, error: 'Network error while saving. Check your connection and try again.' };
+        }
       }
     }
-    return null;
+    return { ok: false, error: 'Failed to save changes. Please try again.' };
   },
 
   async deleteAthleteAccount() {
