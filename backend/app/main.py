@@ -119,6 +119,8 @@ ALLOWED_ORIGINS = [
     "http://localhost:5173",   # local dev (vite)
     "http://localhost:4173",   # local preview
     "http://127.0.0.1:5173",
+    "astrape-ai-coach.web.app",
+    "astrape-ai-coach.firebaseapp.com",
 ]
 
 # Middleware order matters — Starlette wraps in reverse add order, so the last
