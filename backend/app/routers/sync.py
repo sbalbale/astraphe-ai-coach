@@ -60,6 +60,40 @@ def get_clean_strava_redirect_url():
     return f"{base}{settings.API_PREFIX}/sync/oauth/strava/callback"
 
 
+def _oauth_state(athlete_id: str, web_return: str | None) -> str:
+    state = athlete_id
+    if web_return and _safe_web_return(web_return):
+        state = f"{state}|{web_return}"
+    return state
+
+
+def build_whoop_oauth_authorize_url(athlete_id: str, web_return: str | None = None) -> str:
+    redirect_url = get_clean_redirect_url()
+    state = _oauth_state(athlete_id, web_return)
+    params = {
+        "response_type": "code",
+        "client_id": settings.WHOOP_CLIENT_ID,
+        "redirect_uri": redirect_url,
+        "scope": "offline read:recovery read:sleep read:cycles read:workout read:profile read:body_measurement",
+        "state": state,
+    }
+    return f"{settings.WHOOP_OAUTH_AUTH_URL}?{urllib.parse.urlencode(params)}"
+
+
+def build_strava_oauth_authorize_url(athlete_id: str, web_return: str | None = None) -> str:
+    callback_url = get_clean_strava_redirect_url()
+    state = _oauth_state(athlete_id, web_return)
+    params = {
+        "client_id": settings.STRAVA_CLIENT_ID,
+        "response_type": "code",
+        "redirect_uri": callback_url,
+        "approval_prompt": "auto",
+        "scope": "activity:read_all,profile:read_all",
+        "state": state,
+    }
+    return f"https://www.strava.com/oauth/authorize?{urllib.parse.urlencode(params)}"
+
+
 def _oauth_connected_success_response(deep_link: str, provider: str) -> HTMLResponse:
     """In-app browser landing page after OAuth — same UX as WHOOP, themed per provider."""
     themes = {
@@ -835,26 +869,18 @@ async def strava_webhook(
 @router.get("/oauth/whoop/authorize")
 async def whoop_oauth_authorize(
     web_return: str = None,
+    json_url: bool = Query(False, description="Return authorize URL as JSON (for SPA/native clients)"),
     athlete_id: str = Depends(get_current_athlete),
 ):
     """Step 1: Redirect authenticated user to WHOOP for authorization."""
     redirect_url = get_clean_redirect_url()
-    state = athlete_id
-    if web_return and _safe_web_return(web_return):
-        state = f"{state}|{web_return}"
+    state = _oauth_state(athlete_id, web_return)
     print(f"[whoop.oauth.authorize] redirect_uri={redirect_url} state={state}")
-    
-    params = {
-        "response_type": "code",
-        "client_id": settings.WHOOP_CLIENT_ID,
-        "redirect_uri": redirect_url,
-        "scope": "offline read:recovery read:sleep read:cycles read:workout read:profile read:body_measurement",
-        "state": state
-    }
-    
-    query_string = urllib.parse.urlencode(params)
-    print(f"[whoop.oauth.authorize] auth_url={settings.WHOOP_OAUTH_AUTH_URL}?{query_string}")
-    return RedirectResponse(url=f"{settings.WHOOP_OAUTH_AUTH_URL}?{query_string}")
+    auth_url = build_whoop_oauth_authorize_url(athlete_id, web_return)
+    print(f"[whoop.oauth.authorize] auth_url={auth_url}")
+    if json_url:
+        return {"url": auth_url}
+    return RedirectResponse(url=auth_url)
 
 @router.get("/oauth/whoop/callback")
 async def whoop_oauth_callback(
@@ -930,26 +956,16 @@ async def whoop_oauth_callback(
 @router.get("/oauth/strava/authorize")
 async def strava_oauth_authorize(
     web_return: str = None,
+    json_url: bool = Query(False, description="Return authorize URL as JSON (for SPA/native clients)"),
     athlete_id: str = Depends(get_current_athlete),
 ):
     """Redirect authenticated user to Strava for authorization."""
     if not settings.STRAVA_CLIENT_ID or not settings.STRAVA_CLIENT_SECRET:
         raise HTTPException(status_code=503, detail="Strava OAuth is not configured")
-    callback_url = get_clean_strava_redirect_url()
-    state = athlete_id
-    if web_return and _safe_web_return(web_return):
-        state = f"{state}|{web_return}"
-    params = {
-        "client_id": settings.STRAVA_CLIENT_ID,
-        "response_type": "code",
-        "redirect_uri": callback_url,
-        "approval_prompt": "auto",
-        "scope": "activity:read_all,profile:read_all",
-        "state": state,
-    }
-    return RedirectResponse(
-        url=f"https://www.strava.com/oauth/authorize?{urllib.parse.urlencode(params)}"
-    )
+    auth_url = build_strava_oauth_authorize_url(athlete_id, web_return)
+    if json_url:
+        return {"url": auth_url}
+    return RedirectResponse(url=auth_url)
 
 
 @router.get("/oauth/strava/callback")

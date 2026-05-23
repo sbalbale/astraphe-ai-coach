@@ -9,6 +9,7 @@
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { HealthIntegration } from '$lib/integrations/health';
   import { api } from '$lib/api';
+  import { getAuthHeaders } from '$lib/apiAuth';
 
   const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -64,14 +65,24 @@
   });
 
   async function openOAuthAuthorize(providerPath: 'whoop' | 'strava') {
-    const aid = athleteStore.profile?.id || '';
     const isNative = Capacitor.isNativePlatform();
-
-    let url = `${API_URL}/v1/sync/oauth/${providerPath}/authorize?athlete_id=${encodeURIComponent(aid)}`;
-
+    const params = new URLSearchParams({ json_url: 'true' });
     if (!isNative) {
-      url += `&web_return=${encodeURIComponent(window.location.origin + '/profile/connections')}`;
+      params.set('web_return', `${window.location.origin}/profile/connections`);
     }
+
+    const headers = await getAuthHeaders();
+    const res = await fetch(
+      `${API_URL}/v1/sync/oauth/${providerPath}/authorize?${params}`,
+      { headers }
+    );
+    if (!res.ok) {
+      const detail = (await res.json().catch(() => ({}))) as { detail?: string };
+      console.error(`OAuth authorize failed (${res.status}):`, detail.detail ?? res.statusText);
+      return;
+    }
+    const { url } = (await res.json()) as { url: string };
+    if (!url) return;
 
     if (isNative) {
       await Browser.open({ url });
