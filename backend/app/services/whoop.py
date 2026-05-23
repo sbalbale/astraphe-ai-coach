@@ -6,12 +6,28 @@ from fastapi import HTTPException
 from app.config import settings
 from typing import Any, List, Optional
 
+def _whoop_client_secret() -> str | None:
+    """Client secret from env/Secret Manager, stripped (avoids trailing newlines)."""
+    raw = settings.WHOOP_CLIENT_SECRET
+    return raw.strip() if raw else None
+
+
+def _whoop_oauth_credentials() -> tuple[str, str]:
+    """client_id + client_secret for token exchange (WHOOP expects client_secret_post)."""
+    client_id = (settings.WHOOP_CLIENT_ID or "").strip()
+    client_secret = _whoop_client_secret() or ""
+    if not client_id or not client_secret:
+        print("[whoop.oauth] WHOOP_CLIENT_ID or WHOOP_CLIENT_SECRET is missing/empty")
+        raise HTTPException(status_code=500, detail="WHOOP OAuth is not configured on the server")
+    return client_id, client_secret
+
+
 def _whoop_hmac_key() -> bytes | None:
     """WHOOP HMAC key is the client secret string as UTF-8 (not hex-decoded)."""
-    secret = settings.WHOOP_WEBHOOK_SECRET or settings.WHOOP_CLIENT_SECRET
+    secret = (settings.WHOOP_WEBHOOK_SECRET or "").strip() or _whoop_client_secret()
     if not secret:
         return None
-    return secret.strip().encode("utf-8")
+    return secret.encode("utf-8")
 
 
 def verify_webhook_signature(
@@ -47,16 +63,18 @@ def verify_webhook_signature(
 
 async def exchange_oauth_code(code: str, redirect_url: str) -> dict:
     """Exchanges the code for tokens. Must match the URL sent in the first step."""
+    client_id, client_secret = _whoop_oauth_credentials()
     async with httpx.AsyncClient(timeout=10.0) as client:
         response = await client.post(
             settings.WHOOP_OAUTH_TOKEN_URL,
             data={
                 "grant_type": "authorization_code",
                 "code": code,
-                "client_id": settings.WHOOP_CLIENT_ID,
-                "client_secret": settings.WHOOP_CLIENT_SECRET,
-                "redirect_uri": redirect_url, # Key in payload MUST be redirect_uri
-            }
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "redirect_uri": redirect_url,  # Key in payload MUST be redirect_uri
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
         if response.status_code != 200:
             print(f"WHOOP Exchange Error: {response.text}")
@@ -68,15 +86,17 @@ async def refresh_oauth_token(refresh_token: str) -> dict:
     Refresh WHOOP OAuth tokens using the refresh_token grant.
     WHOOP may rotate refresh tokens; callers should persist returned values.
     """
+    client_id, client_secret = _whoop_oauth_credentials()
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.post(
             settings.WHOOP_OAUTH_TOKEN_URL,
             data={
                 "grant_type": "refresh_token",
                 "refresh_token": refresh_token,
-                "client_id": settings.WHOOP_CLIENT_ID,
-                "client_secret": settings.WHOOP_CLIENT_SECRET,
+                "client_id": client_id,
+                "client_secret": client_secret,
             },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
         if response.status_code != 200:
             raise HTTPException(

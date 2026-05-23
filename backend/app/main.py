@@ -69,6 +69,19 @@ async def validate_production_config():
     else:
         print("[startup] WARNING: No WHOOP HMAC key — webhook signatures will be rejected")
 
+    if settings.APP_ENV == "production":
+        _wc = (settings.WHOOP_CLIENT_SECRET or "").strip()
+        if not _wc:
+            print("[startup] WARNING: WHOOP_CLIENT_SECRET is unset — WHOOP OAuth token exchange will fail")
+        elif settings.WHOOP_WEBHOOK_SECRET and settings.WHOOP_CLIENT_SECRET:
+            _ws = settings.WHOOP_WEBHOOK_SECRET.strip()
+            _cs = settings.WHOOP_CLIENT_SECRET.strip()
+            if _ws != _cs:
+                print(
+                    "[startup] WARNING: WHOOP_WEBHOOK_SECRET and WHOOP_CLIENT_SECRET differ — "
+                    "token exchange uses CLIENT_SECRET; webhooks use WEBHOOK_SECRET (or CLIENT_SECRET fallback)."
+                )
+
     if settings.APP_ENV == "development":
         from app.services.strava_webhook_sub import subscription_matches_app_base
 
