@@ -269,7 +269,7 @@ Your rate limiter gracefully falls back to in-memory when `REDIS_URL` is unset, 
 
 1. Go to [upstash.com](https://upstash.com) → Create Database
 2. **Name:** `astrape-prod`
-3. **Region:** `us-central1` (matches Cloud Run region)
+3. **Region:** `us-east-1` (must match Cloud Run `us-east4` in `backend/cloudbuild.yaml`; cross-region causes Redis timeouts)
 4. **Type:** Regional (free tier is sufficient to start)
 5. After creation, click the database → Details tab → copy the `REDIS_URL`
 

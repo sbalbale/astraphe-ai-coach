@@ -108,7 +108,7 @@
         saved = false;
       }, 2500);
     } else {
-      saveError = 'Failed to save changes. Please try again.';
+      saveError = athleteStore.lastProfileSaveError ?? 'Failed to save changes. Please try again.';
     }
   }
 </script>

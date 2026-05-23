@@ -21,7 +21,8 @@
       "mcp__claude_ai_Supabase__get_advisors",
       "mcp__claude_ai_Supabase__apply_migration",
       "Bash(python -c \"import sys,json; logs=json.load\\(sys.stdin\\); [print\\(l.get\\('timestamp',''\\)[:19], l.get\\('httpRequest',{}\\).get\\('status',''\\), l.get\\('httpRequest',{}\\).get\\('requestUrl',''\\)[-60:] if l.get\\('httpRequest',{}\\).get\\('requestUrl'\\) else '', l.get\\('textPayload',''\\)[:150]\\) for l in logs]\")",
-      "Bash(python -c ' *)"
+      "Bash(python -c ' *)",
+      "mcp__claude_ai_Supabase__get_logs"
     ]
   },
   "enableAllProjectMcpServers": true,

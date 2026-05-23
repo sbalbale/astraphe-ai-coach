@@ -1,3 +1,5 @@
+import asyncio
+import logging
 from dataclasses import dataclass
 
 from fastapi import Depends, HTTPException, Security
@@ -5,6 +7,8 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from supabase import create_client, Client
 from app.config import settings
 from app.core.rate_limiter import RateLimiter
+
+logger = logging.getLogger(__name__)
 
 security = HTTPBearer()
 
@@ -17,6 +21,11 @@ TIER_DEFAULTS: dict[str, dict[str, int]] = {
 }
 
 VALID_TIERS = frozenset(TIER_DEFAULTS.keys())
+
+# Max seconds per Supabase auth/DB call (sync SDK runs in a thread pool).
+SUPABASE_CALL_TIMEOUT_SECONDS = 10.0
+# Backoff when PostgREST is reloading schema (PGRST002).
+_PGRST002_RETRY_DELAYS = [1.0, 2.0, 3.0]
 
 
 @dataclass
@@ -59,9 +68,39 @@ async def get_user_db(credentials: HTTPAuthorizationCredentials = Security(secur
     return _with_auth_token(get_db(), token)
 
 
+async def _run_supabase_call(fn, *args, timeout: float = SUPABASE_CALL_TIMEOUT_SECONDS):
+    """Run a blocking supabase-py call off the event loop with a hard timeout."""
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(fn, *args), timeout=timeout)
+    except asyncio.TimeoutError:
+        raise HTTPException(
+            status_code=503,
+            detail="Database request timed out, please retry.",
+        )
+
+
+def _is_pgrst002(exc: BaseException) -> bool:
+    return "PGRST002" in str(exc)
+
+
 # ---------------------------------------------------------------------------
 # Athlete identity
 # ---------------------------------------------------------------------------
+
+async def _auth_get_user(db: Client, token: str):
+    return await _run_supabase_call(db.auth.get_user, token)
+
+
+async def _fetch_athlete_id_for_user(db: Client, user_id: str) -> str:
+    athlete_res = await _run_supabase_call(
+        lambda: db.table("athletes").select("id").eq("user_id", user_id).execute()
+    )
+    if settings.APP_ENV == "development":
+        print(f"Auth DEBUG: athlete_res={athlete_res.data}")
+    if not athlete_res.data:
+        raise HTTPException(status_code=404, detail="Athlete profile not found")
+    return athlete_res.data[0]["id"]
+
 
 async def get_current_user_email(
     credentials: HTTPAuthorizationCredentials = Security(security),
@@ -69,8 +108,10 @@ async def get_current_user_email(
 ) -> str | None:
     """Returns the authenticated user's email address, or None on failure."""
     try:
-        user_res = db.auth.get_user(credentials.credentials)
+        user_res = await _auth_get_user(db, credentials.credentials)
         return getattr(user_res.user, "email", None)
+    except HTTPException:
+        return None
     except Exception:
         return None
 
@@ -80,45 +121,42 @@ async def get_current_athlete(
     db: Client = Depends(get_user_db),
 ) -> str:
     """Extracts athlete_id from Supabase JWT."""
-    import asyncio as _asyncio
     token = credentials.credentials
     last_exc: Exception | None = None
-    _retry_delays = [1.0, 2.0, 3.0]  # wait up to 6s total for PostgREST schema reload
-    for attempt, delay in enumerate([0.0] + _retry_delays):
+    for attempt, delay in enumerate([0.0] + _PGRST002_RETRY_DELAYS):
         if delay:
-            await _asyncio.sleep(delay)
+            await asyncio.sleep(delay)
         try:
-            user = db.auth.get_user(token)
+            user = await _auth_get_user(db, token)
             user_id = user.user.id
             if settings.APP_ENV == "development":
                 print(f"Auth DEBUG: user_id={user_id}")
-
-            athlete_res = db.table("athletes").select("id").eq("user_id", user_id).execute()
-            if settings.APP_ENV == "development":
-                print(f"Auth DEBUG: athlete_res={athlete_res.data}")
-
-            if not athlete_res.data:
-                raise HTTPException(status_code=404, detail="Athlete profile not found")
-            return athlete_res.data[0]["id"]
+            return await _fetch_athlete_id_for_user(db, user_id)
         except HTTPException:
             raise
         except Exception as e:
-            # PGRST002 = PostgREST schema cache reloading (transient). Retry with backoff.
-            if "PGRST002" in str(e) and attempt < len(_retry_delays):
-                print(f"Auth: PGRST002 schema cache miss (attempt {attempt + 1}), retrying in {_retry_delays[attempt]}s…")
+            if _is_pgrst002(e) and attempt < len(_PGRST002_RETRY_DELAYS):
+                logger.warning(
+                    "Auth: PGRST002 schema cache miss (attempt %s), retrying in %ss…",
+                    attempt + 1,
+                    _PGRST002_RETRY_DELAYS[attempt],
+                )
                 last_exc = e
                 continue
             last_exc = e
             break
 
-    print(f"Auth error: {last_exc}")
-    if "PGRST002" in str(last_exc):
-        raise HTTPException(status_code=503, detail="Database schema cache unavailable, please retry.")
+    logger.error("Auth error: %s", last_exc)
+    if last_exc and _is_pgrst002(last_exc):
+        raise HTTPException(
+            status_code=503,
+            detail="Database schema cache unavailable, please retry.",
+        )
     if settings.APP_ENV == "development" and settings.TEST_ATHLETE_ID:
         print(f"WARNING: Falling back to TEST_ATHLETE_ID: {settings.TEST_ATHLETE_ID}")
         try:
-            exists = (
-                db.table("athletes")
+            exists = await _run_supabase_call(
+                lambda: db.table("athletes")
                 .select("id")
                 .eq("id", settings.TEST_ATHLETE_ID)
                 .maybe_single()
@@ -167,7 +205,7 @@ async def get_user_config(
     fallback_analysis = (settings.GEMINI_ANALYSIS_MODEL or "").strip() or "gemini-flash-lite-latest"
 
     try:
-        user_res = db.auth.get_user(token)
+        user_res = await _auth_get_user(db, token)
         u = user_res.user
         app_meta = getattr(u, "app_metadata", None) or {}
 
@@ -198,10 +236,6 @@ async def get_user_config(
     except HTTPException:
         raise
     except Exception as e:
-        # If get_user returned None the token is invalid — fail hard.
-        # For other transient errors (network blip, Supabase unavailable) fall
-        # back to free-tier defaults so the request isn't silently granted
-        # elevated access, but we do NOT suppress a definitive auth failure.
         err_str = str(e).lower()
         is_auth_error = any(k in err_str for k in ("invalid", "expired", "unauthorized", "jwt", "token"))
         if is_auth_error:
