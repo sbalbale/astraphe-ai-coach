@@ -8,7 +8,20 @@
       "Bash(gcloud run *)",
       "Bash(gcloud beta run domain-mappings list *)",
       "Bash(gcloud logging *)",
-      "Bash(curl *)"
+      "Bash(curl *)",
+      "Bash(gcloud projects *)",
+      "Bash(git -C \"C:\\\\Users\\\\sean\\\\Documents\\\\astrape-ai-coach\" diff HEAD backend/cloudbuild.yaml)",
+      "Bash(gcloud builds triggers list *)",
+      "Bash(gcloud builds submit C:\\\\Users\\\\sean\\\\Documents\\\\astrape-ai-coach *)",
+      "Bash(git *)",
+      "Bash(python -c \"import sys,json; logs=json.load\\(sys.stdin\\); [print\\(l.get\\('timestamp',''\\), l.get\\('httpRequest',{}\\).get\\('status',''\\), l.get\\('httpRequest',{}\\).get\\('requestUrl',''\\), l.get\\('textPayload',''\\)[:200]\\) for l in logs]\")",
+      "mcp__claude_ai_Supabase__list_migrations",
+      "mcp__claude_ai_Supabase__list_tables",
+      "mcp__claude_ai_Supabase__execute_sql",
+      "mcp__claude_ai_Supabase__get_advisors",
+      "mcp__claude_ai_Supabase__apply_migration",
+      "Bash(python -c \"import sys,json; logs=json.load\\(sys.stdin\\); [print\\(l.get\\('timestamp',''\\)[:19], l.get\\('httpRequest',{}\\).get\\('status',''\\), l.get\\('httpRequest',{}\\).get\\('requestUrl',''\\)[-60:] if l.get\\('httpRequest',{}\\).get\\('requestUrl'\\) else '', l.get\\('textPayload',''\\)[:150]\\) for l in logs]\")",
+      "Bash(python -c ' *)"
     ]
   },
   "enableAllProjectMcpServers": true,
