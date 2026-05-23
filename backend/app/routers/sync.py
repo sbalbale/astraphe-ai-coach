@@ -14,13 +14,17 @@ from app.dependencies import get_current_athlete, get_user_db, get_admin_db
 from app.services import whoop
 from app.services import strava as strava_service
 from app.services.strava import backfill_historical_data as strava_backfill
-from app.services.whoop_backfill import backfill_historical_data
+from app.services.whoop_backfill import backfill_biometrics_only, backfill_historical_data
 from app.config import settings
 from datetime import date, datetime, timedelta, timezone
 from app.services.token_refresh import token_expires_at
 from app.models.workout import WorkoutPayload
 from app.models.biometrics import DailyBiometrics
-from app.services.processing import process_and_save_workout, process_and_save_biometrics
+from app.services.processing import (
+    process_and_save_workout,
+    process_and_save_biometrics,
+    reprocess_athlete_metrics,
+)
 from app.services.ai_coach import invalidate_context_cache
 from fastapi import status
 
@@ -936,8 +940,11 @@ async def whoop_oauth_callback(
         # When this handler is called without an injected instance (e.g. mis-configured signature),
         # fall back to running the backfill asynchronously in-process so we still populate data.
         print(f"[whoop.oauth.callback] Scheduling background backfill task (90d)...")
-        # Fire-and-forget: backfill catches its own errors so OAuth redirect is never blocked.
-        asyncio.create_task(backfill_historical_data(athlete_id, access_token, None, 90))
+        # Prefer FastAPI BackgroundTasks (keeps work tied to the request lifecycle on Cloud Run).
+        if background_tasks is not None:
+            background_tasks.add_task(backfill_historical_data, athlete_id, access_token, None, 90)
+        else:
+            asyncio.create_task(backfill_historical_data(athlete_id, access_token, None, 90))
         print(f"[whoop.oauth.callback] Backfill scheduled")
         
         print(f"[whoop.oauth.callback] Sending HTML response...")
@@ -1106,6 +1113,47 @@ async def unlink_integration(
         "message": f"{prov.capitalize()} unlinked successfully" if not still_connected else f"{prov.capitalize()} unlink requested",
     }
 
+
+
+@router.post("/reprocess-metrics")
+async def reprocess_metrics_now(
+    athlete_id: str = Depends(get_current_athlete),
+    admin_db=Depends(get_admin_db),
+):
+    """
+    Rebuild workout TSS, biometrics aggregates, and CTL/ATL/TSB for the authenticated athlete.
+    Use after linking WHOOP/Strava when the dashboard shows synced activities but missing load/recovery.
+    """
+    counts = await reprocess_athlete_metrics(athlete_id, admin_db)
+    invalidate_context_cache(athlete_id)
+    return {"status": "success", **counts}
+
+
+@router.post("/whoop/backfill-biometrics")
+async def whoop_backfill_biometrics_now(
+    days: int = 90,
+    athlete_id: str = Depends(get_current_athlete),
+    admin_db=Depends(get_admin_db),
+):
+    """
+    Backfill WHOOP sleep + recovery only (fast). Use when workouts exist but biometrics is empty.
+    """
+    d = max(1, min(int(days), 365))
+    tok = (
+        admin_db.table("oauth_tokens")
+        .select("access_token, refresh_token")
+        .eq("athlete_id", athlete_id)
+        .eq("provider", "whoop")
+        .maybe_single()
+        .execute()
+    )
+    row = tok.data if tok else None
+    access_token = (row or {}).get("access_token")
+    if not access_token:
+        raise HTTPException(status_code=400, detail="WHOOP not connected")
+
+    asyncio.create_task(backfill_biometrics_only(athlete_id, access_token, admin_db, d))
+    return {"status": "success", "scheduled": True, "days": d, "mode": "biometrics_only"}
 
 
 @router.post("/whoop/backfill")

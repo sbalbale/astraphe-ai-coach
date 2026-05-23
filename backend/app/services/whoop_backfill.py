@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import traceback
 from datetime import datetime, timedelta, timezone, date as date_type
 from typing import Any, Optional
 
@@ -9,6 +10,7 @@ from fastapi import HTTPException, status
 from app.services import whoop
 from app.models.biometrics import DailyBiometrics
 from app.models.workout import WorkoutPayload
+from app.services.ai_coach import invalidate_context_cache
 from app.services.processing import process_and_save_biometrics, process_and_save_workout, recalculate_tss_history
 from app.dependencies import get_admin_db
 from app.services.token_refresh import token_expires_at
@@ -82,19 +84,42 @@ async def _ensure_valid_whoop_access_token(
     return new_access
 
 
-async def backfill_historical_data(athlete_id: str, access_token: str, db: Any = None, days: int = 90) -> None:
+async def backfill_historical_data(
+    athlete_id: str,
+    access_token: str,
+    db: Any = None,
+    days: int = 90,
+    *,
+    include_workouts: bool = True,
+) -> None:
     """
     Pull historical WHOOP sleep/recovery/workouts and persist into Supabase.
     This is intended to run right after OAuth connect.
     """
     try:
-        await _backfill_historical_data_impl(athlete_id, access_token, db, days)
+        await _backfill_historical_data_impl(
+            athlete_id, access_token, db, days, include_workouts=include_workouts
+        )
     except Exception as e:
-        print(f"[whoop.backfill] FAILED athlete_id={athlete_id}: {e!r}")
+        print(f"[whoop.backfill] FAILED athlete_id={athlete_id}: {e!r}\n{traceback.format_exc()}")
+
+
+async def backfill_biometrics_only(
+    athlete_id: str, access_token: str, db: Any = None, days: int = 90
+) -> None:
+    """Fast path: sleep + recovery only (fills empty biometrics table)."""
+    await backfill_historical_data(
+        athlete_id, access_token, db, days, include_workouts=False
+    )
 
 
 async def _backfill_historical_data_impl(
-    athlete_id: str, access_token: str, db: Any = None, days: int = 90
+    athlete_id: str,
+    access_token: str,
+    db: Any = None,
+    days: int = 90,
+    *,
+    include_workouts: bool = True,
 ) -> None:
     # If no DB provided (common for background tasks), create one.
     if db is None:
@@ -150,13 +175,147 @@ async def _backfill_historical_data_impl(
     except Exception:
         offset = 0
 
-    # Workouts first (to establish training load for readiness scores).
-    # Skip WHOOP "cycle" records here — they carry no fields we persist and each
-    # process_and_save_biometrics call fans out into many Supabase queries.
-    workouts = await whoop.fetch_collection(access_token, "activity/workout", start_s, end_s)
-    print(f"[whoop.backfill] workouts={len(workouts)}")
+    # Biometrics first (sleep + recovery) so the dashboard has HRV/sleep even if the
+    # workout loop is slow or the Cloud Run instance times out later.
+    sleeps = await whoop.fetch_collection(access_token, "activity/sleep", start_s, end_s)
+    print(f"[whoop.backfill] sleeps={len(sleeps)}")
 
-    for w in workouts:
+    cycle_wake_dates: dict[Any, date_type] = {}
+    sleeps_saved = 0
+    sleeps_skipped = 0
+
+    for slp in sleeps:
+        start_time = slp.get("start")
+        if not start_time:
+            sleeps_skipped += 1
+            continue
+
+        score_state = slp.get("score_state")
+        if score_state and score_state != "SCORED":
+            sleeps_skipped += 1
+            continue
+
+        score = (slp.get("score") or {}) if isinstance(slp.get("score"), dict) else {}
+        stage = (score.get("stage_summary") or {}) if isinstance(score.get("stage_summary"), dict) else {}
+
+        light = stage.get("total_light_sleep_time_milli")
+        deep = stage.get("total_slow_wave_sleep_time_milli")
+        rem = stage.get("total_rem_sleep_time_milli")
+        awake = stage.get("total_awake_time_milli")
+
+        total_sleep_ms = sum(v for v in (light, deep, rem) if isinstance(v, (int, float)))
+        if not total_sleep_ms or total_sleep_ms <= 0:
+            sleeps_skipped += 1
+            continue
+
+        wake_dt = _parse_dt(slp.get("end") or start_time)
+        local_wake = wake_dt + timedelta(minutes=offset)
+        d = local_wake.date()
+        cycle_id = slp.get("cycle_id")
+        if cycle_id is not None and not slp.get("nap"):
+            cycle_wake_dates[cycle_id] = d
+        external_id = str(slp.get("id"))
+
+        payload = DailyBiometrics(
+            date=d,
+            source="whoop",
+            external_id=external_id,
+            hrv_rmssd=None,
+            resting_hr=None,
+            sleep_duration_min=int(total_sleep_ms / 60000),
+            sleep_score=score.get("sleep_performance_percentage"),
+            sleep_deep_pct=_pct(deep, total_sleep_ms),
+            sleep_rem_pct=_pct(rem, total_sleep_ms),
+            sleep_light_pct=_pct(light, total_sleep_ms),
+            sleep_awake_pct=round((awake / (total_sleep_ms + awake)) * 100, 1) if (total_sleep_ms and awake) else 0.0,
+            sleep_bedtime=datetime.fromisoformat(start_time.replace("Z", "+00:00")),
+            sleep_wakeup=datetime.fromisoformat((slp.get("end") or start_time).replace("Z", "+00:00")),
+            is_nap=slp.get("nap", False),
+            sleep_need_min=None,
+            sleep_debt_min=None,
+            skin_temp=None,
+            spo2_pct=None,
+        )
+        try:
+            await asyncio.to_thread(
+                process_and_save_biometrics, payload, athlete_id, db, skip_pmc_recalc=True
+            )
+            sleeps_saved += 1
+        except Exception as e:
+            print(
+                f"[whoop.backfill] sleep_upsert_failed date={d} external_id={external_id}: {e}\n"
+                f"{traceback.format_exc()}"
+            )
+
+    recoveries = await whoop.fetch_collection(access_token, "recovery", start_s, end_s)
+    print(f"[whoop.backfill] recoveries={len(recoveries)}")
+
+    recoveries_saved = 0
+    recoveries_skipped = 0
+
+    for rec in recoveries:
+        score = (rec.get("score") or {}) if isinstance(rec.get("score"), dict) else {}
+        if not whoop.recovery_is_scored(rec):
+            recoveries_skipped += 1
+            continue
+
+        cycle_id = rec.get("cycle_id")
+        d = cycle_wake_dates.get(cycle_id)
+        if d is None:
+            created_at = rec.get("created_at")
+            if not created_at:
+                recoveries_skipped += 1
+                continue
+            utc_created = _parse_dt(created_at)
+            d = (utc_created + timedelta(minutes=offset)).date()
+
+        payload = DailyBiometrics(
+            date=d,
+            source="whoop",
+            hrv_rmssd=score.get("hrv_rmssd_milli") or score.get("hrv_rmssd_ms"),
+            resting_hr=score.get("resting_heart_rate"),
+            sleep_duration_min=None,
+            sleep_score=None,
+            sleep_deep_pct=None,
+            sleep_rem_pct=None,
+            sleep_need_min=None,
+            sleep_debt_min=None,
+            skin_temp=score.get("skin_temp_celsius"),
+            spo2_pct=score.get("spo2_percentage"),
+            recovery_score=score.get("recovery_score"),
+        )
+        try:
+            await asyncio.to_thread(
+                process_and_save_biometrics, payload, athlete_id, db, skip_pmc_recalc=True
+            )
+            recoveries_saved += 1
+        except Exception as e:
+            print(
+                f"[whoop.backfill] recovery_upsert_failed date={d}: {e}\n"
+                f"{traceback.format_exc()}"
+            )
+
+    bio_count_res = (
+        db.table("biometrics")
+        .select("id", count="exact")
+        .eq("athlete_id", athlete_id)
+        .execute()
+    )
+    bio_rows = bio_count_res.count if bio_count_res else 0
+    print(
+        f"[whoop.backfill] biometrics sleeps_saved={sleeps_saved} sleeps_skipped={sleeps_skipped} "
+        f"recoveries_saved={recoveries_saved} recoveries_skipped={recoveries_skipped} "
+        f"biometrics_rows={bio_rows}"
+    )
+
+    if include_workouts:
+        workouts = await whoop.fetch_collection(access_token, "activity/workout", start_s, end_s)
+        print(f"[whoop.backfill] workouts={len(workouts)}")
+    else:
+        workouts = []
+        print("[whoop.backfill] skipping workout ingest (biometrics-only mode)")
+
+    for idx, w in enumerate(workouts, start=1):
         w_start = w.get("start")
         w_end = w.get("end")
         if not w_start or not w_end:
@@ -221,95 +380,39 @@ async def _backfill_historical_data_impl(
             # Don't let a single bad record kill the whole backfill.
             print(f"[whoop.backfill] workout_upsert_failed external_id={external_id} sport={sport_name}: {e}")
             continue
+        if idx % 25 == 0 or idx == len(workouts):
+            print(f"[whoop.backfill] workouts progress {idx}/{len(workouts)}")
 
-    # Recalculate TSS history once after all workouts are in (single rebuild beats N fire-and-forget).
     recalculate_tss_history(athlete_id, db)
 
-    # 2) Recovery (HRV, RHR, spo2, skin temp, recovery score)
-    # This will now have access to the training load (ATL/CTL) for readiness scores
-    recoveries = await whoop.fetch_collection(access_token, "recovery", start_s, end_s)
-    print(f"[whoop.backfill] recoveries={len(recoveries)}")
-
-    for rec in recoveries:
-        created_at = rec.get("created_at")
-        if not created_at:
-            continue
-        utc_created = _parse_dt(created_at)
-        local_created = utc_created + timedelta(minutes=offset)
-        d: date_type = local_created.date()
-        score = (rec.get("score") or {}) if isinstance(rec.get("score"), dict) else {}
-
-        payload = DailyBiometrics(
-            date=d,
-            source="whoop",
-            hrv_rmssd=score.get("hrv_rmssd_milli") or score.get("hrv_rmssd_ms"),
-            resting_hr=score.get("resting_heart_rate"),
-            sleep_duration_min=None,
-            sleep_score=None,
-            sleep_deep_pct=None,
-            sleep_rem_pct=None,
-            sleep_need_min=None,
-            sleep_debt_min=None,
-            skin_temp=score.get("skin_temp_celsius"),
-            spo2_pct=score.get("spo2_percentage"),
-            recovery_score=rec.get("score", {}).get("recovery_score") if isinstance(rec.get("score"), dict) else None,
+    # Refresh readiness scores now that PMC exists (skipped per-row during batch ingest).
+    if bio_rows and bio_rows > 0:
+        dates_res = (
+            db.table("biometrics")
+            .select("date,hrv_rmssd,resting_hr,recovery_score,sleep_score")
+            .eq("athlete_id", athlete_id)
+            .gte("date", start.date().isoformat())
+            .order("date")
+            .execute()
         )
-        try:
-            await asyncio.to_thread(process_and_save_biometrics, payload, athlete_id, db)
-        except Exception as e:
-            print(f"[whoop.backfill] recovery_upsert_failed date={d}: {e}")
+        for row in dates_res.data or []:
+            try:
+                d_raw = row.get("date")
+                if not d_raw:
+                    continue
+                refresh = DailyBiometrics(
+                    date=date_type.fromisoformat(str(d_raw)[:10]),
+                    source="whoop",
+                    hrv_rmssd=float(row["hrv_rmssd"]) if row.get("hrv_rmssd") is not None else None,
+                    resting_hr=row.get("resting_hr"),
+                    recovery_score=row.get("recovery_score"),
+                    sleep_score=row.get("sleep_score"),
+                )
+                await asyncio.to_thread(
+                    process_and_save_biometrics, refresh, athlete_id, db, skip_pmc_recalc=True
+                )
+            except Exception as e:
+                print(f"[whoop.backfill] readiness_refresh_failed date={row.get('date')}: {e}")
 
-    # Sleep (duration + stage breakdown + sleep score)
-    sleeps = await whoop.fetch_collection(access_token, "activity/sleep", start_s, end_s)
-    print(f"[whoop.backfill] sleeps={len(sleeps)}")
-
-    for slp in sleeps:
-        start_time = slp.get("start")
-        if not start_time:
-            continue
-
-        score = (slp.get("score") or {}) if isinstance(slp.get("score"), dict) else {}
-        stage = (score.get("stage_summary") or {}) if isinstance(score.get("stage_summary"), dict) else {}
-        
-        light = stage.get("total_light_sleep_time_milli")
-        deep = stage.get("total_slow_wave_sleep_time_milli")
-        rem = stage.get("total_rem_sleep_time_milli")
-        awake = stage.get("total_awake_time_milli")
-        
-        # Filter out "empty" sleep records
-        total_sleep_ms = sum(v for v in (light, deep, rem) if isinstance(v, (int, float)))
-        if not total_sleep_ms or total_sleep_ms <= 0:
-            continue
-
-        # Standardize to wake date for biological day alignment, adjusted for athlete timezone
-        wake_dt = _parse_dt(slp.get("end") or start_time)
-        local_wake = wake_dt + timedelta(minutes=offset)
-        d = local_wake.date()
-        external_id = str(slp.get("id"))
-
-        payload = DailyBiometrics(
-            date=d,
-            source="whoop",
-            external_id=external_id,
-            hrv_rmssd=None,
-            resting_hr=None,
-            sleep_duration_min=int(total_sleep_ms / 60000),
-            sleep_score=score.get("sleep_performance_percentage"),
-            sleep_deep_pct=_pct(deep, total_sleep_ms),
-            sleep_rem_pct=_pct(rem, total_sleep_ms),
-            sleep_light_pct=_pct(light, total_sleep_ms),
-            sleep_awake_pct=round((awake / (total_sleep_ms + awake)) * 100, 1) if (total_sleep_ms and awake) else 0.0,
-            sleep_bedtime=datetime.fromisoformat(start_time.replace("Z", "+00:00")),
-            sleep_wakeup=datetime.fromisoformat((slp.get("end") or start_time).replace("Z", "+00:00")),
-            is_nap=slp.get("nap", False),
-            sleep_need_min=None,
-            sleep_debt_min=None,
-            skin_temp=None,
-            spo2_pct=None,
-        )
-        try:
-            await asyncio.to_thread(process_and_save_biometrics, payload, athlete_id, db)
-        except Exception as e:
-            print(f"[whoop.backfill] sleep_upsert_failed date={d} external_id={external_id}: {e}")
-
+    invalidate_context_cache(athlete_id)
     print(f"[whoop.backfill] complete athlete_id={athlete_id}")

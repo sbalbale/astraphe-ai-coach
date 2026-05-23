@@ -11,10 +11,15 @@ from fastapi import HTTPException
 
 from app.config import settings
 from app.services.hr_zones import compute_zone_distribution, get_athlete_zones
+from app.models.workout import WorkoutPayload
+from app.services.ai_coach import invalidate_context_cache
 from app.services.processing import (
     _sport_for_db,
     find_or_create_canonical_workout,
     normalize_sport,
+    process_and_save_workout,
+    recalculate_tss_history,
+    recompute_workout_tss_for_athlete,
 )
 
 STRAVA_OAUTH_TOKEN_URL = "https://www.strava.com/oauth/token"
@@ -79,6 +84,54 @@ def _optional_smallint(value: Any, *, max_val: int = 32767) -> int | None:
     if n > max_val:
         n = max_val
     return n
+
+
+def _avg_pace_sec_km_from_strava(activity: dict[str, Any]) -> int | None:
+    """Convert Strava average_speed (m/s) to pace seconds per km."""
+    speed = activity.get("average_speed")
+    if not speed or float(speed) <= 0:
+        return None
+    return int(round(1000.0 / float(speed)))
+
+
+def _workout_payload_from_strava(
+    activity: dict[str, Any],
+    activity_id: int,
+    sport_type: str,
+    start_time: datetime,
+    ended_at: datetime,
+    elapsed_time: int,
+    zone_dist: dict[str, Any],
+) -> WorkoutPayload:
+    zone_cols = _hr_stream_zone_dist_to_workout_columns(zone_dist)
+    return WorkoutPayload(
+        source="strava",
+        external_id=str(activity_id),
+        strava_activity_id=activity_id,
+        sport=sport_type,
+        started_at=start_time,
+        ended_at=ended_at,
+        duration_seconds=int(max(0, elapsed_time)),
+        distance_m=activity.get("distance"),
+        norm_power_w=_optional_smallint(activity.get("weighted_average_watts")),
+        avg_hr=_optional_smallint(activity.get("average_heartrate")),
+        max_hr=_optional_smallint(activity.get("max_heartrate")),
+        avg_pace_sec_km=_avg_pace_sec_km_from_strava(activity),
+        title=activity.get("name"),
+        hr_zone_0_pct=zone_cols.get("hr_zone_0_pct"),
+        hr_zone_1_pct=zone_cols.get("hr_zone_1_pct"),
+        hr_zone_2_pct=zone_cols.get("hr_zone_2_pct"),
+        hr_zone_3_pct=zone_cols.get("hr_zone_3_pct"),
+        hr_zone_4_pct=zone_cols.get("hr_zone_4_pct"),
+        hr_zone_5_pct=zone_cols.get("hr_zone_5_pct"),
+    )
+
+
+async def _finalize_strava_sync(athlete_id: str, db) -> None:
+    """Recompute missing workout TSS and rebuild PMC after Strava ingest/backfill."""
+    await recompute_workout_tss_for_athlete(athlete_id, db)
+    recalculate_tss_history(athlete_id, db)
+    invalidate_context_cache(athlete_id)
 
 
 def _hr_stream_zone_dist_to_workout_columns(zone_dist: dict[str, Any]) -> dict[str, Any]:
@@ -673,6 +726,7 @@ async def ingest_strava_activity(
     access_token: str | None = None,
     force_refresh: bool = False,
     athlete_id: str | None = None,
+    skip_pmc_recalc: bool = False,
 ) -> dict | None:
     """
     Full pipeline: fetch -> deduplicate -> store streams/laps -> compute zones -> return workout.
@@ -748,10 +802,14 @@ async def ingest_strava_activity(
         return workout
 
     if not needs_enrichment and not was_created:
+        if workout.get("tss") is not None:
+            print(
+                f"[strava.ingest] activity_id={activity_id} already enriched on workout {workout_id}; skip"
+            )
+            return workout
         print(
-            f"[strava.ingest] activity_id={activity_id} already enriched on workout {workout_id}; skip"
+            f"[strava.ingest] activity_id={activity_id} enriched but missing TSS on {workout_id}; recomputing"
         )
-        return workout
 
     # Fetch from Strava when no activity_streams row exists (flag alone is not reliable:
     # reprocess/merge paths may set strava_streams_fetched without persisting streams).
@@ -822,6 +880,11 @@ async def ingest_strava_activity(
     _upsert_activity_streams(db, workout_id, athlete_id, streams)
 
     _persist_activity_laps(db, workout_id, athlete_id, merged_laps)
+
+    tss_payload = _workout_payload_from_strava(
+        activity, activity_id, sport_type, start_time, ended_at, elapsed_time, zone_dist
+    )
+    await process_and_save_workout(tss_payload, athlete_id, db, skip_tss_recalc=skip_pmc_recalc)
 
     print(
         f"[strava.ingest] activity_id={activity_id} athlete={athlete_id} "
@@ -930,6 +993,7 @@ async def backfill_historical_data(
                         db=db,
                         delay=True,
                         access_token=access_token,
+                        skip_pmc_recalc=True,
                     )
                     total_ingested += 1
                     break
@@ -961,6 +1025,7 @@ async def backfill_historical_data(
             break  # last page
         page += 1
 
+    await _finalize_strava_sync(athlete_id, db)
     print(
         f"[strava.backfill] Complete. Ingested {total_ingested} activities "
         f"for athlete={athlete_id}"
