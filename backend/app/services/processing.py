@@ -643,7 +643,13 @@ async def process_and_save_workout(
         asyncio.ensure_future(asyncio.to_thread(recalculate_tss_history, athlete_id, db))
 
 
-def process_and_save_biometrics(payload: DailyBiometrics, athlete_id: str, db):
+def process_and_save_biometrics(
+    payload: DailyBiometrics,
+    athlete_id: str,
+    db,
+    *,
+    skip_pmc_recalc: bool = False,
+):
     # 1. Handle Sleep Periods (if sleep data is present)
     has_sleep_session = payload.sleep_bedtime is not None and payload.sleep_wakeup is not None
     
@@ -798,7 +804,9 @@ def process_and_save_biometrics(payload: DailyBiometrics, athlete_id: str, db):
 
     # 4.5 Rebuild PMC first so today's CTL/ATL exist before readiness is computed.
     # Without this, tss_history has no row for today → current_ctl=0 → TSB = -ATL → readiness≈3.
-    recalculate_tss_history(athlete_id, db)
+    # Batch backfills pass skip_pmc_recalc=True and rebuild once at the end.
+    if not skip_pmc_recalc:
+        recalculate_tss_history(athlete_id, db)
 
     # Fetch current CTL for TSS target calculation (now guaranteed to exist for today)
     ctl_res = db.table("tss_history").select("ctl").eq("athlete_id", athlete_id).eq("date", payload.date.isoformat()).maybe_single().execute()
@@ -926,4 +934,77 @@ def process_and_save_biometrics(payload: DailyBiometrics, athlete_id: str, db):
         "skin_temp": final_temp,
         "spo2_pct": final_spo2
         }, on_conflict="athlete_id,date").execute()
+
+
+def _workout_row_to_payload(row: dict) -> WorkoutPayload:
+    """Build a WorkoutPayload from a stored workouts row for TSS/strain recomputation."""
+    return WorkoutPayload(
+        source=row.get("source") or "manual",
+        external_id=row.get("external_id"),
+        strava_activity_id=row.get("strava_activity_id"),
+        sport=row.get("sport") or "other",
+        started_at=row["started_at"],
+        ended_at=row.get("ended_at"),
+        duration_seconds=row.get("duration_seconds"),
+        distance_m=row.get("distance_m"),
+        norm_power_w=row.get("norm_power_w"),
+        avg_hr=row.get("avg_hr"),
+        max_hr=row.get("max_hr"),
+        avg_pace_sec_km=row.get("avg_pace_sec_km"),
+        tss=None,
+        title=row.get("title"),
+        hr_zone_0_pct=row.get("hr_zone_0_pct"),
+        hr_zone_1_pct=row.get("hr_zone_1_pct"),
+        hr_zone_2_pct=row.get("hr_zone_2_pct"),
+        hr_zone_3_pct=row.get("hr_zone_3_pct"),
+        hr_zone_4_pct=row.get("hr_zone_4_pct"),
+        hr_zone_5_pct=row.get("hr_zone_5_pct"),
+    )
+
+
+async def recompute_workout_tss_for_athlete(athlete_id: str, db) -> int:
+    """Recompute TSS/strain for workouts missing tss. Returns count updated."""
+    res = db.table("workouts").select("*").eq("athlete_id", athlete_id).order("started_at").execute()
+    updated = 0
+    for row in res.data or []:
+        if row.get("tss") is not None:
+            continue
+        await process_and_save_workout(_workout_row_to_payload(row), athlete_id, db, skip_tss_recalc=True)
+        updated += 1
+    return updated
+
+
+async def reprocess_athlete_metrics(athlete_id: str, db) -> dict[str, int]:
+    """Rebuild workout TSS, biometrics aggregates, and PMC (CTL/ATL/TSB) for one athlete."""
+    workouts_res = db.table("workouts").select("*").eq("athlete_id", athlete_id).order("started_at").execute()
+    workout_count = 0
+    for row in workouts_res.data or []:
+        await process_and_save_workout(_workout_row_to_payload(row), athlete_id, db, skip_tss_recalc=True)
+        workout_count += 1
+
+    biometrics_res = db.table("biometrics").select("*").eq("athlete_id", athlete_id).order("date").execute()
+    bio_count = 0
+    for b in biometrics_res.data or []:
+        payload = DailyBiometrics(
+            date=b["date"],
+            source=b.get("hrv_source") or "whoop",
+            hrv_rmssd=float(b["hrv_rmssd"]) if b.get("hrv_rmssd") is not None else None,
+            resting_hr=b.get("resting_hr"),
+            sleep_duration_min=None,
+            sleep_score=b.get("sleep_score"),
+            sleep_deep_pct=float(b["sleep_deep_pct"]) if b.get("sleep_deep_pct") is not None else None,
+            sleep_rem_pct=float(b["sleep_rem_pct"]) if b.get("sleep_rem_pct") is not None else None,
+            sleep_light_pct=float(b["sleep_light_pct"]) if b.get("sleep_light_pct") is not None else None,
+            sleep_awake_pct=float(b["sleep_awake_pct"]) if b.get("sleep_awake_pct") is not None else None,
+            sleep_bedtime=None,
+            sleep_wakeup=None,
+            skin_temp=float(b["skin_temp"]) if b.get("skin_temp") is not None else None,
+            spo2_pct=float(b["spo2_pct"]) if b.get("spo2_pct") is not None else None,
+            recovery_score=b.get("recovery_score"),
+        )
+        process_and_save_biometrics(payload, athlete_id, db, skip_pmc_recalc=True)
+        bio_count += 1
+
+    recalculate_tss_history(athlete_id, db)
+    return {"workouts": workout_count, "biometrics": bio_count}
 

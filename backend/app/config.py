@@ -23,8 +23,8 @@ class Settings(BaseSettings):
     # --- Gemini AI ---
     GEMINI_API_KEY: str = "test-gemini-key"
     GEMINI_MODEL: str = "gemma-4-26b-a4b-it"
-    GEMINI_ANALYSIS_MODEL: str = "gemini-3-flash-lite"
-    GEMINI_EMBEDDING_MODEL: str = "gemini-embedding-2"
+    GEMINI_ANALYSIS_MODEL: str = "gemini-flash-lite-latest"
+    GEMINI_EMBEDDING_MODEL: str = "gemini-embedding-001"
 
     # --- Google Cloud ---
     GCP_PROJECT_ID: Optional[str] = None

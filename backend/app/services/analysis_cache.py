@@ -122,8 +122,27 @@ def upsert_analysis(
 
 
 def generate_gemini_analysis(prompt: str, model_name: str) -> Tuple[str, str]:
-    effective_model = (model_name or settings.GEMINI_MODEL)
-    resp = _client.models.generate_content(model=effective_model, contents=prompt)
-    text = getattr(resp, "text", "") or ""
-    return clamp_to_two_sentences(text), effective_model
+    requested = (model_name or settings.GEMINI_ANALYSIS_MODEL).strip()
+    fallback = (settings.GEMINI_ANALYSIS_MODEL or "gemini-flash-lite-latest").strip()
+    candidates = [requested]
+    if fallback and fallback not in candidates:
+        candidates.append(fallback)
+
+    last_err: Exception | None = None
+    for effective_model in candidates:
+        try:
+            resp = _client.models.generate_content(model=effective_model, contents=prompt)
+            text = getattr(resp, "text", "") or ""
+            return clamp_to_two_sentences(text), effective_model
+        except Exception as e:
+            last_err = e
+            err_text = str(e)
+            if "404" in err_text or "NOT_FOUND" in err_text:
+                print(f"[analysis] model {effective_model} unavailable, trying fallback")
+                continue
+            raise
+
+    if last_err is not None:
+        raise last_err
+    return "", requested
 
