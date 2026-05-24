@@ -33,7 +33,10 @@
   }
 </script>
 
-<div class="flex bg-bg1 border-t border-border pt-2 pb-[max(8px,env(safe-area-inset-bottom))] shrink-0">
+<div
+  class="flex bg-bg1 border-t border-border pt-2 shrink-0"
+  style="padding-bottom: max(8px, env(safe-area-inset-bottom, 0px));"
+>
   {#each NAV_ITEMS_MOBILE as item}
     {@const active =
       currentPath === item.id || (currentPath === '/' && item.id === '/dashboard')}
