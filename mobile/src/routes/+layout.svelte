@@ -4,6 +4,7 @@
   import { page } from '$app/stores';
   import { afterNavigate, goto } from '$app/navigation';
   import { resolve } from '$app/paths';
+  import { navTo } from '$lib/nav';
   import Sidebar from '$lib/components/Sidebar.svelte';
   import BottomNav from '$lib/components/BottomNav.svelte';
   import ConfirmHost from '$lib/components/ConfirmHost.svelte';
@@ -168,23 +169,38 @@
       {#if ['/recovery', '/sleep', '/strain'].includes($page.url.pathname)}
         <div class="flex gap-5 px-4 pt-2.5 border-b border-border shrink-0">
           {#each [{id: '/recovery', label: 'Recovery'}, {id: '/sleep', label: 'Sleep'}, {id: '/strain', label: 'Strain'}] as t (t.id)}
-            <a href={t.id} class="pb-2 text-xs font-medium font-mono tracking-wide border-b-2 -mb-px no-underline transition-all duration-200
-              {$page.url.pathname === t.id ? 'border-blue text-text0' : 'border-transparent text-text2'}">
+            <button
+              type="button"
+              class="pb-2 text-xs font-medium font-mono tracking-wide border-b-2 -mb-px bg-transparent cursor-pointer transition-all duration-200
+              {$page.url.pathname === t.id ? 'border-blue text-text0' : 'border-transparent text-text2'}"
+              onclick={() => navTo(t.id)}
+              aria-current={$page.url.pathname === t.id ? 'page' : undefined}
+            >
               {t.label}
-            </a>
+            </button>
           {/each}
         </div>
       {:else if ['/dashboard', '/training', '/zones'].includes($page.url.pathname)}
         <div class="flex gap-5 px-4 pt-2.5 border-b border-border shrink-0">
           {#each [{id: '/dashboard', label: 'Home'}, {id: '/training', label: 'Training'}, {id: '/zones', label: 'Zones'}] as t (t.id)}
-            <a
-              href={t.id}
-              class="pb-2 text-xs font-medium font-mono tracking-wide border-b-2 -mb-px no-underline transition-all duration-200
+            <button
+              type="button"
+              class="pb-2 text-xs font-medium font-mono tracking-wide border-b-2 -mb-px bg-transparent cursor-pointer transition-all duration-200
               {$page.url.pathname === t.id ? 'border-blue text-text0' : 'border-transparent text-text2'}"
-              onclick={t.id === '/training' ? onTrainingTabClick : undefined}
+              onclick={(e) => {
+                if (t.id === '/training') {
+                  onTrainingTabClick(e);
+                  if (!e.defaultPrevented && $page.url.pathname !== '/training') {
+                    navTo('/training');
+                  }
+                } else {
+                  navTo(t.id);
+                }
+              }}
+              aria-current={$page.url.pathname === t.id ? 'page' : undefined}
             >
               {t.label}
-            </a>
+            </button>
           {/each}
         </div>
       {/if}

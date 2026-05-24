@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { navTo } from '$lib/nav';
+
   let { currentPath } = $props<{ currentPath: string }>();
 
   const NAV_ITEMS_MOBILE = [
@@ -13,8 +15,8 @@
     const c = active ? '#4621FF' : 'currentColor';
     const fill = active ? '#4621FF' : 'none';
     const fillLight = active ? 'rgba(70,33,255,0.2)' : 'none';
-    
-    switch(id) {
+
+    switch (id) {
       case '/dashboard':
         return `<svg width="22" height="22" fill="none" viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8" rx="2" fill="${fill}" stroke="${c}" stroke-width="1.5"/><rect x="13" y="3" width="8" height="8" rx="2" fill="${fill}" stroke="${c}" stroke-width="1.5"/><rect x="3" y="13" width="8" height="8" rx="2" fill="${fill}" stroke="${c}" stroke-width="1.5"/><rect x="13" y="13" width="8" height="8" rx="2" fill="none" stroke="${c}" stroke-width="1.5"/></svg>`;
       case '/recovery':
@@ -33,11 +35,19 @@
 
 <div class="flex bg-bg1 border-t border-border pt-2 pb-[max(8px,env(safe-area-inset-bottom))] shrink-0">
   {#each NAV_ITEMS_MOBILE as item}
-    {@const active = currentPath === item.id || (currentPath === '/' && item.id === '/dashboard')}
-    <a href={item.id} class="flex-1 flex flex-col items-center gap-1 bg-transparent border-none cursor-pointer py-1 transition-colors duration-200 no-underline {active ? 'text-blue' : 'text-text2'}">
+    {@const active =
+      currentPath === item.id || (currentPath === '/' && item.id === '/dashboard')}
+    <button
+      type="button"
+      class="flex-1 flex flex-col items-center gap-1 bg-transparent border-none cursor-pointer py-1 transition-colors duration-200 {active
+        ? 'text-blue'
+        : 'text-text2'}"
+      onclick={() => navTo(item.id)}
+      aria-current={active ? 'page' : undefined}
+    >
       <!-- eslint-disable-next-line svelte/no-at-html-tags -->
       {@html getIcon(item.id, active)}
       <span class="text-[9px] font-mono tracking-[0.06em] uppercase">{item.label}</span>
-    </a>
+    </button>
   {/each}
 </div>
