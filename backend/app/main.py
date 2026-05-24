@@ -147,6 +147,9 @@ app.add_middleware(IPRateLimitMiddleware)        # middle
 app.add_middleware(                             # outermost
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
+    # Allow any LAN IP (192.168.x.x / 10.x.x.x) for local iOS/device testing.
+    # Private IPs are unreachable from the public internet so this is safe in prod.
+    allow_origin_regex=r'https?://(192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+)(:\d+)?',
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
