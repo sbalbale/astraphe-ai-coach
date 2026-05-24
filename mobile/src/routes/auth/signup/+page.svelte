@@ -33,7 +33,7 @@
     }
 
     if (data.session) {
-      await authStore.refreshSession();
+      authStore.applySession(data.session);
       await goto('/onboarding', { replaceState: true });
     } else {
       // Email confirmation required — Supabase sent the confirmation email
