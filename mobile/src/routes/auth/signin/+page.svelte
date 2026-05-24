@@ -1,5 +1,6 @@
 <script lang="ts">
   import { supabase } from '$lib/supabase';
+  import { authStore } from '$lib/stores/authStore.svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
 
@@ -24,7 +25,9 @@
       errorMsg = error.message;
       loading = false;
     } else {
-      goto('/dashboard');
+      await authStore.refreshSession();
+      await goto('/dashboard', { replaceState: true });
+      loading = false;
     }
   }
 </script>

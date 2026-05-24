@@ -21,6 +21,7 @@ export function installInAppLinkInterceptor(): () => void {
 		if (
 			!href ||
 			href.startsWith('#') ||
+			href.startsWith('/auth') ||
 			href.startsWith('mailto:') ||
 			href.startsWith('tel:') ||
 			href.startsWith('javascript:')

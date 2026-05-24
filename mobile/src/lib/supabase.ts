@@ -9,9 +9,5 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
     persistSession: true,
     autoRefreshToken: true,
-    // Safari can hang indefinitely on the default Web Locks auth mutex.
-    lock: {
-      acquireTimeout: 8000,
-    },
   },
 });

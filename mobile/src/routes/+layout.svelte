@@ -5,7 +5,6 @@
   import { afterNavigate, goto } from '$app/navigation';
   import { resolve } from '$app/paths';
   import { installInAppLinkInterceptor, navTo } from '$lib/nav';
-  import { setupPwaServiceWorker } from '$lib/pwa/serviceWorker';
   import { isStandaloneDisplayMode } from '$lib/utils/pwa';
   import Sidebar from '$lib/components/Sidebar.svelte';
   import BottomNav from '$lib/components/BottomNav.svelte';
@@ -49,7 +48,6 @@
     if (isStandaloneDisplayMode()) {
       document.documentElement.classList.add('pwa-standalone');
     }
-    void setupPwaServiceWorker();
     const removeLinkInterceptor = installInAppLinkInterceptor();
 
     // Dynamic import so a Capacitor bridge error can't crash the layout
