@@ -10,7 +10,7 @@ from app.models.athlete import AthleteState, AthleteProfileUpdate
 from app.services.algorithms import compute_z_score
 from app.services.hr_zones import athlete_dict_with_hr_zones, get_athlete_zones, optional_canonical_hr_zone_method
 from app.services.resend_service import sync_marketing_contact
-from app.dependencies import get_current_athlete, get_current_user_email, get_user_db, get_admin_db
+from app.dependencies import get_current_athlete, get_current_user_email, get_user_db, get_admin_db, run_supabase_call
 from app.core.redis import get_redis
 
 router = APIRouter(prefix="/v1/athlete", tags=["Athlete"])
@@ -184,11 +184,11 @@ async def get_athlete_state(athlete_id: str = Depends(get_current_athlete), db =
         return cached
 
     display_name, tss_row, bio, window_rows, bio_hist_data = await asyncio.gather(
-        asyncio.to_thread(_fetch_athlete_name_sync, db, athlete_id),
-        asyncio.to_thread(_fetch_latest_tss_sync, db, athlete_id),
-        asyncio.to_thread(_fetch_latest_bio_sync, db, athlete_id),
-        asyncio.to_thread(_fetch_bio_window_sync, db, athlete_id),
-        asyncio.to_thread(_fetch_bio_hist_sync, db, athlete_id),
+        run_supabase_call(lambda: _fetch_athlete_name_sync(db, athlete_id)),
+        run_supabase_call(lambda: _fetch_latest_tss_sync(db, athlete_id)),
+        run_supabase_call(lambda: _fetch_latest_bio_sync(db, athlete_id)),
+        run_supabase_call(lambda: _fetch_bio_window_sync(db, athlete_id)),
+        run_supabase_call(lambda: _fetch_bio_hist_sync(db, athlete_id)),
     )
 
     if display_name is None:
