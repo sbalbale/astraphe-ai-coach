@@ -4,6 +4,7 @@
   import { authStore } from '$lib/stores/authStore.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { goto } from '$app/navigation';
+  import { navTo } from '$lib/nav';
   import { normalizeUnits, type Units } from '$lib/utils/units';
 
   const menu = [
@@ -81,10 +82,14 @@
     <p class="text-[13px] font-semibold mb-3">Account</p>
     <div class="flex flex-col gap-1">
       {#each menu as item (item.href)}
-        <a href={item.href} class="w-full flex justify-between items-center py-2.5 bg-transparent border-none text-text1 text-[13px] cursor-pointer hover:text-text0 transition-colors">
+        <button
+          type="button"
+          class="w-full flex justify-between items-center py-2.5 bg-transparent border-none text-text1 text-[13px] cursor-pointer hover:text-text0 transition-colors text-left"
+          onclick={() => navTo(item.href)}
+        >
           <span>{item.label}</span>
           <span class="text-text2">→</span>
-        </a>
+        </button>
       {/each}
     </div>
   </Card>

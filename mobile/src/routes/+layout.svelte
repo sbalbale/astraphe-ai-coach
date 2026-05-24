@@ -4,7 +4,8 @@
   import { page } from '$app/stores';
   import { afterNavigate, goto } from '$app/navigation';
   import { resolve } from '$app/paths';
-  import { navTo } from '$lib/nav';
+  import { installInAppLinkInterceptor, navTo } from '$lib/nav';
+  import { isStandaloneDisplayMode } from '$lib/utils/pwa';
   import Sidebar from '$lib/components/Sidebar.svelte';
   import BottomNav from '$lib/components/BottomNav.svelte';
   import ConfirmHost from '$lib/components/ConfirmHost.svelte';
@@ -44,6 +45,11 @@
     // Remove the HTML-only pre-load indicator now that Svelte has mounted
     document.getElementById('pre-load')?.remove();
 
+    if (isStandaloneDisplayMode()) {
+      document.documentElement.classList.add('pwa-standalone');
+    }
+    const removeLinkInterceptor = installInAppLinkInterceptor();
+
     // Dynamic import so a Capacitor bridge error can't crash the layout
     let cleanup: (() => void) | null = null;
     import('@capacitor/app')
@@ -69,7 +75,10 @@
       .then((handle) => { cleanup = () => handle.remove(); })
       .catch(() => { /* Not in Capacitor context */ });
 
-    return () => { cleanup?.(); };
+    return () => {
+      removeLinkInterceptor();
+      cleanup?.();
+    };
   });
 
   const profileComplete = $derived.by(() => {

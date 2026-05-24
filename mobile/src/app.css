@@ -46,9 +46,15 @@
 
   html, body {
     @apply h-full bg-bg0 text-text0 font-sans overflow-hidden antialiased;
-    /* 100dvh overrides h-full on iOS Safari: gives a concrete pixel height so
-       percentage-height children don't collapse to zero during auth loading */
-    height: 100dvh;
+    /* min-height for iOS; avoid 100dvh-only which can overshoot standalone viewport */
+    min-height: 100%;
+    min-height: 100dvh;
+  }
+
+  /* Installed PWA: top inset only — BottomNav owns bottom safe-area padding */
+  html.pwa-standalone body {
+    padding-top: env(safe-area-inset-top, 0px);
+    box-sizing: border-box;
   }
 }
 
