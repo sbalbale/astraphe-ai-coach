@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import type { Session } from '@supabase/supabase-js';
   import { supabase } from '$lib/supabase';
+  import { authStore } from '$lib/stores/authStore.svelte';
   import { goto } from '$app/navigation';
 
   let sessionOk = $state<boolean | null>(null);
@@ -20,7 +21,8 @@
     } catch {
       // Non-fatal
     }
-    goto('/onboarding');
+    await authStore.refreshSession();
+    await goto('/onboarding', { replaceState: true });
   }
 
   onMount(() => {
