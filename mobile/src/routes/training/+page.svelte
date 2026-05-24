@@ -242,7 +242,7 @@
       if (match) selectedWorkout = match;
       return;
     }
-    goto(target, { keepFocus: true, noScroll: true });
+    goto(target, { keepFocus: true, noScroll: true, replaceState: true });
   }
 
   function closeWorkout() {

@@ -7,6 +7,7 @@
   import { confirm } from '$lib/confirm';
   import { format } from 'date-fns';
   import { tick } from 'svelte';
+  import { isStandaloneDisplayMode } from '$lib/utils/pwa';
 
   type Conversation = { id: string; title?: string | null; created_at?: string; updated_at?: string };
   type Message = {
@@ -437,7 +438,12 @@
               {#if msg.image_urls && msg.image_urls.length > 0}
                 <div class="flex gap-2 flex-wrap mb-2">
                   {#each msg.image_urls as u (u)}
-                    <a href={u} target="_blank" rel="noreferrer noopener" class="block">
+                    <a
+                      href={u}
+                      target={isStandaloneDisplayMode() ? undefined : '_blank'}
+                      rel="noopener noreferrer"
+                      class="block"
+                    >
                       <img
                         src={u}
                         alt="upload"
@@ -469,7 +475,12 @@
               {#if msg.image_urls && msg.image_urls.length > 0}
                 <div class="flex gap-2 flex-wrap mb-2 justify-end">
                   {#each msg.image_urls as u (u)}
-                    <a href={u} target="_blank" rel="noreferrer noopener" class="block">
+                    <a
+                      href={u}
+                      target={isStandaloneDisplayMode() ? undefined : '_blank'}
+                      rel="noopener noreferrer"
+                      class="block"
+                    >
                       <img
                         src={u}
                         alt="upload"

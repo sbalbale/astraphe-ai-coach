@@ -2,6 +2,7 @@ import DOMPurify from 'dompurify';
 import { Marked } from 'marked';
 import markedKatex from 'marked-katex-extension';
 import 'katex/dist/katex.min.css';
+import { externalLinkTargetAttr } from '$lib/utils/pwa';
 
 /**
  * marked-katex-extension treats inline math as `$ … $` (often with spaces). Tight
@@ -186,7 +187,7 @@ mdRenderer.link = (...args: unknown[]) => {
   const safeTitle = typeof title === 'string' ? title : undefined;
   const safeText = typeof text === 'string' ? escapeHtmlText(text) : escapeHtmlText(safeHref);
   const titleAttr = safeTitle ? ` title="${escapeHtmlAttr(safeTitle)}"` : '';
-  return `<a href="${escapeHtmlAttr(safeHref)}"${titleAttr} target="_blank" rel="noreferrer noopener">${safeText}</a>`;
+  return `<a href="${escapeHtmlAttr(safeHref)}"${titleAttr}${externalLinkTargetAttr()} rel="noopener noreferrer">${safeText}</a>`;
 };
 
 coachMd.setOptions({

@@ -82,8 +82,9 @@ async function _initWebPush(): Promise<void> {
   const vapidPublicKey = (import.meta.env.VITE_VAPID_PUBLIC_KEY as string | undefined) ?? '';
   if (!vapidPublicKey) return;
 
-  const reg = await navigator.serviceWorker.register('/sw.js');
-  await navigator.serviceWorker.ready;
+  // PWA plugin registers the service worker (injectManifest); wait for it.
+  const reg = await navigator.serviceWorker.ready;
+  if (!reg?.pushManager) return;
 
   let sub = await reg.pushManager.getSubscription();
   if (!sub) {
