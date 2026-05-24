@@ -118,6 +118,11 @@
   /** Chart row where the user started or is adjusting the selection */
   let interactionChartId = $state<ChartId | null>(null);
 
+  // Single-finger touch scrubbing state
+  let touchStartX: number | null = null;
+  let touchStartY: number | null = null;
+  let isTouchScrubbing = $state(false);
+
   const hasSelection = $derived(
     selStartIdx !== null &&
       selEndIdx !== null &&
@@ -341,15 +346,62 @@
   }
 
   function onTouchStart(e: TouchEvent) {
-    if (e.touches.length !== 2) return;
-    e.preventDefault();
-    updateTwoFingerSelection(e);
+    if (e.touches.length === 2) {
+      e.preventDefault();
+      updateTwoFingerSelection(e);
+      return;
+    }
+    if (e.touches.length === 1) {
+      touchStartX = e.touches[0].clientX;
+      touchStartY = e.touches[0].clientY;
+      isTouchScrubbing = false;
+    }
   }
 
   function onTouchMove(e: TouchEvent) {
-    if (e.touches.length !== 2) return;
+    if (e.touches.length === 2) {
+      e.preventDefault();
+      updateTwoFingerSelection(e);
+      return;
+    }
+    if (e.touches.length !== 1) return;
+
+    const touch = e.touches[0];
+
+    if (!isTouchScrubbing) {
+      if (touchStartX === null || touchStartY === null) return;
+      const dx = Math.abs(touch.clientX - touchStartX);
+      const dy = Math.abs(touch.clientY - touchStartY);
+      // Wait for at least 5px movement before deciding direction
+      if (dx < 5 && dy < 5) return;
+      if (dx > dy) {
+        isTouchScrubbing = true;
+      } else {
+        // Vertical intent — let scroll win, stop tracking
+        touchStartX = null;
+        touchStartY = null;
+        return;
+      }
+    }
+
+    // Horizontal scrub: prevent scroll and update crosshair
     e.preventDefault();
-    updateTwoFingerSelection(e);
+    const idx = clientXToIndex(touch.clientX);
+    hoveredIdx = idx;
+    const px = plotXFromClientX(touch.clientX);
+    if (px != null && tArr.length && innerW > 0) {
+      hoveredX = xScale(tArr[Math.min(idx, tArr.length - 1)] / 60);
+    }
+  }
+
+  function onTouchEnd() {
+    if (isTouchScrubbing) {
+      isTouchScrubbing = false;
+      hoveredIdx = null;
+      hoveredX = null;
+    }
+    touchStartX = null;
+    touchStartY = null;
   }
 
   const chartModels = $derived.by((): ChartModel[] => {
@@ -709,11 +761,16 @@
     const opts: AddEventListenerOptions = { passive: false };
     const onStart = (e: TouchEvent) => onTouchStart(e);
     const onMove = (e: TouchEvent) => onTouchMove(e);
+    const onEnd = () => onTouchEnd();
     el.addEventListener('touchstart', onStart, opts);
     el.addEventListener('touchmove', onMove, opts);
+    el.addEventListener('touchend', onEnd);
+    el.addEventListener('touchcancel', onEnd);
     return () => {
       el.removeEventListener('touchstart', onStart, opts);
       el.removeEventListener('touchmove', onMove, opts);
+      el.removeEventListener('touchend', onEnd);
+      el.removeEventListener('touchcancel', onEnd);
     };
   });
 
@@ -811,7 +868,7 @@
   {:else}
     <div
       class="chart-interaction-wrapper space-y-3"
-      style="touch-action: {isDragging ? 'none' : 'pan-y'};"
+      style="touch-action: {isDragging || isTouchScrubbing ? 'none' : 'pan-y'};"
       bind:this={chartInteractionEl}
       onpointerdown={onChartPointerDown}
       onpointermove={onChartPointerMove}
