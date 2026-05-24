@@ -16,9 +16,12 @@ from app.dependencies import (
 )
 from app.services.algorithms import compute_z_score
 from app.services.analysis_cache import (
+    analysis_cache_is_valid,
     fingerprint_context,
+    format_analysis_failure_model,
     generate_gemini_analysis,
     get_cached_analysis,
+    is_retryable_failed_analysis,
     upsert_analysis,
 )
 
@@ -678,7 +681,7 @@ def _get_or_compute(
 ) -> Dict[str, Any]:
     fp = fingerprint_context(context)
     cached = get_cached_analysis(db, athlete_id, analysis_type, scope_key)
-    if cached and cached.get("fingerprint") == fp and cached.get("content"):
+    if analysis_cache_is_valid(cached, fp):
         return {"content": cached.get("content"), "fingerprint": fp, "cached": True}
 
     # Only trial/premium get Gemini-generated narrative analysis.
@@ -709,6 +712,7 @@ def _get_or_compute(
         except Exception:
             pass
         fb = _fallback_content(analysis_type, context)
+        failed_model = format_analysis_failure_model(model_name, "error_fallback", e)
         upsert_analysis(
             db=db,
             athlete_id=athlete_id,
@@ -716,19 +720,24 @@ def _get_or_compute(
             scope_key=scope_key,
             fingerprint=fp,
             content=fb,
-            model="gemini:error_fallback",
+            model=failed_model,
         )
         return {
             "content": fb,
             "fingerprint": fp,
             "cached": False,
             "note": "model_error_fallback",
-            "model": "gemini:error_fallback",
+            "model": failed_model,
         }
 
     final_text = (text or "").strip()
     if not final_text:
         fb = _fallback_content(analysis_type, context)
+        empty_model = format_analysis_failure_model(
+            used_model or model_name,
+            "empty_fallback",
+            "model returned empty text",
+        )
         upsert_analysis(
             db=db,
             athlete_id=athlete_id,
@@ -736,13 +745,13 @@ def _get_or_compute(
             scope_key=scope_key,
             fingerprint=fp,
             content=fb,
-            model=f"{used_model or 'gemini'}:empty_fallback",
+            model=empty_model,
         )
         return {
             "content": fb,
             "fingerprint": fp,
             "cached": False,
-            "model": used_model,
+            "model": empty_model,
             "note": "model_empty_fallback",
         }
 
@@ -851,7 +860,7 @@ async def dashboard_summary_analysis(
     cached = get_cached_analysis(db, athlete_id, "dashboard_summary", scope_key)
     flight_key = f"{athlete_id}:{scope_key}"
     if cached and cached.get("content"):
-        stale = cached.get("fingerprint") != fp
+        stale = cached.get("fingerprint") != fp or is_retryable_failed_analysis(cached.get("model"))
         if stale and tier in ("trial", "premium") and flight_key not in _regen_in_flight:
             _regen_in_flight.add(flight_key)
             async def _run_stale():

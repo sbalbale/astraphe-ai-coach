@@ -154,6 +154,77 @@ def _strip_none_update_values(d: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in d.items() if v is not None}
 
 
+def _parse_workout_dt(val: Any) -> datetime | None:
+    if val is None:
+        return None
+    if isinstance(val, datetime):
+        return val
+    if isinstance(val, str):
+        try:
+            s = val
+            if s.endswith("Z"):
+                s = s[:-1] + "+00:00"
+            return datetime.fromisoformat(s)
+        except ValueError:
+            return None
+    return None
+
+
+def _workout_duration_seconds_from_row(row: dict) -> int:
+    """Match GET /v1/workouts duration resolution (explicit fields, then ended - started)."""
+    for k in ("duration_seconds", "duration_secs"):
+        if row.get(k) is not None:
+            try:
+                val = int(row[k])
+                if val >= 0:
+                    return val
+            except (TypeError, ValueError):
+                pass
+    start = _parse_workout_dt(row.get("started_at"))
+    end = _parse_workout_dt(row.get("ended_at"))
+    if start and end:
+        if start.tzinfo is None and end.tzinfo is not None:
+            start = start.replace(tzinfo=timezone.utc)
+        if end.tzinfo is None and start.tzinfo is not None:
+            end = end.replace(tzinfo=timezone.utc)
+        return max(0, int((end - start).total_seconds()))
+    return 0
+
+
+def _compute_daily_strain_from_workout_rows(rows: list[dict]) -> int:
+    day_zone_minutes = {1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0, 5: 0.0}
+    for w in rows:
+        dur_sec = _workout_duration_seconds_from_row(w)
+        if not dur_sec:
+            continue
+        for z in range(1, 6):
+            pct = w.get(f"hr_zone_{z}_pct") or 0
+            day_zone_minutes[z] += (float(pct) / 100.0) * (dur_sec / 60.0)
+    return compute_strain_score(day_zone_minutes)
+
+
+def _refresh_daily_strain_for_day_sync(db: Any, athlete_id: str, day: date) -> None:
+    """Recompute biometrics.strain_score for one calendar day from stored workout zones."""
+    day_start = day.isoformat()
+    day_end = (day + timedelta(days=1)).isoformat()
+    res = (
+        db.table("workouts")
+        .select(
+            "hr_zone_1_pct,hr_zone_2_pct,hr_zone_3_pct,hr_zone_4_pct,hr_zone_5_pct,"
+            "duration_seconds,duration_secs,started_at,ended_at"
+        )
+        .eq("athlete_id", athlete_id)
+        .gte("started_at", day_start)
+        .lt("started_at", day_end)
+        .execute()
+    )
+    rows = (res.data if res else None) or []
+    strain = _compute_daily_strain_from_workout_rows(rows)
+    db.table("biometrics").update({"strain_score": strain}).eq("athlete_id", athlete_id).eq(
+        "date", day.isoformat()
+    ).execute()
+
+
 def _find_or_create_canonical_workout_sync(
     db: Any,
     athlete_id: str,
@@ -502,6 +573,7 @@ async def process_and_save_workout(
     athlete_id: str,
     db: Any,
     skip_tss_recalc: bool = False,
+    skip_daily_strain_refresh: bool = False,
 ) -> None:
     tss = 0.0
     wt_raw = (payload.workout_type or "").strip()
@@ -641,6 +713,11 @@ async def process_and_save_workout(
     # In batch contexts (Strava/WHOOP backfill) the caller recalculates TSS once at the end.
     if not skip_tss_recalc:
         asyncio.ensure_future(asyncio.to_thread(recalculate_tss_history, athlete_id, db))
+    if not skip_daily_strain_refresh:
+        workout_day = start_utc.date()
+        asyncio.ensure_future(
+            asyncio.to_thread(_refresh_daily_strain_for_day_sync, db, athlete_id, workout_day)
+        )
 
 
 def process_and_save_biometrics(
@@ -868,18 +945,19 @@ def process_and_save_biometrics(
         existing = existing_res.data
 
     # 7.5 Calculate Daily Astrape Strain from Workouts
-    # Fetch all workouts for this day to aggregate raw strain
-    day_workouts_res = db.table("workouts").select("hr_zone_1_pct, hr_zone_2_pct, hr_zone_3_pct, hr_zone_4_pct, hr_zone_5_pct, duration_seconds").eq("athlete_id", athlete_id).filter("started_at", "gte", payload.date.isoformat()).filter("started_at", "lt", (payload.date + timedelta(days=1)).isoformat()).execute()
-    
-    day_zone_minutes = {1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0, 5: 0.0}
-    if day_workouts_res and day_workouts_res.data:
-        for w in day_workouts_res.data:
-            dur_sec = w.get("duration_seconds") or 0
-            for z in range(1, 6):
-                pct = w.get(f"hr_zone_{z}_pct") or 0
-                day_zone_minutes[z] += (pct / 100.0) * (dur_sec / 60.0)
-    
-    astrape_strain_score = compute_strain_score(day_zone_minutes)
+    day_workouts_res = (
+        db.table("workouts")
+        .select(
+            "hr_zone_1_pct,hr_zone_2_pct,hr_zone_3_pct,hr_zone_4_pct,hr_zone_5_pct,"
+            "duration_seconds,duration_secs,started_at,ended_at"
+        )
+        .eq("athlete_id", athlete_id)
+        .gte("started_at", payload.date.isoformat())
+        .lt("started_at", (payload.date + timedelta(days=1)).isoformat())
+        .execute()
+    )
+    day_rows = (day_workouts_res.data if day_workouts_res else None) or []
+    astrape_strain_score = _compute_daily_strain_from_workout_rows(day_rows)
 
     final_hrv = payload.hrv_rmssd if payload.hrv_rmssd is not None else existing.get("hrv_rmssd")
     final_rhr = payload.resting_hr if payload.resting_hr is not None else existing.get("resting_hr")
@@ -979,7 +1057,13 @@ async def reprocess_athlete_metrics(athlete_id: str, db) -> dict[str, int]:
     workouts_res = db.table("workouts").select("*").eq("athlete_id", athlete_id).order("started_at").execute()
     workout_count = 0
     for row in workouts_res.data or []:
-        await process_and_save_workout(_workout_row_to_payload(row), athlete_id, db, skip_tss_recalc=True)
+        await process_and_save_workout(
+            _workout_row_to_payload(row),
+            athlete_id,
+            db,
+            skip_tss_recalc=True,
+            skip_daily_strain_refresh=True,
+        )
         workout_count += 1
 
     biometrics_res = db.table("biometrics").select("*").eq("athlete_id", athlete_id).order("date").execute()
