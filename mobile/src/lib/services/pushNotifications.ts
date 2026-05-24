@@ -2,6 +2,7 @@ import { Capacitor } from '@capacitor/core';
 import { PushNotifications } from '@capacitor/push-notifications';
 import { goto } from '$app/navigation';
 import { api } from '$lib/api';
+import { isStandaloneDisplayMode } from '$lib/utils/pwa';
 
 /**
  * Request push permission without registering.
@@ -77,13 +78,16 @@ async function _initNativePush(): Promise<void> {
 }
 
 async function _initWebPush(): Promise<void> {
+  if (!isStandaloneDisplayMode()) return;
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
 
   const vapidPublicKey = (import.meta.env.VITE_VAPID_PUBLIC_KEY as string | undefined) ?? '';
   if (!vapidPublicKey) return;
 
-  // PWA plugin registers the service worker (injectManifest); wait for it.
-  const reg = await navigator.serviceWorker.ready;
+  const reg = await Promise.race([
+    navigator.serviceWorker.ready,
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), 8000)),
+  ]);
   if (!reg?.pushManager) return;
 
   let sub = await reg.pushManager.getSubscription();
