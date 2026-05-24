@@ -1,5 +1,6 @@
 <script lang="ts">
   import { supabase } from '$lib/supabase';
+  import { authStore } from '$lib/stores/authStore.svelte';
   import { authRedirectUrl } from '$lib/utils/redirectUrl';
   import { goto } from '$app/navigation';
   
@@ -32,8 +33,8 @@
     }
 
     if (data.session) {
-      // Email confirmations disabled (local dev only) — go straight to onboarding
-      goto('/onboarding');
+      await authStore.refreshSession();
+      await goto('/onboarding', { replaceState: true });
     } else {
       // Email confirmation required — Supabase sent the confirmation email
       errorMsg = 'Check your email to confirm your account, then sign in.';

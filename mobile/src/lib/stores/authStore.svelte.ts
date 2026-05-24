@@ -35,6 +35,29 @@ class AuthState {
     this.init();
   }
 
+  /** Sync store from Supabase after sign-in / sign-up (before layout auth guards run). */
+  async refreshSession(): Promise<Session | null> {
+    try {
+      const { data, error } = await supabase.auth.getSession();
+      if (error) {
+        console.warn('[auth] refreshSession:', error.message);
+        this.session = null;
+        this.user = null;
+        return null;
+      }
+      const session = data.session;
+      this.session = session;
+      this.user = session?.user ?? null;
+      if (session) {
+        await this.hydrateUserFromServer();
+      }
+      return session;
+    } catch (e) {
+      console.warn('[auth] refreshSession failed', e);
+      return null;
+    }
+  }
+
   private async hydrateUserFromServer() {
     // `session.user` can be stale for app_metadata; fetch the canonical user object.
     try {
@@ -56,13 +79,19 @@ class AuthState {
   }
 
   async init() {
+    supabase.auth.onAuthStateChange(async (event, session) => {
+      this.session = session;
+      this.user = session?.user ?? null;
+      if (session && event !== 'USER_UPDATED') {
+        await this.hydrateUserFromServer();
+      }
+    });
+
     try {
-      // Clear stale sessions from a different Supabase project
-      // 8s timeout prevents indefinite ASTRAPE screen on slow / buggy mobile browsers
       const sessionRace = await Promise.race([
         supabase.auth.getSession(),
         new Promise<{ data: { session: null }; error: null }>((resolve) =>
-          setTimeout(() => resolve({ data: { session: null }, error: null }), 8000)
+          setTimeout(() => resolve({ data: { session: null }, error: null }), 12000)
         ),
       ]);
       const { data: { session } } = sessionRace;
@@ -73,8 +102,7 @@ class AuthState {
         const issuer: string = typeof iss === 'string' ? iss : '';
         const isValidIssuer =
           issuer.startsWith(EXPECTED_SUPABASE_URL) ||
-          issuer.includes('127.0.0.1:57321') ||
-          EXPECTED_SUPABASE_URL.includes('supabase.co');
+          issuer.includes('127.0.0.1:57321');
 
         if (!isValidIssuer) {
           console.warn('[auth] Stale session from different Supabase project — signing out');
@@ -90,14 +118,6 @@ class AuthState {
       if (session) {
         await this.hydrateUserFromServer();
       }
-
-      supabase.auth.onAuthStateChange(async (event, session) => {
-        this.session = session;
-        this.user = session?.user ?? null;
-        if (session && event !== 'USER_UPDATED') {
-          await this.hydrateUserFromServer();
-        }
-      });
     } catch (e) {
       console.warn('[auth] init failed', e);
       this.session = null;
