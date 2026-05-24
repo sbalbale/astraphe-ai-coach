@@ -16,7 +16,7 @@
     loading = true;
     errorMsg = '';
     
-    const { error } = await supabase.auth.signInWithPassword({
+    const { data, error } = await supabase.auth.signInWithPassword({
       email,
       password,
     });
@@ -24,11 +24,18 @@
     if (error) {
       errorMsg = error.message;
       loading = false;
+      return;
+    }
+
+    // Use the session returned by sign-in — Safari can return null from getSession()
+    // for a moment after login, which caused a redirect loop back to this page.
+    if (data.session) {
+      authStore.applySession(data.session);
     } else {
       await authStore.refreshSession();
-      await goto('/dashboard', { replaceState: true });
-      loading = false;
     }
+    await goto('/dashboard', { replaceState: true });
+    loading = false;
   }
 </script>
 

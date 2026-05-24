@@ -35,10 +35,30 @@ class AuthState {
     this.init();
   }
 
+  /** Apply session from sign-in/sign-up response (avoids Safari getSession race after login). */
+  applySession(session: Session | null): void {
+    this.session = session;
+    this.user = session?.user ?? null;
+    if (session) void this.hydrateUserFromServer();
+  }
+
   /** Sync store from Supabase after sign-in / sign-up (before layout auth guards run). */
-  async refreshSession(): Promise<Session | null> {
+  async refreshSession(knownSession?: Session | null): Promise<Session | null> {
+    if (knownSession) {
+      this.applySession(knownSession);
+      return knownSession;
+    }
     try {
-      const { data, error } = await supabase.auth.getSession();
+      const result = await Promise.race([
+        supabase.auth.getSession(),
+        new Promise<{ data: { session: null }; error: { message: string } }>((resolve) =>
+          setTimeout(
+            () => resolve({ data: { session: null }, error: { message: 'getSession timeout' } }),
+            5000
+          )
+        ),
+      ]);
+      const { data, error } = result;
       if (error) {
         console.warn('[auth] refreshSession:', error.message);
         this.session = null;
@@ -46,11 +66,7 @@ class AuthState {
         return null;
       }
       const session = data.session;
-      this.session = session;
-      this.user = session?.user ?? null;
-      if (session) {
-        await this.hydrateUserFromServer();
-      }
+      this.applySession(session);
       return session;
     } catch (e) {
       console.warn('[auth] refreshSession failed', e);
@@ -79,11 +95,11 @@ class AuthState {
   }
 
   async init() {
-    supabase.auth.onAuthStateChange(async (event, session) => {
+    supabase.auth.onAuthStateChange((event, session) => {
       this.session = session;
       this.user = session?.user ?? null;
       if (session && event !== 'USER_UPDATED') {
-        await this.hydrateUserFromServer();
+        void this.hydrateUserFromServer();
       }
     });
 
@@ -113,11 +129,7 @@ class AuthState {
         }
       }
 
-      this.session = session;
-      this.user = session?.user ?? null;
-      if (session) {
-        await this.hydrateUserFromServer();
-      }
+      this.applySession(session);
     } catch (e) {
       console.warn('[auth] init failed', e);
       this.session = null;

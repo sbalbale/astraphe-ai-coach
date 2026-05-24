@@ -21,7 +21,7 @@
     } catch {
       // Non-fatal
     }
-    await authStore.refreshSession();
+    authStore.applySession(session);
     await goto('/onboarding', { replaceState: true });
   }
 
