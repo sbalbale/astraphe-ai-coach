@@ -76,10 +76,10 @@
       const history = athleteStore.metrics?.trainingLoadData?.find((m: any) => isoDate(m?.date) === dateStr);
       const dow = format(d, 'EE');
       const dayLabel = dow === 'Thu' ? 'Th' : dow.charAt(0);
-      const hasStrain = b?.strain_score !== null && b?.strain_score !== undefined;
+      const bioStrain = Number(b?.strain_score);
+      const hasBioStrain = Number.isFinite(bioStrain) && bioStrain > 0;
 
-      // Workout-derived strain proxy (preferred when strain_score isn't present).
-      // We treat "strain" as "did you train today?" — if no workout, show 0 and no warning.
+      // Workout-derived strain when biometrics strain is missing or stale (0 before zones synced).
       const workoutsForDay = athleteStore.workouts?.filter((w: any) => isoDate(w?.started_at) === dateStr) || [];
       const hasWorkout = workoutsForDay.length > 0;
       const workoutStrainScore = Math.min(
@@ -94,7 +94,10 @@
           }, 0),
         ),
       );
-      const computedScore = hasStrain ? Math.round(b.strain_score) : hasWorkout ? workoutStrainScore : 0;
+      const computedScore =
+        hasWorkout || !hasBioStrain
+          ? Math.max(hasBioStrain ? Math.round(bioStrain) : 0, workoutStrainScore)
+          : Math.round(bioStrain);
 
       return {
         date: dateStr,
@@ -106,7 +109,7 @@
         tsb: history?.tsb || athleteStore.tsb || 0,
         workouts: workoutsForDay,
         // Only show "no strain data" when a workout exists but we still can't compute strain.
-        missing: hasWorkout && !hasStrain && computedScore === 0,
+        missing: hasWorkout && computedScore === 0,
         data: b
       };
     });
