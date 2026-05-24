@@ -46,34 +46,10 @@
 
   html, body {
     @apply h-full bg-bg0 text-text0 font-sans overflow-hidden antialiased;
+    /* 100dvh overrides h-full on iOS Safari: gives a concrete pixel height so
+       percentage-height children don't collapse to zero during auth loading */
+    height: 100dvh;
   }
-  /* iOS Safari: address bar resize collapses h-full — use fill-available as fallback */
-  html {
-    height: -webkit-fill-available;
-  }
-  body {
-    min-height: -webkit-fill-available;
-  }
-}
-
-#svelte, .app-root {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-}
-
-::-webkit-scrollbar {
-  width: 4px;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-::-webkit-scrollbar-thumb {
-  background: theme('colors.border');
-  border-radius: 2px;
-}
-* {
-  -webkit-tap-highlight-color: transparent;
 }
 
 #svelte, .app-root {
