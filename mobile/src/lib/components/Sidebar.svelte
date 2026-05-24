@@ -2,6 +2,7 @@
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
   import { resolve } from '$app/paths';
+  import { navTo } from '$lib/nav';
   import { authStore } from '$lib/stores/authStore.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
 
@@ -78,21 +79,28 @@
       <p class="text-[9px] text-text2 font-mono uppercase tracking-[0.12em] px-3 pt-1.5 pb-1">{group}</p>
       {#each ALL_NAV.filter(n => items.includes(n.id)) as item}
         {@const active = currentPath === item.id || (currentPath === '/' && item.id === '/dashboard')}
-        <a
-          href={item.id}
+        <button
+          type="button"
           class="flex items-center gap-2.5 py-2.25 px-3 rounded-xl w-full font-sans text-[13px] text-left transition-all duration-150 border
           {active ? 'bg-blue-dim border-[rgba(70,33,255,0.25)] text-blue font-semibold' : 'bg-transparent border-transparent text-text1 font-normal'}"
-          onclick={(e) => onNavClick(e, item.id)}
+          onclick={(e) => {
+            onNavClick(e, item.id);
+            if (!e.defaultPrevented) navTo(item.id);
+          }}
         >
           <!-- eslint-disable-next-line svelte/no-at-html-tags -->
           {@html getIcon(item.id, active)}
           {item.label}
-        </a>
+        </button>
       {/each}
     </div>
   {/each}
   
-  <a href="/profile" class="mt-auto p-3 bg-glass rounded-xl border border-border cursor-pointer flex items-center gap-2.5 no-underline">
+  <button
+    type="button"
+    class="mt-auto p-3 bg-glass rounded-xl border border-border cursor-pointer flex items-center gap-2.5 w-full text-left"
+    onclick={() => navTo('/profile')}
+  >
     <div class="w-8 h-8 rounded-full bg-gradient-to-br from-blue to-teal flex items-center justify-center text-sm shrink-0 text-white font-bold">
       {authStore.user?.user_metadata?.full_name?.charAt(0)?.toUpperCase() || 'A'}
     </div>
@@ -100,5 +108,5 @@
       <p class="text-xs font-semibold text-text0">{authStore.user?.user_metadata?.full_name || 'Athlete'}</p>
       <p class="text-[10px] text-text2">CTL {Math.round(athleteStore.ctl)} · TSB {athleteStore.tsb > 0 ? '+' : ''}{Math.round(athleteStore.tsb)}</p>
     </div>
-  </a>
+  </button>
 </div>
