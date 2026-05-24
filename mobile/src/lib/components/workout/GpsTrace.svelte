@@ -61,7 +61,7 @@
   const hrMode = $derived(Boolean(heartrate?.length && zones?.length && routeLatLng.length >= 2));
 
   let mapContainer = $state<HTMLDivElement | null>(null);
-  let mapInstance: MapLibreMap | null = null;
+  let mapInstance = $state<MapLibreMap | null>(null);
   let clientReady = $state(false);
   let mapExpanded = $state(false);
 
@@ -85,6 +85,49 @@
       mapInstance?.resize();
       requestAnimationFrame(() => mapInstance?.resize());
     });
+  }
+
+  function fitMapToRoute(
+    map: MapLibreMap,
+    coords: [number, number][],
+    LngLatBounds: typeof import('maplibre-gl').LngLatBounds
+  ) {
+    if (coords.length < 2) return;
+    const bounds = coords.reduce(
+      (b, c) => b.extend(c),
+      new LngLatBounds(coords[0], coords[0])
+    );
+    map.fitBounds(bounds, { padding: 48, animate: false });
+  }
+
+  function setMapInteractive(map: MapLibreMap, enabled: boolean) {
+    const toggle = enabled ? 'enable' : 'disable';
+    map.dragPan[toggle]();
+    map.dragRotate[toggle]();
+    map.scrollZoom[toggle]();
+    map.boxZoom[toggle]();
+    map.doubleClickZoom[toggle]();
+    map.touchZoomRotate[toggle]();
+    map.touchPitch[toggle]();
+    map.keyboard[toggle]();
+  }
+
+  function routeCoordsLngLat(): [number, number][] {
+    return routeLatLng.map(([lat, lng]) => [lng, lat] as [number, number]);
+  }
+
+  async function syncMapExpandedState(expanded: boolean) {
+    const map = mapInstance;
+    if (!map || routeLatLng.length < 2) return;
+
+    setMapInteractive(map, expanded);
+    bumpMapResize();
+
+    const ml = await import('maplibre-gl');
+    if (!mapInstance) return;
+
+    // On open: start fitted to the route. On close: undo pan/zoom from the session.
+    fitMapToRoute(mapInstance, routeCoordsLngLat(), ml.LngLatBounds);
   }
 
   async function ensureWorker(ml: typeof import('maplibre-gl')) {
@@ -112,9 +155,9 @@
   });
 
   $effect(() => {
-    mapExpanded;
-    if (!mapInstance) return;
-    void tick().then(() => bumpMapResize());
+    const expanded = mapExpanded;
+    mapInstance;
+    void tick().then(() => syncMapExpandedState(expanded));
   });
 
   $effect(() => {
@@ -347,11 +390,8 @@
             },
           });
 
-          const bounds = coords.reduce(
-            (b, c) => b.extend(c),
-            new LngLatBounds(coords[0], coords[0])
-          );
-          map.fitBounds(bounds, { padding: 48, animate: false });
+          fitMapToRoute(map, coords, LngLatBounds);
+          setMapInteractive(map, mapExpanded);
         } catch (err) {
           console.warn('[GpsTrace] Failed to add route layers', err);
         }

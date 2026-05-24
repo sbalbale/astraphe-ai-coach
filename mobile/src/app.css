@@ -47,6 +47,13 @@
   html, body {
     @apply h-full bg-bg0 text-text0 font-sans overflow-hidden antialiased;
   }
+  /* iOS Safari: address bar resize collapses h-full — use fill-available as fallback */
+  html {
+    height: -webkit-fill-available;
+  }
+  body {
+    min-height: -webkit-fill-available;
+  }
 }
 
 #svelte, .app-root {

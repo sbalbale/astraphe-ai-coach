@@ -48,7 +48,14 @@ class AuthState {
   async init() {
     // Clear stale sessions from a different Supabase project
     // (e.g. switching from hosted to local or vice versa)
-    const { data: { session } } = await supabase.auth.getSession();
+    // 8s timeout prevents indefinite black screen on slow mobile networks
+    const sessionRace = await Promise.race([
+      supabase.auth.getSession(),
+      new Promise<{ data: { session: null }; error: null }>((resolve) =>
+        setTimeout(() => resolve({ data: { session: null }, error: null }), 8000)
+      ),
+    ]);
+    const { data: { session } } = sessionRace;
 
     if (session) {
       // Validate the token belongs to the current project by checking the issuer
