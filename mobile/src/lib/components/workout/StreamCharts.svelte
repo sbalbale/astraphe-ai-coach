@@ -352,6 +352,9 @@
       return;
     }
     if (e.touches.length === 1) {
+      // Only track touches that begin on a chart row — not on the averages bar or other UI
+      const target = e.target as Element;
+      if (!target.closest('[data-chart-row]')) return;
       touchStartX = e.touches[0].clientX;
       touchStartY = e.touches[0].clientY;
       isTouchScrubbing = false;
@@ -973,7 +976,7 @@
 
       {#if hasSelection && rangeStats && interactionChartId === c.id}
         <div
-          class="relative z-30 flex items-center gap-1.5 mt-2 px-2.5 py-2 bg-bg2 border border-white/[0.12] rounded-xl overflow-x-auto"
+          class="relative z-30 flex items-center gap-1.5 mt-2 px-2.5 py-2 bg-bg2 border border-white/[0.12] rounded-xl overflow-x-auto touch-pan-y"
           transition:slide={{ duration: 200, axis: 'y' }}
         >
             <div class="flex gap-1.5 flex-1 overflow-x-auto">
