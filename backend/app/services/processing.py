@@ -203,15 +203,15 @@ def _compute_daily_strain_from_workout_rows(rows: list[dict]) -> int:
     return compute_strain_score(day_zone_minutes)
 
 
-def _refresh_daily_strain_for_day_sync(db: Any, athlete_id: str, day: date) -> None:
-    """Recompute biometrics.strain_score for one calendar day from stored workout zones."""
+def _refresh_daily_strain_for_day_sync(db: Any, athlete_id: str, day: date) -> int:
+    """Recompute biometrics.strain_score for one calendar day from stored workout zones. Returns strain 0-100."""
     day_start = day.isoformat()
     day_end = (day + timedelta(days=1)).isoformat()
     res = (
         db.table("workouts")
         .select(
             "hr_zone_1_pct,hr_zone_2_pct,hr_zone_3_pct,hr_zone_4_pct,hr_zone_5_pct,"
-            "duration_seconds,duration_secs,started_at,ended_at"
+            "duration_seconds,started_at,ended_at"
         )
         .eq("athlete_id", athlete_id)
         .gte("started_at", day_start)
@@ -223,6 +223,30 @@ def _refresh_daily_strain_for_day_sync(db: Any, athlete_id: str, day: date) -> N
     db.table("biometrics").update({"strain_score": strain}).eq("athlete_id", athlete_id).eq(
         "date", day.isoformat()
     ).execute()
+    return strain
+
+
+def _workout_dates_for_athlete(rows: list[dict]) -> list[date]:
+    dates: set[date] = set()
+    for row in rows:
+        started = _parse_workout_dt(row.get("started_at"))
+        if started is not None:
+            dates.add(started.date())
+    return sorted(dates)
+
+
+def refresh_all_daily_strain_sync(db: Any, athlete_id: str) -> dict[str, int]:
+    """Fast path: refresh biometrics.strain_score for every day that has a workout."""
+    res = (
+        db.table("workouts")
+        .select("started_at")
+        .eq("athlete_id", athlete_id)
+        .execute()
+    )
+    days = _workout_dates_for_athlete((res.data if res else None) or [])
+    for d in days:
+        _refresh_daily_strain_for_day_sync(db, athlete_id, d)
+    return {"days": len(days)}
 
 
 def _find_or_create_canonical_workout_sync(
@@ -949,7 +973,7 @@ def process_and_save_biometrics(
         db.table("workouts")
         .select(
             "hr_zone_1_pct,hr_zone_2_pct,hr_zone_3_pct,hr_zone_4_pct,hr_zone_5_pct,"
-            "duration_seconds,duration_secs,started_at,ended_at"
+            "duration_seconds,started_at,ended_at"
         )
         .eq("athlete_id", athlete_id)
         .gte("started_at", payload.date.isoformat())

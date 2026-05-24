@@ -24,6 +24,7 @@ from app.services.processing import (
     process_and_save_workout,
     process_and_save_biometrics,
     reprocess_athlete_metrics,
+    refresh_all_daily_strain_sync,
 )
 from app.services.ai_coach import invalidate_context_cache
 from fastapi import status
@@ -1115,18 +1116,53 @@ async def unlink_integration(
 
 
 
-@router.post("/reprocess-metrics")
-async def reprocess_metrics_now(
+@router.post("/refresh-strain")
+async def refresh_strain_scores_now(
     athlete_id: str = Depends(get_current_athlete),
     admin_db=Depends(get_admin_db),
 ):
     """
-    Rebuild workout TSS, biometrics aggregates, and CTL/ATL/TSB for the authenticated athlete.
-    Use after linking WHOOP/Strava when the dashboard shows synced activities but missing load/recovery.
+    Recompute daily biometrics.strain_score from stored workout HR zones only.
+    Fast (seconds). Prefer this over /reprocess-metrics when fixing strain display.
     """
-    counts = await reprocess_athlete_metrics(athlete_id, admin_db)
+    counts = await asyncio.to_thread(refresh_all_daily_strain_sync, admin_db, athlete_id)
     invalidate_context_cache(athlete_id)
     return {"status": "success", **counts}
+
+
+@router.post("/reprocess-metrics")
+async def reprocess_metrics_now(
+    full: bool = Query(
+        False,
+        description="If true, rebuild all workouts + biometrics + PMC (slow; may timeout). "
+        "Default false runs fast strain refresh only.",
+    ),
+    athlete_id: str = Depends(get_current_athlete),
+    admin_db=Depends(get_admin_db),
+):
+    """
+    Default (full=false): refresh daily biometrics.strain_score from workout zones — fast, safe from the app.
+
+    full=true: rebuild workout TSS, all biometrics aggregates, and CTL/ATL/TSB. Use only from
+    backend/scripts/reprocess_athlete_data.py for large histories (can exceed HTTP timeouts).
+    """
+    if not full:
+        counts = await asyncio.to_thread(refresh_all_daily_strain_sync, admin_db, athlete_id)
+        invalidate_context_cache(athlete_id)
+        return {"status": "success", "mode": "strain_refresh", **counts}
+
+    try:
+        counts = await reprocess_athlete_metrics(athlete_id, admin_db)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Full reprocess failed. Run: python backend/scripts/reprocess_athlete_data.py <athlete_id> "
+                f"Error: {e}"
+            ),
+        ) from e
+    invalidate_context_cache(athlete_id)
+    return {"status": "success", "mode": "full", **counts}
 
 
 @router.post("/whoop/backfill-biometrics")

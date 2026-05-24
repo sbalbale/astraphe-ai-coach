@@ -1,14 +1,23 @@
 import asyncio
 import logging
 from dataclasses import dataclass
+from typing import Callable, TypeVar
 
 from fastapi import Depends, HTTPException, Security
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from httpcore import RemoteProtocolError
+from httpx import ConnectError, ReadTimeout, RemoteProtocolError as HttpxRemoteProtocolError
 from supabase import create_client, Client
 from app.config import settings
 from app.core.rate_limiter import RateLimiter
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
+
+_admin_db_client: Client | None = None
+_TRANSIENT_DB_RETRIES = 3
+_TRANSIENT_DB_BACKOFF_S = (0.25, 0.75, 1.5)
 
 security = HTTPBearer()
 
@@ -48,10 +57,66 @@ _rate_limiter = RateLimiter()
 # ---------------------------------------------------------------------------
 
 def get_db() -> Client:
+    # Per-request client: JWT is applied via postgrest.auth(token) and must not be shared.
     return create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
 
+
 def get_admin_db() -> Client:
-    return create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_ROLE_KEY or settings.SUPABASE_KEY)
+    """Shared service-role client (safe to reuse across requests)."""
+    global _admin_db_client
+    if _admin_db_client is None:
+        _admin_db_client = create_client(
+            settings.SUPABASE_URL,
+            settings.SUPABASE_SERVICE_ROLE_KEY or settings.SUPABASE_KEY,
+        )
+    return _admin_db_client
+
+
+def _is_transient_db_error(exc: BaseException) -> bool:
+    if isinstance(exc, (RemoteProtocolError, HttpxRemoteProtocolError, ConnectError, ReadTimeout)):
+        return True
+    msg = str(exc).lower()
+    return any(
+        token in msg
+        for token in (
+            "connectionterminated",
+            "connection terminated",
+            "server disconnected",
+            "connection reset",
+            "broken pipe",
+            "eof occurred",
+        )
+    )
+
+
+async def run_supabase_call(
+    fn: Callable[[], T],
+    *,
+    timeout: float = SUPABASE_CALL_TIMEOUT_SECONDS,
+    retries: int = _TRANSIENT_DB_RETRIES,
+) -> T:
+    """Run a blocking supabase call off the event loop with timeout and transient retries."""
+    last_exc: BaseException | None = None
+    for attempt in range(retries):
+        try:
+            return await asyncio.wait_for(asyncio.to_thread(fn), timeout=timeout)
+        except asyncio.TimeoutError as e:
+            raise HTTPException(
+                status_code=503,
+                detail="Database request timed out, please retry.",
+            ) from e
+        except Exception as e:
+            last_exc = e
+            if attempt < retries - 1 and _is_transient_db_error(e):
+                await asyncio.sleep(_TRANSIENT_DB_BACKOFF_S[min(attempt, len(_TRANSIENT_DB_BACKOFF_S) - 1)])
+                continue
+            break
+    if last_exc and _is_transient_db_error(last_exc):
+        raise HTTPException(
+            status_code=503,
+            detail="Database temporarily unavailable, please retry.",
+        ) from last_exc
+    raise last_exc  # type: ignore[misc]
 
 def _with_auth_token(db: Client, token: str) -> Client:
     try:
@@ -70,13 +135,7 @@ async def get_user_db(credentials: HTTPAuthorizationCredentials = Security(secur
 
 async def _run_supabase_call(fn, *args, timeout: float = SUPABASE_CALL_TIMEOUT_SECONDS):
     """Run a blocking supabase-py call off the event loop with a hard timeout."""
-    try:
-        return await asyncio.wait_for(asyncio.to_thread(fn, *args), timeout=timeout)
-    except asyncio.TimeoutError:
-        raise HTTPException(
-            status_code=503,
-            detail="Database request timed out, please retry.",
-        )
+    return await run_supabase_call(lambda: fn(*args), timeout=timeout)
 
 
 def _is_pgrst002(exc: BaseException) -> bool:
