@@ -346,8 +346,8 @@
   }
 
   function onTouchStart(e: TouchEvent) {
+    // Passive — no preventDefault() here so iOS can start scroll without delay
     if (e.touches.length === 2) {
-      e.preventDefault();
       updateTwoFingerSelection(e);
       return;
     }
@@ -360,6 +360,7 @@
 
   function onTouchMove(e: TouchEvent) {
     if (e.touches.length === 2) {
+      // 2-finger selection: prevent pinch-zoom and scroll
       e.preventDefault();
       updateTwoFingerSelection(e);
       return;
@@ -372,19 +373,19 @@
       if (touchStartX === null || touchStartY === null) return;
       const dx = Math.abs(touch.clientX - touchStartX);
       const dy = Math.abs(touch.clientY - touchStartY);
-      // Wait for at least 5px movement before deciding direction
-      if (dx < 5 && dy < 5) return;
-      if (dx > dy) {
+      // Wait for 8px of movement and require clearly horizontal before committing
+      if (dx < 8 && dy < 8) return;
+      if (dx > dy * 1.5) {
         isTouchScrubbing = true;
       } else {
-        // Vertical intent — let scroll win, stop tracking
+        // Vertical intent — let scroll win, stop tracking this gesture
         touchStartX = null;
         touchStartY = null;
         return;
       }
     }
 
-    // Horizontal scrub: prevent scroll and update crosshair
+    // Committed to horizontal scrub: block scroll and drive the crosshair
     e.preventDefault();
     const idx = clientXToIndex(touch.clientX);
     hoveredIdx = idx;
@@ -758,17 +759,18 @@
   $effect(() => {
     const el = chartInteractionEl;
     if (!el) return;
-    const opts: AddEventListenerOptions = { passive: false };
     const onStart = (e: TouchEvent) => onTouchStart(e);
     const onMove = (e: TouchEvent) => onTouchMove(e);
     const onEnd = () => onTouchEnd();
-    el.addEventListener('touchstart', onStart, opts);
-    el.addEventListener('touchmove', onMove, opts);
+    // touchstart passive: lets iOS begin scroll immediately without waiting for JS
+    // touchmove non-passive: we may call preventDefault() for horizontal scrub
+    el.addEventListener('touchstart', onStart, { passive: true });
+    el.addEventListener('touchmove', onMove, { passive: false });
     el.addEventListener('touchend', onEnd);
     el.addEventListener('touchcancel', onEnd);
     return () => {
-      el.removeEventListener('touchstart', onStart, opts);
-      el.removeEventListener('touchmove', onMove, opts);
+      el.removeEventListener('touchstart', onStart);
+      el.removeEventListener('touchmove', onMove);
       el.removeEventListener('touchend', onEnd);
       el.removeEventListener('touchcancel', onEnd);
     };

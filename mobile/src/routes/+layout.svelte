@@ -1,7 +1,6 @@
 <script lang="ts">
   import '../app.css';
   import { onMount } from 'svelte';
-  import { App } from '@capacitor/app';
   import { page } from '$app/stores';
   import { afterNavigate, goto } from '$app/navigation';
   import { resolve } from '$app/paths';
@@ -11,7 +10,6 @@
   import { analysisNavEpoch } from '$lib/analysisNavEpoch.svelte';
   import { authStore } from '$lib/stores/authStore.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
-  import { initPushNotifications } from '$lib/services/pushNotifications';
 
   afterNavigate(() => {
     analysisNavEpoch.bump();
@@ -42,27 +40,35 @@
   let isNoShellRoute = $derived(isAuthRoute || isOnboardingRoute);
 
   onMount(() => {
-    const listener = App.addListener('appUrlOpen', ({ url }) => {
-      try {
-        const parsed = new URL(url);
-        const hash = parsed.hash ?? '';
-        if (parsed.host === 'auth' && parsed.pathname === '/callback') {
-          goto('/auth/callback' + hash);
-        } else if (parsed.host === 'auth' && parsed.pathname === '/reset-password') {
-          goto('/auth/reset-password' + hash);
-        } else if (parsed.pathname.startsWith('/auth/callback')) {
-          goto('/auth/callback' + hash);
-        } else if (parsed.pathname.startsWith('/auth/reset-password')) {
-          goto('/auth/reset-password' + hash);
-        }
-      } catch {
-        // Malformed URL — ignore
-      }
-    });
+    // Remove the HTML-only pre-load indicator now that Svelte has mounted
+    document.getElementById('pre-load')?.remove();
 
-    return () => {
-      void listener.then((h) => h.remove());
-    };
+    // Dynamic import so a Capacitor bridge error can't crash the layout
+    let cleanup: (() => void) | null = null;
+    import('@capacitor/app')
+      .then(({ App }) =>
+        App.addListener('appUrlOpen', ({ url }) => {
+          try {
+            const parsed = new URL(url);
+            const hash = parsed.hash ?? '';
+            if (parsed.host === 'auth' && parsed.pathname === '/callback') {
+              goto('/auth/callback' + hash);
+            } else if (parsed.host === 'auth' && parsed.pathname === '/reset-password') {
+              goto('/auth/reset-password' + hash);
+            } else if (parsed.pathname.startsWith('/auth/callback')) {
+              goto('/auth/callback' + hash);
+            } else if (parsed.pathname.startsWith('/auth/reset-password')) {
+              goto('/auth/reset-password' + hash);
+            }
+          } catch {
+            // Malformed URL — ignore
+          }
+        })
+      )
+      .then((handle) => { cleanup = () => handle.remove(); })
+      .catch(() => { /* Not in Capacitor context */ });
+
+    return () => { cleanup?.(); };
   });
 
   const profileComplete = $derived.by(() => {
@@ -101,10 +107,12 @@
     athleteStore.fetchAll();
     if (athleteStore.loading || !athleteStore.initialLoadDone) return;
 
-    // Register push token once per session.
+    // Register push token once per session — dynamic import keeps Capacitor out of the main bundle
     if (!pushInitialized) {
       pushInitialized = true;
-      initPushNotifications();
+      import('$lib/services/pushNotifications')
+        .then(({ initPushNotifications }) => initPushNotifications())
+        .catch(() => {});
     }
 
     const complete = profileComplete;
