@@ -38,61 +38,73 @@ class AuthState {
   private async hydrateUserFromServer() {
     // `session.user` can be stale for app_metadata; fetch the canonical user object.
     try {
-      const { data, error } = await supabase.auth.getUser();
+      const result = await Promise.race([
+        supabase.auth.getUser(),
+        new Promise<{ data: { user: null }; error: { message: string } }>((resolve) =>
+          setTimeout(
+            () => resolve({ data: { user: null }, error: { message: 'getUser timeout' } }),
+            8000
+          )
+        ),
+      ]);
+      const { data, error } = result;
       if (!error && data?.user) this.user = data.user;
+      else if (error) console.warn('[auth] hydrateUserFromServer:', error.message);
     } catch (e) {
       console.warn('[auth] Failed to hydrate user from server', e);
     }
   }
 
   async init() {
-    // Clear stale sessions from a different Supabase project
-    // (e.g. switching from hosted to local or vice versa)
-    // 8s timeout prevents indefinite black screen on slow mobile networks
-    const sessionRace = await Promise.race([
-      supabase.auth.getSession(),
-      new Promise<{ data: { session: null }; error: null }>((resolve) =>
-        setTimeout(() => resolve({ data: { session: null }, error: null }), 8000)
-      ),
-    ]);
-    const { data: { session } } = sessionRace;
+    try {
+      // Clear stale sessions from a different Supabase project
+      // 8s timeout prevents indefinite ASTRAPE screen on slow / buggy mobile browsers
+      const sessionRace = await Promise.race([
+        supabase.auth.getSession(),
+        new Promise<{ data: { session: null }; error: null }>((resolve) =>
+          setTimeout(() => resolve({ data: { session: null }, error: null }), 8000)
+        ),
+      ]);
+      const { data: { session } } = sessionRace;
 
-    if (session) {
-      // Validate the token belongs to the current project by checking the issuer
-      const tokenPayload = this.parseJwt(session.access_token);
-      const iss = tokenPayload?.iss;
-      const issuer: string = typeof iss === 'string' ? iss : '';
-      const isValidIssuer = issuer.startsWith(EXPECTED_SUPABASE_URL) ||
-                            issuer.includes('127.0.0.1:57321') ||
-                            EXPECTED_SUPABASE_URL.includes('supabase.co');
+      if (session) {
+        const tokenPayload = this.parseJwt(session.access_token);
+        const iss = tokenPayload?.iss;
+        const issuer: string = typeof iss === 'string' ? iss : '';
+        const isValidIssuer =
+          issuer.startsWith(EXPECTED_SUPABASE_URL) ||
+          issuer.includes('127.0.0.1:57321') ||
+          EXPECTED_SUPABASE_URL.includes('supabase.co');
 
-      if (!isValidIssuer) {
-        console.warn('[auth] Stale session from different Supabase project — signing out');
-        await supabase.auth.signOut();
-        this.session = null;
-        this.user = null;
-        this.loading = false;
-        return;
+        if (!isValidIssuer) {
+          console.warn('[auth] Stale session from different Supabase project — signing out');
+          await supabase.auth.signOut();
+          this.session = null;
+          this.user = null;
+          return;
+        }
       }
-    }
 
-    this.session = session;
-    this.user = session?.user ?? null;
-    if (session) {
-      await this.hydrateUserFromServer();
-    }
-    this.loading = false;
-
-    // Listen to changes
-    supabase.auth.onAuthStateChange(async (event, session) => {
       this.session = session;
       this.user = session?.user ?? null;
-      // Skip getUser on USER_UPDATED — session.user is already fresh; concurrent getUser()
-      // during updateUser() causes NavigatorLockAcquireTimeoutError in the browser.
-      if (session && event !== 'USER_UPDATED') {
+      if (session) {
         await this.hydrateUserFromServer();
       }
-    });
+
+      supabase.auth.onAuthStateChange(async (event, session) => {
+        this.session = session;
+        this.user = session?.user ?? null;
+        if (session && event !== 'USER_UPDATED') {
+          await this.hydrateUserFromServer();
+        }
+      });
+    } catch (e) {
+      console.warn('[auth] init failed', e);
+      this.session = null;
+      this.user = null;
+    } finally {
+      this.loading = false;
+    }
   }
 
   private parseJwt(token: string): Record<string, unknown> | null {
