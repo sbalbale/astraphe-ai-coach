@@ -172,14 +172,11 @@
               {/if}
             </div>
           </div>
-          <button
-            class="px-3 py-1 rounded-full text-[11px] font-medium cursor-pointer transition-all duration-200 shrink-0 border {integrations.apple.connected
-              ? 'bg-red-dim text-red border-red/30'
-              : 'bg-red-dim text-red border-red/30'}"
-            onclick={() => toggleIntegration('apple')}
+          <span
+            class="px-3 py-1 rounded-full text-[10px] font-mono uppercase tracking-wide shrink-0 border border-border bg-glass text-text2"
           >
-            {syncing === 'apple' ? '...' : integrations.apple.connected ? 'Unlink' : 'Connect'}
-          </button>
+            Coming soon
+          </span>
         </div>
 
         <!-- Garmin -->
@@ -205,14 +202,11 @@
               {/if}
             </div>
           </div>
-          <button
-            class="px-3 py-1 rounded-full text-[11px] font-medium cursor-pointer transition-all duration-200 shrink-0 border {integrations.garmin.connected
-              ? 'bg-red-dim text-red border-red/30'
-              : 'border-[rgba(0,160,233,0.35)] bg-[rgba(0,160,233,0.15)] text-[#00A0E9]'}"
-            onclick={() => toggleIntegration('garmin')}
+          <span
+            class="px-3 py-1 rounded-full text-[10px] font-mono uppercase tracking-wide shrink-0 border border-border bg-glass text-text2"
           >
-            {syncing === 'garmin' ? '...' : integrations.garmin.connected ? 'Unlink' : 'Connect'}
-          </button>
+            Coming soon
+          </span>
         </div>
 
         <!-- WHOOP -->
