@@ -57,12 +57,12 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.PROXMOX_SSH_KEY }}" > ~/.ssh/id_ed25519_deploy
           chmod 600 ~/.ssh/id_ed25519_deploy
-          cat >> ~/.ssh/config << EOF
+          cat >> ~/.ssh/config << 'EOF'
           Host ssh.astrapeai.com
             HostName ssh.astrapeai.com
             User docker
             IdentityFile ~/.ssh/id_ed25519_deploy
-            ProxyCommand cloudflared access ssh --hostname %h --id ${{ secrets.CF_ACCESS_CLIENT_ID }} --secret ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+            ProxyCommand cloudflared access ssh --hostname %h
             StrictHostKeyChecking no
           EOF
 
@@ -98,16 +98,19 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.PROXMOX_SSH_KEY }}" > ~/.ssh/id_ed25519_deploy
           chmod 600 ~/.ssh/id_ed25519_deploy
-          cat >> ~/.ssh/config << EOF
+          cat >> ~/.ssh/config << 'EOF'
           Host ssh.astrapeai.com
             HostName ssh.astrapeai.com
             User docker
             IdentityFile ~/.ssh/id_ed25519_deploy
-            ProxyCommand cloudflared access ssh --hostname %h --id ${CF_ACCESS_CLIENT_ID} --secret ${CF_ACCESS_CLIENT_SECRET}
+            ProxyCommand cloudflared access ssh --hostname %h
             StrictHostKeyChecking no
           EOF
 
       - name: Run new migrations
+        env:
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
           ssh docker@ssh.astrapeai.com << 'ENDSSH'
             for f in ~/astrape/repo/supabase/migrations/*.sql; do
