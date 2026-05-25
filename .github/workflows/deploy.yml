@@ -93,6 +93,12 @@ jobs:
             BatchMode yes
           EOF
 
+      - name: Deploy email templates
+        run: |
+          ssh docker@ssh.astrapeai.com 'mkdir -p ~/astrape/supabase/templates'
+          scp supabase/templates/confirm.html docker@ssh.astrapeai.com:~/astrape/supabase/templates/confirm.html
+          scp supabase/templates/recovery.html docker@ssh.astrapeai.com:~/astrape/supabase/templates/recovery.html
+
       - name: Deploy to Proxmox
         run: |
           ssh docker@ssh.astrapeai.com << 'ENDSSH'
