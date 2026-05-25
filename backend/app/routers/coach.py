@@ -13,6 +13,7 @@ from app.services.ai_coach import (
     generate_coach_conversation_title,
     get_coach_response,
     _load_conversation_history,
+    _strip_internal_reasoning,
 )
 from app.services.memory import extract_and_save_memories
 from app.dependencies import (
@@ -192,7 +193,11 @@ async def get_conversation_messages(
         .limit(500)
         .execute()
     )
-    return {"status": "success", "messages": res.data or []}
+    messages = res.data or []
+    for m in messages:
+        if m.get("role") == "ai":
+            m["content"] = _strip_internal_reasoning(str(m.get("content") or ""))
+    return {"status": "success", "messages": messages}
 
 @router.delete("/conversations/{conversation_id}")
 async def delete_conversation(

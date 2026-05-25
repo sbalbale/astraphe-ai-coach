@@ -197,9 +197,13 @@ def _load_conversation_history(db: Client, athlete_id: str, conversation_id: str
         # Keep only the essentials
         out: list[dict] = []
         for r in rows:
+            role = r.get("role")
+            content = str(r.get("content") or "")
+            if role == "ai":
+                content = _strip_internal_reasoning(content)
             out.append({
-                "role": r.get("role"),
-                "content": r.get("content"),
+                "role": role,
+                "content": content,
                 "image_urls": r.get("image_urls") or [],
                 "created_at": r.get("created_at"),
             })
@@ -444,6 +448,10 @@ def _history_to_gemini_contents(history: list[dict]) -> list[types.Content]:
             continue
         if raw_role not in ("user", "ai"):
             continue
+        if raw_role == "ai":
+            content = _strip_internal_reasoning(content).strip()
+            if not content:
+                continue
         grole = "user" if raw_role == "user" else "model"
         out.append(types.Content(role=grole, parts=[types.Part.from_text(text=content)]))
     return out
@@ -493,6 +501,12 @@ _COACH_REPLY_START_RE = re.compile(
     r"Hey \w|"
     r"Here is how (?:I )?recommend|"
     r"Here are|"
+    r"That \d|"
+    r"That (?:is|was|sounds|looks|effort)|"
+    r"To answer your question|"
+    r"The short answer|"
+    r"Yes(?:,|\s|-)|"
+    r"Nice work|"
     r"Looking at your|"
     r"I would (?:actually )?recommend|"
     r"I'd (?:actually )?recommend|"
@@ -518,10 +532,12 @@ def _extract_athlete_message_from_text(raw_text: str) -> str:
     # Legacy XML response support (backwards compatibility)
     match = re.search(r"<response>(.*?)</response>", raw, re.DOTALL | re.IGNORECASE)
     if match:
-        return match.group(1).strip()
+        cleaned = _strip_internal_reasoning(match.group(1))
+        return cleaned or "I encountered an error processing your request."
 
     # In the new Agentic Scratchpad pattern, the raw text IS the response
-    return raw if raw else "I encountered an error processing your request."
+    cleaned = _strip_internal_reasoning(raw)
+    return cleaned or "I encountered an error processing your request."
 
 
 def _strip_internal_reasoning(text: str) -> str:
@@ -539,8 +555,21 @@ def _strip_internal_reasoning(text: str) -> str:
 
     # Long inline dumps: jump to the first coach-voice paragraph.
     start = _COACH_REPLY_START_RE.search(t)
-    if start and start.start() > 80:
-        t = t[start.start() :].strip()
+    if start:
+        prefix = t[: start.start()].lower()
+        has_meta_preface = any(
+            marker in prefix
+            for marker in (
+                "the user",
+                "user is asking",
+                "plan:",
+                "constraint check",
+                "final response",
+                "scratchpad",
+            )
+        )
+        if start.start() > 80 or has_meta_preface:
+            t = t[start.start() :].strip()
 
     bad_prefixes = (
         "user goal:",
@@ -553,6 +582,14 @@ def _strip_internal_reasoning(text: str) -> str:
         "current ctl",
         "current atl",
         "target race",
+        "race context:",
+        "race details:",
+        "search results",
+        "search result",
+        "the search results",
+        "the race is",
+        "water temp",
+        "wetsuits are",
         "upcoming load",
         "constraint check",
         "role:",
@@ -566,8 +603,11 @@ def _strip_internal_reasoning(text: str) -> str:
         "final response construction",
         "final polish",
         "final plan:",
+        "final response:",
+        "final response structure:",
         "one more thing:",
         "let's double check",
+        "let's refine",
         "let's say they",
         "refining the",
         "table construction:",
@@ -575,6 +615,15 @@ def _strip_internal_reasoning(text: str) -> str:
         "step 2:",
         "step 3:",
         "the priority is",
+        "answer directly",
+        "acknowledge",
+        "validate",
+        "address the",
+        "provide actionable",
+        "mention ",
+        "connect to",
+        "list ",
+        "explain why",
         "since i don't",
         "i will advise",
         "i'll structure",
@@ -589,6 +638,12 @@ def _strip_internal_reasoning(text: str) -> str:
         "current ctl",
         "current atl",
         "target race",
+        "race context",
+        "race details",
+        "search results",
+        "the race is",
+        "water temp",
+        "wetsuits are",
         "upcoming load",
         "step 1",
         "step 2",
@@ -598,12 +653,22 @@ def _strip_internal_reasoning(text: str) -> str:
         "constraint check",
         "final check",
         "final plan",
+        "final response",
         "drafting",
         "self-correction",
         "one more thing",
+        "let's refine",
         "let's double",
         "pemi loop will likely",
         "simulate the",
+        "answer directly",
+        "acknowledge",
+        "validate",
+        "address the",
+        "provide actionable",
+        "mention ",
+        "connect to",
+        "explain why",
     )
 
     lines = [ln.rstrip() for ln in t.splitlines()]
@@ -616,6 +681,9 @@ def _strip_internal_reasoning(text: str) -> str:
             return True
         if low.startswith(("current metrics:", "target date:", "timeframe:", "persona:", "rule:", "action requested:")):
             return True
+        if re.match(r"^[a-z][a-z0-9 /_-]{2,48}:$", low):
+            if any(m in low for m in planning_bullet_markers):
+                return True
         if re.match(r"^\*\s+", ln.strip()):
             if any(m in low for m in planning_bullet_markers):
                 return True
@@ -640,6 +708,12 @@ def _strip_internal_reasoning(text: str) -> str:
             "hey ",
             "here is how",
             "here are",
+            "that ",
+            "to answer your question",
+            "the short answer",
+            "yes,",
+            "yes ",
+            "nice work",
             "looking at your",
             "i would ",
             "i'd ",
@@ -651,6 +725,17 @@ def _strip_internal_reasoning(text: str) -> str:
         if any(k in low for k in ("ctl", "atl", "tsb", "hrv", "rmssd", "sleep score")) and (("." in s) or (":" in s)):
             return True
         return False
+
+    first_reply_idx = next((idx for idx, ln in enumerate(lines) if looks_like_reply(ln)), None)
+    if first_reply_idx is not None and first_reply_idx > 0:
+        prior = lines[:first_reply_idx]
+        saw_meta_preface = any(
+            is_meta_line(ln)
+            or ln.strip().lower().startswith(("the user", "user "))
+            for ln in prior
+        )
+        if saw_meta_preface:
+            return "\n".join(ln for ln in lines[first_reply_idx:] if ln.strip()).strip()
 
     i = 0
     while i < len(lines):
