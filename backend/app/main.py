@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
@@ -11,6 +12,7 @@ from app.core.redis import close_redis, ping_redis
 from app.core.supabase_health import ping_supabase
 from app.services.token_refresh import token_refresh_loop
 
+logger = logging.getLogger(__name__)
 _ip_rate_limiter = RateLimiter()
 
 _docs_enabled = settings.APP_ENV != "production"
@@ -56,28 +58,28 @@ async def validate_production_config():
     if _hmac_key:
         _source = "WHOOP_WEBHOOK_SECRET" if settings.WHOOP_WEBHOOK_SECRET else "WHOOP_CLIENT_SECRET"
         _preview = _hmac_key[:4].decode("utf-8", errors="replace") + "..." + _hmac_key[-4:].decode("utf-8", errors="replace")
-        print(f"[startup] WHOOP HMAC key from {_source}: '{_preview}' (len={len(_hmac_key)})")
+        logger.info("[startup] WHOOP HMAC key from %s: '%s' (len=%s)", _source, _preview, len(_hmac_key))
         if settings.WHOOP_WEBHOOK_SECRET and settings.WHOOP_CLIENT_SECRET:
             ws = settings.WHOOP_WEBHOOK_SECRET.strip()
             cs = settings.WHOOP_CLIENT_SECRET.strip()
             if ws != cs:
-                print(
+                logger.warning(
                     "[startup] WARNING: WHOOP_WEBHOOK_SECRET and WHOOP_CLIENT_SECRET differ. "
                     "WHOOP signs webhooks with the client_secret from your Developer Dashboard. "
                     "Set WHOOP_WEBHOOK_SECRET to the same value as WHOOP_CLIENT_SECRET."
                 )
     else:
-        print("[startup] WARNING: No WHOOP HMAC key — webhook signatures will be rejected")
+        logger.warning("[startup] WARNING: No WHOOP HMAC key — webhook signatures will be rejected")
 
     if settings.APP_ENV == "production":
         _wc = (settings.WHOOP_CLIENT_SECRET or "").strip()
         if not _wc:
-            print("[startup] WARNING: WHOOP_CLIENT_SECRET is unset — WHOOP OAuth token exchange will fail")
+            logger.warning("[startup] WARNING: WHOOP_CLIENT_SECRET is unset — WHOOP OAuth token exchange will fail")
         elif settings.WHOOP_WEBHOOK_SECRET and settings.WHOOP_CLIENT_SECRET:
             _ws = settings.WHOOP_WEBHOOK_SECRET.strip()
             _cs = settings.WHOOP_CLIENT_SECRET.strip()
             if _ws != _cs:
-                print(
+                logger.warning(
                     "[startup] WARNING: WHOOP_WEBHOOK_SECRET and WHOOP_CLIENT_SECRET differ — "
                     "token exchange uses CLIENT_SECRET; webhooks use WEBHOOK_SECRET (or CLIENT_SECRET fallback)."
                 )
@@ -87,9 +89,9 @@ async def validate_production_config():
 
         ok, detail = subscription_matches_app_base()
         if ok:
-            print(f"[startup] {detail}")
+            logger.info("[startup] %s", detail)
         else:
-            print(f"[startup] WARNING: {detail}")
+            logger.warning("[startup] WARNING: %s", detail)
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
