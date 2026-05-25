@@ -98,12 +98,22 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.PROXMOX_SSH_KEY }}" > ~/.ssh/id_ed25519_deploy
           chmod 600 ~/.ssh/id_ed25519_deploy
-          cat >> ~/.ssh/config << 'EOF'
+
+          # Write a wrapper script that sets the env vars before calling cloudflared
+          cat > /usr/local/bin/cf-ssh-proxy << 'SCRIPT'
+          #!/bin/bash
+          export CF_ACCESS_CLIENT_ID="${CF_CLIENT_ID}"
+          export CF_ACCESS_CLIENT_SECRET="${CF_CLIENT_SECRET}"
+          exec cloudflared access ssh --hostname "$1"
+          SCRIPT
+          chmod +x /usr/local/bin/cf-ssh-proxy
+
+          cat >> ~/.ssh/config << EOF
           Host ssh.astrapeai.com
             HostName ssh.astrapeai.com
             User docker
             IdentityFile ~/.ssh/id_ed25519_deploy
-            ProxyCommand cloudflared access ssh --hostname %h
+            ProxyCommand CF_ACCESS_CLIENT_ID=${{ secrets.CF_ACCESS_CLIENT_ID }} CF_ACCESS_CLIENT_SECRET=${{ secrets.CF_ACCESS_CLIENT_SECRET }} cloudflared access ssh --hostname %h
             StrictHostKeyChecking no
           EOF
 
