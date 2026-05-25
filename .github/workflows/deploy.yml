@@ -56,12 +56,12 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.PROXMOX_SSH_KEY }}" > ~/.ssh/id_ed25519_deploy
           chmod 600 ~/.ssh/id_ed25519_deploy
-          cat >> ~/.ssh/config << 'EOF'
+          cat >> ~/.ssh/config << EOF
           Host ssh.astrapeai.com
             HostName ssh.astrapeai.com
             User docker
             IdentityFile ~/.ssh/id_ed25519_deploy
-            ProxyCommand cloudflared access ssh --hostname %h
+            ProxyCommand cloudflared access ssh --hostname %h --id ${{ secrets.CF_ACCESS_CLIENT_ID }} --secret ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
             StrictHostKeyChecking no
           EOF
 
@@ -94,12 +94,12 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.PROXMOX_SSH_KEY }}" > ~/.ssh/id_ed25519_deploy
           chmod 600 ~/.ssh/id_ed25519_deploy
-          cat >> ~/.ssh/config << 'EOF'
+          cat >> ~/.ssh/config << EOF
           Host ssh.astrapeai.com
             HostName ssh.astrapeai.com
             User docker
             IdentityFile ~/.ssh/id_ed25519_deploy
-            ProxyCommand cloudflared access ssh --hostname %h
+            ProxyCommand cloudflared access ssh --hostname %h --id ${{ secrets.CF_ACCESS_CLIENT_ID }} --secret ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
             StrictHostKeyChecking no
           EOF
 
