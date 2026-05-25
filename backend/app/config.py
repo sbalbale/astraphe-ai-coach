@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     
     # --- General App Configuration ---
     APP_NAME: str = "ASTRAPE-Backend"
+    APP_VERSION: str = "1.0.0"
     APP_ENV: str = "development" 
     PORT: int = 8000
     APP_BASE_URL: str = "http://localhost:8000"

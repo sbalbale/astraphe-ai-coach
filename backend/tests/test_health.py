@@ -16,6 +16,7 @@ def test_health_reports_supabase_and_redis():
     assert res.status_code == 200
     body = res.json()
     assert body["status"] == "healthy"
+    assert body["version"] == app.version
     assert body["redis"] == "connected"
     assert body["supabase"] == "connected"
 
@@ -30,4 +31,5 @@ def test_health_degraded_when_supabase_unavailable():
     assert res.status_code == 200
     body = res.json()
     assert body["status"] == "degraded"
+    assert body["version"] == app.version
     assert body["supabase"] == "unavailable"
