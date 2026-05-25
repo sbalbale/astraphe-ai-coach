@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 from app.services.ai_coach import (
     _extract_athlete_message_from_text,
+    _load_conversation_history,
     load_coach_instructions,
     _extract_grounding_sources,
 )
@@ -57,6 +58,76 @@ def test_extract_athlete_message_strips_scratchpad_without_response_tags():
     assert "Constraint Check" not in out
     assert "Plan the deload" not in out
     assert out.startswith("Given how much your HRV")
+
+
+def test_extract_athlete_message_strips_triathlon_planning_dump():
+    raw = (
+        "The user is asking about their swimming performance and how to improve front crawl.\n"
+        "750m breaststroke at 2:15/100m.\n"
+        "* Is this good? For a beginner triathlete, it is a solid baseline.\n"
+        "* The search results say the Cohasset swim is a 0.25-mile ocean swim.\n"
+        "Plan:\n"
+        "Acknowledge the race and the swim effort.\n"
+        "Constraint Check:\n"
+        "No quotation marks for emphasis.\n"
+        "Let's refine the Is it good part.\n"
+        "Final response structure:\n"
+        "That 750m effort is a fantastic baseline, Sean! To answer your question: "
+        "an average of 2:15 per 100m for breaststroke is a very solid starting point.\n"
+        "How to Improve Your Front Crawl\n"
+        "Start with catch-up drill and fingertip drag drill."
+    )
+    out = _extract_athlete_message_from_text(raw)
+    assert out.startswith("That 750m effort")
+    assert "The user is asking" not in out
+    assert "Plan:" not in out
+    assert "Constraint Check" not in out
+    assert "Final response structure" not in out
+    assert "Let's refine" not in out
+    assert "2:15 per 100m" in out
+
+
+def test_load_conversation_history_sanitizes_persisted_ai_reasoning(fake_db, test_athlete_id):
+    fake_db._table_seeds["coach_messages"] = [
+        {
+            "role": "ai",
+            "content": (
+                "The user is asking about their swimming performance.\n"
+                "Plan:\n"
+                "Answer directly.\n"
+                "That 750m effort is a fantastic baseline, Sean!"
+            ),
+            "image_urls": [],
+            "created_at": "2026-05-25T19:00:00Z",
+        }
+    ]
+
+    rows = _load_conversation_history(fake_db, test_athlete_id, "fake-conversation-id")
+
+    assert rows[0]["content"] == "That 750m effort is a fantastic baseline, Sean!"
+
+
+def test_get_conversation_messages_sanitizes_persisted_ai_reasoning(coach_client, fake_db):
+    fake_db._table_seeds["coach_messages"] = [
+        {
+            "id": "leaky-message",
+            "role": "ai",
+            "content": (
+                "The user is asking about front crawl.\n"
+                "Constraint Check:\n"
+                "Cite a metric.\n"
+                "That 750m effort is a fantastic baseline, Sean!"
+            ),
+            "image_urls": [],
+            "created_at": "2026-05-25T19:00:00Z",
+        }
+    ]
+
+    response = coach_client.get("/v1/coach/conversations/fake-conversation-id/messages")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["messages"][0]["content"] == "That 750m effort is a fantastic baseline, Sean!"
 
 
 def test_extract_grounding_sources_dedupes_and_skips_empty():

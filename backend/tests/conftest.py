@@ -8,7 +8,10 @@ from app.dependencies import (
     get_current_athlete,
     get_current_gemini_model,
     get_current_user_tier,
+    get_user_config,
     get_user_db,
+    require_ai_rate_limit,
+    UserConfig,
 )
 
 # The UUID we want to return whenever the API asks for the current authenticated user
@@ -24,12 +27,31 @@ def override_get_current_user_tier():
     return "premium"
 
 
+def override_get_user_config():
+    """Mock combined auth/config dependency used by coach routes."""
+    return UserConfig(
+        user_id="fake-user-id",
+        tier="premium",
+        gemini_model="gemini-flash-lite-test",
+        gemini_analysis_model="gemini-flash-lite-test",
+        rate_limit_rpm=1000,
+        rate_limit_rph=1000,
+        is_admin=False,
+    )
+
+
+async def override_require_ai_rate_limit():
+    return None
+
+
 @pytest.fixture
 def client():
     """Provides a test client with bypassed authentication."""
     # Tell FastAPI to use our mock function instead of checking for a Supabase JWT
     app.dependency_overrides[get_current_athlete] = override_get_current_athlete
     app.dependency_overrides[get_current_user_tier] = override_get_current_user_tier
+    app.dependency_overrides[get_user_config] = override_get_user_config
+    app.dependency_overrides[require_ai_rate_limit] = override_require_ai_rate_limit
 
     # Yield the client so tests can use it
     with TestClient(app) as test_client:
@@ -175,8 +197,10 @@ def coach_client(fake_db):
     """
     app.dependency_overrides[get_current_athlete] = override_get_current_athlete
     app.dependency_overrides[get_current_user_tier] = override_get_current_user_tier
+    app.dependency_overrides[get_user_config] = override_get_user_config
     app.dependency_overrides[get_user_db] = lambda: fake_db
     app.dependency_overrides[get_current_gemini_model] = lambda: "gemini-flash-lite-test"
+    app.dependency_overrides[require_ai_rate_limit] = override_require_ai_rate_limit
 
     with TestClient(app) as test_client:
         yield test_client
