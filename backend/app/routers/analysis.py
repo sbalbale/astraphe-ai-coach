@@ -29,6 +29,9 @@ from app.services.analysis_cache import (
 router = APIRouter(prefix="/v1/analysis", tags=["Analysis"])
 
 _regen_in_flight: set[str] = set()
+_ANALYSIS_PROMPT_POLICY_VERSION: dict[str, str] = {
+    "strain": "2026-05-25-strain-scale-v2",
+}
 
 
 def _parse_day(day: Optional[str]) -> date:
@@ -354,6 +357,23 @@ def _load_zones_context(db: Client, athlete_id: str, window_start: str, window_e
 def _prompt(analysis_type: str, context: Dict[str, Any]) -> str:
     # Tight output rules: 1–2 sentences, no lists, cite at least one metric from context.
     # We embed JSON so the model can quote exact numbers.
+    if analysis_type == "strain":
+        return (
+            "You are ASTRAPE, a clinical performance analyst.\n"
+            "Task: Write a concise 1-2 sentence analysis of today's strain/load status with a takeaway and a next-step.\n"
+            "Rules:\n"
+            "- Output 1-2 sentences only. No bullets, no headings, no emojis.\n"
+            "- Cite at least one exact metric from the JSON: strain_score, recovery_score, sleep_score, CTL, ATL, or TSB.\n"
+            "- Interpret strain_score on a 0-100 scale: 0-33 = light/recovery, 34-66 = moderate, 67-100 = high/taxing.\n"
+            "- If strain_score is below 34, describe it as light or low load. Do not call it significant, heavy, taxing, high load, or intense.\n"
+            "- Interpret recovery_score on a 0-100 scale: 75-100 = recovered, 50-74 = moderate, 25-49 = fatigued, 0-24 = depleted.\n"
+            "- Interpret TSB precisely: -10 to +25 = productive/fresh/good form, -30 to -10 = build-phase fatigue, below -30 = overreaching risk.\n"
+            "- For TSB between -10 and +25, do not call it overload, an overload phase, or a fatigue phase.\n"
+            "- If data is missing, say what is missing in one sentence.\n\n"
+            f"AnalysisType: {analysis_type}\n"
+            f"ContextJSON: {context}\n"
+        )
+
     if analysis_type == "workout":
         return (
             "You are ASTRAPE, a clinical performance analyst.\n"
@@ -401,6 +421,90 @@ def _n(v: Any) -> Optional[float]:
         return float(v)
     except Exception:
         return None
+
+
+def _fmt_num(v: Optional[float], decimals: int = 2) -> str:
+    if v is None:
+        return ""
+    fv = float(v)
+    if fv.is_integer():
+        return str(int(fv))
+    return f"{fv:.{decimals}f}".rstrip("0").rstrip(".")
+
+
+def _fmt_signed(v: Optional[float], decimals: int = 2) -> str:
+    if v is None:
+        return ""
+    return f"{float(v):+.{decimals}f}".rstrip("0").rstrip(".")
+
+
+def _strain_label(strain_score: Optional[float]) -> Optional[str]:
+    if strain_score is None:
+        return None
+    if strain_score < 34:
+        return "light"
+    if strain_score < 67:
+        return "moderate"
+    return "high"
+
+
+def _analysis_fingerprint(analysis_type: str, context: Dict[str, Any]) -> str:
+    policy_version = _ANALYSIS_PROMPT_POLICY_VERSION.get(analysis_type)
+    if policy_version is None:
+        return fingerprint_context(context)
+    return fingerprint_context(
+        {
+            "analysis_type": analysis_type,
+            "policy_version": policy_version,
+            "context": context,
+        }
+    )
+
+
+def _violates_strain_policy(text: str, context: Dict[str, Any]) -> bool:
+    if not text:
+        return True
+
+    ctx = context or {}
+    biom = ctx.get("biometrics") or {}
+    pmc = ctx.get("pmc") or {}
+    strain_score = _n(biom.get("strain_score"))
+    tsb = _n(pmc.get("tsb"))
+    low = text.lower()
+
+    if strain_score is not None and strain_score < 34:
+        low_strain_forbidden = (
+            "significant training load",
+            "significant load",
+            "heavy load",
+            "taxing",
+            "high strain",
+            "high load",
+            "intense load",
+            "substantial load",
+        )
+        if any(term in low for term in low_strain_forbidden):
+            return True
+
+    if tsb is not None and -10 <= tsb <= 25:
+        fresh_tsb_forbidden = (
+            "productive overload",
+            "overload phase",
+            "overload",
+            "fatigue phase",
+            "sustainable fatigue",
+            "manageable threshold",
+        )
+        if any(term in low for term in fresh_tsb_forbidden):
+            return True
+
+    return False
+
+
+def _sanitize_analysis_content(analysis_type: str, context: Dict[str, Any], text: str) -> str:
+    if analysis_type == "strain" and _violates_strain_policy(text, context):
+        return _fallback_content(analysis_type, context)
+    return text
 
 
 def _fallback_content(analysis_type: str, context: Dict[str, Any]) -> str:
@@ -653,19 +757,32 @@ def _fallback_content(analysis_type: str, context: Dict[str, Any]) -> str:
         ctl = _n(pmc.get("ctl"))
         atl = _n(pmc.get("atl"))
         tsb = _n(pmc.get("tsb"))
+        recovery_score = _n(biom.get("recovery_score"))
         if strain_score is None and ctl is None and atl is None:
             return "Strain insight isn't available yet because today's strain/load data is missing."
         parts: list[str] = []
         if strain_score is not None:
-            parts.append(f"strain {round(strain_score)}")
+            parts.append(f"strain {round(strain_score)}/100")
+        if recovery_score is not None:
+            parts.append(f"recovery {round(recovery_score)}/100")
         if ctl is not None and atl is not None and tsb is not None:
-            parts.append(f"CTL {round(ctl)}, ATL {round(atl)}, TSB {round(tsb)}")
+            parts.append(f"CTL {_fmt_num(ctl)}, ATL {_fmt_num(atl)}, TSB {_fmt_signed(tsb)}")
+        elif tsb is not None:
+            parts.append(f"TSB {_fmt_signed(tsb)}")
         s = ", ".join(parts) if parts else "today's load metrics"
+
+        label = _strain_label(strain_score)
         if tsb is not None and tsb < -20:
-            return f"Today's strain sits on top of high fatigue ({s}); prioritize low-intensity work and recovery behaviors."
+            return f"Today's {label or 'current'} strain sits on top of elevated fatigue ({s}); prioritize low-intensity work and recovery behaviors."
+        if strain_score is not None and strain_score < 34:
+            if tsb is not None and -10 <= tsb <= 25:
+                if recovery_score is not None and recovery_score >= 75:
+                    return f"Today's strain is light ({s}), and your recovery/TSB show good form; you're well-positioned for planned quality work without treating today as a big load."
+                return f"Today's strain is light ({s}), and your TSB shows good form; keep added work controlled unless a quality session is already planned."
+            return f"Today's strain is light ({s}); keep the next work controlled and let recovery guide any added intensity."
         if strain_score is not None and strain_score >= 67:
             return f"High strain day ({s}); keep tomorrow easier unless recovery markers rebound."
-        return f"Your strain is manageable ({s}); keep a steady aerobic focus and avoid stacking too many hard days."
+        return f"Your strain is moderate ({s}); keep a steady aerobic focus and avoid stacking too many hard days."
 
     return "Insight isn't available yet because the required data hasn't synced."
 
@@ -679,7 +796,7 @@ def _get_or_compute(
     context: Dict[str, Any],
     model_name: str,
 ) -> Dict[str, Any]:
-    fp = fingerprint_context(context)
+    fp = _analysis_fingerprint(analysis_type, context)
     cached = get_cached_analysis(db, athlete_id, analysis_type, scope_key)
     if analysis_cache_is_valid(cached, fp):
         return {"content": cached.get("content"), "fingerprint": fp, "cached": True}
@@ -730,7 +847,7 @@ def _get_or_compute(
             "model": failed_model,
         }
 
-    final_text = (text or "").strip()
+    final_text = _sanitize_analysis_content(analysis_type, context, (text or "").strip())
     if not final_text:
         fb = _fallback_content(analysis_type, context)
         empty_model = format_analysis_failure_model(
@@ -855,7 +972,7 @@ async def dashboard_summary_analysis(
     d = _parse_day(day)
     scope_key = d.isoformat()
     ctx = _load_dashboard_context(db, athlete_id, d)
-    fp = fingerprint_context(ctx)
+    fp = _analysis_fingerprint("dashboard_summary", ctx)
 
     cached = get_cached_analysis(db, athlete_id, "dashboard_summary", scope_key)
     flight_key = f"{athlete_id}:{scope_key}"
