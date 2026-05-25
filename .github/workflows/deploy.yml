@@ -1,0 +1,108 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'backend/**'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ github.sha }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          push: true
+          tags: |
+            ghcr.io/sbalbale/astrape-api:latest
+            ghcr.io/sbalbale/astrape-api:${{ github.sha }}
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install cloudflared
+        run: |
+          curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
+          chmod +x cloudflared
+          sudo mv cloudflared /usr/local/bin/
+
+      - name: Setup SSH via Cloudflare Tunnel
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.PROXMOX_SSH_KEY }}" > ~/.ssh/id_ed25519_deploy
+          chmod 600 ~/.ssh/id_ed25519_deploy
+          cat >> ~/.ssh/config << 'EOF'
+          Host ssh.astrapeai.com
+            HostName ssh.astrapeai.com
+            User docker
+            IdentityFile ~/.ssh/id_ed25519_deploy
+            ProxyCommand cloudflared access ssh --hostname %h
+            StrictHostKeyChecking no
+          EOF
+
+      - name: Deploy to Proxmox
+        run: |
+          ssh docker@ssh.astrapeai.com << 'ENDSSH'
+            cd ~/astrape
+            docker compose pull astrape-api
+            docker compose up -d astrape-api
+            docker image prune -f
+            docker compose ps
+          ENDSSH
+
+  migrate:
+    needs: deploy
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install cloudflared
+        run: |
+          curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
+          chmod +x cloudflared
+          sudo mv cloudflared /usr/local/bin/
+
+      - name: Setup SSH via Cloudflare Tunnel
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.PROXMOX_SSH_KEY }}" > ~/.ssh/id_ed25519_deploy
+          chmod 600 ~/.ssh/id_ed25519_deploy
+          cat >> ~/.ssh/config << 'EOF'
+          Host ssh.astrapeai.com
+            HostName ssh.astrapeai.com
+            User docker
+            IdentityFile ~/.ssh/id_ed25519_deploy
+            ProxyCommand cloudflared access ssh --hostname %h
+            StrictHostKeyChecking no
+          EOF
+
+      - name: Run new migrations
+        run: |
+          ssh docker@ssh.astrapeai.com << 'ENDSSH'
+            for f in ~/astrape/repo/supabase/migrations/*.sql; do
+              docker exec -i supabase-db psql -U postgres -d postgres -f - < "$f"
+            done
+          ENDSSH
