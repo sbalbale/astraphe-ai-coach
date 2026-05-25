@@ -78,8 +78,8 @@ jobs:
           echo "${{ secrets.PROXMOX_SSH_KEY }}" > ~/.ssh/id_ed25519_deploy
           chmod 600 ~/.ssh/id_ed25519_deploy
 
-          # Use printf to avoid heredoc indentation pitfalls - values baked in at write time
-          printf '#!/bin/bash\nexport CF_ACCESS_CLIENT_ID="%s"\nexport CF_ACCESS_CLIENT_SECRET="%s"\nexec cloudflared access ssh --hostname "$1"\n' \
+          # Pass credentials directly as flags instead of relying on environment variables
+          printf '#!/bin/bash\nexec cloudflared access ssh --hostname "$1" --service-token-id "%s" --service-token-secret "%s"\n' \
             "$CF_ACCESS_CLIENT_ID" "$CF_ACCESS_CLIENT_SECRET" > /tmp/cf-proxy.sh
           chmod +x /tmp/cf-proxy.sh
 
@@ -133,7 +133,8 @@ jobs:
           echo "${{ secrets.PROXMOX_SSH_KEY }}" > ~/.ssh/id_ed25519_deploy
           chmod 600 ~/.ssh/id_ed25519_deploy
 
-          printf '#!/bin/bash\nexport CF_ACCESS_CLIENT_ID="%s"\nexport CF_ACCESS_CLIENT_SECRET="%s"\nexec cloudflared access ssh --hostname "$1"\n' \
+          # Apply the same flag correction here
+          printf '#!/bin/bash\nexec cloudflared access ssh --hostname "$1" --service-token-id "%s" --service-token-secret "%s"\n' \
             "$CF_ACCESS_CLIENT_ID" "$CF_ACCESS_CLIENT_SECRET" > /tmp/cf-proxy.sh
           chmod +x /tmp/cf-proxy.sh
 
