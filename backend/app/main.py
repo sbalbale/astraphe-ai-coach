@@ -18,7 +18,7 @@ _docs_enabled = settings.APP_ENV != "production"
 app = FastAPI(
     title="ASTRAPE Backend API",
     description="Mathematical and AI orchestration core for the ASTRAPE Coach",
-    version="1.0.0",
+    version=settings.APP_VERSION,
     docs_url="/docs" if _docs_enabled else None,
     redoc_url="/redoc" if _docs_enabled else None,
 )
@@ -178,6 +178,7 @@ async def health_check():
     return {
         "status": overall,
         "service": "ASTRAPE API",
+        "version": settings.APP_VERSION,
         "redis": "connected" if redis_ok else "unavailable",
         "supabase": "connected" if supabase_ok else "unavailable",
     }
