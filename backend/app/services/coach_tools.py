@@ -860,8 +860,7 @@ def handle_internal_scratchpad(
     """
     Sinks internal AI reasoning and planning into a tool call to hide it from the user.
     """
-    # Simply log and return success; the thinking is preserved in the tool call itself.
-    print(f"\n--- [AI SCRATCHPAD] ---\n{args.get('thought', 'No thought provided')}\n")
+    print("--- [AI SCRATCHPAD RECORDED] ---")
     return {"status": "success", "message": "Thought recorded in scratchpad."}
 
 

@@ -18,6 +18,8 @@
     created_at?: string;
     streaming?: boolean;
   };
+
+  let greetingMessage = $state<string>('');
   
   const initialText = $derived(greetingMessage || `Hey ${authStore.user?.user_metadata?.full_name?.split(' ')[0] || 'there'}! I'm your ASTRAPE Coach. ${athleteStore.ctl > 0 ? `I've analyzed your current fitness (CTL: ${Math.round(athleteStore.ctl)}).` : "Link your data so I can start analyzing your training."} How can I help you today?`);
   
@@ -25,7 +27,6 @@
   let conversationId = $state<string | null>(null);
   let messages = $state<Message[]>([]);
   let aiMemories = $state<string[]>([]);
-  let greetingMessage = $state<string>('');
   
   let input = $state('');
   let loading = $state(false);
@@ -327,6 +328,7 @@
       }
       scrollToBottom();
     } catch (e) {
+      console.error('[Chat] Failed to send coach message:', e);
       const msgIndex = messages.findIndex(m => m.id === aiMsgId);
       if (msgIndex !== -1) {
         messages[msgIndex].text = "Sorry, I had trouble connecting to the coaching engine.";
