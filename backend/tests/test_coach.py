@@ -22,6 +22,16 @@ def test_markdown_prompt_loading():
     assert "<response>" in instructions
 
 
+def test_coach_prompt_discourages_habitual_emoji_use():
+    instructions = load_coach_instructions()
+
+    assert "✨" not in instructions
+    assert "You may use a relevant emoji" not in instructions
+    assert "many responses should have no emoji" in instructions
+    assert "default closing flourish" in instructions
+    assert "Response Calibration Examples" in instructions
+
+
 def test_extract_athlete_message_strips_scratchpad_tags():
     raw = (
         "<scratchpad>Internal planning only.</scratchpad>"

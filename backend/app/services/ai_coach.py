@@ -563,13 +563,13 @@ def build_initialization_message(
             "[PROACTIVE CHECK]\nThe following severe anomalies were detected (JSON):\n"
             + json.dumps(anomalies, ensure_ascii=False)
             + "\n\nWrite exactly 2–3 sentences. Name the triggering metric(s). Recommend a decisive action. "
-            "ASTRAPE voice: conversational and supportive. You may use a relevant emoji. Wrap your final message in <response> ... </response> tags."
+            "ASTRAPE voice: conversational, supportive, and measured. Use emoji only if it adds clear signal; do not make it a default closer. Wrap your final message in <response> ... </response> tags."
         )
     else:
         directive = (
             "[INITIAL GREETING]\nNo severe anomaly triggers fired. "
             "Write at most 2 sentences, context-aware, and cite TSB or HRV from the context. "
-            "ASTRAPE voice: conversational and supportive. You may use a relevant emoji. Wrap your final message in <response> ... </response> tags."
+            "ASTRAPE voice: conversational, supportive, and measured. Use emoji only if it adds clear signal; do not make it a default closer. Wrap your final message in <response> ... </response> tags."
         )
 
     prompt = f"{instructions}\n\n{context_block}\n\n{directive}"
