@@ -6,7 +6,6 @@ from app.services.algorithms import compute_z_score
 from app.services.memory import retrieve_relevant_memories
 from app.services.time_utils import (
     coerce_timezone_offset_min,
-    fetch_athlete_timezone_offset_min,
     local_datetime_from_timezone_offset,
 )
 import asyncio
@@ -17,7 +16,7 @@ from typing import Any
 
 import numpy as np
 from supabase import Client
-from datetime import timedelta
+from datetime import date, timedelta
 
 
 _client = genai.Client(api_key=settings.GEMINI_API_KEY)
@@ -239,6 +238,123 @@ def invalidate_context_cache(athlete_id: str) -> None:
     _context_parts_cache.pop(athlete_id, None)
 
 
+def _calendar_context_for_offset(timezone_offset_min: int) -> dict[str, str]:
+    local_now = local_datetime_from_timezone_offset(timezone_offset_min)
+    today = local_now.date()
+    tomorrow = today + timedelta(days=1)
+    return {
+        "current_local_date": today.isoformat(),
+        "current_local_weekday": today.strftime("%A"),
+        "current_local_datetime": local_now.isoformat(timespec="seconds"),
+        "tomorrow_date": tomorrow.isoformat(),
+        "tomorrow_weekday": tomorrow.strftime("%A"),
+    }
+
+
+def _athlete_local_calendar(db: Client, athlete_id: str) -> dict[str, str]:
+    _, profile, _ = _get_context_parts_cached(db, athlete_id)
+    timezone_offset_min = coerce_timezone_offset_min(profile.get("timezone_offset_min"))
+    return _calendar_context_for_offset(timezone_offset_min)
+
+
+_ISO_DATE_RE = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
+
+
+def _message_mentions(message: str, word: str) -> bool:
+    return bool(re.search(rf"\b{re.escape(word)}\b", message or "", flags=re.IGNORECASE))
+
+
+def _message_has_explicit_iso_date(message: str) -> bool:
+    return bool(_ISO_DATE_RE.search(message or ""))
+
+
+def _calendar_preface(message: str, calendar: dict[str, str]) -> str:
+    return (
+        "[ATHLETE-LOCAL CALENDAR]\n"
+        f"Today is {calendar['current_local_weekday']}, {calendar['current_local_date']}.\n"
+        f"Tomorrow is {calendar['tomorrow_weekday']}, {calendar['tomorrow_date']}.\n"
+        "Resolve relative dates from these values, not from UTC/server timestamps.\n"
+        "[ATHLETE MESSAGE]\n"
+        f"{message}"
+    )
+
+
+def _normalize_relative_tool_dates(
+    tool_name: str,
+    args: dict[str, Any],
+    *,
+    message: str,
+    calendar: dict[str, str],
+) -> dict[str, Any]:
+    """
+    Deterministically correct model-chosen dates for relative workout requests.
+
+    The LLM can still infer dates from UTC or stale chat history. For write tools,
+    the backend is the source of truth for common relative dates.
+    """
+    if tool_name != "schedule_workout":
+        return args
+    if _message_has_explicit_iso_date(message):
+        return args
+
+    normalized = dict(args)
+    if _message_mentions(message, "tomorrow"):
+        normalized["date"] = calendar["tomorrow_date"]
+    elif _message_mentions(message, "today"):
+        normalized["date"] = calendar["current_local_date"]
+    return normalized
+
+
+def _month_day_labels(iso_date: str) -> list[str]:
+    try:
+        d = date.fromisoformat(iso_date)
+    except ValueError:
+        return []
+    suffix = "th" if 11 <= (d.day % 100) <= 13 else {1: "st", 2: "nd", 3: "rd"}.get(d.day % 10, "th")
+    base = f"{d.strftime('%B')} {d.day}"
+    return [base, f"{base}{suffix}"]
+
+
+def _calendar_tool_result_reminder(planned_dates: list[str], calendar: dict[str, str]) -> str | None:
+    labels: list[str] = []
+    for planned_date in planned_dates:
+        if planned_date == calendar.get("tomorrow_date"):
+            labels.append(f"{planned_date} is tomorrow ({calendar.get('tomorrow_weekday')}).")
+        elif planned_date == calendar.get("current_local_date"):
+            labels.append(f"{planned_date} is today ({calendar.get('current_local_weekday')}).")
+    if not labels:
+        return None
+    return (
+        "[CALENDAR REMINDER FOR FINAL RESPONSE]\n"
+        + " ".join(labels)
+        + " Use this wording when confirming scheduled workouts."
+    )
+
+
+def _correct_relative_date_language(text: str, planned_dates: list[str], calendar: dict[str, str]) -> str:
+    corrected = text or ""
+    for planned_date in planned_dates:
+        if planned_date != calendar.get("tomorrow_date"):
+            continue
+        corrected = re.sub(r"\b(to|for) today\b", r"\1 tomorrow", corrected, flags=re.IGNORECASE)
+        corrected = re.sub(r"\btoday's\b", "tomorrow's", corrected, flags=re.IGNORECASE)
+        for label in _month_day_labels(planned_date):
+            escaped = re.escape(label)
+            corrected = re.sub(
+                rf"\btoday(\s*,?\s*)({escaped})",
+                r"tomorrow\1\2",
+                corrected,
+                flags=re.IGNORECASE,
+            )
+            corrected = re.sub(
+                rf"\btoday(\s*\(\s*)({escaped})(\s*\))",
+                r"tomorrow\1\2\3",
+                corrected,
+                flags=re.IGNORECASE,
+            )
+    return corrected
+
+
 def _build_system_context(
     db: Client,
     athlete_id: str,
@@ -247,20 +363,19 @@ def _build_system_context(
     memories: list[dict] | None = None,
 ) -> str:
     bio, profile, tss_base = _get_context_parts_cached(db, athlete_id)
-    timezone_offset_min = fetch_athlete_timezone_offset_min(db, athlete_id)
-    local_now = local_datetime_from_timezone_offset(timezone_offset_min)
-    today = local_now.date().isoformat()
+    timezone_offset_min = coerce_timezone_offset_min(profile.get("timezone_offset_min"))
+    calendar = _calendar_context_for_offset(timezone_offset_min)
+    today = calendar["current_local_date"]
     profile = {**profile, "timezone_offset_min": timezone_offset_min}
     # Patch current workout TSS (varies per message) into the cached training load dict.
     training_load = {**tss_base, "most_recent_workout_tss": _safe_float(current_tss) or 0.0}
     ctx: dict = {
         "date": today,
-        "current_local_date": today,
-        "current_local_datetime": local_now.isoformat(timespec="seconds"),
+        **calendar,
         "timezone_offset_min": timezone_offset_min,
         "calendar_rules": {
             "today": "Resolve today from current_local_date in the athlete's timezone.",
-            "tomorrow": "Resolve tomorrow as current_local_date + 1 calendar day in the athlete's timezone.",
+            "tomorrow": "Resolve tomorrow from tomorrow_date in the athlete's timezone.",
         },
         "athlete_id": athlete_id,
         "training_load": training_load,
@@ -796,7 +911,7 @@ def get_coach_response_agentic(
     system_with_ctx = (
         f"{system_instruction}\n\n{context_block}\n\n"
         "Calendar rule: for all relative dates, including today, tomorrow, this week, and next week, "
-        "use the athlete-local current_local_date/current_local_datetime from SYSTEM CONTEXT. "
+        "use the athlete-local current_local_date, current_local_weekday, tomorrow_date, and tomorrow_weekday from SYSTEM CONTEXT. "
         "Do not infer dates from UTC, server time, or model pretraining."
     )
 
@@ -821,18 +936,20 @@ def get_coach_response_agentic(
         if conversation_id
         else []
     )
+    calendar = _athlete_local_calendar(db, athlete_id)
     contents = _history_to_gemini_contents(history)
     # Always append the current user message (history alone is not sufficient).
-    contents.append(types.Content(role="user", parts=[types.Part.from_text(text=message)]))
+    contents.append(types.Content(role="user", parts=[types.Part.from_text(text=_calendar_preface(message, calendar))]))
     # If there was no history, `contents` is now a 1-item list with the current message.
 
     # Deterministic backstop: if the user requests clearing a plan, do it even if the model doesn't call tools.
     msg_l = (message or "").lower()
     wants_clear = any(k in msg_l for k in ("delete", "remove", "clear")) and ("plan" in msg_l or "calendar" in msg_l)
     if wants_clear:
-        today = local_datetime_from_timezone_offset(
-            fetch_athlete_timezone_offset_min(db, athlete_id)
-        ).date()
+        try:
+            today = date.fromisoformat(calendar["current_local_date"])
+        except Exception:
+            today = local_datetime_from_timezone_offset(0).date()
         monday = today - timedelta(days=today.weekday())
         if "next week" in msg_l:
             start = monday + timedelta(days=7)
@@ -880,6 +997,7 @@ def get_coach_response_agentic(
         config.thinking_config = types.ThinkingConfig(include_thoughts=False)
 
     last_response = None
+    planned_dates_from_tools: list[str] = []
     # Reduced max hops to prevent long hangs on heavy models or tool-call oscillations
     for _hop in range(8):
         _hop_error: Exception | None = None
@@ -947,6 +1065,7 @@ def get_coach_response_agentic(
                     continue
                 name = fc.name
                 args = coach_tools.parse_function_args(fc)
+                args = _normalize_relative_tool_dates(name, args, message=message, calendar=calendar)
                 handler = coach_tools.TOOL_HANDLERS.get(name)
                 try:
                     result: dict[str, Any] = (
@@ -954,30 +1073,43 @@ def get_coach_response_agentic(
                     )
                 except Exception as e:
                     result = {"error": str(e)}
+                if name == "schedule_workout" and isinstance(result, dict):
+                    planned_date = result.get("planned_date")
+                    workout_strict = result.get("workout_strict")
+                    if not isinstance(planned_date, str) and isinstance(workout_strict, dict):
+                        planned_date = workout_strict.get("date")
+                    if isinstance(planned_date, str) and planned_date:
+                        planned_dates_from_tools.append(planned_date[:10])
                 print(f"\n--- [TOOL EXECUTED: {name}] ---")
                 print(f"Args: {args}")
                 print(f"Result: {result}\n")
                 fr_parts.append(types.Part.from_function_response(name=name, response=result))
             if fr_parts:
                 contents.append(types.Content(role="user", parts=fr_parts))
+                reminder = _calendar_tool_result_reminder(planned_dates_from_tools, calendar)
+                if reminder:
+                    contents.append(types.Content(role="user", parts=[types.Part.from_text(text=reminder)]))
             continue
 
         joined = "".join(t for t in texts if t)
         if joined.strip():
+            final_text = _extract_athlete_message_from_text(joined)
             return (
-                _extract_athlete_message_from_text(joined),
+                _correct_relative_date_language(final_text, planned_dates_from_tools, calendar),
                 _extract_grounding_sources(last_response),
             )
         fallback = getattr(last_response, "text", None) or ""
         if fallback.strip():
+            final_text = _extract_athlete_message_from_text(fallback)
             return (
-                _extract_athlete_message_from_text(fallback),
+                _correct_relative_date_language(final_text, planned_dates_from_tools, calendar),
                 _extract_grounding_sources(last_response),
             )
         break
 
     fallback = getattr(last_response, "text", None) or "" if last_response else ""
     final = _extract_athlete_message_from_text(fallback)
+    final = _correct_relative_date_language(final, planned_dates_from_tools, calendar)
     grounding = _extract_grounding_sources(last_response) if last_response else []
     return (final or "Unable to complete coach response.", grounding)
 
@@ -1013,17 +1145,16 @@ async def _build_system_context_string_async(
         load_memories(),
     )
     timezone_offset_min = coerce_timezone_offset_min(profile.get("timezone_offset_min"))
-    local_now = local_datetime_from_timezone_offset(timezone_offset_min)
-    today = local_now.date().isoformat()
+    calendar = _calendar_context_for_offset(timezone_offset_min)
+    today = calendar["current_local_date"]
     profile = {**profile, "timezone_offset_min": timezone_offset_min}
     ctx: dict = {
         "date": today,
-        "current_local_date": today,
-        "current_local_datetime": local_now.isoformat(timespec="seconds"),
+        **calendar,
         "timezone_offset_min": timezone_offset_min,
         "calendar_rules": {
             "today": "Resolve today from current_local_date in the athlete's timezone.",
-            "tomorrow": "Resolve tomorrow as current_local_date + 1 calendar day in the athlete's timezone.",
+            "tomorrow": "Resolve tomorrow from tomorrow_date in the athlete's timezone.",
         },
         "athlete_id": athlete_id,
         "training_load": training,
@@ -1080,7 +1211,7 @@ async def get_coach_response_stream(
     final_prompt = (
         f"{system_instruction}\n\n{context_block}\n\n"
         "Calendar rule: for all relative dates, including today, tomorrow, this week, and next week, "
-        "use the athlete-local current_local_date/current_local_datetime from SYSTEM CONTEXT. "
+        "use the athlete-local current_local_date, current_local_weekday, tomorrow_date, and tomorrow_weekday from SYSTEM CONTEXT. "
         "Do not infer dates from UTC, server time, or model pretraining.\n\n"
         f"Athlete Message: {message}"
     )
