@@ -4,11 +4,15 @@ from app.config import settings
 from app.services import coach_tools
 from app.services.algorithms import compute_z_score
 from app.services.memory import retrieve_relevant_memories
+from app.services.time_utils import (
+    coerce_timezone_offset_min,
+    fetch_athlete_timezone_offset_min,
+    local_datetime_from_timezone_offset,
+)
 import asyncio
 import json
 import re
 import time
-from datetime import date
 from typing import Any
 
 import numpy as np
@@ -242,12 +246,22 @@ def _build_system_context(
     conversation_id: str | None = None,
     memories: list[dict] | None = None,
 ) -> str:
-    today = date.today().isoformat()
     bio, profile, tss_base = _get_context_parts_cached(db, athlete_id)
+    timezone_offset_min = fetch_athlete_timezone_offset_min(db, athlete_id)
+    local_now = local_datetime_from_timezone_offset(timezone_offset_min)
+    today = local_now.date().isoformat()
+    profile = {**profile, "timezone_offset_min": timezone_offset_min}
     # Patch current workout TSS (varies per message) into the cached training load dict.
     training_load = {**tss_base, "most_recent_workout_tss": _safe_float(current_tss) or 0.0}
     ctx: dict = {
         "date": today,
+        "current_local_date": today,
+        "current_local_datetime": local_now.isoformat(timespec="seconds"),
+        "timezone_offset_min": timezone_offset_min,
+        "calendar_rules": {
+            "today": "Resolve today from current_local_date in the athlete's timezone.",
+            "tomorrow": "Resolve tomorrow as current_local_date + 1 calendar day in the athlete's timezone.",
+        },
         "athlete_id": athlete_id,
         "training_load": training_load,
         "biometrics": bio,
@@ -779,7 +793,12 @@ def get_coach_response_agentic(
         if db
         else f"[SYSTEM CONTEXT - DO NOT SHOW TO USER]\nAthlete ID: {athlete_id}\nMost recent workout TSS: {current_tss}\n[END CONTEXT]"
     )
-    system_with_ctx = f"{system_instruction}\n\n{context_block}"
+    system_with_ctx = (
+        f"{system_instruction}\n\n{context_block}\n\n"
+        "Calendar rule: for all relative dates, including today, tomorrow, this week, and next week, "
+        "use the athlete-local current_local_date/current_local_datetime from SYSTEM CONTEXT. "
+        "Do not infer dates from UTC, server time, or model pretraining."
+    )
 
     if not db:
         final_prompt = f"{system_with_ctx}\n\nAthlete Message: {message}"
@@ -811,7 +830,9 @@ def get_coach_response_agentic(
     msg_l = (message or "").lower()
     wants_clear = any(k in msg_l for k in ("delete", "remove", "clear")) and ("plan" in msg_l or "calendar" in msg_l)
     if wants_clear:
-        today = date.today()
+        today = local_datetime_from_timezone_offset(
+            fetch_athlete_timezone_offset_min(db, athlete_id)
+        ).date()
         monday = today - timedelta(days=today.weekday())
         if "next week" in msg_l:
             start = monday + timedelta(days=7)
@@ -972,8 +993,6 @@ async def _build_system_context_string_async(
     Same payload as _build_system_context, but DB reads run in parallel to cut
     time-to-first-token on /v1/coach/stream (four sequential round-trips → one wait).
     """
-    today = date.today().isoformat()
-
     async def load_hist() -> list[dict]:
         if not conversation_id:
             return []
@@ -993,8 +1012,19 @@ async def _build_system_context_string_async(
         load_hist(),
         load_memories(),
     )
+    timezone_offset_min = coerce_timezone_offset_min(profile.get("timezone_offset_min"))
+    local_now = local_datetime_from_timezone_offset(timezone_offset_min)
+    today = local_now.date().isoformat()
+    profile = {**profile, "timezone_offset_min": timezone_offset_min}
     ctx: dict = {
         "date": today,
+        "current_local_date": today,
+        "current_local_datetime": local_now.isoformat(timespec="seconds"),
+        "timezone_offset_min": timezone_offset_min,
+        "calendar_rules": {
+            "today": "Resolve today from current_local_date in the athlete's timezone.",
+            "tomorrow": "Resolve tomorrow as current_local_date + 1 calendar day in the athlete's timezone.",
+        },
         "athlete_id": athlete_id,
         "training_load": training,
         "biometrics": bio,
@@ -1047,7 +1077,13 @@ async def get_coach_response_stream(
         context_block = (
             f"[SYSTEM CONTEXT - DO NOT SHOW TO USER]\nAthlete ID: {athlete_id}\nMost recent workout TSS: {current_tss}\n[END CONTEXT]"
         )
-    final_prompt = f"{system_instruction}\n\n{context_block}\n\nAthlete Message: {message}"
+    final_prompt = (
+        f"{system_instruction}\n\n{context_block}\n\n"
+        "Calendar rule: for all relative dates, including today, tomorrow, this week, and next week, "
+        "use the athlete-local current_local_date/current_local_datetime from SYSTEM CONTEXT. "
+        "Do not infer dates from UTC, server time, or model pretraining.\n\n"
+        f"Athlete Message: {message}"
+    )
     effective_model = (model_name or settings.GEMINI_MODEL)
     is_thinking_model = "thinking" in effective_model.lower()
     
