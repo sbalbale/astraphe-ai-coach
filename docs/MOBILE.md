@@ -1,424 +1,169 @@
 ﻿# Mobile
 
-## Svelte 5 + Capacitor Architecture
+## Overview
 
-The ASTRAPE mobile app is a Svelte 5 single-page application compiled to a static web bundle and wrapped by Capacitor into a native iOS and Android binary. The WebView executes the compiled JavaScript; Capacitor provides native plugin bridges as typed TypeScript APIs.
+The `mobile/` app is a Svelte 5 + SvelteKit 2 single-page app. It is built statically with `adapter-static`, disables SSR, registers a Vite PWA service worker, and includes a Capacitor iOS scaffold.
 
----
+Android is not currently scaffolded in this repository.
 
-## Svelte 5 State Management
+## Runtime
 
-ASTRAPE uses Svelte 5's rune system for all reactive state. There is no external state management library (no Pinia, no Zustand) — runes provide fine-grained reactivity with zero boilerplate.
+Current package versions are pinned in `mobile/package.json`:
 
-### Athlete State Store
+- `svelte@5.55.5`
+- `@sveltejs/kit@2.58.0`
+- `vite@8.0.10`
+- `typescript@6.0.3`
+- `tailwindcss@3.4.19`
+- `@capacitor/core@8.3.1`
+- `@capacitor/ios@8.3.1`
+- `@supabase/supabase-js@2.105.0`
+- `layerchart@1.0.13`
+- `d3@7.9.0`
+- `maplibre-gl@5.24.0`
 
-```typescript
-// src/lib/stores/athlete.svelte.ts
+The package requires pnpm:
 
-import type { AthleteState } from '$lib/api/types';
-
-// Reactive state — accessible anywhere via import
-let state = $state<AthleteState | null>(null);
-let loading = $state(false);
-let lastFetched = $state<Date | null>(null);
-
-export function useAthleteState() {
-    async function refresh() {
-        loading = true;
-        try {
-            const response = await api.get<AthleteState>('/athlete/state');
-            state = response.data;
-            lastFetched = new Date();
-        } finally {
-            loading = false;
-        }
-    }
-    
-    return {
-        get state() { return state; },
-        get loading() { return loading; },
-        get lastFetched() { return lastFetched; },
-        refresh,
-    };
-}
+```bash
+cd mobile
+pnpm install
+pnpm run dev
 ```
 
-### Conversation Store (Coach)
+## SvelteKit Mode
 
-```typescript
-// src/lib/stores/conversation.svelte.ts
+`mobile/src/routes/+layout.ts` sets:
 
-interface Message {
-    id: string;
-    role: 'user' | 'assistant';
-    content: string;
-    timestamp: Date;
-    streaming?: boolean;
-}
-
-let messages = $state<Message[]>([]);
-let conversationId = $state<string | null>(null);
-
-export function useConversation() {
-    async function send(text: string) {
-        // Optimistic user message
-        const userMsg: Message = {
-            id: crypto.randomUUID(),
-            role: 'user',
-            content: text,
-            timestamp: new Date(),
-        };
-        messages = [...messages, userMsg];
-        
-        // Streaming AI response
-        const aiMsg: Message = {
-            id: crypto.randomUUID(),
-            role: 'assistant',
-            content: '',
-            timestamp: new Date(),
-            streaming: true,
-        };
-        messages = [...messages, aiMsg];
-        
-        const stream = await api.stream('/coach/message', {
-            conversation_id: conversationId,
-            message: text,
-        });
-        
-        for await (const chunk of stream) {
-            aiMsg.content += chunk;
-            messages = [...messages]; // Trigger reactivity
-        }
-        
-        aiMsg.streaming = false;
-        messages = [...messages];
-    }
-    
-    return {
-        get messages() { return messages; },
-        send,
-        clear: () => { messages = []; conversationId = null; },
-    };
-}
+```ts
+export const prerender = true;
+export const ssr = false;
 ```
 
----
+This means the app behaves as an SPA and relies on client-side Supabase auth/API calls.
+
+## Routes
+
+Current page routes include:
+
+- `/`
+- `/dashboard`
+- `/training`
+- `/zones`
+- `/recovery`
+- `/sleep`
+- `/strain`
+- `/plan`
+- `/chat`
+- `/onboarding`
+- `/profile`
+- `/profile/personal-info`
+- `/profile/training-settings`
+- `/profile/connections`
+- `/profile/notifications`
+- `/profile/privacy`
+- `/auth/signin`
+- `/auth/signup`
+- `/auth/forgot-password`
+- `/auth/reset-password`
+- `/auth/callback`
+
+The root layout owns auth redirects, onboarding redirects, desktop/mobile navigation, deep-link handling, and push initialization.
 
 ## API Client
 
-The typed API client wraps all HTTP calls and handles auth token attachment, request retry, and SSE streaming.
+The app uses browser `fetch` rather than a Capacitor-native HTTP wrapper.
 
-```typescript
-// src/lib/api/client.ts
+Key files:
 
-import { CapacitorHttp } from '@capacitor/core';
-import { getSession } from '$lib/auth';
+- `mobile/src/lib/api.ts`: route-specific API helpers plus generic `get()`/`post()`.
+- `mobile/src/lib/apiAuth.ts`: Supabase session token headers.
+- `mobile/src/lib/supabase.ts`: Supabase client setup.
 
-const BASE_URL = import.meta.env.VITE_API_URL;
+Default backend URL:
 
-async function getHeaders(): Promise<Record<string, string>> {
-    const session = await getSession();
-    return {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${session.access_token}`,
-    };
-}
+```ts
+const API_URL = VITE_API_URL || 'http://localhost:8000';
+```
 
-export const api = {
-    async get<T>(path: string): Promise<{ data: T }> {
-        const response = await CapacitorHttp.get({
-            url: `${BASE_URL}${path}`,
-            headers: await getHeaders(),
-        });
-        
-        if (response.status >= 400) {
-            throw new ApiError(response.data.error);
-        }
-        
-        return { data: response.data };
-    },
-    
-    async post<T>(path: string, body: unknown): Promise<{ data: T }> {
-        const response = await CapacitorHttp.post({
-            url: `${BASE_URL}${path}`,
-            headers: await getHeaders(),
-            data: body,
-        });
-        
-        if (response.status >= 400) {
-            throw new ApiError(response.data.error);
-        }
-        
-        return { data: response.data };
-    },
-    
-    // SSE streaming for coach responses
-    async *stream(path: string, body: unknown): AsyncGenerator<string> {
-        const headers = await getHeaders();
-        const response = await fetch(`${BASE_URL}${path}`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify(body),
-        });
-        
-        const reader = response.body!.getReader();
-        const decoder = new TextDecoder();
-        
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            
-            const chunk = decoder.decode(value);
-            const lines = chunk.split('\n');
-            
-            for (const line of lines) {
-                if (line.startsWith('data: ')) {
-                    const data = line.slice(6);
-                    if (data === '[DONE]') return;
-                    yield data;
-                }
-            }
-        }
-    },
+Coach chat currently calls `POST /v1/coach/message` and expects a JSON response. The backend also supports `/v1/coach/stream` for SSE, but the current client chat flow is non-streaming.
+
+## State Management
+
+State uses Svelte 5 runes and small store modules. There is no external state library.
+
+Current stores:
+
+- `mobile/src/lib/stores/authStore.svelte.ts`
+- `mobile/src/lib/stores/athleteStore.svelte.ts`
+- `mobile/src/lib/stores/trainingStore.svelte.ts`
+- `mobile/src/lib/stores/workoutDetailCache.ts`
+- `mobile/src/lib/stores/analysisNavEpoch.svelte.ts`
+
+Chat state lives in `mobile/src/routes/chat/+page.svelte`; there is no standalone conversation store module.
+
+## Capacitor
+
+`mobile/capacitor.config.ts` is intentionally minimal:
+
+```ts
+const config: CapacitorConfig = {
+  appId: 'com.astrape.coach',
+  appName: 'astrape',
+  webDir: 'build'
 };
 ```
 
----
+Common iOS commands:
 
-## HealthKit Integration
-
-HealthKit data is read natively via the Capacitor Background Runner plugin. The background runner executes a JavaScript worker file at scheduled intervals (every hour by default) and whenever the app returns to the foreground.
-
-### Background Runner Script
-
-```javascript
-// public/runner.js
-// This file runs in a native background context, not in the browser WebView.
-
-addEventListener('healthkitSync', async (resolve, reject, args) => {
-    const lastSync = args.lastSyncTimestamp || new Date(Date.now() - 86400000).toISOString();
-    
-    try {
-        // Query HealthKit for new samples
-        const workouts = await CapacitorHealthkit.queryWorkouts({
-            startDate: lastSync,
-            endDate: new Date().toISOString(),
-        });
-        
-        const hrv = await CapacitorHealthkit.queryQuantityType({
-            identifier: 'HKQuantityTypeIdentifierHeartRateVariabilitySDNN',
-            startDate: lastSync,
-            endDate: new Date().toISOString(),
-            aggregation: 'daily_min',  // RMSSD lowest = overnight resting HRV
-        });
-        
-        const restingHR = await CapacitorHealthkit.queryQuantityType({
-            identifier: 'HKQuantityTypeIdentifierRestingHeartRate',
-            startDate: lastSync,
-            endDate: new Date().toISOString(),
-            aggregation: 'daily_min',
-        });
-        
-        const sleep = await CapacitorHealthkit.querySleepAnalysis({
-            startDate: lastSync,
-            endDate: new Date().toISOString(),
-        });
-        
-        const spo2 = await CapacitorHealthkit.queryQuantityType({
-            identifier: 'HKQuantityTypeIdentifierOxygenSaturation',
-            startDate: lastSync,
-            endDate: new Date().toISOString(),
-            aggregation: 'daily_avg',
-        });
-        
-        // POST batch to ASTRAPE API
-        const payload = { workouts, hrv, restingHR, sleep, spo2 };
-        
-        await CapacitorHttp.post({
-            url: `${API_BASE_URL}/sync/healthkit/batch`,
-            headers: {
-                'Content-Type': 'application/json',
-                'X-HealthKit-Runner': 'true',
-                'Authorization': `Bearer ${args.accessToken}`,
-            },
-            data: payload,
-        });
-        
-        resolve({ 
-            success: true, 
-            syncedItems: workouts.length + hrv.length + sleep.length,
-            timestamp: new Date().toISOString(),
-        });
-        
-    } catch (error) {
-        reject(error.message);
-    }
-});
+```bash
+cd mobile
+pnpm run build
+npx cap sync ios
+npx cap open ios
 ```
 
-### Registering the Background Task
+## Health Integration
 
-```typescript
-// src/lib/healthkit.ts
+Health integration is scaffolded in `mobile/src/lib/integrations/health.ts`.
 
-import { BackgroundRunner } from '@capacitor/background-runner';
-import { getSession } from '$lib/auth';
+Current behavior:
 
-export async function registerHealthKitSync() {
-    const { access_token } = await getSession();
-    
-    await BackgroundRunner.dispatchEvent({
-        label: 'app.astrape-coach.healthkit-sync',
-        event: 'healthkitSync',
-        details: {
-            accessToken: access_token,
-            lastSyncTimestamp: localStorage.getItem('lastHealthKitSync'),
-        },
-    });
-}
+- Web returns simulated success for permission requests.
+- Native uses `@interval-health/capacitor-health` permission request scaffolding.
+- `syncRecentData()` currently posts an empty/mock payload to `/v1/biometrics/sync`.
 
-// Register on app foreground
-document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) {
-        registerHealthKitSync();
-    }
-});
-```
+The backend does not currently document `/v1/biometrics/sync` as a production ingestion route; full HealthKit ingestion still needs wiring.
 
----
+## Push Notifications
 
-## Supabase Realtime
+Relevant files:
 
-The mobile client subscribes to Supabase Realtime channels to receive instant updates when new workouts are processed or biometrics are synced. This eliminates the need for polling.
+- `mobile/src/lib/services/pushNotifications.ts`
+- `mobile/src/service-worker.ts`
+- `mobile/src/routes/+layout.svelte`
+- `mobile/src/routes/profile/notifications/+page.svelte`
 
-```typescript
-// src/lib/realtime.ts
+Web push uses the Vite PWA service worker at `mobile/src/service-worker.ts`. The layout initializes push after auth/profile loading. Web push is limited to installed standalone PWA mode.
 
-import { createClient } from '@supabase/supabase-js';
-import { useAthleteState } from '$lib/stores/athlete.svelte';
+Native iOS push uses the Capacitor push notification plugin scaffold. Android setup should wait until an Android project is added.
 
-const supabase = createClient(
-    import.meta.env.VITE_SUPABASE_URL,
-    import.meta.env.VITE_SUPABASE_ANON_KEY,
-);
+## PWA And Firebase Hosting
 
-export function subscribeToAthleteUpdates(athleteId: string) {
-    const { refresh } = useAthleteState();
-    
-    // Subscribe to tss_history changes (triggers CTL/ATL/TSB update)
-    const channel = supabase
-        .channel(`athlete-${athleteId}`)
-        .on(
-            'postgres_changes',
-            {
-                event: '*',
-                schema: 'public',
-                table: 'tss_history',
-                filter: `athlete_id=eq.${athleteId}`,
-            },
-            () => refresh(),  // Refetch athlete state on any change
-        )
-        .on(
-            'postgres_changes',
-            {
-                event: 'INSERT',
-                schema: 'public',
-                table: 'biometrics',
-                filter: `athlete_id=eq.${athleteId}`,
-            },
-            () => refresh(),
-        )
-        .subscribe();
-    
-    return () => supabase.removeChannel(channel);
-}
-```
+The app uses Vite PWA/Workbox and Firebase Hosting.
 
----
+`mobile/firebase.json` serves `build/`, configures no-cache headers for service-worker/workbox assets, immutable caching for `_app/immutable/**`, and rewrites all routes to `/index.html`.
+
+GitHub Actions workflows:
+
+- `.github/workflows/firebase-hosting-merge.yml`: live deploy on `main`.
+- `.github/workflows/firebase-hosting-pull-request.yml`: preview deploy for same-repo PRs.
+
+Both workflows install with pnpm and pass Vite env vars from GitHub secrets.
 
 ## Offline Behavior
 
-ASTRAPE degrades gracefully without a network connection. The priority is to always show data rather than a blank screen.
+The app has PWA precaching and a few in-memory/client-side caches, especially for workout detail and store state. Do not assume full offline queueing of HealthKit payloads or complete local persistence for every screen unless it is implemented in the relevant route/store.
 
-| Feature | Offline behavior |
-|---|---|
-| Dashboard metrics | Shows cached CTL/ATL/TSB from last successful fetch |
-| Charts | Renders from locally cached series data |
-| Coach chat | Shows message input disabled with "No connection" indicator |
-| Workout list | Shows cached workout history |
-| Plan | Shows cached plan for the current week |
-| Sync | Queues HealthKit payloads locally; flushes when connection restores |
+## Design System
 
-**Local cache strategy:**
-
-```typescript
-// src/lib/cache.ts
-
-const CACHE_TTL = {
-    athleteState: 5 * 60 * 1000,    // 5 minutes
-    workouts: 30 * 60 * 1000,       // 30 minutes
-    biometrics: 60 * 60 * 1000,     // 1 hour
-    plan: 4 * 60 * 60 * 1000,       // 4 hours
-};
-
-export function cache<T>(key: string, ttl: number) {
-    return {
-        get(): T | null {
-            const raw = localStorage.getItem(key);
-            if (!raw) return null;
-            const { data, timestamp } = JSON.parse(raw);
-            if (Date.now() - timestamp > ttl) return null;
-            return data as T;
-        },
-        set(data: T) {
-            localStorage.setItem(key, JSON.stringify({
-                data,
-                timestamp: Date.now(),
-            }));
-        },
-    };
-}
-```
-
----
-
-## Capacitor Configuration
-
-```typescript
-// capacitor.config.ts
-
-import type { CapacitorConfig } from '@capacitor/cli';
-
-const config: CapacitorConfig = {
-    appId: 'app.astrape-coach.ios',
-    appName: 'ASTRAPE',
-    webDir: 'build',
-    server: {
-        // In development only: point to local dev server
-        // Remove for production builds
-        url: 'http://192.168.1.xxx:5173',
-        cleartext: true,
-    },
-    plugins: {
-        BackgroundRunner: {
-            label: 'app.astrape-coach.healthkit-sync',
-            src: 'runner.js',
-            event: 'healthkitSync',
-            repeat: true,
-            interval: 60,          // minutes between background fetches
-            autoStart: true,
-        },
-        SplashScreen: {
-            launchShowDuration: 0,  // ASTRAPE handles its own splash
-        },
-        StatusBar: {
-            style: 'dark',          // White icons on dark background
-            backgroundColor: '#08080F',
-        },
-    },
-};
-
-export default config;
-```
-
-
+The UI uses Tailwind tokens from `mobile/tailwind.config.js` and CSS variables from `mobile/src/app.css`. New Svelte code should use Svelte 5 runes, tokenized colors, and `font-mono` for numeric metrics.

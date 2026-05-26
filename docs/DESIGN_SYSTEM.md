@@ -1,267 +1,195 @@
 ﻿# Design System
 
-## Spectral Glassmorphism
+ASTRAPE's visual language is "Spectral": dark-first, high-contrast, data dense, and built from translucent layers with surgical accent color.
 
-ASTRAPE's visual language is called "Spectral." It is a dark-mode-native, high-contrast design system built around three principles:
+The source of truth is:
 
-1. **Depth through translucency.** Cards and panels are not opaque — they are frosted glass layers that reveal depth in the background without losing legibility.
-2. **Color as signal.** Every color in the palette has a single, consistent semantic meaning. Blue = action/fitness, Teal = positive/recovery, Amber = caution/load, Red = stress/intensity.
-3. **Typography as data.** Metrics are always rendered in the monospace `Space Mono` face. UI chrome uses `Space Grotesk`. The contrast between the two creates an immediate visual hierarchy.
+- `mobile/tailwind.config.js`
+- `mobile/src/app.css`
+- shared Svelte components in `mobile/src/lib/components/`
+- frontend rules in `.cursor/rules/frontend-design.mdc`
 
----
+## Principles
 
-## Color Tokens
+1. Elevation comes from layered opacity and borders, not heavy blur.
+2. Accent colors are semantic and should not be overused.
+3. Numeric metrics use `font-mono`; prose and UI chrome use `font-sans`.
+4. Prefer Tailwind tokens over hardcoded colors in class attributes.
+5. Use Svelte 5 patterns: runes, snippets, `onclick`, and tokenized classes.
 
-### Background Scale
+## Core Tokens
 
-```css
---bg0: #08080F;   /* Base canvas. The darkest layer. */
---bg1: #0F0F1A;   /* Navigation bars, sidebars. */
---bg2: #141424;   /* Grouped content containers. */
---bg3: #1C1C30;   /* Elevated modals, drawers. */
-```
+### Surfaces
 
-Depth is achieved by layering these backgrounds, never through border lines alone. Moving from `bg0` → `bg3` creates visual elevation.
+| Tailwind | CSS variable | Value | Use |
+|---|---|---|---|
+| `bg-bg0` | `--bg0` | `#08080F` | Page background |
+| `bg-bg1` | `--bg1` | `#0F0F1A` | Nav/section background |
+| `bg-bg2` | `--bg2` | `#141424` | Card background |
+| `bg-bg3` | `--bg3` | `#1C1C30` | Elevated surfaces |
+| `bg-glass` | `--glass` | `rgba(255,255,255,0.04)` | Standard glass card |
+| `bg-glass2` | `--glass2` | `rgba(255,255,255,0.08)` | Elevated/interactive card |
+| `border-border` | `--border` | `rgba(255,255,255,0.07)` | Dividers and card borders |
 
-### Glass Surfaces
+Glass surfaces are opacity layers. Do not add backdrop blur to normal cards; keep blur for modal/overlay contexts only if needed.
 
-```css
---glass:  rgba(255, 255, 255, 0.04);   /* Standard card surface */
---glass2: rgba(255, 255, 255, 0.08);   /* Elevated / interactive surface */
-```
+### Text
 
-Glass surfaces should always use `backdrop-filter: blur(20px) saturate(160%)` with a `border: 1px solid var(--border)` to define the edge.
+| Tailwind | CSS variable | Use |
+|---|---|---|
+| `text-text0` | `--text0` | Primary text |
+| `text-text1` | `--text1` | Secondary text |
+| `text-text2` | `--text2` | Muted labels/metadata |
 
-### Borders
+`text-text3` is not defined.
 
-```css
---border: rgba(255, 255, 255, 0.07);   /* Subtle, never dominant */
-```
+### Accents
 
-### Semantic Accent Colors
+| Tailwind | CSS variable | Use |
+|---|---|---|
+| `blue` | `--blue` | Primary actions, selected states, fitness |
+| `teal` | `--teal` | Recovery, success, positive deltas |
+| `amber` | `--amber` | Load, caution, fatigue |
+| `red` | `--red` | Stress, alerts, high intensity |
+| `sky` | `--sky` | Secondary blue accent |
+| `violet` | `--violet` | Specialty/secondary accent |
+| `steel` | `--steel` | Neutral data accent |
+| `green` | `--green` | Positive/secondary success |
 
-Each accent color ships in three forms: a full color, a dim background, and a glow for box-shadows.
+Dim variants exist for `blue`, `teal`, `amber`, `red`, `sky`, `violet`, `steel`, and `green`.
 
-```css
-/* Blue — Fitness, Primary Actions, Running */
---blue:       #4621FF;
---blue-dim:   rgba(70, 33, 255, 0.15);
---blue-glow:  rgba(70, 33, 255, 0.30);
+### Zone Colors
 
-/* Teal — Recovery, Success, Positive Delta */
---teal:       #00C8A8;
---teal-dim:   rgba(0, 200, 168, 0.15);
+Zone colors are CSS variables, not Tailwind tokens:
 
-/* Amber — Load, Caution, Fatigue */
---amber:      #FFCB88;
---amber-dim:  rgba(255, 203, 136, 0.15);
+| Variable | Value | Zone |
+|---|---|---|
+| `--zone-0` | `#94a3b8` | Rest |
+| `--zone-1` | `#579BFA` | Z1 |
+| `--zone-2` | `#00C8A8` | Z2 |
+| `--zone-3` | `#FFCB88` | Z3 |
+| `--zone-4` | `#FF8C42` | Z4 |
+| `--zone-5` | `#F07178` | Z5 |
 
-/* Red — Stress, High Intensity, Alerts */
---red:        #F07178;
---red-dim:    rgba(240, 113, 120, 0.15);
-```
+Use them through `style=""` or chart constants, not as generic UI accents.
 
-### Text Scale
+### Chart Identities
 
-```css
---text0: #F0F0FF;                    /* Primary text. High contrast. */
---text1: rgba(240, 240, 255, 0.65);  /* Secondary text, labels. */
---text2: rgba(240, 240, 255, 0.35);  /* Tertiary text, metadata, disabled. */
-```
+Training-load chart colors:
 
----
+| Token | Value | Use |
+|---|---|---|
+| `chartCtl` | `#3b82f6` | CTL/fitness |
+| `chartAtl` | `#334155` | ATL/fatigue |
+
+For canvas/D3/MapLibre/SVG presentation attributes, use hex constants rather than CSS variables.
 
 ## Typography
 
-### Typefaces
+Fonts:
 
-```css
---font: 'Space Grotesk', sans-serif;   /* UI chrome, body copy */
---mono: 'Space Mono', monospace;        /* Metrics, numbers, timestamps, codes */
-```
+- `font-sans`: Space Grotesk
+- `font-mono`: Space Mono
 
-**Loading from Google Fonts:**
-```html
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
-```
+Rules:
 
-### Type Scale
-
-| Use Case | Size | Weight | Family |
-|---|---|---|---|
-| Screen title | 22px | 700 | Grotesk |
-| Card heading | 13–15px | 600 | Grotesk |
-| Body / AI messages | 13px | 400 | Grotesk |
-| Labels / metadata | 11–12px | 400–500 | Grotesk |
-| Tag / badge text | 9–10px | 600 | Mono |
-| Metric values | 16–26px | 700 | Grotesk |
-| Metric labels | 9–10px | 400 | Mono |
-| Timestamps | 11px | 400 | Mono |
-
-### Rules
-- **Letter-spacing:** All-caps labels use `0.06–0.12em`. Metric labels use `0.08em`.
-- **Line-height:** Body copy: `1.55`. AI messages: `1.6`. Compact metadata: `1.2`.
-- **Tabular numerals:** All metric displays use `font-variant-numeric: tabular-nums` to prevent layout shift when values update.
-
----
+- Metric values, scores, watts, HR, paces, dates used as data, tags, and compact labels use `font-mono`.
+- Body copy, AI text, buttons, headings, and descriptive labels use `font-sans`.
+- Uppercase labels generally use `tracking-widest`.
 
 ## Component Patterns
 
 ### Card
 
-The fundamental container. All content lives in cards.
+The shared `Card.svelte` component uses Svelte 5 snippets:
 
 ```svelte
-<!-- Svelte component -->
-<div class="card" class:glass2={elevated}>
-  <slot />
+<Card>
+  <p>Content</p>
+</Card>
+```
+
+It renders a rounded border layer with either `bg-glass` or `bg-glass2`. Do not assume backdrop blur is present.
+
+### Metric
+
+```svelte
+<div class="flex flex-col gap-0.5">
+  <span class="text-[10px] font-mono text-text2 uppercase tracking-widest">
+    Label
+  </span>
+  <span class="text-3xl font-mono font-bold text-text0 leading-none">
+    72
+  </span>
+  <span class="text-[11px] font-mono text-text1">score</span>
 </div>
-
-<style>
-  .card {
-    background: var(--glass);
-    border: 1px solid var(--border);
-    border-radius: 16px;
-    padding: 16px;
-  }
-  .card.glass2 {
-    background: var(--glass2);
-  }
-</style>
 ```
 
-**Gradient cards** (used for key metrics and readiness):
+### Badge
+
 ```svelte
-<!-- Fitness card with blue gradient -->
-<div class="card" style="background: linear-gradient(135deg, var(--blue-dim), transparent); border-color: var(--blue-glow)">
+<span class="inline-flex items-center rounded px-2 py-0.5 text-[10px] font-mono uppercase tracking-wide bg-teal-dim text-teal border border-teal/30">
+  Good
+</span>
 ```
 
-### Tag / Badge
+### Button
 
-Small status indicators.
-
-```css
-.tag {
-  font-size: 9px;
-  font-family: var(--mono);
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  padding: 2px 7px;
-  border-radius: 99px;
-  /* Color is set inline: background = color + "22", border = color + "44" */
-}
-```
-
-### Pill Button
-
-Segmented selectors and filter tabs.
-
-```css
-.pill {
-  padding: 6px 14px;
-  border-radius: 99px;
-  font-size: 12px;
-  font-weight: 500;
-  transition: all 0.2s;
-}
-.pill.active {
-  background: var(--blue);
-  color: #fff;
-  border-color: var(--blue);
-}
-.pill:not(.active) {
-  background: var(--glass);
-  color: var(--text1);
-  border-color: var(--border);
-}
-```
-
-### Radial Progress Ring
-
-Used for Readiness, Recovery, and Strain scores.
-
-The ring is drawn on a `<canvas>` element using two arcs: a background track at 7% white, and a value arc with a gradient fill. The gradient always runs from the secondary accent to the primary accent (blue → teal for recovery, for example).
-
-```javascript
-// Drawing the value arc
-const grad = ctx.createLinearGradient(0, 0, size, size);
-grad.addColorStop(0, accentColor);
-grad.addColorStop(1, accentColor + 'AA');  // 67% opacity at tail
-
-ctx.beginPath();
-ctx.arc(cx, cy, r, startAngle, valueAngle);
-ctx.strokeStyle = grad;
-ctx.lineWidth = 4;
-ctx.lineCap = 'round';
-ctx.stroke();
-```
-
-### Telemetry Charts
-
-All charts are implemented using LayerChart with D3 scales. Common chart patterns:
-
-**Line chart with gradient fill:**
 ```svelte
-<LayerChart {data} x="date" y="value">
-  <AreaLayer fill="url(#grad)" opacity={0.3} />
-  <LineLayer stroke={color} strokeWidth={2} />
-  <defs>
-    <linearGradient id="grad" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color={color} stop-opacity={0.5} />
-      <stop offset="100%" stop-color={color} stop-opacity={0} />
-    </linearGradient>
-  </defs>
-</LayerChart>
+<button
+  class="w-full rounded-xl bg-blue px-4 py-3 text-sm font-semibold text-text0 transition-colors disabled:opacity-40"
+  onclick={handleClick}
+>
+  Continue
+</button>
 ```
 
-**Multi-line overlay (CTL + ATL):**
-The `MultiLineChart` combines a bar series (ATL, rendered with 25% blue opacity) with a line+dot series (CTL, solid teal). The dual encoding (bars for fatigue, line for fitness) makes the Training Stress Balance immediately readable as the gap between them.
+Use `onclick`, not legacy `on:click`.
 
----
+## Svelte 5 Rules
 
-## Motion
+Use runes for new components:
 
-ASTRAPE uses minimal motion. Animations serve one purpose: confirming state changes.
+```svelte
+<script lang="ts">
+  let { value = 0 }: { value: number } = $props();
+  let loading = $state(false);
+  let displayValue = $derived(value.toFixed(1));
+</script>
+```
 
-| Transition | Duration | Easing |
-|---|---|---|
-| Pill button active state | 200ms | ease |
-| Toggle switch | 150ms | ease |
-| Card gradient on hover | 200ms | ease |
-| Progress bar fill on load | 600ms | ease |
-| Segmented control thumb | 150ms | cubic-bezier(0.3, 0.7, 0.4, 1) |
-| AI typing indicator dots | 1200ms | ease-in-out, staggered 200ms |
+Prefer:
 
-**No page transitions.** Navigation is instantaneous — content swaps in-place. On mobile, this eliminates the vestibular-motion concerns of slide animations and keeps the app feeling fast.
+- `$state` for reactive mutable values.
+- `$derived` for computed values.
+- `$props` for props.
+- snippets and `{@render}` over slots in new components.
+- keyed `{#each}` blocks.
 
----
+Avoid:
+
+- `$:` reactive statements in new code.
+- `export let`.
+- `on:click`.
+- shared mutable module state for request/user-scoped state.
+
+## Tailwind Rules
+
+- Use Astrape tokens instead of standard Tailwind palette colors for UI.
+- Opacity modifiers should be standard Tailwind steps such as `/5`, `/10`, `/15`, `/20`, `/25`, `/30`, `/40`, `/50`.
+- Keep exact non-token colors in `style=""`, canvas/SVG/D3/MapLibre constants, or documented third-party brand cases.
+- Do not use `pb-safe` or `pt-safe`; they are not configured.
 
 ## Accessibility
 
-WCAG AA compliance targets:
+Targets:
 
-- All text on `--bg0` meets 4.5:1 contrast ratio (`--text0` achieves 16.5:1)
-- Interactive elements have a minimum touch target of 44×44px
-- All icon buttons have `aria-label` attributes
-- Radial progress rings include a visually hidden text value for screen readers
-- The segmented radio control uses `role="radiogroup"` and `role="radio"` with `aria-checked`
-- Color is never the sole conveyor of meaning (tags include text labels; charts include axis labels)
+- Interactive controls should be touch friendly.
+- Icon-only buttons need labels.
+- Color should not be the only signal.
+- Data visualizations need text labels/legends where practical.
+- Motion should be minimal and functional.
 
----
+## Light Mode
 
-## Dark / Light Mode
-
-The current Spectral system is dark-mode native. A light-mode export is specified in the design documentation for future implementation:
-
-```css
-/* Light mode palette (future) */
---bg0: #FFFFFF;
---bg1: #F5F5F5;
---accent: #0055FF;     /* Electric Blue */
---secondary: #0088CC;  /* Deep Cyan */
---muted: #8D909D;
-```
-
-Light mode maintains the same semantic color roles but inverts the surface hierarchy. Implementation is deferred to post-MVP.
-
-
+The current product is dark-mode native. Light mode is not implemented.

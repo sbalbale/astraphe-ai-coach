@@ -2,216 +2,191 @@
 
 ## Overview
 
-ASTRAPE is composed of five decoupled layers: a native mobile client, a Python computation + API backend, an AI intelligence layer, a cached AI analysis layer, and a persistent data layer. Each communicates via well-defined async interfaces.
+ASTRAPE is a Supabase-backed coaching app with a SvelteKit mobile/web client, a stateless FastAPI backend, a Google GenAI coach layer, Redis-assisted rate limiting/caching, and third-party training data integrations.
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│                        MOBILE CLIENT                         │
-│          Svelte 5 + SvelteKit 2 + Capacitor 6 (iOS/Android)  │
-│          LayerChart / D3 · HealthKit · Supabase Auth JWT      │
-└───────────────────────────┬──────────────────────────────────┘
-                            │ HTTPS / SSE
-┌───────────────────────────▼──────────────────────────────────┐
-│                      FASTAPI GATEWAY                         │
-│     Python 3.12 · Async · Google Cloud Run · Docker          │
-│                                                              │
-│  Routers: athlete · workouts · biometrics · coach · sync     │
-│           plan · training-plans · analysis · debug           │
-└────────────┬──────────────────────────┬──────────────────────┘
-             │ NumPy / Pydantic          │ google-genai SDK
-┌────────────▼────────────┐  ┌──────────▼──────────────────────┐
-│    COMPUTE ENGINE       │  │         AI LAYER                 │
-│  CTL/ATL/TSB/TSS/RDY   │  │   Gemma 4 26B (coach)        │
-│  Recovery Score         │  │   Gemini Flash Lite latest (analysis)   │
-│  NumPy vectorized ops   │  │   Function Calling · RAG         │
-└────────────┬────────────┘  └──────────┬──────────────────────┘
-             │ SQL                       │ pgvector
-┌────────────▼───────────────────────────▼──────────────────────┐
-│                        DATA LAYER                             │
-│              Supabase PostgreSQL + pgvector                   │
-│  athletes · workouts · biometrics · tss_history               │
-│  training_plans · coach_conversations · coach_messages        │
-│  coach_memories · oauth_tokens · ai_analysis_cache            │
-└───────────────────────────────────────────────────────────────┘
-                            │ GCS
-                    ┌───────▼───────┐
-                    │  Cloud Storage │
-                    │ Raw FIT blobs  │
-                    └───────────────┘
+```text
+SvelteKit SPA / PWA / Capacitor iOS
+  Supabase Auth JWT + fetch()
+          |
+          v
+FastAPI backend
+  routers: athlete, workouts, activities, biometrics, coach, sync,
+           plan, training-plans, analysis, admin, notifications, debug
+          |
+          +--> Supabase Postgres/Auth/Storage/RLS/pgvector
+          +--> Redis rate limits + activity caches
+          +--> Google GenAI coach, analysis, embeddings, grounding
+          +--> Strava, WHOOP, Garmin, Resend, FCM/VAPID
 ```
 
----
+## Runtime Layers
 
-## Service Responsibilities
+### Mobile/Web Client
 
-### Mobile Client (Svelte 5 + Capacitor 6)
+The `mobile/` app is a Svelte 5 + SvelteKit 2 single-page app with SSR disabled and static prerendering. It runs as a browser/PWA app and can be wrapped in the current Capacitor iOS scaffold. Android source is not present in this repo.
 
-A SvelteKit single-page application compiled into a native iOS/Android shell via Capacitor. It is a pure presentation and interaction layer — no business logic or metric computation runs here.
+Responsibilities:
 
-**Key responsibilities:**
-- Render real-time telemetry visualizations via LayerChart / D3 SVG
-- Collect HealthKit data on-device via Capacitor Background Runner and POST batches to the API
-- Authenticate users via Supabase Auth JWT and attach tokens to all API requests
-- Stream AI coach responses via Server-Sent Events
-- Enforce tier-based UI gating (premium badge, feature locks)
+- Authenticate with Supabase and attach access tokens via `mobile/src/lib/apiAuth.ts`.
+- Call the FastAPI backend through `mobile/src/lib/api.ts` using browser `fetch`.
+- Render dashboards, training, recovery, sleep, strain, plan, chat, profile, notifications, privacy, zones, and auth routes.
+- Initialize push notifications after auth/profile loading.
+- Provide scaffolded HealthKit/health integration code; current sync sends an empty/mock payload until native data collection is fully wired.
 
-**What it explicitly does NOT do:**
-- Calculate TSS, CTL, ATL, or TSB
-- Store raw workout or biometric data locally beyond a session-level memo cache
-- Hold API keys or OAuth secrets of any kind
+The client does not calculate TSS, CTL, ATL, TSB, recovery, or strain. Those remain server-side.
 
----
+### FastAPI Backend
 
-### Computation API (FastAPI on Cloud Run)
+The backend entrypoint is `backend/app/main.py`. It registers production-disabled docs, security headers, CORS, GZip, a global IP rate-limit middleware, `/health`, and routers under `/v1`.
 
-The FastAPI service is the system's mathematical and orchestration core. It is stateless and horizontally scalable. All instances share state only through Supabase.
+Routers:
 
-**Key responsibilities:**
-- Receive raw workout payloads and compute TSS using sport-specific normalized power / IF calculations
-- Maintain rolling CTL/ATL windows via NumPy vectorized operations over `tss_history`
-- Manage OAuth 2.0 token lifecycles for Garmin and WHOOP
-- Construct AI context payloads and call the Google AI API
-- Serve RAG-augmented coaching responses via SSE using pgvector similarity search
-- Produce and cache screen-level AI analysis insights (recovery, sleep, strain, training load, dashboard, workout)
-- Enforce tier-based access (`free` | `trial` | `premium`) on coach, plan, and AI analysis endpoints
+- `athlete`: profile, state, metrics, zones, onboarding, account deletion.
+- `workouts`: completed workout list, ingestion, deletion, TSS calculation.
+- `activity_detail`: streams, laps, intervals, zone distribution, Strava rehydration.
+- `biometrics`: paginated daily biometrics and ingestion.
+- `coach`: conversations, messages, document uploads, JSON and SSE coach replies.
+- `sync`: Garmin, WHOOP, Strava OAuth/webhooks/backfills, integration status, reprocessing.
+- `plan` and `training-plans`: legacy plan view and CRUD planned workouts.
+- `analysis`: cached screen-level AI insights.
+- `admin`: app-metadata user configuration.
+- `notifications`: push token registration and non-production test send.
+- `debug`: development-only connection/RLS diagnostics.
 
----
+### Data Layer
+
+Supabase is the durable source of truth for auth, relational data, storage, and pgvector. The canonical schema history is in `supabase/migrations/`.
+
+Key tables include:
+
+- `athletes`
+- `workouts`
+- `biometrics`
+- `sleep_periods`
+- `tss_history`
+- `training_plans`
+- `oauth_tokens`
+- `coach_conversations`
+- `coach_messages`
+- `coach_memories`
+- `athlete_analyses`
+- `activity_streams`
+- `activity_laps`
+- `push_tokens`
+
+Most athlete-owned tables use RLS predicates that map `athlete_id` to `athletes.user_id = auth.uid()`.
 
 ### AI Layer
 
-Two models serve distinct roles:
+The coach uses the `google-genai` SDK. Defaults come from `backend/app/config.py`:
 
-| Model | Role | Trigger |
-|---|---|---|
-| Gemma 4 26B | Full AI coach — conversational, context-aware, multi-turn, function calling | `POST /coach/message` |
-| Gemini Flash Lite latest (or configured override) | Short-form screen analysis — recovery, sleep, strain, training load, workout insight | `GET /analysis/*` |
+- `GEMINI_MODEL=gemma-4-26b-a4b-it`
+- `GEMINI_ANALYSIS_MODEL=gemini-flash-lite-latest`
+- `GEMINI_EMBEDDING_MODEL=gemini-embedding-001`
 
-The coach uses **function calling** so it can autonomously fetch athlete state, schedule training plan sessions, or clear the calendar mid-conversation. The analysis layer uses a **deterministic fallback** for free-tier athletes — rule-based summaries are generated without a Gemini call.
+Admin overrides for coach/analysis models are stored in `auth.users.app_metadata`. User-editable metadata is not trusted for authorization or model selection.
 
----
+Coach behavior is prompt-file driven from `backend/app/prompts/coach_behavior.md`. The agent loop supports custom tools, Google Search grounding, document/image context, RAG memories, XML `<response>` extraction, and background memory persistence.
 
-### Data Layer (Supabase PostgreSQL + pgvector)
+### Redis Layer
 
-Supabase provides three things ASTRAPE needs from a single managed service: a relational PostgreSQL database, Row Level Security for multi-tenant data isolation, and the pgvector extension for embedding-based similarity search.
+Redis is optional but recommended in multi-instance environments. It backs:
 
-**Key tables:**
-- `athletes` — user profiles, physiological anchors, subscription tier
-- `workouts` — normalized workout records from all sources
-- `biometrics` — daily HRV, RHR, sleep, strain, and body temperature readings
-- `tss_history` — computed daily TSS values (source of truth for CTL/ATL)
-- `training_plans` — structured session blocks with AI-generated structure and context
-- `coach_conversations` / `coach_messages` — persisted conversation threads
-- `coach_memories` — embedded conversation chunks for RAG retrieval
-- `ai_analysis_cache` — cached insight strings keyed by type + scope + data fingerprint
-- `oauth_tokens` — encrypted third-party provider credentials
+- Per-IP sliding-window rate limits.
+- Per-athlete AI minute/hour rate limits.
+- Activity stream and workout zone caches.
 
----
+When `REDIS_URL` is not set or Redis is unreachable, the rate limiter falls back to process-local memory.
+
+### Deployment Layer
+
+Current repo automation deploys the backend through GitHub Actions:
+
+1. Build and push `ghcr.io/sbalbale/astrape-api`.
+2. Connect to the Proxmox host through Cloudflare Access SSH.
+3. Run `docker compose pull astrape-api` and `docker compose up -d astrape-api`.
+4. Run migrations on the remote Supabase/Postgres container.
+
+The frontend is deployed to Firebase Hosting via the Firebase hosting workflows. `backend/cloudbuild.yaml` still exists as an alternate/historical Cloud Run pipeline, but it is not the primary workflow in the current repo.
 
 ## Data Flows
 
+### Authenticated API Request
+
+```text
+SvelteKit route
+  -> Supabase session access token
+  -> fetch() with Authorization header
+  -> FastAPI dependency calls Supabase auth.get_user()
+  -> athletes.id lookup by user_id
+  -> per-request PostgREST client receives JWT
+  -> RLS-scoped database query
+```
+
 ### Workout Ingestion
 
-```
-1. User completes workout (Garmin / WHOOP / Apple Watch)
-      │
-2. Webhook: POST /sync/garmin/webhook  or  POST /sync/whoop/webhook
-   (or HealthKit: POST /workouts via Capacitor Background Runner)
-      │
-3. API validates webhook HMAC signature
-      │
-4. Raw payload normalized to internal WorkoutPayload
-      │
-5. TSS computed (NP-based for cycling, pace-HR for running)
-      │
-6. Workout row inserted into `workouts`
-      │
-7. `tss_history` upserted with daily_tss aggregate
-      │
-8. CTL / ATL rolling averages recomputed for athlete (NumPy)
-      │
-9. `tss_history` updated with ctl, atl, tsb
-      │
-10. Supabase Realtime pushes update → mobile client re-renders
+```text
+Manual/HealthKit/Strava/Garmin/WHOOP input
+  -> FastAPI sync or workout route
+  -> source normalization and ownership verification
+  -> workout row
+  -> TSS/HRSS/strain processing
+  -> tss_history update
+  -> CTL/ATL/TSB recompute
+  -> cached analysis invalidation/refetch on next client request
 ```
 
----
+### Strava Detail
 
-### AI Coach Query
-
-```
-1. User sends message in Coach screen
-      │
-2. POST /coach/message  {conversation_id, message}
-      │
-3. API checks tier: 403 if not premium
-      │
-4. API fetches current athlete context:
-   - CTL, ATL, TSB (from tss_history)
-   - Last 14d HRV trend (from biometrics)
-   - Recent workouts (last 7)
-   - Upcoming training plan (next 7 days)
-      │
-5. pgvector similarity search over coach_memories
-   (retrieves relevant prior coaching context, k=5)
-      │
-6. System prompt + context + memories + history assembled
-      │
-7. Gemma 4 26B called with function_calling tools:
-   get_athlete_state · get_recent_workouts · get_training_plan
-   schedule_training_plan · clear_training_plans
-      │
-8. Tool hops executed (up to max_tool_hops) until model returns text
-      │
-9. Response streamed back to client via SSE
-      │
-10. Full response stored in coach_messages
-11. Embedding generated and stored in coach_memories (background)
+```text
+Strava OAuth/webhook/backfill
+  -> owner_id mapped to oauth_tokens/provider metadata
+  -> activity detail fetched
+  -> workout upsert/merge
+  -> streams and laps stored in activity_streams/activity_laps
+  -> activity_detail routes expose streams, laps, intervals, and zones
+  -> Redis caches high-read activity detail responses when available
 ```
 
----
+### AI Coach
 
-### AI Analysis (Screen Insights)
-
-```
-1. Mobile screen mounts (Dashboard, Recovery, Strain, Training)
-      │
-2. GET /analysis/{type}?day=YYYY-MM-DD
-      │
-3. API builds context dict for the requested type:
-   - biometrics context (recovery/sleep/strain)
-   - tss_history context (training-load)
-   - blended context (dashboard-summary)
-   - workout row (workout/{id})
-      │
-4. Fingerprint computed (SHA-256 of context dict)
-      │
-5. Cache lookup: if fingerprint matches ai_analysis_cache → return cached
-      │
-6. Cache miss:
-   - free/trial tier → deterministic rule-based summary (no LLM call)
-   - premium tier   → Gemini Flash Lite call
-      │
-7. Result written to ai_analysis_cache
-      │
-8. { content, fingerprint, cached, model } returned to client
+```text
+Chat screen
+  -> POST /v1/coach/message or /v1/coach/stream
+  -> tier/model/rate limits from app_metadata
+  -> current context from athletes, biometrics, tss_history, workouts, training_plans
+  -> relevant coach_memories via pgvector
+  -> Gemini/Gemma agent loop with tools and Google Search grounding
+  -> XML response extraction
+  -> response saved to coach_messages
+  -> important memory saved to coach_memories
 ```
 
----
+### Screen-Level AI Analysis
 
-## Scalability Model
-
-Cloud Run scales to zero when idle (zero cost) and scales horizontally under load. Each instance is stateless, so no session affinity is required. The Supabase connection pool (via PgBouncer) handles concurrent database connections without exhausting the PostgreSQL instance.
-
-For launch targeting individual athletes: 0–10 Cloud Run instances is sufficient. At scale (10k+ DAUs), the TSS recalculation jobs should be extracted into Cloud Tasks or a dedicated worker pool.
-
----
+```text
+Mobile screen
+  -> GET /v1/analysis/<type>
+  -> context build from current data
+  -> SHA-256 fingerprint
+  -> athlete_analyses cache lookup
+  -> cached result, deterministic fallback, or Gemini analysis call
+  -> content/fingerprint/model/cached response
+```
 
 ## Security Model
 
-- All API endpoints require a valid Supabase JWT (`Authorization: Bearer <token>`)
-- `tier` is read from `athletes.tier` (admin-controlled column), not from user-editable auth metadata
-- Supabase Row Level Security ensures athletes can only query their own records at the database layer — a second line of defense after the API validates the JWT
-- Garmin and WHOOP OAuth tokens are stored encrypted at rest via Supabase Vault
-- Webhook endpoints validate HMAC signatures before processing any payload
-- The mobile client never receives or stores third-party OAuth tokens
-- The debug router is disabled (`404`) in all non-development environments
+- Supabase Auth access tokens are required for protected routes.
+- `app_metadata` is the source of truth for tier, admin status, AI model overrides, and rate-limit overrides.
+- `user_metadata` is never used for authorization.
+- RLS remains enabled on athlete-owned public tables.
+- Production disables FastAPI interactive docs.
+- Production startup rejects `TEST_ATHLETE_ID`.
+- Security headers are added to all responses.
+- CORS origins are enumerated in `backend/app/main.py`.
+- Push, OAuth, and service-role credentials stay server-side.
+- Debug routes are not registered in production.
+
+## Scaling Notes
+
+The backend is stateless. Shared state lives in Supabase and Redis, so multiple API containers can run concurrently. Expensive recalculation and backfill work is currently performed inside API/background tasks; if traffic grows materially, those jobs should move to a dedicated worker queue.

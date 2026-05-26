@@ -2,60 +2,63 @@
 
 ## Overview
 
-ASTRAPE gives users control over two privacy settings accessible from **Profile → Privacy**.
-
----
+Privacy settings are managed at **Profile -> Privacy** in the mobile/web app and saved to `athletes.privacy_settings` through `PATCH /v1/athlete/profile`.
 
 ## Settings
 
 ### Anonymous AI Training
 
-> "Allow ASTRAPE to use your anonymized performance data to improve our global coaching models."
+Stored as:
 
-- **Default:** Off (opt-in)
-- **Stored as:** `privacy_settings.share_data` (`boolean`) on the athlete's profile
+```json
+{ "share_data": false }
+```
 
-When this is enabled, the user's anonymized workout and biometric data may be used to improve ASTRAPE's global coaching models. Currently this flag is stored but not actively consumed by any pipeline — it will gate future training data exports once that infrastructure is built.
+Default is opt-out. The flag is saved today and is intended to gate future anonymized training-data export/model-improvement pipelines.
 
 ### Product Updates
 
-> "Receive occasional emails about new features and platform updates."
+Stored as:
 
-- **Default:** Off (opt-in)
-- **Stored as:** `privacy_settings.marketing` (`boolean`) on the athlete's profile
+```json
+{ "marketing": false }
+```
 
-When a user enables this, they are automatically added to the **Astrape Marketing** segment in Resend. When they disable it, they are marked as `unsubscribed` in that segment. The sync happens immediately on each toggle.
+Default is opt-out. When enabled, the backend attempts to upsert the user into the configured Resend audience. When disabled, the backend marks the contact unsubscribed in that audience.
 
----
+## Save Behavior
 
-## How Settings Are Saved
+The frontend saves immediately on toggle through `athleteStore.updateProfile()` and `PATCH /v1/athlete/profile`; there is no separate Save button. The store updates optimistically with the full `privacy_settings` object.
 
-Both settings are saved to `athletes.privacy_settings` (a JSONB column) via `PATCH /v1/athlete/profile`. The toggle saves immediately — there is no explicit "Save" button.
-
----
+If a profile save fails, current UI behavior is limited; do not assume a full rollback/error-display flow exists for every toggle failure.
 
 ## Resend Integration
 
-The `marketing` flag is the only setting that triggers an external side-effect:
+Resend sync is the only current external side effect.
 
-1. User toggles the checkbox in the Privacy screen
-2. The app calls `PATCH /v1/athlete/profile` with `{ privacy_settings: { marketing: true/false } }`
-3. The backend saves the value to Supabase, then calls the Resend API to upsert the contact in the Astrape Marketing audience
-4. Resend uses **upsert semantics** — the same API call works whether the user is new or already in the audience
+Flow:
 
-If the Resend call fails (network error, invalid key, etc.), the profile save still succeeds. The failure is logged server-side but not returned to the user.
+1. User toggles **Product Updates**.
+2. Frontend calls `PATCH /v1/athlete/profile` with the updated `privacy_settings`.
+3. Backend saves Supabase profile data.
+4. Backend calls Resend if `RESEND_API_KEY` and `RESEND_AUDIENCE_ID` are configured.
+5. Resend errors are logged, but profile saving still succeeds.
 
----
+Required backend environment:
 
-## Required Environment Variables
-
+```env
+RESEND_API_KEY=
+RESEND_AUDIENCE_ID=
 ```
-RESEND_API_KEY=re_your_api_key_here
-RESEND_AUDIENCE_ID=your_audience_uuid_here
+
+If either value is missing, Resend sync is skipped.
+
+## Account Deletion
+
+The privacy screen also exposes account deletion. The frontend calls:
+
+```http
+DELETE /v1/athlete
 ```
 
-Get these from [resend.com](https://resend.com):
-- **API Key:** Settings → API Keys
-- **Audience ID:** Contacts → Segments → Astrape Marketing → copy the UUID from the URL
-
-If either variable is missing, Resend sync is silently skipped (the profile still saves normally).
+The backend owns the deletion flow and should remain the source of truth for what data is removed.
