@@ -1,73 +1,66 @@
 # Redis
 
-Redis backs the rate limiters. All rate-limit state lives in Redis so it's consistent across multiple backend instances (Cloud Run scale-out).
+Redis is optional in local development and recommended in production/multi-container deployments.
 
----
+## Uses
 
-## Local development
+| Feature | Purpose |
+|---|---|
+| Global IP rate limit | Shared sliding-window request limit across API instances. |
+| AI rate limits | Per-athlete minute/hour sliding windows for coach and analysis-heavy routes. |
+| Activity stream cache | Cached Strava/activity stream payloads for workout detail views. |
+| Workout zone cache | Cached zone distribution responses for repeated reads. |
 
-Start Redis in Docker (one command, no install needed):
+Rate limiting falls back to an in-process dictionary if Redis is absent. That is fine for single-process local dev, but it is not shared across instances and resets on restart.
+
+## Local Development
+
+Start Redis from the repository root:
 
 ```bash
 docker compose up -d redis
 ```
 
-Then add to `backend/.env`:
-```
-REDIS_URL="redis://localhost:6379"
+Add this to `backend/.env`:
+
+```env
+REDIS_URL=redis://localhost:6379
 ```
 
-Stop it when done:
+Stop Redis:
+
 ```bash
 docker compose down
 ```
 
----
+## Production
 
-## Production (Upstash)
+Use any Redis-compatible URL. Upstash-style TLS URLs work:
 
-1. Go to [upstash.com](https://upstash.com) → **Create Database** → pick a region close to your Cloud Run service
-2. Copy the **Redis URL** from the console (starts with `rediss://`)
-3. Add it to Cloud Run / Secret Manager:
-   ```
-   REDIS_URL="rediss://default:<token>@<host>.upstash.io:6380"
-   ```
-
-That's it — same `redis-py` client, same interface, TLS handled automatically.
-
----
-
-## What uses Redis
-
-| Feature | Key pattern | Window |
-|---|---|---|
-| Per-IP rate limit (all endpoints) | `rl:ip:<ip>` | 60 s |
-| Per-user AI rate limit (minute) | `rl:<athlete_id>:ai:minute` | 60 s |
-| Per-user AI rate limit (hour) | `rl:<athlete_id>:ai:hour` | 3600 s |
-
-All use a **sliding-window sorted set** — accurate, no thundering-herd on window reset.
-
----
-
-## Fallback behaviour
-
-If `REDIS_URL` is not set (or Redis is unreachable), both rate limiters fall back to an **in-process dict**. This means:
-- Rate limits still work for single-instance deployments
-- State is lost on restart
-- Limits are not shared across multiple instances
-
-The health endpoint reports Redis status:
-```
-GET /health
-→ { "status": "healthy", "redis": "connected" | "unavailable" }
+```env
+REDIS_URL=rediss://default:<token>@<host>.upstash.io:6380
 ```
 
----
+For the current Proxmox/docker-compose deployment, provide `REDIS_URL` through the server environment used by the `astrape-api` container.
+
+## Health Check
+
+`GET /health` reports Redis state:
+
+```json
+{
+  "redis": "connected"
+}
+```
+
+If Redis is unset or unreachable, the value is `unavailable` and the API continues with the in-memory fallback.
 
 ## Implementation
 
 | File | Purpose |
 |---|---|
-| `backend/app/core/redis.py` | Lazy async client singleton, `ping_redis()`, `close_redis()` |
-| `backend/app/core/rate_limiter.py` | `RateLimiter` class — Redis sorted set + in-memory fallback |
-| `docker-compose.yml` | Local Redis service (`redis:7-alpine`, port 6379) |
+| `backend/app/core/redis.py` | Async Redis client lifecycle and ping. |
+| `backend/app/core/rate_limiter.py` | Redis sorted-set sliding window plus memory fallback. |
+| `backend/app/services/analysis_cache.py` | Cache/fingerprint helpers for AI analysis. |
+| `backend/app/routers/activity_detail.py` | Activity stream and zone cache use. |
+| `docker-compose.yml` | Local Redis service. |

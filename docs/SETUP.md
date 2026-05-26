@@ -1,324 +1,226 @@
 ﻿# Setup Guide
 
+This is the short local setup checklist. For more detail, see `docs/GETTING_STARTED.md`.
+
 ## Prerequisites
 
-| Tool | Minimum Version | Install |
+| Tool | Version | Notes |
 |---|---|---|
-| Node.js | 20.x LTS | https://nodejs.org |
-| Python | 3.12 | https://python.org |
-| Docker | 24.x | https://docker.com |
-| Supabase CLI | latest | `npm i -g supabase` |
-| Google Cloud CLI | latest | https://cloud.google.com/sdk |
+| Node.js | 20+ | Root tooling and frontend build. |
+| pnpm | 10+ | Required in `mobile/`; npm/yarn installs are blocked there. |
+| Python | 3.12 | Backend runtime. |
+| Docker | Current | Supabase local stack and Redis. |
+| Supabase CLI | Project-local or global | Prefer `npx supabase ...` from repo root. |
 
----
+## Install Root Tooling
 
-## 1. Clone and Configure
+From the repository root:
 
 ```bash
-git clone https://github.com/seanbalbale/astrape-coach.git
-cd astrape-coach
-cp .env.example .env
+npm install
+npx supabase --version
 ```
 
-**Edit `.env`:**
+## Supabase Local Stack
+
+Start Supabase:
 
 ```bash
-# Supabase
-SUPABASE_URL=https://your-project-id.supabase.co
-SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
-SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+npx supabase start
+npx supabase status
+```
 
-# Gemini
-GEMINI_API_KEY=AIzaSy...
+Current local ports come from `supabase/config.toml`:
 
-# Garmin (from Garmin Developer Portal)
-GARMIN_CONSUMER_KEY=your_garmin_consumer_key
-GARMIN_CONSUMER_SECRET=your_garmin_consumer_secret
-GARMIN_WEBHOOK_SECRET=your_garmin_webhook_hmac_secret
+| Service | URL |
+|---|---|
+| API/Auth/Storage | `http://127.0.0.1:54321` |
+| Postgres | `postgresql://postgres:postgres@127.0.0.1:54322/postgres` |
+| Studio | `http://127.0.0.1:54323` |
+| Inbucket | `http://127.0.0.1:54324` |
 
-# WHOOP (from WHOOP Developer Portal)
-WHOOP_CLIENT_ID=your_whoop_client_id
-WHOOP_CLIENT_SECRET=your_whoop_client_secret
-WHOOP_WEBHOOK_SECRET=your_whoop_webhook_hmac_secret
+Apply migrations:
 
-# App configuration
+```bash
+npx supabase db push
+```
+
+Reset and seed a clean database:
+
+```bash
+npx supabase db reset
+```
+
+Note: `supabase/config.toml` currently points seed loading at `./seed.sql`. The repo also contains `supabase/seed_athlete.sql`; keep the config and seed file aligned before relying on automatic seeding.
+
+## Redis
+
+Optional for single-process local dev, but useful for matching production rate-limit/cache behavior:
+
+```bash
+docker compose up -d redis
+```
+
+Use:
+
+```env
+REDIS_URL=redis://127.0.0.1:6379
+```
+
+## Backend
+
+Create `backend/.env`:
+
+```bash
+cp backend/.env.example backend/.env
+```
+
+On Windows PowerShell:
+
+```powershell
+copy backend\.env.example backend\.env
+```
+
+Minimum local values:
+
+```env
 APP_ENV=development
 APP_BASE_URL=http://localhost:8000
-MOBILE_DEEP_LINK_SCHEME=astrape
+SUPABASE_URL=http://127.0.0.1:54321
+SUPABASE_KEY=<anon key from supabase status>
+SUPABASE_SERVICE_ROLE_KEY=<service_role key from supabase status>
+SUPABASE_DB_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres
+GEMINI_API_KEY=<optional until using AI features>
 ```
 
----
-
-## 2. Supabase Local Setup
-
-```bash
-# Start local Supabase stack (PostgreSQL, Auth, Storage, Realtime)
-supabase start
-
-# Apply migrations
-supabase db push
-
-# Seed development data (creates a test athlete with 90 days of mock data)
-supabase db seed
-
-# Verify
-supabase status
-```
-
-After `supabase start`, you'll see output like:
-```
-API URL: http://localhost:54321
-Studio URL: http://localhost:54323
-DB URL: postgresql://postgres:postgres@localhost:54322/postgres
-```
-
-Update your `.env` with the local URLs:
-```bash
-SUPABASE_URL=http://localhost:54321
-```
-
----
-
-## 3. Python Backend Setup
+Install and run:
 
 ```bash
 cd backend
-
-# Create virtual environment
 python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
-
-# Install dependencies
+source .venv/bin/activate
+python -m pip install --upgrade pip
 pip install -r requirements.txt
-
-# Verify environment
-python -c "import fastapi, numpy, google.generativeai; print('Dependencies OK')"
-
-# Run development server
+python -c "import fastapi, numpy; from google import genai; print('Dependencies OK')"
 uvicorn app.main:app --reload --port 8000
 ```
 
-The FastAPI dev server runs at `http://localhost:8000`. The auto-generated OpenAPI docs are available at `http://localhost:8000/docs`.
+Windows activation:
 
-**Backend project structure:**
-
-```
-backend/
-├── app/
-│   ├── main.py              # FastAPI app + router registration
-│   ├── config.py            # Settings (pydantic-settings)
-│   ├── dependencies.py      # Auth middleware, DB client injection
-│   ├── routers/
-│   │   ├── athlete.py
-│   │   ├── workouts.py
-│   │   ├── biometrics.py
-│   │   ├── coach.py
-│   │   ├── sync.py
-│   │   └── plan.py
-│   ├── services/
-│   │   ├── algorithms.py    # TSS, CTL, ATL, TSB, Recovery
-│   │   ├── ai_coach.py      # Gemini integration + RAG
-│   │   ├── garmin.py        # Garmin API + OAuth
-│   │   └── whoop.py         # WHOOP API + OAuth
-│   └── models/
-│       ├── athlete.py
-│       ├── workout.py
-│       └── biometrics.py
-├── migrations/              # Supabase migration SQL files
-├── seeds/                   # Development seed data
-├── tests/
-├── Dockerfile
-└── requirements.txt
+```powershell
+.\.venv\Scripts\Activate.ps1
 ```
 
----
-
-## 4. Mobile Frontend Setup
+Health check:
 
 ```bash
-cd mobile
-
-# Install Node dependencies
-npm install
-
-# Sync Capacitor plugins
-npx cap sync
-
-# Run web development server
-npm run dev
+curl http://localhost:8000/health
 ```
 
-The Svelte dev server runs at `http://localhost:5173`.
+Expected shape:
 
-**To run on an iOS simulator:**
-```bash
-npm run build
-npx cap sync ios
-npx cap open ios
-# Then press ▶ in Xcode
-```
-
-**To run on an Android emulator:**
-```bash
-npm run build
-npx cap sync android
-npx cap open android
-# Then press ▶ in Android Studio
-```
-
-**Mobile project structure:**
-
-```
-mobile/
-├── src/
-│   ├── routes/
-│   │   ├── +layout.svelte    # Root layout with nav
-│   │   ├── +page.svelte      # Dashboard (redirects to /dashboard)
-│   │   ├── dashboard/
-│   │   ├── training/
-│   │   ├── plan/
-│   │   ├── zones/
-│   │   ├── recovery/
-│   │   ├── sleep/
-│   │   ├── strain/
-│   │   ├── coach/
-│   │   ├── connect/
-│   │   └── profile/
-│   ├── lib/
-│   │   ├── api.ts            # Typed API client
-│   │   ├── auth.ts           # Supabase auth helpers
-│   │   ├── healthkit.ts      # HealthKit Capacitor plugin wrapper
-│   │   ├── stores/           # Svelte 5 rune-based state
-│   │   └── components/       # Shared UI components
-│   └── app.html
-├── capacitor.config.ts
-├── svelte.config.js
-└── package.json
-```
-
----
-
-## 5. HealthKit Configuration (iOS)
-
-HealthKit requires Info.plist permission strings and a background entitlement.
-
-**In `ios/App/App/Info.plist`:**
-```xml
-<key>NSHealthShareUsageDescription</key>
-<string>ASTRAPE reads your Apple Health data to analyze training load, recovery, and readiness.</string>
-<key>NSHealthUpdateUsageDescription</key>
-<string>ASTRAPE can write workout summaries to Apple Health.</string>
-```
-
-**In `ios/App/App/App.entitlements`:**
-```xml
-<key>com.apple.developer.healthkit</key>
-<true/>
-<key>com.apple.developer.healthkit.background-delivery</key>
-<true/>
-```
-
-**Background runner configuration (`background-runner-config.json`):**
 ```json
 {
-  "HEALTHKIT_SYNC": {
-    "identifier": "app.astrape-coach.healthkit-sync",
-    "interval": 3600,
-    "runner": "runner.js",
-    "event": "healthkitSync",
-    "permissions": {
-      "healthKit": {
-        "read": [
-          "HKWorkoutTypeIdentifier",
-          "HKQuantityTypeIdentifierHeartRate",
-          "HKQuantityTypeIdentifierHeartRateVariabilitySDNN",
-          "HKQuantityTypeIdentifierRestingHeartRate",
-          "HKCategoryTypeIdentifierSleepAnalysis",
-          "HKQuantityTypeIdentifierOxygenSaturation",
-          "HKQuantityTypeIdentifierBodyTemperature"
-        ]
-      }
-    }
-  }
+  "status": "healthy",
+  "service": "ASTRAPE API",
+  "version": "1.0.0",
+  "redis": "connected",
+  "supabase": "connected"
 }
 ```
 
----
-
-## 6. Running Tests
+Backend tests:
 
 ```bash
-# Backend unit tests
 cd backend
-pytest tests/ -v
+python -m pytest tests -v
+```
 
-# Backend tests with coverage report
-pytest tests/ --cov=app --cov-report=html
+## Mobile/Web Frontend
 
-# Key test suites
-pytest tests/test_algorithms.py -v      # TSS/CTL/ATL formula tests
-pytest tests/test_coach.py -v           # Gemini integration (mocked)
-pytest tests/test_webhooks.py -v        # Garmin/WHOOP webhook tests
+Create `mobile/.env`:
 
-# Mobile tests
+```bash
+cp mobile/.env.example mobile/.env
+```
+
+Set:
+
+```env
+VITE_SUPABASE_URL=http://127.0.0.1:54321
+VITE_SUPABASE_KEY=<anon key from supabase status>
+VITE_API_URL=http://localhost:8000
+VITE_VAPID_PUBLIC_KEY=<optional web-push public key>
+```
+
+Install and run:
+
+```bash
 cd mobile
-npm run test
+pnpm install
+pnpm run dev
 ```
 
----
-
-## 7. Garmin API Access
-
-**Important:** Garmin strictly gates their Connect API for enterprise use. You must complete this process before production deployment.
-
-1. Register at https://developer.garmin.com
-2. Complete the Health API application form
-3. Wait for Garmin's review (typically 2–6 weeks)
-4. After approval, you receive OAuth 1.0a consumer credentials
-5. Add credentials to `.env`
-
-During development, use Garmin's **sandbox environment** with test device simulators. The webhook endpoint must be publicly reachable — use `ngrok` or Cloudflare Tunnel for local development:
+Quality commands:
 
 ```bash
-# Expose local API to the internet for webhook testing
-ngrok http 8000
-# Copy the https URL, set GARMIN_WEBHOOK_URL in Garmin developer portal
+pnpm run check
+pnpm run test
 ```
 
----
-
-## 8. Verifying the Full Stack
-
-With all services running, verify end-to-end functionality:
+Build:
 
 ```bash
-# 1. Check API health
-curl http://localhost:8000/health
-# Expected: {"status": "ok", "version": "1.0.0"}
-
-# 2. Create a test athlete (using Supabase seed JWT)
-curl -X GET http://localhost:8000/v1/athlete/state \
-  -H "Authorization: Bearer $(supabase gen jwt --uid test-user-id)"
-
-# 3. Ingest a test workout
-curl -X POST http://localhost:8000/v1/workouts \
-  -H "Authorization: Bearer <jwt>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "source": "manual",
-    "sport": "run",
-    "started_at": "2026-04-26T12:00:00Z",
-    "ended_at": "2026-04-26T12:45:00Z",
-    "distance_m": 9000,
-    "avg_hr": 135
-  }'
-
-# 4. Ask the coach
-curl -X POST http://localhost:8000/v1/coach/message \
-  -H "Authorization: Bearer <jwt>" \
-  -H "Content-Type: application/json" \
-  --no-buffer \
-  -d '{"message": "How is my fitness trending?"}'
+pnpm run build
 ```
 
+Capacitor iOS:
 
+```bash
+pnpm run build
+npx cap sync ios
+npx cap open ios
+```
+
+Android is not currently scaffolded in this repo.
+
+## Integrations
+
+Optional backend env values are documented in `backend/.env.example`:
+
+- WHOOP: `WHOOP_CLIENT_ID`, `WHOOP_CLIENT_SECRET`, optional `WHOOP_WEBHOOK_SECRET`.
+- Garmin: `GARMIN_CONSUMER_KEY`, `GARMIN_CONSUMER_SECRET`, `GARMIN_WEBHOOK_SECRET`.
+- Strava: `STRAVA_CLIENT_ID`, `STRAVA_CLIENT_SECRET`, `STRAVA_WEBHOOK_VERIFY_TOKEN`, `STRAVA_WEBHOOK_SUBSCRIPTION_ID`.
+- Resend: `RESEND_API_KEY`, `RESEND_AUDIENCE_ID`.
+- Push: `FCM_SERVICE_ACCOUNT_JSON`, `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT`.
+
+Use ngrok or Cloudflare Tunnel when testing OAuth callbacks/webhooks against a local backend.
+
+## Project Structure
+
+```text
+backend/
+  app/
+    main.py
+    config.py
+    dependencies.py
+    routers/
+    services/
+    models/
+  tests/
+  Dockerfile
+  requirements.txt
+
+mobile/
+  src/routes/
+  src/lib/
+  src/service-worker.ts
+  capacitor.config.ts
+  firebase.json
+  package.json
+
+supabase/
+  migrations/
+  config.toml
+  seed_athlete.sql
+```

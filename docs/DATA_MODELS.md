@@ -1,424 +1,319 @@
 # Data Models
 
-## Database: Supabase PostgreSQL
+## Source Of Truth
 
-All tables enforce Row Level Security. The policy pattern is uniform: `athlete_id IN (SELECT id FROM athletes WHERE user_id = auth.uid())`. No cross-athlete data access is possible at the database layer regardless of what the API layer requests.
+The authoritative schema history is `supabase/migrations/`. This document describes the current public data model at a high level; it is not a generated schema snapshot.
 
----
+Generated schema output, when used, lives at `docs/schema/astrape_public_schema.sql` and can lag behind migrations unless regenerated manually.
 
-## Schema
+## Auth And User Configuration
+
+User identity is Supabase Auth. Most API routes resolve:
+
+```text
+Authorization JWT -> auth.users.id -> athletes.user_id -> athletes.id
+```
+
+Admin-controlled user settings are read from `auth.users.app_metadata`:
+
+- `tier`
+- `gemini_model`
+- `gemini_analysis_model`
+- `rate_limit_rpm`
+- `rate_limit_rph`
+- `is_admin`
+
+`user_metadata` is not trusted for authorization. The `athletes.tier` column still exists and defaults to `premium`, but backend authorization/model/rate-limit decisions use app metadata.
+
+## RLS Pattern
+
+Athlete-owned public tables generally use this ownership pattern:
+
+```sql
+athlete_id IN (
+  SELECT id FROM athletes WHERE user_id = auth.uid()
+)
+```
+
+The API also scopes every request by resolved athlete ID and uses a per-request Supabase client authenticated with the user's JWT, so RLS remains active.
+
+## Core Tables
 
 ### `athletes`
 
-The root entity. One row per registered user. Automatically created by the `on_auth_user_created` trigger on `auth.users`.
+One row per application user. Created from Supabase auth onboarding/trigger flows and updated through profile routes.
 
-```sql
-CREATE TABLE athletes (
-  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id         UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+Important fields:
 
-  -- Identity
-  display_name    TEXT NOT NULL,
-  city            TEXT,
-  country_code    CHAR(2),
-  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+- `id`
+- `user_id`
+- `display_name`
+- `date_of_birth`
+- `gender`
+- `city`
+- `country_code`
+- `weight_kg`
+- `height_cm`
+- `max_hr`
+- `resting_hr`
+- `threshold_hr`
+- `threshold_hr_source`
+- `threshold_pace`
+- `ftp_watts`
+- `vo2max_est`
+- `sport_focus`
+- `weekly_tss_target`
+- `timezone_offset_min`
+- `measurement_units`
+- `training_zones`
+- `hr_zone_method`
+- `notification_settings`
+- `privacy_settings`
+- `tier` default `premium`
+- timestamps
 
-  -- Physiological anchors (updated via test or AI estimation)
-  date_of_birth   DATE,
-  weight_kg       NUMERIC(5,2),
-  height_cm       NUMERIC(5,1),
-  max_hr          SMALLINT,           -- bpm
-  resting_hr      SMALLINT,           -- bpm (baseline, not daily reading)
-  ftp_watts       SMALLINT,           -- Functional Threshold Power
-  threshold_hr    SMALLINT,           -- Lactate threshold HR
-  threshold_pace  NUMERIC(5,2),       -- min/km at threshold
-  vo2max_est      NUMERIC(4,1),       -- ml/kg/min
-
-  -- Training configuration
-  sport_focus     TEXT[] DEFAULT '{"run","bike"}',
-  weekly_tss_target SMALLINT DEFAULT 400,
-
-  -- Subscription tier (source of truth; prefer over auth metadata)
-  tier            TEXT NOT NULL DEFAULT 'free'
-                  CHECK (tier IN ('free', 'trial', 'premium')),
-
-  CONSTRAINT athletes_user_id_unique UNIQUE (user_id)
-);
-
-ALTER TABLE athletes ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "athletes_self_access" ON athletes
-  FOR ALL USING (user_id = auth.uid());
-```
-
-> **Tier management:** The `tier` column is the authoritative source for feature gating. It replaces the earlier approach of reading from `auth.users` metadata. Premium gates are enforced server-side by `get_current_user_tier()` in `app/dependencies.py`. Use the migration `20260503_move_tier_to_athletes.sql` to backfill from metadata.
-
----
+Allowed `hr_zone_method` values are `lthr`, `hrr`, and `max_hr`.
 
 ### `workouts`
 
-Normalized representation of a completed training session, regardless of source device.
+Canonical completed workouts, regardless of source.
 
-```sql
-CREATE TABLE workouts (
-  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  athlete_id      UUID NOT NULL REFERENCES athletes(id) ON DELETE CASCADE,
+Important fields:
 
-  -- Source tracking
-  source          TEXT NOT NULL CHECK (source IN ('garmin','whoop','healthkit','manual')),
-  external_id     TEXT,               -- ID from the originating platform
+- `id`
+- `athlete_id`
+- `source`
+- `external_id`
+- `sport`
+- `title`
+- `started_at`
+- `ended_at`
+- `duration_seconds`
+- `distance_m`
+- `elevation_gain_m`
+- `avg_hr`
+- `max_hr`
+- `avg_power_w`
+- `norm_power_w`
+- `avg_pace_sec_km`
+- `hr_zone_0_pct` through `hr_zone_5_pct`
+- `tss`
+- `if_value`
+- `strain_score`
+- `fit_file_url`
+- Strava-related detail/source columns from later migrations
 
-  -- Classification
-  sport           TEXT NOT NULL CHECK (sport IN ('run','bike','swim','strength','other')),
-  title           TEXT,
+Allowed sources include `garmin`, `whoop`, `healthkit`, `manual`, and `strava`.
 
-  -- Timing
-  started_at      TIMESTAMPTZ NOT NULL,
-  ended_at        TIMESTAMPTZ NOT NULL,
-  duration_secs   INTEGER NOT NULL GENERATED ALWAYS AS (
-                    EXTRACT(EPOCH FROM (ended_at - started_at))::INTEGER
-                  ) STORED,
+Allowed sports are:
 
-  -- Volume
-  distance_m      NUMERIC(10,2),
-  elevation_gain_m NUMERIC(8,2),
-
-  -- Intensity
-  avg_hr          SMALLINT,
-  max_hr          SMALLINT,
-  avg_power_w     SMALLINT,
-  norm_power_w    SMALLINT,           -- Normalized Power (cycling)
-  avg_pace_sec_km SMALLINT,           -- seconds per km
-
-  -- HR zone distributions (percentage per zone, 0–100)
-  hr_zone_0_pct   NUMERIC(5,2),
-  hr_zone_1_pct   NUMERIC(5,2),
-  hr_zone_2_pct   NUMERIC(5,2),
-  hr_zone_3_pct   NUMERIC(5,2),
-  hr_zone_4_pct   NUMERIC(5,2),
-  hr_zone_5_pct   NUMERIC(5,2),
-
-  -- Computed load
-  tss             NUMERIC(6,2),       -- Training Stress Score
-  if_value        NUMERIC(4,3),       -- Intensity Factor (NP / FTP)
-  strain_score    NUMERIC(5,2),       -- WHOOP/zone-weighted cardiovascular load (0–21)
-
-  -- Raw data reference
-  fit_file_url    TEXT,               -- GCS path to .fit file
-
-  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-
-  CONSTRAINT workouts_external_id_unique UNIQUE (source, external_id)
-);
-
-CREATE INDEX workouts_athlete_started_at ON workouts (athlete_id, started_at DESC);
-
-ALTER TABLE workouts ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "workouts_athlete_access" ON workouts
-  FOR ALL USING (
-    athlete_id IN (SELECT id FROM athletes WHERE user_id = auth.uid())
-  );
+```text
+run, bike, swim, strength, row, mobility, other
 ```
-
----
 
 ### `biometrics`
 
-One row per athlete per day. Stores aggregated daily physiological readings.
+Daily physiological summaries.
 
-```sql
-CREATE TABLE biometrics (
-  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  athlete_id      UUID NOT NULL REFERENCES athletes(id) ON DELETE CASCADE,
-  date            DATE NOT NULL,
+Important fields:
 
-  -- Heart Rate Variability
-  hrv_rmssd       NUMERIC(6,2),       -- milliseconds
-  hrv_source      TEXT CHECK (hrv_source IN ('whoop','garmin','healthkit')),
+- `id`
+- `athlete_id`
+- `date`
+- `source`
+- `external_id`
+- `hrv_rmssd`
+- `hrv_source`
+- `resting_hr`
+- `sleep_duration_min`
+- `sleep_in_bed_min`
+- `sleep_score`
+- sleep stage percentages/minutes where present
+- `sleep_bedtime`
+- `sleep_wakeup`
+- `skin_temp`
+- `spo2_pct`
+- `recovery_score`
+- `readiness_score`
+- `strain_score`
 
-  -- Resting Heart Rate
-  resting_hr      SMALLINT,           -- bpm (lowest during sleep)
+`skin_temp` stores absolute Celsius.
 
-  -- Sleep
-  sleep_duration_min   SMALLINT,
-  sleep_score          SMALLINT,      -- 0–100
-  sleep_deep_pct       NUMERIC(4,1),
-  sleep_rem_pct        NUMERIC(4,1),
-  sleep_light_pct      NUMERIC(4,1),
-  sleep_awake_pct      NUMERIC(4,1),
-  sleep_bedtime        TIMESTAMPTZ,
-  sleep_wakeup         TIMESTAMPTZ,
+### `sleep_periods`
 
-  -- Body metrics
-  skin_temp_deviation  NUMERIC(4,2),  -- °F deviation from baseline
-  spo2_pct             NUMERIC(4,1),
+Per-period sleep records, including naps, linked to an athlete and source.
 
-  -- Computed scores
-  recovery_score       SMALLINT,      -- 0–100 ASTRAPE composite score
-  strain_score         NUMERIC(5,2),  -- Daily cardiovascular load (0–21)
-
-  CONSTRAINT biometrics_athlete_date_unique UNIQUE (athlete_id, date)
-);
-
-CREATE INDEX biometrics_athlete_date ON biometrics (athlete_id, date DESC);
-
-ALTER TABLE biometrics ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "biometrics_athlete_access" ON biometrics
-  FOR ALL USING (
-    athlete_id IN (SELECT id FROM athletes WHERE user_id = auth.uid())
-  );
-```
-
----
+Used when daily sleep has multiple periods or richer source details.
 
 ### `tss_history`
 
-A materialized daily TSS ledger. Source of truth for all CTL/ATL calculations. Separate from `workouts` because (a) a single day may have multiple workouts and (b) rest days must be explicitly represented as `daily_tss = 0` to correctly decay the exponential moving averages.
+Daily training load ledger and source of current CTL/ATL/TSB values.
 
-```sql
-CREATE TABLE tss_history (
-  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  athlete_id      UUID NOT NULL REFERENCES athletes(id) ON DELETE CASCADE,
-  date            DATE NOT NULL,
-  daily_tss       NUMERIC(7,2) NOT NULL DEFAULT 0,
-  workout_ids     UUID[],             -- contributing workouts
+Important fields:
 
-  -- Cached computed values (updated after each new entry)
-  ctl             NUMERIC(6,2),       -- Chronic Training Load (fitness)
-  atl             NUMERIC(6,2),       -- Acute Training Load (fatigue)
-  tsb             NUMERIC(7,2),       -- Training Stress Balance (form)
+- `athlete_id`
+- `date`
+- `daily_tss`
+- `workout_ids`
+- `ctl`
+- `atl`
+- `tsb`
 
-  CONSTRAINT tss_history_athlete_date_unique UNIQUE (athlete_id, date)
-);
-
-CREATE INDEX tss_history_athlete_date ON tss_history (athlete_id, date DESC);
-
-ALTER TABLE tss_history ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "tss_history_athlete_access" ON tss_history
-  FOR ALL USING (
-    athlete_id IN (SELECT id FROM athletes WHERE user_id = auth.uid())
-  );
-```
-
----
+Unique by `(athlete_id, date)`.
 
 ### `training_plans`
 
-Structured training blocks. Each row is one planned workout session. Can be created manually or generated by the AI coach.
+Planned workouts. Backend API exposes canonical fields such as `date`, `duration_minutes`, and `projected_tss`, while the database uses legacy columns:
 
-```sql
-CREATE TABLE training_plans (
-  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  athlete_id      UUID NOT NULL REFERENCES athletes(id) ON DELETE CASCADE,
+| API field | DB column |
+|---|---|
+| `date` | `planned_date` |
+| `duration_minutes` | `duration_min` |
+| `projected_tss` | `target_tss` |
 
-  planned_date    DATE NOT NULL,
-  sport           TEXT NOT NULL,
-  title           TEXT NOT NULL,
-  description     TEXT,
-  duration_min    SMALLINT,
-  target_tss      SMALLINT,
-  target_zones    JSONB,              -- e.g., {"Z2": 60, "Z4": 20}
-  primary_zone    TEXT,               -- e.g., "Endurance", "Threshold", "VO2max"
-  structure       JSONB,              -- Array of interval blocks with label/duration_min/zone
-  goal            TEXT,               -- AI-generated session goal narrative
-  context         TEXT,               -- Additional AI coaching context / prescription notes
+Important fields:
 
-  status          TEXT NOT NULL DEFAULT 'planned'
-                  CHECK (status IN ('planned','done','skipped','modified')),
+- `sport`
+- `title`
+- `description`
+- `duration_min`
+- `target_tss`
+- `target_zones`
+- `primary_zone`
+- `structure`
+- `goal`
+- `context`
+- `status`
+- `completed_workout_id`
+- `generated_by`
 
-  completed_workout_id UUID REFERENCES workouts(id),
+`structure` stores structured intervals as JSONB.
 
-  generated_by    TEXT DEFAULT 'astrape_ai',  -- 'astrape_ai' or 'manual'
-  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-ALTER TABLE training_plans ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "training_plans_athlete_access" ON training_plans
-  FOR ALL USING (
-    athlete_id IN (SELECT id FROM athletes WHERE user_id = auth.uid())
-  );
-```
-
----
+## Integrations
 
 ### `oauth_tokens`
 
-Encrypted storage for third-party API credentials.
+Stores third-party tokens by athlete/provider.
 
-```sql
-CREATE TABLE oauth_tokens (
-  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  athlete_id      UUID NOT NULL REFERENCES athletes(id) ON DELETE CASCADE,
-  provider        TEXT NOT NULL CHECK (provider IN ('garmin','whoop')),
+Providers currently include WHOOP, Garmin-related flows, and Strava. Token access is server-side; clients never receive OAuth tokens.
 
-  -- Stored encrypted via Supabase Vault
-  access_token    TEXT NOT NULL,
-  refresh_token   TEXT,
-  expires_at      TIMESTAMPTZ,
-  scope           TEXT[],
+Important fields:
 
-  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+- `athlete_id`
+- `provider`
+- `access_token`
+- `refresh_token`
+- `expires_at`
+- `scope`
+- provider metadata columns from integration migrations
 
-  CONSTRAINT oauth_tokens_athlete_provider_unique UNIQUE (athlete_id, provider)
-);
+### `activity_streams`
 
--- No RLS needed — this table is only accessed by the server-side API,
--- never by the client directly. API layer enforces athlete ownership.
-```
+Stores heavy per-second activity streams separately from `workouts`.
 
----
+Important fields:
+
+- `workout_id`
+- `athlete_id`
+- `stream_data` / stream JSON payload fields from migration
+- metadata such as resolution/source
+
+### `activity_laps`
+
+Stores lap/split detail for activity detail screens.
+
+Important fields:
+
+- `workout_id`
+- `athlete_id`
+- `lap_index`
+- timing/distance fields
+- HR/power/cadence/speed fields
+- raw lap payload fields
+
+### `push_tokens`
+
+Stores web and native push tokens/subscriptions.
+
+Important fields:
+
+- `athlete_id`
+- `platform`
+- `token`
+- timestamps
+
+Protected by RLS so athletes manage their own token rows.
+
+## Coach And AI
 
 ### `coach_conversations`
 
-Conversation threads for the AI coach. One row per chat session.
+Conversation thread metadata:
 
-```sql
-CREATE TABLE coach_conversations (
-  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  athlete_id      UUID NOT NULL REFERENCES athletes(id) ON DELETE CASCADE,
-  title           TEXT,               -- Auto-generated from first user message (≤80 chars)
-  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-ALTER TABLE coach_conversations ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "coach_conversations_athlete_access" ON coach_conversations
-  FOR ALL USING (
-    athlete_id IN (SELECT id FROM athletes WHERE user_id = auth.uid())
-  );
-```
-
----
+- `id`
+- `athlete_id`
+- `title`
+- timestamps
 
 ### `coach_messages`
 
-Individual messages within a conversation thread.
+Individual user/assistant messages:
 
-```sql
-CREATE TABLE coach_messages (
-  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  athlete_id      UUID NOT NULL REFERENCES athletes(id) ON DELETE CASCADE,
-  conversation_id UUID NOT NULL REFERENCES coach_conversations(id) ON DELETE CASCADE,
-  role            TEXT NOT NULL CHECK (role IN ('user','assistant')),
-  content         TEXT NOT NULL,
-  image_urls      TEXT[] DEFAULT '{}',
-  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX coach_messages_conversation ON coach_messages (conversation_id, created_at ASC);
-
-ALTER TABLE coach_messages ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "coach_messages_athlete_access" ON coach_messages
-  FOR ALL USING (
-    athlete_id IN (SELECT id FROM athletes WHERE user_id = auth.uid())
-  );
-```
-
----
+- `conversation_id`
+- `athlete_id`
+- `role`
+- `content`
+- `image_urls`
+- timestamps
 
 ### `coach_memories`
 
-Long-term memory store for the ASTRAPE AI agent. Each row is a semantically meaningful chunk of coaching history, stored alongside its vector embedding for similarity search.
+Long-term coach memory with pgvector embeddings.
 
-```sql
-CREATE TABLE coach_memories (
-  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  athlete_id      UUID NOT NULL REFERENCES athletes(id) ON DELETE CASCADE,
-  content         TEXT NOT NULL,
-  embedding       VECTOR(768),        -- text-embedding-004 output
-  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+Important fields:
 
-CREATE INDEX ON coach_memories
-  USING hnsw (embedding vector_cosine_ops)
-  WITH (m = 16, ef_construction = 64);
+- `athlete_id`
+- `content`
+- `memory_type`
+- `context_date`
+- `metadata`
+- `embedding vector(3072)`
+- timestamps
 
-ALTER TABLE coach_memories ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "coach_memories_athlete_access" ON coach_memories
-  FOR ALL USING (
-    athlete_id IN (SELECT id FROM athletes WHERE user_id = auth.uid())
-  );
-```
+The current migration creates vector support and RLS. Do not assume an HNSW index exists unless verified against the latest migration state.
 
----
+### `athlete_analyses`
 
-### `ai_analysis_cache`
+Cached screen-level AI analysis results.
 
-Cached AI-generated insight strings, keyed by `(athlete_id, analysis_type, scope_key)`. A fingerprint of the input context prevents stale cache hits when underlying data changes.
+Important fields:
 
-```sql
-CREATE TABLE ai_analysis_cache (
-  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  athlete_id      UUID NOT NULL REFERENCES athletes(id) ON DELETE CASCADE,
-  analysis_type   TEXT NOT NULL,      -- 'recovery', 'sleep', 'strain', 'training_load', 'dashboard_summary', 'workout'
-  scope_key       TEXT NOT NULL,      -- YYYY-MM-DD or workout_id
-  fingerprint     TEXT NOT NULL,      -- SHA-256 of context dict
-  content         TEXT NOT NULL,      -- The cached insight string
-  model           TEXT,               -- Model that produced this insight
-  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+- `athlete_id`
+- `analysis_type`
+- `scope_key`
+- `fingerprint`
+- `content`
+- `model`
+- timestamps
 
-  CONSTRAINT ai_analysis_cache_unique UNIQUE (athlete_id, analysis_type, scope_key)
-);
-```
+Used by `/v1/analysis/*` routes to avoid repeated LLM calls when source data has not changed.
 
----
+## Storage
 
-## Pydantic Models (Key Request Bodies)
+Coach uploads use the `coach-uploads` bucket and path prefixes based on the authenticated user/conversation. The bucket privacy/RLS state is governed by migrations and Supabase Storage policies; the current frontend upload helper still uses `getPublicUrl()` after upload.
 
-### `WorkoutPayload`
+## Pydantic Models
 
-Used for both `POST /workouts` and `POST /training-plans`.
+Request/response schemas live in `backend/app/models/` and router-local models. Treat those as the API contract source when they differ from database column names.
 
-```python
-class WorkoutPayload(BaseModel):
-    source: str
-    external_id: Optional[str] = None
-    sport: str
-    title: Optional[str] = None
-    started_at: Optional[datetime] = None
-    ended_at: Optional[datetime] = None
-    date: Optional[str] = None          # For training plans (planned_date)
-    duration_minutes: Optional[int] = None
-    distance_m: Optional[float] = None
-    avg_hr: Optional[int] = None
-    max_hr: Optional[int] = None
-    avg_power_w: Optional[int] = None
-    norm_power_w: Optional[int] = None
-    avg_pace_sec_km: Optional[int] = None
-    hr_zone_0_pct: Optional[float] = None
-    # ... hr_zone_1_pct through hr_zone_5_pct
-    tss: Optional[float] = None
-    strain_score: Optional[float] = None
-    projected_tss: Optional[int] = None  # For training plans
-    primary_zone: Optional[str] = None
-    description: Optional[str] = None
-    structure: list[IntervalBlock] = []
-    completed: bool = False
-```
+Important files:
 
-### `DailyBiometrics`
+- `backend/app/models/athlete.py`
+- `backend/app/models/workout.py`
+- `backend/app/models/biometrics.py`
+- `backend/app/routers/coach.py`
+- `backend/app/routers/notifications.py`
 
-Used for `POST /biometrics/daily`.
+## Schema Maintenance
 
-```python
-class DailyBiometrics(BaseModel):
-    date: date
-    source: str
-    external_id: Optional[str] = None
-    hrv_rmssd: Optional[float] = None
-    resting_hr: Optional[int] = None
-    sleep_duration_min: Optional[int] = None
-    sleep_score: Optional[int] = None
-    sleep_deep_pct: Optional[float] = None
-    sleep_rem_pct: Optional[float] = None
-    sleep_light_pct: Optional[float] = None
-    sleep_awake_pct: Optional[float] = None
-    sleep_bedtime: Optional[str] = None
-    sleep_wakeup: Optional[str] = None
-    skin_temp_deviation: Optional[float] = None
-    spo2_pct: Optional[float] = None
-    recovery_score: Optional[int] = None
-    strain_score: Optional[float] = None
-    is_nap: bool = False
-```
+When migrations change tables, update this document manually and optionally regenerate `docs/schema/astrape_public_schema.sql` with `docs/tools/generate_schema.py`.

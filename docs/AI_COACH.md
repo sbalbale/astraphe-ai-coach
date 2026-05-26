@@ -2,420 +2,135 @@
 
 ## Overview
 
-The ASTRAPE AI Coach is a Gemini 2.5 Pro agent that combines structured physiological context, function calling for live data retrieval, and a RAG memory pipeline to deliver coaching responses that are simultaneously data-driven and conversationally natural.
+The ASTRAPE coach is implemented in `backend/app/services/ai_coach.py`, `backend/app/services/coach_tools.py`, `backend/app/services/memory.py`, and `backend/app/routers/coach.py`.
 
----
+It uses the current `google-genai` SDK, prompt-file instructions, structured athlete context, tool calls, Google Search grounding, image/document inputs, and pgvector-backed long-term memory.
 
-## System Prompt
+## Model Configuration
 
-The system prompt defines the ASTRAPE persona, constraints, and output style. It is injected once per conversation session.
+Defaults are loaded from `backend/app/config.py`:
 
-```python
-ASTRAPE_SYSTEM_PROMPT = """
-You are ASTRAPE, an AI endurance sports coach embedded in the athlete's training platform.
+| Setting | Default | Purpose |
+|---|---|---|
+| `GEMINI_MODEL` | `gemma-4-26b-a4b-it` | Main coach chat model |
+| `GEMINI_ANALYSIS_MODEL` | `gemini-flash-lite-latest` | Screen-level analysis model |
+| `GEMINI_EMBEDDING_MODEL` | `gemini-embedding-001` | Coach memory embeddings |
 
-## Identity
-You are a world-class coaching intelligence with deep expertise in:
-- Exercise physiology (VO2max, lactate threshold, energy systems)
-- Training load management (CTL/ATL/TSB model, periodization)
-- Recovery science (HRV, sleep staging, autonomic nervous system)
-- Sport-specific technique: running, cycling, triathlon
+Per-user overrides for coach/analysis models live in `auth.users.app_metadata` as `gemini_model` and `gemini_analysis_model`. The backend intentionally ignores user-editable metadata for model, tier, admin, and rate-limit decisions.
 
-## Tone and Style
-- Concise. Maximum 3 sentences unless the athlete asks for detail.
-- Data-first. Always anchor recommendations to actual numbers from context.
-  Bad: "Your recovery looks good."
-  Good: "Your HRV is 78ms — 9% above your 30-day baseline — and TSB is +28. Attack today."
-- Direct. No hedging, no "it depends" without immediately explaining what it depends on.
-- Warm but professional. You care about this athlete's performance AND their health.
+## Prompt Source
 
-## Decision Framework
-When recommending workout intensity, always check in this order:
-1. TSB position (is the athlete fresh or fatigued?)
-2. HRV trend (is the nervous system recovered?)
-3. Sleep quality (was the last 24h restorative?)
-4. Recent load pattern (is this a build week or a recovery week?)
+The coach instructions are read from:
 
-## Hard Rules
-- NEVER recommend training through illness (elevated skin temp, low SpO2).
-- NEVER recommend an intensity upgrade when TSB < -30.
-- ALWAYS reference at least one specific number in every response.
-- If asked for a training plan, confirm race date and current CTL before generating.
-
-## Output Format
-- For conversational responses: plain prose, no markdown.
-- For training plans: structured format with day, session, duration, and target zone.
-- For metric explanations: include the formula and a plain-language interpretation.
-"""
+```text
+backend/app/prompts/coach_behavior.md
 ```
 
----
+If that file is missing, the service falls back to a minimal "elite, data-driven performance coach" instruction.
+
+The prompt expects the model to produce an internal scratchpad and an athlete-facing response. The backend extracts only the athlete-facing text.
+
+```xml
+<scratchpad>
+Internal reasoning and tool planning.
+</scratchpad>
+<response>
+Text delivered to the athlete.
+</response>
+```
+
+If tags are malformed or missing, the backend strips `<scratchpad>` blocks and returns the remaining text.
+
+## Coach Endpoints
+
+- `POST /v1/coach/message`: complete JSON response.
+- `POST /v1/coach/stream`: Server-Sent Events streaming response.
+- `POST /v1/coach/initialize`: warm coach context.
+- `GET /v1/coach/conversations`: list threads.
+- `POST /v1/coach/conversations`: create thread.
+- `GET /v1/coach/conversations/{id}/messages`: read messages.
+- `DELETE /v1/coach/conversations/{id}`: delete thread.
+- `POST /v1/coach/upload-document`: upload a document attachment.
+
+The current mobile app calls `POST /v1/coach/message` for normal chat and uses plain `fetch`.
 
 ## Context Assembly
 
-Before every AI call, the API assembles a structured context object from the database. This is injected as the first user turn in the conversation history.
+Before inference, the service builds a compact context from current athlete data:
 
-```python
-async def build_athlete_context(athlete_id: str, db: Client) -> dict:
-    """
-    Assemble complete physiological context for Gemini injection.
-    Called before every /coach/message request.
-    """
-    # Fetch current state
-    state = await get_athlete_state(athlete_id, db)
-    
-    # Fetch recent workouts (last 7)
-    recent_workouts = await db.table("workouts") \
-        .select("sport,title,started_at,duration_secs,tss,avg_hr") \
-        .eq("athlete_id", athlete_id) \
-        .order("started_at", desc=True) \
-        .limit(7) \
-        .execute()
-    
-    # Fetch HRV trend (last 14 days)
-    biometrics = await db.table("biometrics") \
-        .select("date,hrv_rmssd,resting_hr,sleep_score,sleep_duration_min,recovery_score") \
-        .eq("athlete_id", athlete_id) \
-        .order("date", desc=True) \
-        .limit(14) \
-        .execute()
-    
-    # Fetch training plan (next 7 days)
-    upcoming = await db.table("training_plans") \
-        .select("planned_date,sport,title,duration_min,target_tss,status") \
-        .eq("athlete_id", athlete_id) \
-        .gte("planned_date", date.today().isoformat()) \
-        .order("planned_date") \
-        .limit(7) \
-        .execute()
-    
-    return {
-        "athlete": {
-            "name": state.display_name,
-            "ftp_watts": state.ftp_watts,
-            "max_hr": state.max_hr,
-            "threshold_hr": state.threshold_hr,
-            "weight_kg": state.weight_kg,
-        },
-        "current_load": {
-            "ctl": state.ctl,
-            "atl": state.atl,
-            "tsb": state.tsb,
-            "readiness_score": state.readiness_score,
-        },
-        "today_biometrics": {
-            "hrv_rmssd": state.hrv_rmssd,
-            "hrv_delta_7d": state.hrv_delta_7d,
-            "resting_hr": state.resting_hr,
-            "sleep_hours": state.sleep_hours,
-            "sleep_score": state.sleep_score,
-            "recovery_score": state.recovery_score,
-        },
-        "recent_workouts": recent_workouts.data,
-        "biometric_history_14d": biometrics.data,
-        "upcoming_plan": upcoming.data,
-    }
-```
+- Profile: name, gender, units, timezone offset, HR/FTP/pace anchors.
+- Biometrics: latest HRV, resting HR, sleep, recovery, readiness, strain, SpO2, skin temperature, and 7-day averages.
+- Training load: latest `tss_history` row with CTL, ATL, TSB, and daily TSS.
+- Conversation history: recent `coach_messages` in the active conversation.
+- Memories: relevant `coach_memories` from pgvector similarity search.
+- Attachments: uploaded document/image URLs when supplied.
 
----
+Context parts are cached in process for five minutes per athlete and invalidated after relevant sync/processing paths.
 
-## Function Calling Tools
+## Tools
 
-Gemini can autonomously invoke these tools to fetch fresher or more specific data mid-conversation.
+The coach exposes custom Python tools through Gemini function declarations:
 
-```python
-ASTRAPE_TOOLS = [
-    {
-        "name": "get_athlete_state",
-        "description": "Get the athlete's current load metrics (CTL, ATL, TSB) and readiness score. Use when the athlete asks about their current fitness, fatigue, or form.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "date": {
-                    "type": "string",
-                    "description": "ISO date string (YYYY-MM-DD). Defaults to today if not specified."
-                }
-            }
-        }
-    },
-    {
-        "name": "get_workout_history",
-        "description": "Get recent completed workouts with TSS and HR data. Use when analyzing training patterns or when the athlete asks about specific past sessions.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "days_back": {
-                    "type": "integer",
-                    "description": "Number of days of history to retrieve (1–90).",
-                    "default": 14
-                },
-                "sport": {
-                    "type": "string",
-                    "enum": ["run", "bike", "swim", "strength", "all"],
-                    "default": "all"
-                }
-            }
-        }
-    },
-    {
-        "name": "get_hrv_trend",
-        "description": "Get HRV trend analysis including delta vs baseline and trend direction. Use when discussing recovery or nervous system readiness.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "days": {
-                    "type": "integer",
-                    "description": "Analysis window in days (7–30).",
-                    "default": 14
-                }
-            }
-        }
-    },
-    {
-        "name": "get_training_plan",
-        "description": "Get the athlete's upcoming planned sessions. Use when discussing upcoming training or race preparation.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "days_ahead": {
-                    "type": "integer",
-                    "description": "Number of days to look ahead (1–30).",
-                    "default": 7
-                }
-            }
-        }
-    },
-    {
-        "name": "generate_training_plan",
-        "description": "Generate a new training plan block. Use ONLY when the athlete explicitly requests a new plan or significant plan modification.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "weeks": {
-                    "type": "integer",
-                    "description": "Number of weeks to plan (1–8).",
-                    "default": 4
-                },
-                "target_event_date": {
-                    "type": "string",
-                    "description": "ISO date of the target race or event, if applicable."
-                },
-                "weekly_tss_target": {
-                    "type": "integer",
-                    "description": "Target weekly TSS for the plan block."
-                }
-            },
-            "required": []
-        }
-    }
-]
-```
+| Tool | Purpose |
+|---|---|
+| `simulate_training_impact` | Project CTL, ATL, and TSB after a hypothetical TSS load. |
+| `schedule_workout` | Create a structured planned workout in `training_plans`. |
+| `calculate_nutrition` | Estimate kJ, carb, fluid, and sodium targets for a planned effort. |
+| `clear_training_plans` | Delete planned workouts in a date range before replacing a week. |
+| `save_memory` | Persist an important athlete fact to `coach_memories`. |
+| `internal_scratchpad` | Sink private model reasoning so it is never shown to the athlete. |
 
----
+The tool list also enables Google Search grounding through `types.Tool(google_search=types.GoogleSearch())`.
 
-## RAG Memory Pipeline
+## Memory Pipeline
 
-Before calling Gemini, ASTRAPE performs a similarity search over the athlete's `coach_memories` table to retrieve relevant prior coaching context.
+Long-term memory is stored in `coach_memories`:
 
-```python
-import google.generativeai as genai
+- `athlete_id`
+- `content`
+- `memory_type`
+- `context_date`
+- `metadata`
+- `embedding vector(3072)`
+- timestamps
 
-async def retrieve_relevant_memories(
-    athlete_id: str,
-    query: str,
-    db: Client,
-    top_k: int = 5,
-) -> list[dict]:
-    """
-    Retrieve semantically relevant memories from the athlete's coaching history.
-    
-    Uses Google's text-embedding-004 model for query embedding,
-    then performs cosine similarity search via pgvector.
-    """
-    # Embed the user's query
-    embedding_model = genai.embed_content(
-        model="models/text-embedding-004",
-        content=query,
-        task_type="retrieval_query",
-    )
-    query_embedding = embedding_model["embedding"]
-    
-    # pgvector similarity search
-    result = await db.rpc("match_coach_memories", {
-        "athlete_id": athlete_id,
-        "query_embedding": query_embedding,
-        "match_threshold": 0.75,
-        "match_count": top_k,
-    }).execute()
-    
-    return result.data
-```
+The service embeds user queries and important facts with `GEMINI_EMBEDDING_MODEL`, retrieves the most relevant memories through the `match_coach_memories` RPC, and stores new memories after replies or explicit `save_memory` tool calls.
 
-**The `match_coach_memories` SQL function:**
+## Message Persistence
 
-```sql
-CREATE OR REPLACE FUNCTION match_coach_memories(
-    athlete_id UUID,
-    query_embedding vector(768),
-    match_threshold FLOAT,
-    match_count INT
-)
-RETURNS TABLE (
-    id UUID,
-    content TEXT,
-    memory_type TEXT,
-    context_date DATE,
-    similarity FLOAT
-)
-LANGUAGE SQL STABLE
-AS $$
-  SELECT
-    id,
-    content,
-    memory_type,
-    context_date,
-    1 - (embedding <=> query_embedding) AS similarity
-  FROM coach_memories
-  WHERE
-    coach_memories.athlete_id = match_coach_memories.athlete_id
-    AND 1 - (embedding <=> query_embedding) > match_threshold
-  ORDER BY similarity DESC
-  LIMIT match_count;
-$$;
-```
+Conversation state is stored in:
 
----
+- `coach_conversations`
+- `coach_messages`
 
-## Full Inference Pipeline
+Messages can include `image_urls`. The frontend currently uploads coach images to the `coach-uploads` Supabase Storage bucket and passes the resulting URLs to `/v1/coach/message`.
 
-```python
-async def coach_response(
-    athlete_id: str,
-    message: str,
-    conversation_history: list[dict],
-    db: Client,
-) -> AsyncIterator[str]:
-    """
-    Complete ASTRAPE coaching inference pipeline.
-    Streams response tokens back to the client.
-    """
-    # 1. Build structured context
-    context = await build_athlete_context(athlete_id, db)
-    
-    # 2. Retrieve relevant memories
-    memories = await retrieve_relevant_memories(athlete_id, message, db)
-    
-    # 3. Construct messages array
-    messages = []
-    
-    # Inject context as a synthetic "user" setup message
-    context_injection = f"""
-CURRENT ATHLETE CONTEXT (as of {date.today().isoformat()}):
-{json.dumps(context, indent=2)}
+## Rate Limits And Access
 
-RELEVANT COACHING HISTORY:
-{chr(10).join(f"- {m['content']} ({m['context_date']})" for m in memories)}
-"""
-    messages.append({
-        "role": "user",
-        "parts": [context_injection]
-    })
-    messages.append({
-        "role": "model",
-        "parts": ["Context received. Ready to coach."]
-    })
-    
-    # Append conversation history (last 10 turns)
-    for turn in conversation_history[-10:]:
-        messages.append({
-            "role": turn["role"],
-            "parts": [turn["content"]]
-        })
-    
-    # Add current message
-    messages.append({
-        "role": "user",
-        "parts": [message]
-    })
-    
-    # 4. Call Gemini with streaming
-    model = genai.GenerativeModel(
-        model_name="gemini-2.5-pro",
-        system_instruction=ASTRAPE_SYSTEM_PROMPT,
-        tools=ASTRAPE_TOOLS,
-    )
-    
-    chat = model.start_chat(history=messages[:-1])
-    response = await chat.send_message_async(
-        message,
-        stream=True,
-    )
-    
-    # 5. Stream response tokens
-    full_response = ""
-    async for chunk in response:
-        token = chunk.text
-        full_response += token
-        yield token
-    
-    # 6. Persist response as a memory (async, non-blocking)
-    asyncio.create_task(
-        store_coaching_memory(
-            athlete_id=athlete_id,
-            content=f"Q: {message} | A: {full_response}",
-            memory_type="coaching_insight",
-            context=context["current_load"],
-            db=db,
-        )
-    )
-```
+AI rate limits are enforced per athlete with Redis-backed sliding windows when Redis is available:
 
----
+| Tier | Requests/min | Requests/hour |
+|---|---:|---:|
+| `free` | 5 | 20 |
+| `trial` | 15 | 75 |
+| `premium` | 40 | 200 |
 
-## Personality Modes
+`rate_limit_rpm` and `rate_limit_rph` in `auth.users.app_metadata` override those defaults.
 
-The front-end `coachPersonality` tweak modifies a personality suffix appended to the system prompt.
+Tier gating also uses `auth.users.app_metadata.tier`. The `athletes.tier` column exists for profile/admin workflows and defaults, but the backend authorization source of truth is app metadata.
 
-```python
-PERSONALITY_SUFFIXES = {
-    "analytical": """
-Focus on numbers, trends, and mechanisms. Explain *why* a metric matters.
-Lead with data, follow with recommendation.
-""",
-    "motivational": """
-Lead with encouragement. Use athlete's name. Acknowledge the hard work.
-Data supports the motivation, not the other way around.
-""",
-    "gentle": """
-Softer tone. Frame challenges as opportunities. Avoid words like "must" or "should."
-Check in on how the athlete is feeling, not just the numbers.
-""",
-    "tough_love": """
-Direct and demanding. High expectations. Challenge the athlete.
-Call out excuses. The numbers don't lie — hold the athlete to them.
-""",
-}
-```
+## Screen-Level Analysis
 
----
+Short analysis strings are implemented separately in `backend/app/routers/analysis.py` and `backend/app/services/analysis_cache.py`.
 
-## Token Budget Management
+Routes include recovery, sleep, strain, training load, dashboard summary, workout, and time-in-zones analysis. Results are cached in `athlete_analyses` using a context fingerprint to avoid repeated model calls when data has not changed.
 
-Gemini 2.5 Pro's 1M context window eliminates most truncation concerns, but ASTRAPE still implements a tiered context strategy to minimize latency and cost:
+Free/trial users receive deterministic fallback summaries where the route supports it; premium users can receive Gemini analysis results with the configured analysis model.
 
-| Context Tier | Included When | Approximate Tokens |
-|---|---|---|
-| Core state | Always | ~200 |
-| Recent workouts (7d) | Always | ~400 |
-| Biometric history (14d) | Always | ~300 |
-| Upcoming plan (7d) | Always | ~300 |
-| RAG memories (top 5) | Always | ~500 |
-| Extended workout history (90d) | User asks about long-term trends | ~3,000 |
-| Full conversation history | Continuing conversation | Variable |
-| Season-level TSS history | User asks about fitness trajectory | ~1,500 |
+## Operational Notes
 
-**Total per-query token estimate (typical): ~1,700 tokens input, ~200–400 tokens output.**
-
-At Gemini 2.5 Pro pricing, this is approximately $0.003–0.006 per coaching message — commercially viable at any reasonable user volume.
-
-
+- Synchronous SDK calls are run off the FastAPI event loop.
+- The backend stores only the athlete-facing response in normal chat output.
+- AI-generated training plan rows are normalized/sanitized before insertion.
+- Garmin device push from generated workouts is currently stubbed in the tool response.
+- Google Search grounding sources may be returned alongside replies.

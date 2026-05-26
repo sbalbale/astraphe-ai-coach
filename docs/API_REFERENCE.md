@@ -2,615 +2,364 @@
 
 ## Base URL
 
-```
-Production:  https://api.astrape-coach.app/v1
+```text
+Production:  https://api.astrapeai.com/v1
 Development: http://localhost:8000/v1
 ```
 
+`GET /health` is mounted outside `/v1`. All other documented routes are prefixed with `/v1`.
+
 ## Authentication
 
-All endpoints require a Supabase JWT in the Authorization header:
+Protected endpoints require a Supabase access token:
 
-```
+```http
 Authorization: Bearer <supabase_jwt>
 ```
 
-The API validates the JWT against the Supabase project's public key and extracts `athlete_id` from the claims. Every database query is automatically scoped to the authenticated athlete via RLS.
+The backend validates the token with Supabase Auth, resolves the matching `athletes.id`, and uses a per-request Supabase client with the user's JWT so RLS remains active. Admin-only routes additionally require `auth.users.app_metadata.is_admin = true`.
 
-**Error format** (all errors):
+Errors use FastAPI's normal shape:
+
 ```json
 { "detail": "message string" }
 ```
 
----
-
 ## Health
 
-### GET `/health`
+### `GET /health`
 
-Liveness check — no auth required.
+No auth. Returns API, Redis, and Supabase status.
 
-**Response:**
 ```json
-{ "status": "healthy", "service": "ASTRAPE API" }
+{
+  "status": "healthy",
+  "service": "ASTRAPE API",
+  "version": "1.0.0",
+  "redis": "connected",
+  "supabase": "connected"
+}
 ```
 
----
+`status` becomes `degraded` when Supabase is unavailable.
 
 ## Athlete
 
-### GET `/athlete/state`
+### `POST /v1/athlete/onboard`
 
-Returns the athlete's current physiological state including computed CTL, ATL, TSB, and readiness score.
+Seeds sample athlete data for first-run onboarding. Safe to call more than once.
 
-**Response:**
-```json
-{
-  "athlete_id": "uuid",
-  "display_name": "Marcus Jensen",
-  "date": "2026-04-26",
-  "ctl": 68.4,
-  "atl": 38.1,
-  "tsb": 28.2,
-  "hrv_rmssd": 78.0,
-  "hrv_delta_7d": 6.3,
-  "resting_hr": 52,
-  "sleep_hours": 7.5,
-  "sleep_score": 94,
-  "recovery_score": 78,
-  "readiness_score": 78,
-  "readiness_label": "Optimal",
-  "readiness_recommendation": "High HRV and positive TSB — strong window for a quality effort today."
-}
-```
+### `GET /v1/athlete/state`
 
----
+Returns current load, recovery, readiness, profile anchors, and streak/profile completion data for the authenticated athlete.
 
-### GET `/athlete/metrics`
+### `GET /v1/athlete/metrics`
 
-Returns computed PMC metrics over a date range.
+Returns PMC time series.
 
-**Query parameters:**
+Query parameters:
 
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `start_date` | ISO date | 42 days ago | Range start |
-| `end_date` | ISO date | today | Range end |
-| `metrics` | comma-sep string | `ctl,atl,tsb` | Metrics to include |
+| Parameter | Default | Notes |
+|---|---:|---|
+| `start_date` | 42 days ago | ISO date |
+| `end_date` | today | ISO date |
+| `metrics` | `ctl,atl,tsb` | Comma-separated metric list |
 
-**Response:**
-```json
-{
-  "athlete_id": "uuid",
-  "start_date": "2026-03-15",
-  "end_date": "2026-04-26",
-  "series": [
-    {
-      "date": "2026-03-15",
-      "ctl": 58.2,
-      "atl": 62.4,
-      "tsb": -4.2,
-      "daily_tss": 85.0
-    }
-  ]
-}
-```
+### `GET /v1/athlete/profile`
 
----
+Returns profile fields, settings JSON, integration-facing metadata, and HR zone settings.
 
-### PATCH `/athlete/profile`
+### `PATCH /v1/athlete/profile`
 
-Update athlete physiological anchors.
+Updates profile fields such as physiological anchors, units, notification settings, privacy settings, and onboarding fields. Marketing privacy changes are saved first, then synced to Resend if configured.
 
-**Request body** (all fields optional):
-```json
-{
-  "weight_kg": 75.5,
-  "ftp_watts": 285,
-  "max_hr": 185,
-  "threshold_hr": 162,
-  "threshold_pace": 4.37
-}
-```
+### `GET /v1/athlete/zones`
 
-**Response:** `200 OK` with updated athlete profile.
+Returns calculated HR zones from `max_hr`, `resting_hr`, `threshold_hr`, and `hr_zone_method`.
 
----
+### `PUT /v1/athlete/zones`
 
-### POST `/athlete/onboard`
+Updates zone anchors and method. Supported methods are `lthr`, `hrr`, and `max_hr`.
 
-Seeds an athlete account with sample training plan data for a fresh onboarding experience. Safe to call multiple times (uses upsert).
+### `DELETE /v1/athlete`
 
-**Response:** `{ "status": "success", "message": "Athlete onboarded with sample data" }`
-
----
+Deletes the authenticated athlete account via the backend account-deletion flow.
 
 ## Workouts
 
-### GET `/workouts`
+### `GET /v1/workouts`
 
-Returns workout history, newest first.
+Returns completed workouts, newest first.
 
-**Query parameters:**
+Query parameters:
 
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `limit` | int | 20 | Max results to return |
+| Parameter | Default | Notes |
+|---|---:|---|
+| `limit` | 20 | Maximum number of rows |
 
-**Response:** Array of workout objects:
-```json
-[
-  {
-    "id": "uuid",
-    "source": "garmin",
-    "sport": "run",
-    "title": "Easy Recovery Run",
-    "started_at": "2026-04-26T12:30:00Z",
-    "ended_at": "2026-04-26T13:15:00Z",
-    "duration_secs": 2700,
-    "distance_m": 9200,
-    "avg_hr": 132,
-    "max_hr": 158,
-    "tss": 38.0,
-    "if_value": 0.71
-  }
-]
-```
+### `POST /v1/workouts`
 
----
+Ingests a completed workout and queues downstream processing. Accepted `source` values include `manual`, `healthkit`, `garmin`, `whoop`, and `strava`. Accepted sports are `run`, `bike`, `swim`, `strength`, `row`, `mobility`, and `other`.
 
-### POST `/workouts`
+### `DELETE /v1/workouts/{workout_id}`
 
-Ingest a new completed workout. TSS computation and CTL/ATL recalculation run as a background task.
+Deletes a workout owned by the athlete and recalculates downstream load data.
 
-**Request body:**
-```json
-{
-  "source": "healthkit",
-  "external_id": "HKWorkout-uuid",
-  "sport": "run",
-  "started_at": "2026-04-26T12:30:00Z",
-  "ended_at": "2026-04-26T13:15:00Z",
-  "distance_m": 9200.0,
-  "avg_hr": 132,
-  "max_hr": 158,
-  "avg_pace_sec_km": 293
-}
-```
+### `POST /v1/workouts/calculate-tss`
 
-**Response:**
-```json
-{ "status": "success", "message": "Workout ingestion and analysis queued." }
-```
+Calculates TSS from a workout payload without saving a new completed workout.
 
----
+## Activity Detail
 
-### DELETE `/workouts/{workout_id}`
+### `GET /v1/activities/{workout_id}/streams`
 
-Delete a workout by UUID. Also removes the corresponding `tss_history` contribution and triggers CTL/ATL recalculation.
+Returns stored per-second stream data for a workout when available. Strava stream payloads are cached in Redis when Redis is configured.
 
-**Response:** `200 OK` on success, `404` if not found or not owned by the athlete.
+### `GET /v1/activities/{workout_id}/laps`
 
----
+Returns stored lap rows for the workout.
+
+### `GET /v1/activities/{workout_id}/intervals`
+
+Returns normalized interval data derived from laps/streams.
+
+### `POST /v1/activities/{workout_id}/hydrate-streams`
+
+Fetches and stores Strava streams for a Strava-backed workout.
+
+### `POST /v1/activities/{workout_id}/refetch-strava`
+
+Refetches Strava detail for a workout and refreshes stored stream/lap data.
+
+### `GET /v1/activities/{workout_id}/zones`
+
+Returns HR zone distribution for one workout.
 
 ## Biometrics
 
-### GET `/biometrics`
+### `GET /v1/biometrics`
 
-Returns daily biometric readings with running HRV and RHR z-scores attached.
+Returns daily biometric readings with pagination and derived values.
 
-**Query parameters:**
+Query parameters:
 
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `limit` | int | 60 | Days to return |
-| `before` | ISO date | today | Cursor: return days before this date (exclusive) |
-| `start_date` | ISO date | — | Explicit range start (overrides cursor) |
-| `end_date` | ISO date | — | Explicit range end |
-| `all` | bool | false | Return full history (use with care) |
+| Parameter | Default | Notes |
+|---|---:|---|
+| `limit` | 60 | Number of days |
+| `before` | today | Cursor date, exclusive |
+| `start_date` | none | Explicit range start |
+| `end_date` | none | Explicit range end |
+| `all` | `false` | Return full history |
 
-**Response:**
-```json
-{
-  "hrvData": [78.0, 74.5, 81.2],
-  "sleepData": [7.5, 6.8, 8.1],
-  "sleepScores": [94, 78, 91],
-  "series": [
-    {
-      "date": "2026-04-26",
-      "hrv_rmssd": 78.0,
-      "hrv_z": 0.45,
-      "resting_hr": 52,
-      "rhr_z": -0.3,
-      "sleep_duration_min": 450,
-      "sleep_score": 94,
-      "sleep_deep_pct": 22.0,
-      "sleep_rem_pct": 24.0,
-      "recovery_score": 78,
-      "strain_score": 14.2,
-      "spo2_pct": 98.0,
-      "periods": []
-    }
-  ],
-  "page": {
-    "limit": 60,
-    "start_date": "2026-02-25",
-    "end_date": "2026-04-26",
-    "has_more": false,
-    "next_before": null
-  }
-}
-```
+### `POST /v1/biometrics/daily`
 
----
-
-### POST `/biometrics/daily`
-
-Ingest a daily biometric summary. Recovery score calculation runs as a background task.
-
-**Request body:**
-```json
-{
-  "date": "2026-04-26",
-  "source": "whoop",
-  "hrv_rmssd": 78.0,
-  "resting_hr": 52,
-  "sleep_duration_min": 450,
-  "sleep_score": 94,
-  "sleep_deep_pct": 22.0,
-  "sleep_rem_pct": 24.0,
-  "skin_temp_deviation": 0.1,
-  "spo2_pct": 98.0
-}
-```
-
-**Response:**
-```json
-{ "status": "success", "message": "Biometrics recorded and recovery analysis queued", "date": "2026-04-26" }
-```
-
----
+Ingests a daily biometric summary. Current payloads use `skin_temp` for absolute Celsius skin temperature.
 
 ## AI Coach
 
-> **Premium required.** All `/coach` endpoints return `403` for `free` and `trial` tier athletes.
+All coach routes require a user config from `auth.users.app_metadata`. Tier, model override, admin flag, and AI rate-limit overrides are read from app metadata, not user-editable metadata.
 
-### POST `/coach/message`
+### `GET /v1/coach/conversations`
 
-Send a message to the ASTRAPE AI coach. Streams the response via Server-Sent Events.
+Lists conversations.
 
-**Request body:**
+### `POST /v1/coach/conversations`
+
+Creates a conversation. Body: `{ "title": "optional title" }`.
+
+### `GET /v1/coach/conversations/{conversation_id}/messages`
+
+Returns ordered messages for a conversation.
+
+### `DELETE /v1/coach/conversations/{conversation_id}`
+
+Deletes a conversation and its messages.
+
+### `POST /v1/coach/upload-document`
+
+Uploads a coach document attachment. Requires multipart form data.
+
+### `POST /v1/coach/initialize`
+
+Warms coach context for the authenticated athlete.
+
+### `POST /v1/coach/message`
+
+Returns a complete JSON coach reply.
+
 ```json
 {
+  "message": "How is my fitness trending?",
+  "recent_tss": 64,
   "conversation_id": "uuid-or-null",
-  "message": "Should I do a hard session tomorrow?"
+  "image_urls": []
 }
 ```
 
-**Response:** `text/event-stream`
-```
-data: Based on your TSB of +28 and HRV at 78ms
+Response:
 
-data:  — 9% above your baseline — tomorrow is
-
-data:  a genuine green-light day. I'd target the
-
-data:  VO2max intervals from the plan: 5×4min @95% FTP.
-
-data: [DONE]
-```
-
-On `[DONE]` the client should close the stream. The full response is stored in `coach_messages` and a memory embedding is written to `coach_memories`.
-
----
-
-### GET `/coach/conversations`
-
-List all conversation threads for the authenticated athlete.
-
-**Response:** Array of conversation summaries with `id`, `title`, `created_at`, `updated_at`.
-
----
-
-### GET `/coach/conversation/{conversation_id}`
-
-Returns full message history for a conversation.
-
-**Response:**
-```json
-{
-  "conversation_id": "uuid",
-  "created_at": "2026-04-26T08:00:00Z",
-  "messages": [
-    { "role": "user", "content": "Should I do a hard session tomorrow?", "created_at": "..." },
-    { "role": "assistant", "content": "Based on your TSB...", "created_at": "..." }
-  ]
-}
-```
-
----
-
-### DELETE `/coach/conversation/{conversation_id}`
-
-Deletes a conversation and all its messages.
-
----
-
-## Sync & Integrations
-
-### POST `/sync/garmin/webhook`
-
-Webhook receiver for Garmin Connect push notifications.
-
-**Headers:** `X-Garmin-Signature: <hmac-sha256>`
-
-**Response:** `200 OK` (must respond within 5 seconds or Garmin retries)
-
----
-
-### POST `/sync/whoop/webhook`
-
-Webhook receiver for WHOOP data push events (workout, recovery, sleep).
-
-**Headers:**
-- `X-WHOOP-Signature` — base64 HMAC-SHA256 of `timestamp + raw_body` using your OAuth client secret
-- `X-WHOOP-Signature-Timestamp` — milliseconds since epoch (prepended to body before signing)
-
----
-
-### GET `/sync/oauth/whoop/authorize`
-
-Initiates WHOOP OAuth 2.0 authorization flow. Redirects to WHOOP's authorization page.
-
-**Query params:** `athlete_id`
-
-**Response:** `302 Redirect` to `https://api.prod.whoop.com/oauth/oauth2/auth`
-
----
-
-### GET `/sync/oauth/whoop/callback`
-
-OAuth callback handler. Exchanges authorization code for access + refresh tokens, then redirects to the mobile app.
-
-**Response:** `302 Redirect` to deep link `astrape://connected?provider=whoop` (or HTML splash page for browser-based flows)
-
----
-
-### GET `/sync/status`
-
-Returns connection status for all configured integrations.
-
-**Response:**
-```json
-{
-  "integrations": {
-    "garmin": { "connected": true, "last_sync": "2026-04-26T10:14:00Z" },
-    "whoop": { "connected": false, "last_sync": null },
-    "healthkit": { "connected": false, "last_sync": null }
-  }
-}
-```
-
-> Note: `healthkit` reports `connected: false` until a verifiable sync handshake from the mobile client is received. The Garmin `last_sync` is currently a placeholder value; WHOOP's is live from the OAuth token record.
-
----
-
-### DELETE `/sync/{provider}`
-
-Unlinks a third-party integration by deleting its OAuth tokens. `provider` must be `garmin` or `whoop`.
-
-**Response:**
-```json
-{ "status": "success", "provider": "whoop", "remaining_providers": [] }
-```
-
----
-
-## Training Plan (Legacy / Mobile UI)
-
-> **Premium required.** Returns `403` for non-premium athletes.
-
-### GET `/plan`
-
-Returns the athlete's training plan for a date range in a mobile-friendly format used by the Plan screen.
-
-**Query parameters:** `start_date`, `end_date` (default: today → today+7d)
-
-**Response:**
-```json
-{
-  "workouts": [
-    { "type": "run", "title": "Tempo Run", "date": "Mon", "duration": "55m", "load": 68 }
-  ],
-  "plan": {
-    "12": { "type": "run", "title": "Tempo Run", "duration": "55 min", "tss": 68, "status": "planned", "note": "Z3-Z4 effort" }
-  }
-}
-```
-
----
-
-## Training Plans (CRUD)
-
-Full CRUD for planned workout sessions. Used by the AI coach to schedule and modify training blocks.
-
-### GET `/training-plans`
-
-Returns planned workouts as Workout objects.
-
-**Query parameters:** `start_date`, `end_date` (ISO dates)
-
-**Response:** Array of workout objects with `id`, `date`, `title`, `sport`, `primary_zone`, `duration_minutes`, `projected_tss`, `description`, `structure`, `completed`.
-
----
-
-### POST `/training-plans`
-
-Create a planned workout.
-
-**Request body:**
-```json
-{
-  "source": "manual",
-  "sport": "run",
-  "title": "Threshold Intervals",
-  "date": "2026-05-12",
-  "duration_minutes": 65,
-  "projected_tss": 85,
-  "primary_zone": "Threshold",
-  "description": "5×4min @95% FTP with 3min recovery jog.",
-  "structure": [
-    { "label": "Warm-up", "duration_min": 15, "zone": "Z1-Z2" },
-    { "label": "Main set", "duration_min": 35, "zone": "Z4-Z5" },
-    { "label": "Cool-down", "duration_min": 15, "zone": "Z1" }
-  ],
-  "completed": false
-}
-```
-
-**Response:** Created workout object.
-
----
-
-### PUT `/training-plans/{training_plan_id}`
-
-Replace a planned workout. Sets `status` to `done` if `completed: true`, otherwise `modified`.
-
-**Request body:** Same as POST.
-
-**Response:** Updated workout object.
-
----
-
-### DELETE `/training-plans`
-
-Delete training plan rows in a date range. Requires at least one of `start_date` or `end_date`.
-
-**Query parameters:** `start_date`, `end_date`
-
-**Response:**
-```json
-{ "status": "success", "deleted": 5 }
-```
-
----
-
-## AI Analysis
-
-Cached, AI-generated insight strings for specific screens and contexts. All endpoints check the athlete's tier and fall back to a deterministic rule-based summary for `free`/`trial` users if the Gemini call would be gated. Results are cached per `(athlete_id, analysis_type, scope_key)` and reused until the underlying data changes (fingerprinting).
-
-### GET `/analysis/recovery`
-
-One-sentence recovery insight for a given day.
-
-**Query parameters:** `day` (YYYY-MM-DD, default today)
-
-**Response:**
 ```json
 {
   "status": "success",
-  "analysis": {
-    "content": "Your signals are mixed but workable (recovery 58/100, HRV 74 vs 78, RHR 54 vs 52, TSB -4); keep training controlled and use how you feel to decide intensity.",
-    "fingerprint": "sha256-...",
-    "cached": true,
-    "model": "gemini-flash-lite-latest"
-  }
+  "conversation_id": "uuid",
+  "reply": "Athlete-facing text",
+  "sources": []
 }
 ```
 
----
+### `POST /v1/coach/stream`
 
-### GET `/analysis/sleep`
+Streams the same coach flow over Server-Sent Events. Use this route when a streaming UI is needed.
 
-One-sentence sleep quality insight for a given day.
+## Sync And Integrations
 
-**Query parameters:** `day` (YYYY-MM-DD, default today)
+### `POST /v1/sync/garmin/webhook`
 
-**Response:** Same shape as `/analysis/recovery`.
+Garmin webhook receiver. Uses the configured Garmin webhook secret when available.
 
----
+### `POST /v1/sync/whoop/webhook`
 
-### GET `/analysis/strain`
+WHOOP webhook receiver. Validates WHOOP HMAC signatures unless development skip mode is explicitly enabled.
 
-One-sentence daily strain / load insight.
+### `GET /v1/sync/strava/webhook`
 
-**Query parameters:** `day` (YYYY-MM-DD, default today)
+Strava subscription verification endpoint. Echoes the `hub.challenge` after checking `hub.verify_token`.
 
-**Response:** Same shape as `/analysis/recovery`.
+### `POST /v1/sync/strava/webhook`
 
----
+Strava event webhook. Verifies owner mapping and queues activity ingestion/backfill work for supported create/update/delete events.
 
-### GET `/analysis/training-load`
+### `GET /v1/sync/oauth/whoop/authorize`
 
-Weekly training load insight (CTL/ATL/TSB trend + weekly TSS).
+Starts WHOOP OAuth. Optional `web_return` controls browser return behavior.
 
-**Query parameters:** `end_day` (YYYY-MM-DD, default today)
+### `GET /v1/sync/oauth/whoop/callback`
 
-**Response:** Same shape as `/analysis/recovery`.
+Completes WHOOP OAuth, stores tokens, and redirects to the mobile/web return path.
 
----
+### `GET /v1/sync/oauth/strava/authorize`
 
-### GET `/analysis/dashboard-summary`
+Starts Strava OAuth.
 
-Blended dashboard insight combining recovery, sleep, HRV, and training load signals.
+### `GET /v1/sync/oauth/strava/callback`
 
-**Query parameters:** `day` (YYYY-MM-DD, default today)
+Completes Strava OAuth, stores tokens and athlete mapping, and kicks off recent activity import.
 
-**Response:** Same shape as `/analysis/recovery`.
+### `GET /v1/sync/status`
 
----
+Returns connection state for Garmin, WHOOP, Strava, and HealthKit.
 
-### GET `/analysis/workout/{workout_id}`
+### `DELETE /v1/sync/{provider}`
 
-AI insight for a specific completed workout. Returns workout-level effort classification and next-step recommendation.
+Unlinks `garmin`, `whoop`, or `strava`.
 
-> **Premium only** — returns a static fallback for free users.
+### `POST /v1/sync/refresh-strain`
 
-**Response:** Same shape as `/analysis/recovery`.
+Recalculates strain scores for the authenticated athlete.
 
----
+### `POST /v1/sync/reprocess-metrics`
+
+Reprocesses load metrics. `full=true` performs a broader rebuild.
+
+### `POST /v1/sync/whoop/backfill-biometrics`
+
+Backfills WHOOP biometrics. Query parameter: `days` (default 90).
+
+### `POST /v1/sync/whoop/backfill`
+
+Backfills WHOOP workouts/recovery data. Query parameter: `days` (default 90).
+
+### `POST /v1/sync/strava/backfill`
+
+Backfills Strava activities. Query parameter: `days` (default 90).
+
+## Training Plan
+
+### `GET /v1/plan`
+
+Legacy/mobile-friendly weekly plan projection.
+
+### `GET /v1/training-plans`
+
+Returns planned workouts. Query parameters: `start_date`, `end_date`.
+
+### `POST /v1/training-plans`
+
+Creates a planned workout.
+
+### `PUT /v1/training-plans/{training_plan_id}`
+
+Replaces a planned workout.
+
+### `DELETE /v1/training-plans/{training_plan_id}`
+
+Deletes one planned workout.
+
+### `DELETE /v1/training-plans`
+
+Deletes planned workouts in a date range. Requires `start_date`, `end_date`, or both.
+
+## Analysis
+
+Screen-level AI insights are cached in `athlete_analyses` by `(athlete_id, analysis_type, scope_key)` and data fingerprint. Premium users can use the configured Gemini analysis model; free/trial users receive deterministic fallback summaries where implemented.
+
+Routes:
+
+- `GET /v1/analysis/recovery?day=YYYY-MM-DD`
+- `GET /v1/analysis/sleep?day=YYYY-MM-DD`
+- `GET /v1/analysis/strain?day=YYYY-MM-DD`
+- `GET /v1/analysis/training-load?end_day=YYYY-MM-DD`
+- `GET /v1/analysis/dashboard-summary?day=YYYY-MM-DD`
+- `GET /v1/analysis/workout/{workout_id}`
+- `GET /v1/analysis/time-in-zones?window_start=YYYY-MM-DD&window_end=YYYY-MM-DD`
+
+## Notifications
+
+### `POST /v1/notifications/token`
+
+Registers a push token or web-push subscription.
+
+```json
+{ "token": "<fcm-token-or-subscription-json>", "platform": "ios" }
+```
+
+`platform` may be `ios`, `android`, or `web`.
+
+### `DELETE /v1/notifications/token`
+
+Unregisters a push token/subscription.
+
+### `POST /v1/notifications/test`
+
+Sends a test push notification. Disabled in production.
+
+## Admin
+
+Admin routes require `app_metadata.is_admin`.
+
+- `GET /v1/admin/users`
+- `GET /v1/admin/users/{user_id}`
+- `PATCH /v1/admin/users/{user_id}`
+- `DELETE /v1/admin/users/{user_id}/config/{field}`
+
+Admin config writes update Supabase Auth app metadata fields such as `tier`, `gemini_model`, `gemini_analysis_model`, `rate_limit_rpm`, and `rate_limit_rph`.
 
 ## Debug
 
-> **Development only.** All debug endpoints return `404` in `APP_ENV != "development"`.
+Debug routes are registered only when `APP_ENV != "production"`.
 
-### GET `/debug/connection`
+### `GET /v1/debug/connection`
 
-End-to-end connectivity and RLS verification for the currently logged-in user.
-
-**Response:**
-```json
-{
-  "backend_env": "development",
-  "backend_supabase_url": "http://localhost:57321",
-  "athlete": { "id": "uuid", "user_id": "uuid", "display_name": "...", "created_at": "..." },
-  "counts_visible_under_rls": {
-    "workouts": 14,
-    "biometrics": 21,
-    "training_plans": 7
-  },
-  "notes": [
-    "If athlete is null -> your auth user exists but no athletes row is visible under RLS for this JWT.",
-    "If counts are 0 but you expect data -> you are likely logged into a different Supabase project/environment."
-  ]
-}
-```
-
----
-
-## Error Responses
-
-| HTTP Status | Typical Cause |
-|---|---|
-| 401 | Missing or expired JWT |
-| 403 | Premium tier required |
-| 404 | Resource not found (or debug endpoint in production) |
-| 409 | Duplicate `external_id` on workout ingestion |
-| 422 | Request body validation failed (Pydantic) |
-| 500 | Unexpected server error |
-
----
+Checks authenticated user, resolved athlete row, and RLS-visible table counts.
 
 ## Rate Limits
 
-Not enforced at the API layer in the current implementation. Cloud Run's concurrency limits and Supabase's connection pool (via PgBouncer) act as implicit throttles.
+The API enforces a global per-IP sliding-window limit on all routes except `/health` (`IP_RATE_LIMIT_RPM`, default 100/min). AI routes also enforce per-athlete minute/hour limits from `auth.users.app_metadata` overrides or tier defaults:
+
+| Tier | Requests/min | Requests/hour |
+|---|---:|---:|
+| `free` | 5 | 20 |
+| `trial` | 15 | 75 |
+| `premium` | 40 | 200 |
+
+Redis is used when `REDIS_URL` is configured; otherwise the limiter falls back to per-process memory.

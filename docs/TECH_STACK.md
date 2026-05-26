@@ -1,164 +1,175 @@
 ﻿# Tech Stack
 
-## Decision Summary
+## Summary
 
-Every technology choice in ASTRAPE was made against three criteria: mobile performance, free-tier economics at launch, and mathematical precision for physiological computation. This document explains each major decision.
-
----
+ASTRAPE is a SvelteKit/Svelte 5 frontend, FastAPI Python backend, Supabase data/auth/storage layer, Redis-assisted cache/rate-limit layer, and Google GenAI-powered coaching system.
 
 ## Frontend
 
-### Svelte 5 + Capacitor
+The frontend lives in `mobile/` and is a static SvelteKit SPA/PWA with Capacitor iOS support.
 
-**Why Svelte 5 over React Native:**
-
-React Native imposes a JavaScript bridge between the UI thread and the native layer. For a data-dense coaching dashboard with real-time chart updates, this bridge introduces non-trivial latency and makes fine-grained animation control difficult. Svelte 5's rune-based reactivity system compiles to vanilla DOM operations with no virtual DOM diffing overhead — the resulting JavaScript bundle is typically 30–60% smaller than an equivalent React application.
-
-Capacitor wraps the compiled Svelte app in a native WebView and provides typed TypeScript bindings to native device APIs. Unlike Expo/React Native, Capacitor has no opinions about your JavaScript framework — it simply exposes native plugins. This means ASTRAPE gains full access to HealthKit, background execution, push notifications, and biometric auth without any framework-imposed constraints.
-
-**Key packages:**
+Key package versions from `mobile/package.json`:
 
 | Package | Version | Purpose |
-|---|---|---|
-| `svelte` | 5.x | Reactive UI framework |
-| `@sveltejs/kit` | 2.x | Routing, SSR scaffold |
-| `@capacitor/core` | 6.x | Native bridge runtime |
-| `@capacitor/ios` | 6.x | iOS target |
-| `@capacitor/android` | 6.x | Android target |
-| `@capacitor/background-runner` | latest | HealthKit background sync |
-| `layerchart` | latest | D3-backed SVG chart library |
-| `d3` | 7.x | Scale, axis, and path utilities |
+|---|---:|---|
+| `svelte` | `5.55.5` | UI framework |
+| `@sveltejs/kit` | `2.58.0` | Routing/app framework |
+| `vite` | `8.0.10` | Dev/build tool |
+| `typescript` | `6.0.3` | Type checking |
+| `tailwindcss` | `3.4.19` | Styling |
+| `@capacitor/core` | `8.3.1` | Native bridge |
+| `@capacitor/ios` | `8.3.1` | iOS target |
+| `@capacitor/push-notifications` | `8.1.0` | Native push scaffold |
+| `@interval-health/capacitor-health` | `2.0.0` | HealthKit scaffold |
+| `@supabase/supabase-js` | `2.105.0` | Auth/client SDK |
+| `layerchart` | `1.0.13` | Svelte chart primitives |
+| `d3` | `7.9.0` | Scales and visualization utilities |
+| `maplibre-gl` | `5.24.0` | Map rendering |
+| `vite-plugin-pwa` | `1.3.0` | PWA/service worker |
+| `workbox-*` | `7.4.1` | PWA caching/routing |
 
-### LayerChart (D3-backed SVG Visualization)
-
-LayerChart provides composable, declarative chart primitives that render as SVG elements, giving direct DOM access for custom animations. The Spectral glassmorphism aesthetic requires gradient fills on chart areas, custom axis tick styling, and animated line draws — none of which are achievable without direct SVG control. LayerChart's architecture (each chart is composed of `Layer*` Svelte components) maps naturally to ASTRAPE's data model where multiple metrics overlay on shared axes (e.g., CTL and ATL on the same timeline chart).
-
----
+The frontend package requires pnpm 10+. Android is not currently scaffolded.
 
 ## Backend
 
-### Python 3.12 + FastAPI
+The backend lives in `backend/`.
 
-Python is the only serious choice for the computation layer. NumPy's vectorized array operations are the idiomatic way to compute exponential weighted moving averages over large TSS history arrays, and the scientific Python ecosystem (SciPy, Pandas) provides audited implementations of every statistical method ASTRAPE needs. FastAPI's async request handling, automatic OpenAPI schema generation, and Pydantic v2 model validation make it the modern standard for Python APIs.
+Key choices:
 
-**Key packages:**
+| Technology | Purpose |
+|---|---|
+| Python 3.12 | Runtime |
+| FastAPI | HTTP API |
+| Pydantic v2 / pydantic-settings | Validation and config |
+| NumPy | TSS, CTL, ATL, TSB, recovery, strain calculations |
+| Supabase Python client | PostgREST/Auth/Storage access |
+| httpx | Third-party HTTP calls |
+| google-genai | Coach, analysis, embeddings, grounding |
+| redis-py asyncio | Redis rate-limit/cache client |
+| pywebpush | Web push notifications |
+| firebase-admin | Native push notifications |
+| pytest | Backend tests |
 
-| Package | Version | Purpose |
+The backend is stateless; shared state lives in Supabase and Redis.
+
+## AI
+
+Defaults from `backend/app/config.py`:
+
+| Setting | Default | Role |
 |---|---|---|
-| `fastapi` | 0.111+ | Async API framework |
-| `pydantic` | 2.x | Request/response validation |
-| `numpy` | 1.26+ | Vectorized metric computation |
-| `pandas` | 2.x | Time-series data manipulation |
-| `httpx` | latest | Async HTTP client (Garmin, WHOOP, Gemini) |
-| `supabase-py` | 2.x | Supabase client |
-| `google-generativeai` | latest | Gemini API SDK |
-| `python-jose` | latest | JWT validation |
-| `cryptography` | latest | OAuth token encryption |
+| `GEMINI_MODEL` | `gemma-4-26b-a4b-it` | Coach chat |
+| `GEMINI_ANALYSIS_MODEL` | `gemini-flash-lite-latest` | Screen insights |
+| `GEMINI_EMBEDDING_MODEL` | `gemini-embedding-001` | Coach memory embeddings |
 
-### Google Cloud Run
+The coach uses:
 
-Cloud Run is the correct deployment target for a stateless FastAPI container at this scale. It charges only for actual request processing time (per 100ms), scales to zero between uses (critical for a startup with variable traffic), and cold starts a Python FastAPI container in under 2 seconds. The alternative — a persistent VM or Kubernetes cluster — would cost 5–10x more per month with no performance benefit at sub-10k DAU scale.
+- prompt file: `backend/app/prompts/coach_behavior.md`
+- Google GenAI SDK: `from google import genai`
+- custom function tools in `backend/app/services/coach_tools.py`
+- Google Search grounding
+- pgvector memories in `coach_memories`
+- cached screen analysis in `athlete_analyses`
 
-**Cloud Run configuration:**
-
-```yaml
-# cloud-run-service.yaml
-apiVersion: serving.knative.dev/v1
-kind: Service
-metadata:
-  name: astrape-api
-spec:
-  template:
-    spec:
-      containerConcurrency: 80
-      timeoutSeconds: 300
-      containers:
-        - image: gcr.io/PROJECT_ID/astrape-api:latest
-          resources:
-            limits:
-              cpu: "2"
-              memory: 1Gi
-          env:
-            - name: SUPABASE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: astrape-secrets
-                  key: supabase-url
-```
-
----
-
-## AI Layer
-
-### Google Gemini 2.5 Pro
-
-Gemini 2.5 Pro is the AI backbone of the ASTRAPE coaching agent. The choice of Gemini over alternatives (OpenAI GPT-4, Anthropic Claude) was made on three grounds:
-
-**1. Structured output and function calling.**
-Gemini 2.5 Pro's function calling API allows ASTRAPE to define a schema for `get_athlete_state`, `get_recent_workouts`, and `get_sleep_summary` as callable tools. The model can autonomously decide to fetch fresher data mid-conversation rather than relying solely on the context injected at the start of a session. This creates a genuinely agentic experience where the coach can say "let me check your most recent HRV before answering."
-
-**2. Long context window (1M tokens).**
-A single Gemini 2.5 Pro call can hold an entire season of training logs, all prior coaching conversations, and rich physiological context simultaneously. This eliminates the need for aggressive context truncation and makes multi-month retrospective analysis ("why did I overtrain in February?") tractable in a single inference pass.
-
-**3. Google Cloud ecosystem integration.**
-Running on Google Cloud Run means Gemini API calls stay within Google's network, reducing latency and simplifying IAM-based authentication (no API key management required in production — use Workload Identity instead).
-
-**Model configuration:**
-
-```python
-import google.generativeai as genai
-
-genai.configure(api_key=settings.GEMINI_API_KEY)
-
-model = genai.GenerativeModel(
-    model_name="gemini-2.5-pro",
-    generation_config=genai.GenerationConfig(
-        temperature=0.4,      # Low: coaching advice should be consistent
-        top_p=0.85,
-        max_output_tokens=512,  # Coaches are concise
-    ),
-    system_instruction=ASTRAPE_SYSTEM_PROMPT,
-)
-```
-
----
+Do not document the old Gemini Pro-era coach model as the current model.
 
 ## Data Layer
 
-### Supabase PostgreSQL + pgvector
+Supabase provides:
 
-Supabase provides three things ASTRAPE needs from a single managed service: a relational PostgreSQL database, Row Level Security for multi-tenant data isolation, and the pgvector extension for embedding-based similarity search.
+- PostgreSQL
+- Auth
+- Row Level Security
+- Storage
+- pgvector
+- local development stack through Supabase CLI/Docker
 
-**Why pgvector instead of a dedicated vector database (Pinecone, Weaviate):**
-At ASTRAPE's launch scale, storing coaching memory embeddings alongside relational athlete data in the same PostgreSQL instance is operationally simpler, cheaper (no additional service), and fast enough. A pgvector HNSW index on 100k embedding vectors returns nearest-neighbor results in under 10ms — more than adequate for a conversational RAG pipeline where the user's perceived latency is dominated by the Gemini inference call (300–800ms), not the retrieval step.
+The authoritative schema history is `supabase/migrations/`.
 
-**pgvector index:**
-```sql
-CREATE INDEX ON coach_memories
-USING hnsw (embedding vector_cosine_ops)
-WITH (m = 16, ef_construction = 64);
+Important tables include:
+
+- `athletes`
+- `workouts`
+- `biometrics`
+- `sleep_periods`
+- `tss_history`
+- `training_plans`
+- `oauth_tokens`
+- `coach_conversations`
+- `coach_messages`
+- `coach_memories`
+- `athlete_analyses`
+- `activity_streams`
+- `activity_laps`
+- `push_tokens`
+
+## Redis
+
+Redis is optional locally and recommended in production.
+
+It backs:
+
+- global per-IP rate limiting
+- per-athlete AI rate limiting
+- activity stream caching
+- workout zone caching
+
+If Redis is unavailable, rate limiting falls back to process-local memory.
+
+## Integrations
+
+| Integration | Current Role |
+|---|---|
+| Supabase Auth | User identity and JWTs. |
+| Supabase Storage | Coach uploads and other app storage buckets. |
+| Strava | OAuth, webhooks, backfill, activity detail, streams, laps. |
+| WHOOP | OAuth, webhooks, recovery/sleep/strain backfill. |
+| Garmin | Webhook ingestion and OAuth-related configuration. |
+| Resend | Marketing privacy opt-in sync. |
+| Firebase/FCM | Native push notification transport. |
+| Web Push/VAPID | PWA push notification transport. |
+| Cloudflare Tunnel | Deploy-time SSH path to Proxmox. |
+| Firebase Hosting | Static frontend hosting. |
+| GHCR | Backend container registry. |
+
+## Deployment
+
+Current repo automation:
+
+- Backend: `.github/workflows/deploy.yml` builds `ghcr.io/sbalbale/astrape-api`, deploys to Proxmox over Cloudflare Access SSH, and runs migrations in the remote database container.
+- Frontend: Firebase Hosting workflows build `mobile/` with pnpm and deploy live/preview channels.
+
+`backend/cloudbuild.yaml` remains in the repo as an alternate/historical Cloud Run build pipeline and should not be described as the primary deployment path unless it is reactivated.
+
+## Local Commands
+
+Root:
+
+```bash
+npm install
+npx supabase start
+npx supabase db push
+docker compose up -d redis
 ```
 
----
+Backend:
 
-## External APIs
+```bash
+cd backend
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8000
+python -m pytest tests -v
+```
 
-### Apple HealthKit (via Capacitor Background Runner)
+Mobile:
 
-HealthKit data is accessed entirely on-device. The Capacitor Background Runner plugin executes a JavaScript worker that queries HealthKit for new samples since the last sync timestamp, serializes them, and POSTs the batch to the ASTRAPE API. This approach ensures App Store compliance (data never leaves the device to a third-party service directly), respects iOS Background App Refresh constraints, and avoids any Apple enterprise developer program requirements.
-
-### Garmin Connect API
-
-Garmin's Connect IQ API is enterprise-gated. A formal commercial application must be submitted to Garmin's developer program before production access is granted. During development, the ASTRAPE backend uses Garmin's webhook push notifications to receive workout summaries when they sync from the device. This is push-based (Garmin calls ASTRAPE) rather than poll-based (ASTRAPE calls Garmin), which is critical for low-latency data freshness.
-
-**Required Garmin API scopes:**
-- `activity_export` — GPS and workout file access
-- `daily_summary` — Steps, floors, daily HR stats
-- `health_snapshot` — HRV, SpO2, respiration
-- `sleep` — Sleep stage data
-
-### WHOOP API
-
-WHOOP uses standard OAuth 2.0 with a refresh token flow. ASTRAPE stores the access and refresh tokens encrypted in Supabase Vault and refreshes them proactively 5 minutes before expiry. WHOOP's key data contributions to ASTRAPE are recovery score, strain score, and detailed sleep stage breakdowns (WHOOP's sleep staging is generally considered more granular than Apple's for HRV-based recovery assessment).
-
-
+```bash
+cd mobile
+pnpm install
+pnpm run dev
+pnpm run check
+pnpm run test
+pnpm run build
+```
