@@ -12,6 +12,7 @@ from google.genai import types
 from supabase import Client
 
 from app.services.algorithms import compute_atl, compute_ctl
+from app.services.time_utils import athlete_local_date
 
 # Zone-derived intensity factors for TSS estimation (IF^2 * duration_h * 100)
 ZONE_IF: dict[str, float] = {
@@ -50,8 +51,14 @@ def _safe_int(v: Any) -> int | None:
         return None
 
 
-def _fetch_tss_history_rows(db: Client, athlete_id: str, days_back: int = 120) -> list[dict[str, Any]]:
-    start = (date.today() - timedelta(days=days_back)).isoformat()
+def _fetch_tss_history_rows(
+    db: Client,
+    athlete_id: str,
+    days_back: int = 120,
+    today: date | None = None,
+) -> list[dict[str, Any]]:
+    local_today = today or athlete_local_date(db, athlete_id)
+    start = (local_today - timedelta(days=days_back)).isoformat()
     try:
         res = (
             db.table("tss_history")
@@ -87,11 +94,11 @@ def handle_simulate_training_impact(
     except ValueError as e:
         return {"error": f"invalid target_date: {e}"}
 
-    today = date.today()
+    today = athlete_local_date(db, athlete_id)
     if target_date < today:
         return {"error": "target_date must be today or in the future"}
 
-    rows = _fetch_tss_history_rows(db, athlete_id)
+    rows = _fetch_tss_history_rows(db, athlete_id, today=today)
     if rows and isinstance(rows[0], dict) and rows[0].get("_error"):
         return {"error": rows[0]["_error"]}
 
@@ -147,7 +154,7 @@ def handle_simulate_training_impact(
         "today_tss_assumed": target_tss,
         "target_date": target_date.isoformat(),
         "series_start": start.isoformat(),
-        "note": "Projection uses EWMA CTL(42d) and ATL(7d) from daily TSS; today overridden with target_tss; future days assumed 0 TSS.",
+        "note": "Projection uses EWMA CTL(42d) and ATL(7d) from daily TSS; athlete-local today overridden with target_tss; future days assumed 0 TSS.",
     }
 
 
@@ -735,7 +742,14 @@ _schedule_decl = types.FunctionDeclaration(
                 type=types.Type.STRING,
                 enum=list(FOCUS_ZONES),
             ),
-            "date": types.Schema(type=types.Type.STRING, description="Planned date ISO YYYY-MM-DD"),
+            "date": types.Schema(
+                type=types.Type.STRING,
+                description=(
+                    "Planned date ISO YYYY-MM-DD. Resolve relative dates from the athlete-local "
+                    "current_local_date/current_local_datetime in SYSTEM CONTEXT; tomorrow is "
+                    "current_local_date + 1 calendar day."
+                ),
+            ),
             "sport": types.Schema(
                 type=types.Type.STRING,
                 description="run, bike, swim, row, strength, mobility, or other. (default other)",
