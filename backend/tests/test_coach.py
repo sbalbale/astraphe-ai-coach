@@ -2,10 +2,14 @@ import pytest
 from types import SimpleNamespace
 
 from app.services.ai_coach import (
+    _calendar_preface,
     _extract_athlete_message_from_text,
+    _extract_athlete_message_from_model_output,
+    _extract_non_thought_text_from_response,
     _load_conversation_history,
     load_coach_instructions,
     _extract_grounding_sources,
+    _normalize_relative_tool_dates,
 )
 
 
@@ -15,6 +19,7 @@ def test_markdown_prompt_loading():
     assert "ASTRAPE" in instructions
     assert "Tool Use Discipline" in instructions or "simulate_training_impact" in instructions
     assert "Live Web Search" in instructions
+    assert "<response>" in instructions
 
 
 def test_extract_athlete_message_strips_scratchpad_tags():
@@ -23,6 +28,60 @@ def test_extract_athlete_message_strips_scratchpad_tags():
         "<response>Because your HRV dipped, rest today.</response>"
     )
     assert _extract_athlete_message_from_text(raw) == "Because your HRV dipped, rest today."
+
+
+def test_extract_athlete_message_prefers_final_response_xml():
+    raw = (
+        "<scratchpad>Internal planning only. <response>Wrong draft.</response></scratchpad>\n"
+        "<response>Because your HRV dipped, rest today.</response>"
+    )
+    assert _extract_athlete_message_from_text(raw) == "Because your HRV dipped, rest today."
+
+
+def test_extract_model_output_filters_thought_parts():
+    response = SimpleNamespace(
+        candidates=[
+            SimpleNamespace(
+                content=SimpleNamespace(
+                    parts=[
+                        SimpleNamespace(text="THOUGHT: Hidden reasoning.\n\n", thought=True),
+                        SimpleNamespace(text="<response>Keep the swim easy today.</response>", thought=False),
+                    ]
+                )
+            )
+        ],
+        text="THOUGHT: Hidden reasoning.\n\n<response>Fallback should not be needed.</response>",
+    )
+
+    assert _extract_non_thought_text_from_response(response) == "<response>Keep the swim easy today.</response>"
+    assert _extract_athlete_message_from_model_output(response) == "Keep the swim easy today."
+
+
+def test_extract_model_output_does_not_fallback_when_only_thought_parts():
+    response = SimpleNamespace(
+        candidates=[
+            SimpleNamespace(
+                content=SimpleNamespace(
+                    parts=[
+                        SimpleNamespace(text="THOUGHT: Hidden reasoning.", thought=True),
+                    ]
+                )
+            )
+        ],
+        text="THOUGHT: Hidden reasoning.",
+    )
+
+    assert _extract_non_thought_text_from_response(response) == ""
+
+
+def test_extract_athlete_message_strips_thought_prefix_fallback():
+    raw = (
+        "THOUGHT: Check TSB, HRV, and recovery before answering.\n\n"
+        "That changes things significantly! Keep the ball-machine tennis controlled."
+    )
+    out = _extract_athlete_message_from_text(raw)
+    assert out.startswith("That changes things significantly!")
+    assert "THOUGHT:" not in out
 
 
 def test_extract_athlete_message_strips_thinking_dump_before_ready_marker():
@@ -85,6 +144,62 @@ def test_extract_athlete_message_strips_triathlon_planning_dump():
     assert "Final response structure" not in out
     assert "Let's refine" not in out
     assert "2:15 per 100m" in out
+
+
+def test_extract_athlete_message_strips_followup_planning_dump_with_metrics():
+    raw = (
+        "Remind them of the metrics: Their recovery score (79) and TSB (-5.92) still support this.\n"
+        "Ask if they want me to schedule the Threshold Run for Wednesday or if they want to pivot the whole day's plan.\n"
+        "Wait, the user's message means this sequence is their plan for Wednesday.\n"
+        "Plan:\n"
+        "Acknowledge that ball machine work is much lower impact/intensity.\n"
+        "Metric Check: TSB -5.92 is Productive.\n"
+        "That changes things significantly! Hitting from a ball machine is much more controlled.\n"
+        "Since the tennis will be lower intensity, your Wednesday multi-sport day looks much safer."
+    )
+    out = _extract_athlete_message_from_text(raw)
+    assert out.startswith("That changes things significantly!")
+    assert "Remind them" not in out
+    assert "Ask if" not in out
+    assert "Wait, the user's message" not in out
+    assert "Plan:" not in out
+    assert "Wednesday multi-sport day" in out
+
+
+def test_calendar_preface_includes_named_weekday_dates():
+    calendar = {
+        "current_local_weekday": "Monday",
+        "current_local_date": "2026-05-25",
+        "tomorrow_weekday": "Tuesday",
+        "tomorrow_date": "2026-05-26",
+        "upcoming_weekdays": {
+            "Monday": "2026-05-25",
+            "Tuesday": "2026-05-26",
+            "Wednesday": "2026-05-27",
+        },
+    }
+    preface = _calendar_preface("This is all for Wednesday.", calendar)
+    assert "Wednesday: 2026-05-27" in preface
+    assert "preserve the previously discussed workout date" in preface
+
+
+def test_normalize_schedule_date_from_named_weekday():
+    calendar = {
+        "current_local_date": "2026-05-25",
+        "tomorrow_date": "2026-05-26",
+        "upcoming_weekdays": {
+            "Monday": "2026-05-25",
+            "Tuesday": "2026-05-26",
+            "Wednesday": "2026-05-27",
+        },
+    }
+    out = _normalize_relative_tool_dates(
+        "schedule_workout",
+        {"date": "2026-05-26", "sport": "bike"},
+        message="This is all for Wednesday.",
+        calendar=calendar,
+    )
+    assert out["date"] == "2026-05-27"
 
 
 def test_load_conversation_history_sanitizes_persisted_ai_reasoning(fake_db, test_athlete_id):

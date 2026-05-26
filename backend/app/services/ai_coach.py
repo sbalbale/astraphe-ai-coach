@@ -203,7 +203,7 @@ def _load_conversation_history(db: Client, athlete_id: str, conversation_id: str
             role = r.get("role")
             content = str(r.get("content") or "")
             if role == "ai":
-                content = _strip_internal_reasoning(content)
+                content = _extract_athlete_message_from_text(content)
             out.append({
                 "role": role,
                 "content": content,
@@ -238,20 +238,25 @@ def invalidate_context_cache(athlete_id: str) -> None:
     _context_parts_cache.pop(athlete_id, None)
 
 
-def _calendar_context_for_offset(timezone_offset_min: int) -> dict[str, str]:
+def _calendar_context_for_offset(timezone_offset_min: int) -> dict[str, Any]:
     local_now = local_datetime_from_timezone_offset(timezone_offset_min)
     today = local_now.date()
     tomorrow = today + timedelta(days=1)
+    upcoming_weekdays = {
+        (today + timedelta(days=i)).strftime("%A"): (today + timedelta(days=i)).isoformat()
+        for i in range(7)
+    }
     return {
         "current_local_date": today.isoformat(),
         "current_local_weekday": today.strftime("%A"),
         "current_local_datetime": local_now.isoformat(timespec="seconds"),
         "tomorrow_date": tomorrow.isoformat(),
         "tomorrow_weekday": tomorrow.strftime("%A"),
+        "upcoming_weekdays": upcoming_weekdays,
     }
 
 
-def _athlete_local_calendar(db: Client, athlete_id: str) -> dict[str, str]:
+def _athlete_local_calendar(db: Client, athlete_id: str) -> dict[str, Any]:
     _, profile, _ = _get_context_parts_cached(db, athlete_id)
     timezone_offset_min = coerce_timezone_offset_min(profile.get("timezone_offset_min"))
     return _calendar_context_for_offset(timezone_offset_min)
@@ -268,12 +273,20 @@ def _message_has_explicit_iso_date(message: str) -> bool:
     return bool(_ISO_DATE_RE.search(message or ""))
 
 
-def _calendar_preface(message: str, calendar: dict[str, str]) -> str:
+def _calendar_preface(message: str, calendar: dict[str, Any]) -> str:
+    upcoming_weekdays = calendar.get("upcoming_weekdays") or {}
+    weekday_lines = "\n".join(
+        f"- {weekday}: {iso_date}"
+        for weekday, iso_date in upcoming_weekdays.items()
+    )
     return (
         "[ATHLETE-LOCAL CALENDAR]\n"
         f"Today is {calendar['current_local_weekday']}, {calendar['current_local_date']}.\n"
         f"Tomorrow is {calendar['tomorrow_weekday']}, {calendar['tomorrow_date']}.\n"
-        "Resolve relative dates from these values, not from UTC/server timestamps.\n"
+        "Upcoming weekday dates:\n"
+        f"{weekday_lines}\n"
+        "Resolve relative dates and named weekdays from these values, not from UTC/server timestamps.\n"
+        "For follow-up messages, preserve the previously discussed workout date unless the athlete clearly changes it.\n"
         "[ATHLETE MESSAGE]\n"
         f"{message}"
     )
@@ -284,7 +297,7 @@ def _normalize_relative_tool_dates(
     args: dict[str, Any],
     *,
     message: str,
-    calendar: dict[str, str],
+    calendar: dict[str, Any],
 ) -> dict[str, Any]:
     """
     Deterministically correct model-chosen dates for relative workout requests.
@@ -302,6 +315,12 @@ def _normalize_relative_tool_dates(
         normalized["date"] = calendar["tomorrow_date"]
     elif _message_mentions(message, "today"):
         normalized["date"] = calendar["current_local_date"]
+    else:
+        upcoming_weekdays = calendar.get("upcoming_weekdays") or {}
+        for weekday, iso_date in upcoming_weekdays.items():
+            if _message_mentions(message, weekday):
+                normalized["date"] = iso_date
+                break
     return normalized
 
 
@@ -315,7 +334,7 @@ def _month_day_labels(iso_date: str) -> list[str]:
     return [base, f"{base}{suffix}"]
 
 
-def _calendar_tool_result_reminder(planned_dates: list[str], calendar: dict[str, str]) -> str | None:
+def _calendar_tool_result_reminder(planned_dates: list[str], calendar: dict[str, Any]) -> str | None:
     labels: list[str] = []
     for planned_date in planned_dates:
         if planned_date == calendar.get("tomorrow_date"):
@@ -331,7 +350,7 @@ def _calendar_tool_result_reminder(planned_dates: list[str], calendar: dict[str,
     )
 
 
-def _correct_relative_date_language(text: str, planned_dates: list[str], calendar: dict[str, str]) -> str:
+def _correct_relative_date_language(text: str, planned_dates: list[str], calendar: dict[str, Any]) -> str:
     corrected = text or ""
     for planned_date in planned_dates:
         if planned_date != calendar.get("tomorrow_date"):
@@ -376,6 +395,8 @@ def _build_system_context(
         "calendar_rules": {
             "today": "Resolve today from current_local_date in the athlete's timezone.",
             "tomorrow": "Resolve tomorrow from tomorrow_date in the athlete's timezone.",
+            "named_weekdays": "Resolve weekday names from upcoming_weekdays.",
+            "followups": "If the athlete clarifies a plan with words like this, that, it, or all, keep the previously discussed workout date unless they clearly change it.",
         },
         "athlete_id": athlete_id,
         "training_load": training_load,
@@ -578,7 +599,7 @@ def _history_to_gemini_contents(history: list[dict]) -> list[types.Content]:
         if raw_role not in ("user", "ai"):
             continue
         if raw_role == "ai":
-            content = _strip_internal_reasoning(content).strip()
+            content = _extract_athlete_message_from_text(content).strip()
             if not content:
                 continue
         grole = "user" if raw_role == "user" else "model"
@@ -615,13 +636,51 @@ def _extract_grounding_sources(response: Any) -> list[dict[str, str]]:
     return sources
 
 
+def _extract_non_thought_text_from_response(
+    response: Any,
+    *,
+    allow_text_fallback: bool = True,
+) -> str:
+    """
+    Join visible text parts from a Gemini response while dropping thought parts.
+
+    Some Gemini thinking models expose reasoning as `part.thought=True`; Gemma-style
+    models may not, so this is one layer before the XML/fallback sanitizer.
+    """
+    text_parts: list[str] = []
+    saw_structured_parts = False
+    try:
+        candidates = getattr(response, "candidates", None) or []
+        candidate = candidates[0] if candidates else None
+        content = getattr(candidate, "content", None) if candidate is not None else None
+        parts = getattr(content, "parts", None) or []
+        for part in parts:
+            saw_structured_parts = True
+            if getattr(part, "thought", False):
+                continue
+            text = getattr(part, "text", None)
+            if text:
+                text_parts.append(str(text))
+    except Exception:
+        text_parts = []
+
+    joined = "".join(text_parts).strip()
+    if joined:
+        return joined
+    if allow_text_fallback and not saw_structured_parts:
+        return (getattr(response, "text", None) or "").strip()
+    return ""
+
+
 def _extract_athlete_message_from_model_output(response: Any) -> str:
-    """Extracts text from Gemini response and passes it to the XML parser."""
-    raw_text = (getattr(response, "text", None) or "").strip()
+    """Extract visible model text and pass it to the response parser."""
+    raw_text = _extract_non_thought_text_from_response(response)
     return _extract_athlete_message_from_text(raw_text)
 
 
+_RESPONSE_RE = re.compile(r"<response>(.*?)</response>", re.DOTALL | re.IGNORECASE)
 _SCRATCHPAD_RE = re.compile(r"<scratchpad>.*?</scratchpad>", re.DOTALL | re.IGNORECASE)
+_THOUGHT_BLOCK_RE = re.compile(r"(?:^|\n)\s*THOUGHT:\s*.*?(?=\n\s*\n|$)", re.DOTALL | re.IGNORECASE)
 _READY_MARKER_RE = re.compile(r"\*Ready\.\*", re.IGNORECASE)
 _COACH_REPLY_START_RE = re.compile(
     r"(?:^|\n)\s*(?:"
@@ -648,23 +707,21 @@ _COACH_REPLY_START_RE = re.compile(
 
 def _extract_athlete_message_from_text(raw_text: str) -> str:
     """
-    Cleaner extraction: strips any lingering XML scratchpad tags but otherwise 
-    treats the terminal output as the athlete message.
+    Extract the athlete-facing message from XML output or sanitized fallback text.
     """
     raw = (raw_text or "").strip()
     if not raw:
         return ""
 
-    # Strip legacy or hallucinated scratchpad tags
-    raw = _SCRATCHPAD_RE.sub("", raw).strip()
-
-    # Legacy XML response support (backwards compatibility)
-    match = re.search(r"<response>(.*?)</response>", raw, re.DOTALL | re.IGNORECASE)
-    if match:
-        cleaned = _strip_internal_reasoning(match.group(1))
+    # Primary contract: only text inside the final <response> reaches the athlete.
+    matches = list(_RESPONSE_RE.finditer(raw))
+    if matches:
+        cleaned = _strip_internal_reasoning(matches[-1].group(1))
         return cleaned or "I encountered an error processing your request."
 
-    # In the new Agentic Scratchpad pattern, the raw text IS the response
+    # Fallback for older outputs or malformed XML.
+    raw = _SCRATCHPAD_RE.sub("", raw).strip()
+    raw = _THOUGHT_BLOCK_RE.sub("", raw).strip()
     cleaned = _strip_internal_reasoning(raw)
     return cleaned or "I encountered an error processing your request."
 
@@ -674,6 +731,7 @@ def _strip_internal_reasoning(text: str) -> str:
     Backstop sanitizer: if the model emits chain-of-thought style scaffolding, drop it.
     """
     t = _SCRATCHPAD_RE.sub("", (text or "")).strip()
+    t = _THOUGHT_BLOCK_RE.sub("", t).strip()
     if not t:
         return ""
 
@@ -749,6 +807,15 @@ def _strip_internal_reasoning(text: str) -> str:
         "validate",
         "address the",
         "provide actionable",
+        "remind them",
+        "ask if",
+        "note that",
+        "cite ",
+        "include ",
+        "use ",
+        "make sure",
+        "metrics to mention",
+        "metric check",
         "mention ",
         "connect to",
         "list ",
@@ -795,6 +862,15 @@ def _strip_internal_reasoning(text: str) -> str:
         "validate",
         "address the",
         "provide actionable",
+        "remind them",
+        "ask if",
+        "note that",
+        "cite ",
+        "include ",
+        "use ",
+        "make sure",
+        "metrics to mention",
+        "metric check",
         "mention ",
         "connect to",
         "explain why",
@@ -851,7 +927,24 @@ def _strip_internal_reasoning(text: str) -> str:
         )
         if any(low.startswith(o) for o in coach_openings):
             return True
-        if any(k in low for k in ("ctl", "atl", "tsb", "hrv", "rmssd", "sleep score")) and (("." in s) or (":" in s)):
+        metric_meta_prefixes = (
+            "remind them",
+            "ask if",
+            "mention ",
+            "metric check",
+            "metrics to mention",
+            "constraint check",
+            "cite ",
+            "include ",
+            "use ",
+            "note that",
+            "make sure",
+        )
+        if (
+            any(k in low for k in ("ctl", "atl", "tsb", "hrv", "rmssd", "sleep score"))
+            and (("." in s) or (":" in s))
+            and not any(low.startswith(p) for p in metric_meta_prefixes)
+        ):
             return True
         return False
 
@@ -910,8 +1003,9 @@ def get_coach_response_agentic(
     )
     system_with_ctx = (
         f"{system_instruction}\n\n{context_block}\n\n"
-        "Calendar rule: for all relative dates, including today, tomorrow, this week, and next week, "
-        "use the athlete-local current_local_date, current_local_weekday, tomorrow_date, and tomorrow_weekday from SYSTEM CONTEXT. "
+        "Calendar rule: for all relative dates, including today, tomorrow, named weekdays, this week, and next week, "
+        "use the athlete-local current_local_date, current_local_weekday, tomorrow_date, tomorrow_weekday, and upcoming_weekdays from SYSTEM CONTEXT. "
+        "For follow-up clarifications, preserve the previously discussed workout date unless the athlete clearly changes it. "
         "Do not infer dates from UTC, server time, or model pretraining."
     )
 
@@ -1046,8 +1140,12 @@ def get_coach_response_agentic(
             break
 
         parts = list(cand.content.parts)
-        fcs = [p.function_call for p in parts if p.function_call]
-        texts = [p.text for p in parts if p.text]
+        fcs = [getattr(p, "function_call", None) for p in parts if getattr(p, "function_call", None)]
+        texts = [
+            p.text
+            for p in parts
+            if not getattr(p, "thought", False) and getattr(p, "text", None)
+        ]
 
         if fcs:
             fc_parts: list[types.Part] = []
@@ -1098,7 +1196,7 @@ def get_coach_response_agentic(
                 _correct_relative_date_language(final_text, planned_dates_from_tools, calendar),
                 _extract_grounding_sources(last_response),
             )
-        fallback = getattr(last_response, "text", None) or ""
+        fallback = _extract_non_thought_text_from_response(last_response)
         if fallback.strip():
             final_text = _extract_athlete_message_from_text(fallback)
             return (
@@ -1107,7 +1205,7 @@ def get_coach_response_agentic(
             )
         break
 
-    fallback = getattr(last_response, "text", None) or "" if last_response else ""
+    fallback = _extract_non_thought_text_from_response(last_response) if last_response else ""
     final = _extract_athlete_message_from_text(fallback)
     final = _correct_relative_date_language(final, planned_dates_from_tools, calendar)
     grounding = _extract_grounding_sources(last_response) if last_response else []
@@ -1155,6 +1253,8 @@ async def _build_system_context_string_async(
         "calendar_rules": {
             "today": "Resolve today from current_local_date in the athlete's timezone.",
             "tomorrow": "Resolve tomorrow from tomorrow_date in the athlete's timezone.",
+            "named_weekdays": "Resolve weekday names from upcoming_weekdays.",
+            "followups": "If the athlete clarifies a plan with words like this, that, it, or all, keep the previously discussed workout date unless they clearly change it.",
         },
         "athlete_id": athlete_id,
         "training_load": training,
@@ -1210,8 +1310,9 @@ async def get_coach_response_stream(
         )
     final_prompt = (
         f"{system_instruction}\n\n{context_block}\n\n"
-        "Calendar rule: for all relative dates, including today, tomorrow, this week, and next week, "
-        "use the athlete-local current_local_date, current_local_weekday, tomorrow_date, and tomorrow_weekday from SYSTEM CONTEXT. "
+        "Calendar rule: for all relative dates, including today, tomorrow, named weekdays, this week, and next week, "
+        "use the athlete-local current_local_date, current_local_weekday, tomorrow_date, tomorrow_weekday, and upcoming_weekdays from SYSTEM CONTEXT. "
+        "For follow-up clarifications, preserve the previously discussed workout date unless the athlete clearly changes it. "
         "Do not infer dates from UTC, server time, or model pretraining.\n\n"
         f"Athlete Message: {message}"
     )
@@ -1230,7 +1331,7 @@ async def get_coach_response_stream(
         contents=final_prompt,
         config=config,
     ):
-        t = getattr(chunk, "text", None)
+        t = _extract_non_thought_text_from_response(chunk, allow_text_fallback=False)
         if t:
             collected.append(t)
     full_text = "".join(collected)
