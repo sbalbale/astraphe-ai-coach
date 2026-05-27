@@ -60,6 +60,8 @@
     return raw.map((w) => (w / sum) * 100);
   });
 
+  const barGridTemplate = $derived(barWidths.map((w) => `minmax(0, ${w}fr)`).join(' '));
+
   function formatLapPaceOrSpeed(lap: ActivityLap): string {
     const v = lap.average_speed;
     if (v == null || v <= 0) return '—';
@@ -88,15 +90,18 @@
   <div class="bg-glass2 border border-border rounded-2xl p-4">
     <p class="text-[11px] font-semibold text-text1 mb-3 font-sans">Laps</p>
 
-    <div class="relative flex gap-0.5 h-7" role="list">
+    <div
+      class="relative grid h-7 min-w-0 gap-px overflow-hidden rounded-sm"
+      role="list"
+      style="grid-template-columns: {barGridTemplate};"
+    >
       {#each laps as lap, i (lap.lap_index ?? i)}
-        {@const widthPct = barWidths[i]}
         <button
           type="button"
-          class="h-full rounded-sm min-w-[8px] border-0 p-0 cursor-pointer transition-opacity {selectedLap === i
-            ? 'opacity-100 ring-1 ring-white/40'
+          class="h-full min-w-0 rounded-sm border-0 p-0 cursor-pointer transition-opacity {selectedLap === i
+            ? 'opacity-100 ring-1 ring-inset ring-white/40'
             : 'opacity-90 hover:opacity-100'}"
-          style="width: {widthPct}%; background: {lapBarColor(lap.average_heartrate)};"
+          style="background: {lapBarColor(lap.average_heartrate)};"
           aria-label={lapAriaLabel(lap, i)}
           onclick={() => (selectedLap = selectedLap === i ? null : i)}
         ></button>

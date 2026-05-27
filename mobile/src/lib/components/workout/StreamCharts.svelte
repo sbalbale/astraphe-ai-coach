@@ -26,6 +26,9 @@
   } from '$lib/utils/units';
 
   const MIN_SELECTION_SAMPLES = 10;
+  const AXIS_TICK_EPSILON = 1e-6;
+  const X_AXIS_LABEL_CHAR_PX = 5.5;
+  const X_AXIS_LABEL_GAP_PX = 4;
   const METERS_PER_MILE = 1609.344;
 
   const STREAM_COLORS = {
@@ -163,12 +166,33 @@
     return speedFromMps(v, measurementUnits);
   }
 
-  function xAxisTickMinutes(xMax: number): number[] {
+  function xAxisLabelWidthPx(label: string): number {
+    return label.length * X_AXIS_LABEL_CHAR_PX;
+  }
+
+  function xAxisTickMinutes(xMax: number, widthPx: number): number[] {
     if (xMax <= 0) return [0];
-    const ticks = d3.ticks(0, xMax, 6);
-    const lastT = ticks[ticks.length - 1] ?? 0;
-    if (lastT < xMax - 1e-6) ticks.push(Math.ceil(xMax));
-    return ticks;
+    const ticks = d3.ticks(0, xMax, 6).filter((t) => t < xMax - AXIS_TICK_EPSILON);
+    const finalLabelWidth = xAxisLabelWidthPx(formatXAxisTickMinute(xMax, xMax));
+    const spacedTicks = ticks.filter((tick) => {
+      const distanceFromFinalPx = ((xMax - tick) / xMax) * widthPx;
+      const requiredSpacingPx =
+        xAxisLabelWidthPx(formatXAxisTickMinute(tick, xMax)) / 2 +
+        finalLabelWidth +
+        X_AXIS_LABEL_GAP_PX;
+
+      return distanceFromFinalPx >= requiredSpacingPx;
+    });
+
+    return [...spacedTicks, xMax];
+  }
+
+  function formatXAxisTickMinute(value: number, xMax: number): string {
+    const minutes =
+      Math.abs(value - xMax) < AXIS_TICK_EPSILON
+        ? Math.ceil(xMax)
+        : Math.round(value);
+    return `${minutes}m`;
   }
 
   function plotXFromClientX(clientX: number): number | null {
@@ -816,11 +840,11 @@
     for (const c of chartModels) {
       const gx = axisXRefs[c.id];
       if (gx) {
-        const ticks = xAxisTickMinutes(xMax);
+        const ticks = xAxisTickMinutes(xMax, innerW);
         const axis = d3
           .axisBottom(xs)
           .tickValues(ticks)
-          .tickFormat((d) => `${Math.round(d as number)}m`)
+          .tickFormat((d) => formatXAxisTickMinute(Number(d), xMax))
           .tickSize(3)
           .tickSizeOuter(0);
         const sel = d3.select(gx);
@@ -835,6 +859,16 @@
           .attr('font-size', 9)
           .attr('font-family', 'monospace')
           .attr('fill', 'var(--text2)');
+        sel.selectAll<SVGGElement, number>('.tick').each(function (_, i, nodes) {
+          const text = d3.select(this).select('text');
+          if (i === 0) {
+            text.attr('text-anchor', 'start');
+          } else if (i === nodes.length - 1) {
+            text.attr('text-anchor', 'end');
+          } else {
+            text.attr('text-anchor', 'middle');
+          }
+        });
       }
 
       const gy = axisYRefs[c.id];
