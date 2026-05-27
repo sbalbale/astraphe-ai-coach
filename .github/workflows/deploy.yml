@@ -150,8 +150,11 @@ jobs:
 
       - name: Run new migrations
         run: |
-          ssh docker@ssh.astrapeai.com << 'ENDSSH'
-            for f in ~/astrape/repo/supabase/migrations/*.sql; do
-              docker exec -i supabase-db psql -U postgres -d postgres -f - < "$f"
-            done
+          ssh docker@ssh.astrapeai.com << ENDSSH
+            export PATH="\$HOME/.local/share/supabase:\$PATH"
+            cd ~/astrape/repo
+            git pull origin main
+            PGSSLMODE=disable supabase db push \
+              --db-url "postgresql://postgres:${{ secrets.SUPABASE_DB_PASSWORD }}@172.21.0.3:5432/postgres" \
+              --yes
           ENDSSH

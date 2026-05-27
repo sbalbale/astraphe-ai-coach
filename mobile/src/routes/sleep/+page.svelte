@@ -508,29 +508,31 @@
 
       <!-- 7-Day Trend -->
       <Card>
-        <div class="flex justify-between items-center mb-3">
+        <div class="flex flex-wrap items-start justify-between gap-x-3 gap-y-1 mb-3">
           <p class="text-[13px] font-semibold">7-Day Trend</p>
-          <span class="text-[10px] text-text2 font-mono">
+          <span class="text-[10px] text-text2 font-mono text-right ml-auto max-w-full">
             avg {avg7d === null ? "--" : `${avg7d}%`} · {nightData.score}% current
           </span>
         </div>
-        <div class="flex gap-2 items-end h-[50px] mb-1 px-1">
+        <div class="flex gap-2 h-[70px] mb-1 px-1">
           {#each nights as nt, i (nt.rawDate)}
             {@const c = getSleepColor(nt.score)}
             <button
               type="button"
-              class="flex-1 flex flex-col items-center gap-1 cursor-pointer"
+              class="flex-1 h-full flex flex-col items-center gap-1 cursor-pointer"
               onclick={() => {
                 endPickerValue = nt.rawDate;
                 nightIndex = 6;
               }}
               aria-label={`Select ${nt.date}: ${nt.score}%`}
             >
-              <div
-                class="w-full rounded-t-sm transition-all duration-300"
-                style="background: {c}; opacity: {i === nightIndex ? 1 : 0.35}; height: {Math.max(4, (nt.score / 100) * 50)}px;"
-              ></div>
-              <span class="text-[9px] font-mono {i === nightIndex ? 'text-text0' : 'text-text2'}">{nt.day}</span>
+              <div class="h-[50px] w-full flex items-end">
+                <div
+                  class="w-full rounded-t-sm transition-all duration-300"
+                  style="background: {c}; opacity: {i === nightIndex ? 1 : 0.35}; height: {Math.max(4, (nt.score / 100) * 50)}px;"
+                ></div>
+              </div>
+              <span class="text-[9px] font-mono leading-none {i === nightIndex ? 'text-text0' : 'text-text2'}">{nt.day}</span>
             </button>
           {/each}
         </div>

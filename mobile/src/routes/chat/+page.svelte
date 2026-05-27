@@ -8,6 +8,7 @@
   import { format } from 'date-fns';
   import { tick } from 'svelte';
   import { isStandaloneDisplayMode } from '$lib/utils/pwa';
+  import { normalizeLeadingTimeOfDayGreeting } from '$lib/utils/greeting';
 
   type Conversation = { id: string; title?: string | null; created_at?: string; updated_at?: string };
   type Message = {
@@ -90,7 +91,8 @@
       // 2. Load initialization data in the background (greeting + memories)
       api.initializeCoach().then((initRes) => {
         if (initRes?.status === 'success' || initRes?.status === 'partial_success') {
-          greetingMessage = initRes.message || '';
+          const message = typeof initRes.message === 'string' ? initRes.message : '';
+          greetingMessage = message ? normalizeLeadingTimeOfDayGreeting(message) : '';
           aiMemories = initRes.memories || [];
           
           // If we are still in a new chat (no conversationId), update the greeting text

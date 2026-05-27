@@ -18,6 +18,8 @@
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { authStore } from '$lib/stores/authStore.svelte';
   import { api } from '$lib/api';
+  import { goto } from '$app/navigation';
+  import { resolve } from '$app/paths';
   import { addDays, format, subDays } from 'date-fns';
   import { boundedScoreCssColor } from '$lib/colorSystem';
   import { CHART_ATL_STROKE, CHART_CTL_STROKE, formCssColor } from '$lib/scoreColors';
@@ -231,6 +233,15 @@
     showWorkoutModal = true;
   }
 
+  function viewSelectedWorkout() {
+    const workoutId = selectedWorkout?.id;
+    if (!workoutId) return;
+
+    showWorkoutModal = false;
+    const target = resolve(`/training?workout_id=${encodeURIComponent(String(workoutId))}`);
+    goto(target, { keepFocus: true, noScroll: true });
+  }
+
   let workoutAnalysisLoading = $state(false);
   async function loadWorkoutAnalysis(workoutId: string) {
     if (authStore.tier !== 'premium') return;
@@ -419,27 +430,29 @@
 
       <!-- Timeline -->
       <Card>
-        <div class="flex justify-between items-center mb-3">
+        <div class="flex flex-wrap items-start justify-between gap-x-3 gap-y-1 mb-3">
           <p class="text-[13px] font-semibold">7-Day Trend</p>
-          <span class="text-[10px] text-text2 font-mono">
+          <span class="text-[10px] text-text2 font-mono text-right ml-auto max-w-full">
             avg {avg7d === null ? '--' : `${avg7d}%`} · {score}% current
           </span>
         </div>
-        <div class="flex gap-2 items-end h-[50px] mb-1 px-1">
+        <div class="flex gap-2 h-[70px] mb-1 px-1">
           {#each days as day, i (day.date)}
             {@const c = boundedScoreCssColor(day.score, true)}
             <button
               type="button"
-              class="flex-1 flex flex-col items-center gap-1 cursor-pointer"
+              class="flex-1 h-full flex flex-col items-center gap-1 cursor-pointer"
               onclick={() => {
                 endPickerValue = day.date;
                 dayIndex = 6;
               }}
               aria-label={`Select ${day.label}: ${day.score}%`}
             >
-              <div class="w-full rounded-t-sm transition-all duration-300"
-                   style="background: {c}; opacity: {i === dayIndex ? 1 : 0.35}; height: {Math.max(4, (day.score / 100) * 50)}px;"></div>
-              <span class="text-[9px] font-mono {i === dayIndex ? 'text-text0' : 'text-text2'}">{day.day}</span>
+              <div class="h-[50px] w-full flex items-end">
+                <div class="w-full rounded-t-sm transition-all duration-300"
+                     style="background: {c}; opacity: {i === dayIndex ? 1 : 0.35}; height: {Math.max(4, (day.score / 100) * 50)}px;"></div>
+              </div>
+              <span class="text-[9px] font-mono leading-none {i === dayIndex ? 'text-text0' : 'text-text2'}">{day.day}</span>
             </button>
           {/each}
         </div>
@@ -627,6 +640,15 @@
           </div>
         {/if}
       </div>
+
+      <button
+        type="button"
+        class="w-full rounded-xl border border-blue/30 bg-blue/10 px-4 py-3 text-[13px] font-semibold text-blue transition-colors hover:bg-blue/15 disabled:cursor-not-allowed disabled:opacity-50"
+        disabled={!selectedWorkout.id}
+        onclick={viewSelectedWorkout}
+      >
+        View full workout
+      </button>
 
       {#if authStore.tier === 'premium'}
         <div class="mt-4 pt-4 border-t border-border/40 rounded-xl p-3 bg-gradient-to-br from-blue/10 via-transparent to-transparent">

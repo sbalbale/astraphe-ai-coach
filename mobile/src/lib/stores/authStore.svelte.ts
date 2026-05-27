@@ -2,7 +2,7 @@ import { supabase } from '../supabase';
 import type { User, Session } from '@supabase/supabase-js';
 
 // The expected Supabase URL for this environment
-const EXPECTED_SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const EXPECTED_SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL?.trim() ?? '';
 
 export type AccountTier = 'free' | 'trial' | 'premium';
 
@@ -117,11 +117,10 @@ class AuthState {
         const iss = tokenPayload?.iss;
         const issuer: string = typeof iss === 'string' ? iss : '';
         const isValidIssuer =
-          issuer.startsWith(EXPECTED_SUPABASE_URL) ||
-          issuer.includes('127.0.0.1:57321');
+          !!EXPECTED_SUPABASE_URL && issuer.startsWith(EXPECTED_SUPABASE_URL);
 
         if (!isValidIssuer) {
-          console.warn('[auth] Stale session from different Supabase project — signing out');
+          console.warn('[auth] Stale or misconfigured Supabase session — signing out');
           await supabase.auth.signOut();
           this.session = null;
           this.user = null;

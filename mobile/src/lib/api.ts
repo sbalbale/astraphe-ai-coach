@@ -1,6 +1,7 @@
 import { getAuthHeaders } from './apiAuth';
 import { supabase } from '$lib/supabase';
 import type { Workout } from './types/training';
+import { getTimeOfDayPeriod, type TimeOfDayPeriod } from './utils/greeting';
 
 const VITE_API_URL = import.meta.env.VITE_API_URL;
 const API_URL = VITE_API_URL && VITE_API_URL !== 'undefined' ? VITE_API_URL : 'http://localhost:8000';
@@ -8,7 +9,9 @@ const API_URL = VITE_API_URL && VITE_API_URL !== 'undefined' ? VITE_API_URL : 'h
 const ISO_DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 console.log(`[API] Initialized with API_URL: ${API_URL}`);
 
-let _initCache: { result: unknown; expiresAt: number } | null = null;
+const getUserTimezoneOffsetMin = () => -new Date().getTimezoneOffset();
+
+let _initCache: { result: unknown; expiresAt: number; period: TimeOfDayPeriod; timezoneOffsetMin: number } | null = null;
 
 export const api = {
   async getDashboardSummary(day?: string) {
@@ -235,6 +238,21 @@ export const api = {
     return null;
   },
 
+  async updateWorkout(workoutId: string, payload: object) {
+    try {
+      const headers = await getAuthHeaders({ 'Content-Type': 'application/json' });
+      const res = await fetch(`${API_URL}/v1/workouts/${workoutId}`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify(payload)
+      });
+      if (res.ok) return await res.json();
+    } catch (e) {
+      console.warn("Failed to update workout.", e);
+    }
+    return null;
+  },
+
   async patchAthleteProfile(payload: any): Promise<{ ok: true; data: unknown } | { ok: false; error: string }> {
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
@@ -358,15 +376,27 @@ export const api = {
   },
 
   async initializeCoach() {
-    if (_initCache && Date.now() < _initCache.expiresAt) return _initCache.result;
+    const period = getTimeOfDayPeriod();
+    const timezoneOffsetMin = getUserTimezoneOffsetMin();
+    if (
+      _initCache &&
+      _initCache.period === period &&
+      _initCache.timezoneOffsetMin === timezoneOffsetMin &&
+      Date.now() < _initCache.expiresAt
+    ) return _initCache.result;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 12000);
     try {
-      const headers = await getAuthHeaders();
-      const res = await fetch(`${API_URL}/v1/coach/initialize`, { method: 'POST', headers, signal: controller.signal });
+      const headers = await getAuthHeaders({ 'Content-Type': 'application/json' });
+      const res = await fetch(`${API_URL}/v1/coach/initialize`, {
+        method: 'POST',
+        headers,
+        signal: controller.signal,
+        body: JSON.stringify({ timezone_offset_min: timezoneOffsetMin })
+      });
       if (res.ok) {
         const data = await res.json();
-        _initCache = { result: data, expiresAt: Date.now() + 10 * 60 * 1000 };
+        _initCache = { result: data, expiresAt: Date.now() + 10 * 60 * 1000, period, timezoneOffsetMin };
         return data;
       }
     } catch (e) {
@@ -443,7 +473,8 @@ export const api = {
         message: params.message,
         recent_tss: params.recent_tss,
         conversation_id: params.conversation_id ?? null,
-        image_urls: params.image_urls ?? null
+        image_urls: params.image_urls ?? null,
+        timezone_offset_min: getUserTimezoneOffsetMin()
       })
     });
 

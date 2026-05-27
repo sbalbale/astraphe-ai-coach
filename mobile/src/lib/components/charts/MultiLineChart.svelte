@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from 'svelte';
   import {
     CHART_ATL_FILL_ACTIVE,
     CHART_ATL_FILL_REST,
@@ -7,6 +8,7 @@
   } from '$lib/scoreColors';
 
   const CHART_PAD = { t: 15, b: 24, l: 36, r: 15 } as const;
+  const SCROLL_RIGHT_TOLERANCE = 2;
 
   let { data, height = 100 } = $props<{
     data: { day: string; date?: string; atl: number; ctl: number; tsb?: number; daily_tss?: number }[];
@@ -20,6 +22,7 @@
   let selectedIdx = $state<number | null>(null);
   let tooltipLayout = $state<{ x: number; y: number; flipLeft: boolean } | null>(null);
   let touchStart: { x: number; y: number } | null = null;
+  let lastDataScrollKey = '';
 
   function updateTooltipLayout() {
     if (selectedIdx === null || !canvas || !scrollHost) {
@@ -41,6 +44,46 @@
       x: anchorX,
       y: anchorY,
       flipLeft: anchorX > visibleMid
+    };
+  }
+
+  function getDataScrollKey(): string {
+    const first = data[0];
+    const last = data[data.length - 1];
+    const firstKey = first?.date ?? first?.day ?? '';
+    const lastKey = last?.date ?? last?.day ?? '';
+    return `${data.length}:${firstKey}:${lastKey}`;
+  }
+
+  function getMaxScrollLeft(): number {
+    if (!scrollHost) return 0;
+    return Math.max(0, scrollHost.scrollWidth - scrollHost.clientWidth);
+  }
+
+  function isAtLatestScrollPosition(maxLeft = getMaxScrollLeft()): boolean {
+    return !scrollHost || maxLeft <= SCROLL_RIGHT_TOLERANCE || scrollHost.scrollLeft >= maxLeft - SCROLL_RIGHT_TOLERANCE;
+  }
+
+  function scrollToLatestData() {
+    if (!scrollHost) return;
+    scrollHost.scrollLeft = getMaxScrollLeft();
+    updateTooltipLayout();
+  }
+
+  function scheduleScrollToLatestData(): () => void {
+    let cancelled = false;
+    let frame = 0;
+
+    void tick().then(() => {
+      if (cancelled) return;
+      frame = requestAnimationFrame(() => {
+        if (!cancelled) scrollToLatestData();
+      });
+    });
+
+    return () => {
+      cancelled = true;
+      if (frame) cancelAnimationFrame(frame);
     };
   }
 
@@ -214,6 +257,37 @@
   });
 
   $effect(() => {
+    if (!scrollHost) return;
+
+    const dataScrollKey = getDataScrollKey();
+    if (dataScrollKey === lastDataScrollKey) return;
+
+    lastDataScrollKey = dataScrollKey;
+    return scheduleScrollToLatestData();
+  });
+
+  $effect(() => {
+    if (!scrollHost) return;
+
+    let previousMaxLeft = getMaxScrollLeft();
+    const observer = new ResizeObserver(() => {
+      const wasAtLatest = isAtLatestScrollPosition(previousMaxLeft);
+      previousMaxLeft = getMaxScrollLeft();
+      if (wasAtLatest) scrollToLatestData();
+    });
+
+    observer.observe(scrollHost);
+    if (chartRoot) observer.observe(chartRoot);
+
+    const cancelInitialAlign = scheduleScrollToLatestData();
+
+    return () => {
+      observer.disconnect();
+      cancelInitialAlign();
+    };
+  });
+
+  $effect(() => {
     if (!canvas || !data || data.length === 0) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
@@ -315,11 +389,11 @@
 <div class="relative">
   <div
     bind:this={scrollHost}
-    class="overflow-x-auto overflow-y-visible snap-x snap-mandatory overscroll-x-contain [-webkit-overflow-scrolling:touch]"
+    class="overflow-x-auto overflow-y-visible overscroll-x-contain [-webkit-overflow-scrolling:touch]"
   >
     <div
       bind:this={chartRoot}
-      class="relative group min-w-[600px] w-full snap-start"
+      class="relative group min-w-[600px] w-full"
       role="presentation"
       onpointerleave={() => {
         selectedIdx = null;

@@ -6,11 +6,22 @@ callers can degrade gracefully rather than crashing.
 """
 
 import logging
+from urllib.parse import urlsplit, urlunsplit
 from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 _client = None
+
+
+def describe_redis_url(url: str | None) -> str:
+    if not url:
+        return "unset"
+    parsed = urlsplit(url)
+    host = parsed.hostname or ""
+    port = f":{parsed.port}" if parsed.port else ""
+    netloc = f"{host}{port}" if host else parsed.netloc.split("@")[-1]
+    return urlunsplit((parsed.scheme, netloc, parsed.path, "", ""))
 
 
 def get_redis():
@@ -34,7 +45,7 @@ def get_redis():
                 socket_connect_timeout=2,
                 socket_timeout=2,
             )
-            logger.info("Redis client initialised (%s)", settings.REDIS_URL.split("@")[-1])
+            logger.info("Redis client initialised (%s)", describe_redis_url(settings.REDIS_URL))
         except Exception as exc:
             logger.warning("Redis client init failed: %s", exc)
     return _client
@@ -54,5 +65,12 @@ async def ping_redis() -> bool:
         return False
     try:
         return await r.ping()
-    except Exception:
+    except Exception as exc:
+        from app.config import settings
+
+        logger.warning(
+            "Redis ping failed for %s: %s",
+            describe_redis_url(settings.REDIS_URL),
+            exc,
+        )
         return False
