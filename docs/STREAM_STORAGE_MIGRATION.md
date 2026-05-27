@@ -13,7 +13,7 @@ Move full-fidelity activity stream data from Postgres JSONB to Supabase Storage 
 
 | Layer | Today | After migration |
 |-------|--------|-----------------|
-| Postgres `activity_streams` | `time_series JSONB NOT NULL` | `storage_path`, `byte_size`, `content_encoding`; `time_series` nullable until backfill completes |
+| Postgres `activity_streams` | `time_series JSONB NOT NULL` | `storage_path`, `byte_size`, `content_encoding`; `time_series` nullable (legacy JSONB dual-read until column dropped) |
 | Object store | unused | Private bucket `activity-streams`, **`{athlete_id}/{workout_id}.json.gz`** |
 | API | JSONB via PostgREST | **Option A:** download blob, gunzip, parse JSON → same `time_series` in `/detail` |
 | Mobile | `getActivityDetail()` | **No change** (API proxy + Redis cache) |
@@ -167,13 +167,17 @@ Keep JSONB until backfill verified. API dual-reads Storage + JSONB until column 
 
 ## Operations checklist
 
-- [ ] `SUPABASE_URL=http://host.docker.internal:8001` on **astrape-api**
-- [ ] Bucket `activity-streams` exists, `public = false`
-- [ ] Upload uses `upsert: true` on hydrate/refetch
-- [ ] RLS: athletes cannot read another athlete’s `{athlete_id}/…` prefix
-- [ ] Redis connected (`GET /health` → `"redis": "connected"`)
-- [ ] Backup Postgres and Storage volume
+- [x] Migration `20260528100000_activity_streams_gzip_storage.sql` (bucket, columns, RLS, `NOTIFY pgrst`)
+- [x] Backend `stream_storage.py` + Strava upsert + `/detail` dual-read
+- [x] Backfill: `python backend/scripts/migrate_streams_to_storage.py`
+- [ ] `SUPABASE_URL=http://host.docker.internal:8001` on **astrape-api** (deploy)
+- [x] Bucket `activity-streams` exists, `public = false` (local dev)
+- [x] Upload uses `upsert: true` on hydrate/refetch
+- [x] RLS: athletes cannot read another athlete’s `{athlete_id}/…` prefix
+- [ ] Redis connected on deploy (`GET /health` → `"redis": "connected"`)
+- [ ] Backup Postgres and Storage volume (before prod)
 - [ ] Compare `GET /detail` latency before/after ([`PERFORMANCE.md`](./PERFORMANCE.md))
+- [ ] Follow-up migration: drop `time_series` JSONB column after prod backfill verified
 
 ## Related docs
 
