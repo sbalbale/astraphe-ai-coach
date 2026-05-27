@@ -43,6 +43,7 @@ class ChatMessage(BaseModel):
     recent_tss: Optional[float] = 0.0
     image_urls: Optional[List[str]] = None
     document_contents: Optional[List[str]] = None
+    timezone_offset_min: Optional[int] = None
 
     @field_validator("message")
     @classmethod
@@ -59,6 +60,24 @@ class ChatMessage(BaseModel):
         if len(v) > 3:
             raise ValueError("Max 3 documents per message")
         return [c[:10000] for c in v]
+
+    @field_validator("timezone_offset_min")
+    @classmethod
+    def validate_timezone_offset_min(cls, v: Optional[int]) -> Optional[int]:
+        if v is None:
+            return v
+        return max(-14 * 60, min(14 * 60, int(v)))
+
+
+class InitializeCoachRequest(BaseModel):
+    timezone_offset_min: Optional[int] = None
+
+    @field_validator("timezone_offset_min")
+    @classmethod
+    def validate_timezone_offset_min(cls, v: Optional[int]) -> Optional[int]:
+        if v is None:
+            return v
+        return max(-14 * 60, min(14 * 60, int(v)))
 
 class CreateConversation(BaseModel):
     title: Optional[str] = None
@@ -250,6 +269,7 @@ async def upload_document(
 
 @router.post("/initialize")
 async def initialize_coach(
+    payload: InitializeCoachRequest | None = None,
     athlete_id: str = Depends(get_current_athlete),
     config: UserConfig = Depends(get_user_config),
     _rl: None = Depends(require_ai_rate_limit),
@@ -266,7 +286,13 @@ async def initialize_coach(
         from app.services.ai_coach import build_initialization_message
         
         # Parallelize the slow Gemini-based tasks
-        msg_task = asyncio.to_thread(build_initialization_message, athlete_id, db, config.gemini_model)
+        msg_task = asyncio.to_thread(
+            build_initialization_message,
+            athlete_id,
+            db,
+            config.gemini_model,
+            None if payload is None else payload.timezone_offset_min,
+        )
         mem_task = asyncio.to_thread(retrieve_relevant_memories, athlete_id, "upcoming races, goals, trips, and injuries", db, top_k=5)
         
         [msg_res, memories] = await asyncio.gather(msg_task, mem_task)
@@ -322,6 +348,7 @@ async def chat_with_coach(
             db=db,
             conversation_id=conversation_id,
             model_name=config.gemini_model,
+            timezone_offset_min=payload.timezone_offset_min,
         )
         _insert_message(db, athlete_id, conversation_id, role="ai", content=coach_reply, image_urls=None)
 
@@ -404,6 +431,7 @@ async def stream_chat_with_coach(
                 db,
                 conversation_id,
                 config.gemini_model,
+                payload.timezone_offset_min,
             )
             ai_full = (ai_full or "").strip()
             if not ai_full:

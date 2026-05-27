@@ -1,5 +1,5 @@
 <script module lang="ts">
-  import { SvelteMap } from 'svelte/reactivity';
+  import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 
   const trainingLoadAnalysisMemo = new SvelteMap<string, string | null>();
   const workoutAnalysisMemo = new SvelteMap<string, string | null>();
@@ -70,6 +70,8 @@
   const ATL_IDENTITY_HEX = CHART_ATL_STROKE;
 
   let addActivityOpen = $state(false);
+  let editActivityOpen = $state(false);
+  let editingWorkout = $state<any>(null);
 
   const measurementUnitsForModal = $derived(
     (athleteStore.profile as any)?.measurement_units === 'imperial' ? 'imperial' : 'metric'
@@ -77,6 +79,27 @@
 
   async function handleActivitySaved(payload: object) {
     await athleteStore.addWorkout(payload);
+  }
+
+  async function handleActivityUpdated(payload: object) {
+    const workoutId = editingWorkout?.id ?? selectedWorkout?.id;
+    if (!workoutId) throw new Error('No workout selected');
+
+    const result = await athleteStore.updateWorkout(workoutId, payload);
+    if (!result) throw new Error('Failed to update workout');
+
+    if (typeof result === 'object') {
+      const updated = { ...selectedWorkout, ...result };
+      selectedWorkout = updated;
+      editingWorkout = updated;
+      return;
+    }
+
+    const match = (athleteStore.workouts || []).find((w) => String(w?.id) === String(workoutId));
+    if (match) {
+      selectedWorkout = match;
+      editingWorkout = match;
+    }
   }
 
   let metric = $state('load');
@@ -122,7 +145,7 @@
   let detailRepulling = $state(false);
   let detailReloadEpoch = $state(0);
   let lastRepullWorkoutId = $state<string | null>(null);
-  let repullDismissedWorkoutIds = $state<Set<string>>(new Set());
+  let repullDismissedWorkoutIds = new SvelteSet<string>();
 
   const detailStravaPolyline = $derived(
     selectedWorkout ? stravaPolylineFromPayload(selectedWorkout.raw_strava_payload) : null
@@ -222,7 +245,7 @@
     ) {
       return;
     }
-    repullDismissedWorkoutIds = new Set(repullDismissedWorkoutIds).add(w.id);
+    repullDismissedWorkoutIds.add(w.id);
     lastRepullWorkoutId = null;
   });
 
@@ -408,6 +431,13 @@
     return Math.max(0, Math.floor(ms / 1000));
   }
 
+  function formatAvgPower(w: any): string {
+    const raw = w?.avg_power_w ?? w?.average_watts;
+    if (raw == null) return '--';
+    const watts = Number(raw);
+    return Number.isFinite(watts) ? String(Math.round(watts)) : '--';
+  }
+
   function formatMMSS(totalSeconds: number): string {
     const s = Math.max(0, Math.floor(totalSeconds || 0));
     const m = Math.floor(s / 60);
@@ -451,6 +481,17 @@
       console.error(e);
       alert('Failed to delete workout');
     }
+  }
+
+  function openEditActivity() {
+    if (!selectedWorkout?.id) return;
+    editingWorkout = selectedWorkout;
+    editActivityOpen = true;
+  }
+
+  function closeEditActivityModal() {
+    editActivityOpen = false;
+    editingWorkout = null;
   }
 
   async function loadWorkoutAnalysis(workoutId: string) {
@@ -646,12 +687,25 @@
   });
 </script>
 
-<AddActivityModal
-  show={addActivityOpen}
-  onClose={() => (addActivityOpen = false)}
-  units={measurementUnitsForModal}
-  onSaved={handleActivitySaved}
-/>
+{#if addActivityOpen}
+  <AddActivityModal
+    show={addActivityOpen}
+    onClose={() => (addActivityOpen = false)}
+    units={measurementUnitsForModal}
+    onSaved={handleActivitySaved}
+  />
+{/if}
+
+{#if editActivityOpen}
+  <AddActivityModal
+    show={editActivityOpen}
+    mode="edit"
+    workout={editingWorkout}
+    onClose={closeEditActivityModal}
+    units={measurementUnitsForModal}
+    onSaved={handleActivityUpdated}
+  />
+{/if}
 
 <div class="flex flex-col gap-3">
   <div class="flex items-center justify-between pt-1">
@@ -797,12 +851,20 @@
             ← Back to list
           </button>
 
-          <button
-            class="text-xs text-red bg-transparent border-none p-0 cursor-pointer"
-            onclick={deleteSelectedWorkout}
-          >
-            Delete
-          </button>
+          <div class="flex items-center gap-3">
+            <button
+              class="text-xs text-blue bg-transparent border-none p-0 cursor-pointer"
+              onclick={openEditActivity}
+            >
+              Edit
+            </button>
+            <button
+              class="text-xs text-red bg-transparent border-none p-0 cursor-pointer"
+              onclick={deleteSelectedWorkout}
+            >
+              Delete
+            </button>
+          </div>
         </div>
         
         <Card>
@@ -835,7 +897,7 @@
             </div>
           </div>
 
-          <div class="grid grid-cols-3 gap-2 mb-5">
+          <div class="grid grid-cols-2 gap-2 mb-5">
             <div class="bg-glass2 p-2.5 rounded-xl border border-border">
               <p class="text-[9px] text-text2 font-mono uppercase mb-1">Duration</p>
               <p class="text-sm font-bold">{Math.floor(getDurationSecs(selectedWorkout) / 60)}m</p>
@@ -849,6 +911,15 @@
             <div class="bg-glass2 p-2.5 rounded-xl border border-border">
               <p class="text-[9px] text-text2 font-mono uppercase mb-1">Avg HR</p>
               <p class="text-sm font-bold">{selectedWorkout.avg_hr || '--'} <span class="text-[10px] font-normal opacity-60">bpm</span></p>
+            </div>
+            <div class="bg-glass2 p-2.5 rounded-xl border border-border">
+              <p class="text-[9px] text-text2 font-mono uppercase mb-1">Avg Watts</p>
+              <p class="text-sm font-bold">
+                {formatAvgPower(selectedWorkout)}
+                {#if formatAvgPower(selectedWorkout) !== '--'}
+                  <span class="text-[10px] font-normal opacity-60">w</span>
+                {/if}
+              </p>
             </div>
           </div>
 
@@ -940,8 +1011,8 @@
 
             {#if detailLoading}
               <div class="mt-4 space-y-3">
-                {#each [150, 150, 120] as h}
-                  <div class="rounded-2xl bg-glass animate-pulse" style="height: {h}px;"></div>
+                {#each [{ id: 'streams', h: 150 }, { id: 'map', h: 150 }, { id: 'splits', h: 120 }] as skeleton (skeleton.id)}
+                  <div class="rounded-2xl bg-glass animate-pulse" style="height: {skeleton.h}px;"></div>
                 {/each}
               </div>
 

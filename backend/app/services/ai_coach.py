@@ -218,6 +218,7 @@ def _load_conversation_history(db: Client, athlete_id: str, conversation_id: str
 # Keys: athlete_id → (bio, profile, tss_base_dict, expires_at)
 _context_parts_cache: dict[str, tuple[dict, dict, dict, float]] = {}
 _CONTEXT_CACHE_TTL = 300.0  # 5 minutes
+_TIME_OF_DAY_GREETING_RE = re.compile(r"^\s*good\s+(morning|afternoon|evening)\b[\s,!.:-]*", re.IGNORECASE)
 
 
 def _get_context_parts_cached(db: Client, athlete_id: str) -> tuple[dict, dict, dict]:
@@ -238,6 +239,22 @@ def invalidate_context_cache(athlete_id: str) -> None:
     _context_parts_cache.pop(athlete_id, None)
 
 
+def _time_of_day_greeting(local_now: Any) -> str:
+    hour = int(getattr(local_now, "hour", 0))
+    if 5 <= hour < 12:
+        return "Good morning"
+    if 12 <= hour < 18:
+        return "Good afternoon"
+    return "Good evening"
+
+
+def _strip_leading_time_of_day_greeting(text: str | None) -> str:
+    cleaned = _TIME_OF_DAY_GREETING_RE.sub("", (text or "").strip(), count=1).lstrip()
+    if not cleaned:
+        return cleaned
+    return cleaned[:1].upper() + cleaned[1:]
+
+
 def _calendar_context_for_offset(timezone_offset_min: int) -> dict[str, Any]:
     local_now = local_datetime_from_timezone_offset(timezone_offset_min)
     today = local_now.date()
@@ -256,10 +273,12 @@ def _calendar_context_for_offset(timezone_offset_min: int) -> dict[str, Any]:
     }
 
 
-def _athlete_local_calendar(db: Client, athlete_id: str) -> dict[str, Any]:
+def _athlete_local_calendar(db: Client, athlete_id: str, timezone_offset_min: int | None = None) -> dict[str, Any]:
     _, profile, _ = _get_context_parts_cached(db, athlete_id)
-    timezone_offset_min = coerce_timezone_offset_min(profile.get("timezone_offset_min"))
-    return _calendar_context_for_offset(timezone_offset_min)
+    offset = coerce_timezone_offset_min(
+        profile.get("timezone_offset_min") if timezone_offset_min is None else timezone_offset_min
+    )
+    return _calendar_context_for_offset(offset)
 
 
 _ISO_DATE_RE = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
@@ -380,18 +399,21 @@ def _build_system_context(
     current_tss: float = 0.0,
     conversation_id: str | None = None,
     memories: list[dict] | None = None,
+    timezone_offset_min: int | None = None,
 ) -> str:
     bio, profile, tss_base = _get_context_parts_cached(db, athlete_id)
-    timezone_offset_min = coerce_timezone_offset_min(profile.get("timezone_offset_min"))
-    calendar = _calendar_context_for_offset(timezone_offset_min)
+    offset = coerce_timezone_offset_min(
+        profile.get("timezone_offset_min") if timezone_offset_min is None else timezone_offset_min
+    )
+    calendar = _calendar_context_for_offset(offset)
     today = calendar["current_local_date"]
-    profile = {**profile, "timezone_offset_min": timezone_offset_min}
+    profile = {**profile, "timezone_offset_min": offset}
     # Patch current workout TSS (varies per message) into the cached training load dict.
     training_load = {**tss_base, "most_recent_workout_tss": _safe_float(current_tss) or 0.0}
     ctx: dict = {
         "date": today,
         **calendar,
-        "timezone_offset_min": timezone_offset_min,
+        "timezone_offset_min": offset,
         "calendar_rules": {
             "today": "Resolve today from current_local_date in the athlete's timezone.",
             "tomorrow": "Resolve tomorrow from tomorrow_date in the athlete's timezone.",
@@ -548,6 +570,7 @@ def build_initialization_message(
     athlete_id: str,
     db: Client,
     model_name: str | None = None,
+    timezone_offset_min: int | None = None,
 ) -> tuple[str, bool]:
     """
     Proactive first message when chat mounts, or a standard greeting.
@@ -555,7 +578,19 @@ def build_initialization_message(
     """
     anomalies = detect_anomalies(db, athlete_id)
     instructions = load_coach_instructions()
-    context_block = _build_system_context(db, athlete_id, current_tss=0.0, conversation_id=None)
+    context_block = _build_system_context(
+        db,
+        athlete_id,
+        current_tss=0.0,
+        conversation_id=None,
+        timezone_offset_min=timezone_offset_min,
+    )
+    _, profile, _ = _get_context_parts_cached(db, athlete_id)
+    offset = coerce_timezone_offset_min(
+        profile.get("timezone_offset_min") if timezone_offset_min is None else timezone_offset_min
+    )
+    local_now = local_datetime_from_timezone_offset(offset)
+    greeting = _time_of_day_greeting(local_now)
     effective_model = model_name or settings.GEMINI_MODEL
 
     if anomalies:
@@ -563,12 +598,14 @@ def build_initialization_message(
             "[PROACTIVE CHECK]\nThe following severe anomalies were detected (JSON):\n"
             + json.dumps(anomalies, ensure_ascii=False)
             + "\n\nWrite exactly 2–3 sentences. Name the triggering metric(s). Recommend a decisive action. "
+            "Do not include a time-of-day greeting such as Good morning, Good afternoon, or Good evening. "
             "ASTRAPE voice: conversational, supportive, and measured. Use emoji only if it adds clear signal; do not make it a default closer. Wrap your final message in <response> ... </response> tags."
         )
     else:
         directive = (
             "[INITIAL GREETING]\nNo severe anomaly triggers fired. "
             "Write at most 2 sentences, context-aware, and cite TSB or HRV from the context. "
+            "Do not include a time-of-day greeting such as Good morning, Good afternoon, or Good evening; the server will add the correct local greeting. "
             "ASTRAPE voice: conversational, supportive, and measured. Use emoji only if it adds clear signal; do not make it a default closer. Wrap your final message in <response> ... </response> tags."
         )
 
@@ -585,6 +622,9 @@ def build_initialization_message(
         text = _extract_athlete_message_from_model_output(response)
     except Exception as e:
         text = f"Initialization failed: {e}"
+    text = _strip_leading_time_of_day_greeting(text)
+    if not anomalies and text:
+        text = f"{greeting}. {text}"
     return text, bool(anomalies)
 
 
@@ -988,6 +1028,7 @@ def get_coach_response_agentic(
     db: Client | None = None,
     conversation_id: str | None = None,
     model_name: str | None = None,
+    timezone_offset_min: int | None = None,
     max_tool_hops: int = 15,
 ) -> tuple[str, list[dict[str, str]]]:
     """
@@ -997,7 +1038,14 @@ def get_coach_response_agentic(
     system_instruction = load_coach_instructions()
     memories = retrieve_relevant_memories(athlete_id, message, db, top_k=5) if db else []
     context_block = (
-        _build_system_context(db, athlete_id, current_tss=current_tss, conversation_id=conversation_id, memories=memories)
+        _build_system_context(
+            db,
+            athlete_id,
+            current_tss=current_tss,
+            conversation_id=conversation_id,
+            memories=memories,
+            timezone_offset_min=timezone_offset_min,
+        )
         if db
         else f"[SYSTEM CONTEXT - DO NOT SHOW TO USER]\nAthlete ID: {athlete_id}\nMost recent workout TSS: {current_tss}\n[END CONTEXT]"
     )
@@ -1030,7 +1078,7 @@ def get_coach_response_agentic(
         if conversation_id
         else []
     )
-    calendar = _athlete_local_calendar(db, athlete_id)
+    calendar = _athlete_local_calendar(db, athlete_id, timezone_offset_min=timezone_offset_min)
     contents = _history_to_gemini_contents(history)
     # Always append the current user message (history alone is not sufficient).
     contents.append(types.Content(role="user", parts=[types.Part.from_text(text=_calendar_preface(message, calendar))]))
@@ -1218,6 +1266,7 @@ async def _build_system_context_string_async(
     current_tss: float = 0.0,
     conversation_id: str | None = None,
     query: str | None = None,
+    timezone_offset_min: int | None = None,
 ) -> str:
     """
     Same payload as _build_system_context, but DB reads run in parallel to cut
@@ -1242,14 +1291,16 @@ async def _build_system_context_string_async(
         load_hist(),
         load_memories(),
     )
-    timezone_offset_min = coerce_timezone_offset_min(profile.get("timezone_offset_min"))
-    calendar = _calendar_context_for_offset(timezone_offset_min)
+    offset = coerce_timezone_offset_min(
+        profile.get("timezone_offset_min") if timezone_offset_min is None else timezone_offset_min
+    )
+    calendar = _calendar_context_for_offset(offset)
     today = calendar["current_local_date"]
-    profile = {**profile, "timezone_offset_min": timezone_offset_min}
+    profile = {**profile, "timezone_offset_min": offset}
     ctx: dict = {
         "date": today,
         **calendar,
-        "timezone_offset_min": timezone_offset_min,
+        "timezone_offset_min": offset,
         "calendar_rules": {
             "today": "Resolve today from current_local_date in the athlete's timezone.",
             "tomorrow": "Resolve tomorrow from tomorrow_date in the athlete's timezone.",
@@ -1281,6 +1332,7 @@ def get_coach_response(
     db: Client | None = None,
     conversation_id: str | None = None,
     model_name: str | None = None,
+    timezone_offset_min: int | None = None,
 ) -> tuple[str, list[dict[str, str]]]:
     return get_coach_response_agentic(
         athlete_id=athlete_id,
@@ -1289,6 +1341,7 @@ def get_coach_response(
         db=db,
         conversation_id=conversation_id,
         model_name=model_name,
+        timezone_offset_min=timezone_offset_min,
     )
 
 async def get_coach_response_stream(
@@ -1298,11 +1351,16 @@ async def get_coach_response_stream(
     db: Client | None = None,
     conversation_id: str | None = None,
     model_name: str | None = None,
+    timezone_offset_min: int | None = None,
 ):
     system_instruction = load_coach_instructions()
     if db:
         context_block = await _build_system_context_string_async(
-            db, athlete_id, current_tss=current_tss, conversation_id=conversation_id
+            db,
+            athlete_id,
+            current_tss=current_tss,
+            conversation_id=conversation_id,
+            timezone_offset_min=timezone_offset_min,
         )
     else:
         context_block = (

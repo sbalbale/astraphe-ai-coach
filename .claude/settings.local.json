@@ -40,7 +40,9 @@
       "Bash(pnpm build *)",
       "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); [print\\(k,v\\) for k,v in d.get\\('dependencies',{}\\).items\\(\\) if 'capacitor' in k.lower\\(\\)]\")",
       "Bash(Select-Object FullName)",
-      "Bash(Head -30)"
+      "Bash(Head -30)",
+      "Bash(python -c \"import pydantic_settings; help\\(pydantic_settings.BaseSettings.settings_customise_sources\\)\")",
+      "Bash(.venvScriptspython.exe -c ' *)"
     ]
   },
   "enableAllProjectMcpServers": true,

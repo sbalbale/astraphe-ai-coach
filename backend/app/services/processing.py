@@ -687,8 +687,8 @@ async def process_and_save_workout(
             threshold_hr_source=anchor_threshold_hr_source,
             hr_zone_method=athlete.get("hr_zone_method"),
         )
-    elif canonical == "row" and hasattr(payload, "avg_power") and payload.avg_power:
-        norm_watts = normalize_rowing_watts(payload.avg_power)
+    elif canonical == "row" and payload.average_power and payload.duration_seconds:
+        norm_watts = normalize_rowing_watts(payload.average_power)
         tss = compute_tss_power(payload.duration_seconds, int(norm_watts), payload.ftp_at_time)
     elif getattr(payload, "tss", None):
         tss = getattr(payload, "tss")
@@ -720,6 +720,7 @@ async def process_and_save_workout(
         "ended_at": ended_at.isoformat() if ended_at else None,
         "duration_seconds": duration_seconds,
         "distance_m": payload.distance_m,
+        "avg_power_w": payload.average_power,
         "avg_hr": payload.average_hr,
         "max_hr": payload.max_hr,
         "norm_power_w": payload.normalized_power,
@@ -1049,6 +1050,7 @@ def _workout_row_to_payload(row: dict) -> WorkoutPayload:
         ended_at=row.get("ended_at"),
         duration_seconds=row.get("duration_seconds"),
         distance_m=row.get("distance_m"),
+        avg_power_w=row.get("avg_power_w"),
         norm_power_w=row.get("norm_power_w"),
         avg_hr=row.get("avg_hr"),
         max_hr=row.get("max_hr"),

@@ -8,7 +8,7 @@ from starlette.responses import JSONResponse
 from app.routers import workouts, activity_detail, coach, athlete, biometrics, sync, plan, debug, analysis, training_plans, admin, notifications
 from app.config import settings
 from app.core.rate_limiter import RateLimiter
-from app.core.redis import close_redis, ping_redis
+from app.core.redis import close_redis, describe_redis_url, ping_redis
 from app.core.supabase_health import ping_supabase
 from app.services.token_refresh import token_refresh_loop
 
@@ -38,6 +38,18 @@ async def shutdown_redis():
 
 @app.on_event("startup")
 async def validate_production_config():
+    logger.warning(
+        "[startup] APP_ENV=%s SUPABASE_URL=%s REDIS_URL=%s",
+        settings.APP_ENV,
+        settings.SUPABASE_URL,
+        describe_redis_url(settings.REDIS_URL),
+    )
+    if settings.APP_ENV == "development" and "host.docker.internal:8001" in settings.SUPABASE_URL:
+        logger.warning(
+            "[startup] WARNING: backend is using stale Supabase URL %s; expected backend/.env dev URL.",
+            settings.SUPABASE_URL,
+        )
+
     if settings.APP_ENV == "production" and settings.TEST_ATHLETE_ID:
         raise RuntimeError(
             "TEST_ATHLETE_ID must not be set when APP_ENV=production. "

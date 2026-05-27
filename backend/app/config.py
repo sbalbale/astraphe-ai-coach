@@ -1,6 +1,11 @@
 from pathlib import Path
-from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+BACKEND_DIR = Path(__file__).resolve().parent.parent
+
 
 class Settings(BaseSettings):
     """Centralized configuration for the ASTRAPE backend."""
@@ -82,14 +87,28 @@ class Settings(BaseSettings):
     TEST_ATHLETE_ID: str | None = None
 
     # --- Path Management ---
-    BASE_DIR: Path = Path(__file__).resolve().parent.parent
+    BASE_DIR: Path = BACKEND_DIR
     PROMPTS_DIR: Path = BASE_DIR / "app" / "prompts"
     COACH_PROMPT_FILE: str = "coach_behavior.md"
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=BACKEND_DIR / ".env",
         env_file_encoding="utf-8",
         extra="ignore"
     )
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls,
+        init_settings,
+        env_settings,
+        dotenv_settings,
+        file_secret_settings,
+    ):
+        # Prefer backend/.env over shell environment variables so stale shell
+        # exports don't shadow local dev settings. In production no .env file
+        # is present in the container, so env_settings wins by default.
+        return init_settings, dotenv_settings, env_settings, file_secret_settings
 
 settings = Settings()

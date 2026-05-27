@@ -1,7 +1,12 @@
 <script module lang="ts">
   import { SvelteMap } from 'svelte/reactivity';
+  import { stripLeadingTimeOfDayGreeting } from '$lib/utils/greeting';
 
-  const AI_SUMMARY_CACHE_KEY = 'astrape:dashboard-ai-summary:v1';
+  const AI_SUMMARY_CACHE_KEY = 'astrape:dashboard-ai-summary:v2';
+
+  function _sanitizeAiSummary(content: string) {
+    return stripLeadingTimeOfDayGreeting(content);
+  }
 
   function _loadAiSummaryCache(): Record<string, string> {
     if (typeof localStorage === 'undefined') return {};
@@ -12,7 +17,10 @@
       if (!parsed || typeof parsed !== 'object') return {};
       const out: Record<string, string> = {};
       for (const [k, v] of Object.entries(parsed)) {
-        if (typeof v === 'string') out[k] = v;
+        if (typeof v === 'string') {
+          const summary = _sanitizeAiSummary(v);
+          if (summary) out[k] = summary;
+        }
       }
       return out;
     } catch {
@@ -24,7 +32,9 @@
     if (typeof localStorage === 'undefined') return;
     try {
       const current = _loadAiSummaryCache();
-      current[day] = content;
+      const summary = _sanitizeAiSummary(content);
+      if (!summary) return;
+      current[day] = summary;
       // Keep only the last 14 days to bound size.
       const keys = Object.keys(current).sort();
       while (keys.length > 14) delete current[keys.shift()!];
@@ -59,6 +69,7 @@
   import { format } from 'date-fns';
   import { boundedScoreCssColor } from '$lib/colorSystem';
   import { CHART_ATL_STROKE, CHART_CTL_STROKE, formCssColor, getZScoreColor } from '$lib/scoreColors';
+  import { getTimeOfDayGreeting } from '$lib/utils/greeting';
 
   const CTL_IDENTITY_HEX = CHART_CTL_STROKE;
   const ATL_IDENTITY_HEX = CHART_ATL_STROKE;
@@ -66,9 +77,18 @@
   const props = $props();
 
   let showReadinessModal = $state(false);
+  let greetingNow = $state(new Date());
+  const currentDateLabel = $derived(format(greetingNow, 'EEEE, MMM d'));
+  const currentGreeting = $derived(getTimeOfDayGreeting(greetingNow));
 
   onMount(() => {
     athleteStore.fetchAll();
+    greetingNow = new Date();
+    const greetingTimer = window.setInterval(() => {
+      greetingNow = new Date();
+    }, 60_000);
+
+    return () => window.clearInterval(greetingTimer);
   });
 
   const isCalibrating = $derived(
@@ -84,6 +104,10 @@
 
   const todayBio = $derived(athleteStore.biometrics?.series?.find((s: any) => s.date === todayStr));
   const todayLoad = $derived(athleteStore.metrics?.trainingLoadData?.find((m: any) => isoDate(m?.date) === todayStr));
+  const latestBio = $derived(athleteStore.biometrics?.series?.[athleteStore.biometrics.series.length - 1]);
+  const latestLoad = $derived(
+    athleteStore.metrics?.trainingLoadData?.[athleteStore.metrics.trainingLoadData.length - 1]
+  );
 
   const firstPositiveFiniteNumber = (...candidates: unknown[]): number | null => {
     for (const v of candidates) {
@@ -103,10 +127,6 @@
   const todaySleepMin = $derived(todayBio?.sleep_duration_min ?? null);
   const todaySleepScore = $derived(todayBio?.sleep_score ?? null);
 
-  const latestBio = $derived(athleteStore.biometrics?.series?.[athleteStore.biometrics.series.length - 1]);
-  const latestLoad = $derived(
-    athleteStore.metrics?.trainingLoadData?.[athleteStore.metrics.trainingLoadData.length - 1]
-  );
   const latestHrv = $derived(todayHrv ?? latestBio?.hrv_rmssd ?? null);
   const latestSleepMin = $derived(todaySleepMin ?? latestBio?.sleep_duration_min ?? null);
   const latestSleepScore = $derived(todaySleepScore ?? latestBio?.sleep_score ?? null);
@@ -150,8 +170,16 @@
 
     const cached = dashboardAiSummaryMemo.get(endDay);
     if (cached !== undefined && cached !== null) {
-      analysisText = cached;
-      return;
+      const summary = _sanitizeAiSummary(cached);
+      if (summary) {
+        if (summary !== cached) {
+          dashboardAiSummaryMemo.set(endDay, summary);
+          _persistAiSummary(endDay, summary);
+        }
+        analysisText = summary;
+        return;
+      }
+      dashboardAiSummaryMemo.delete(endDay);
     }
 
     analysisText = null;
@@ -162,7 +190,9 @@
     (async () => {
       try {
         const res = await api.getDashboardSummary(endDay);
-        const content = typeof res?.analysis?.content === 'string' ? res.analysis.content.trim() : '';
+        const content = typeof res?.analysis?.content === 'string'
+          ? _sanitizeAiSummary(res.analysis.content)
+          : '';
         const next = content ? content : null;
         // Only memoize successful content so transient 401s/network hiccups don't permanently lock us into null.
         if (next) {
@@ -298,8 +328,8 @@
   <!-- Header (Visible on Desktop, as Mobile has layout header) -->
   <div class="hidden md:flex justify-between items-start">
     <div>
-      <p class="text-xs text-text2 font-mono uppercase tracking-[0.1em]">{format(new Date(), 'EEEE, MMM d')}</p>
-      <h1 class="text-[22px] font-bold tracking-[-0.02em]">Good morning, {authStore.user?.user_metadata?.full_name || 'Athlete'}</h1>
+      <p class="text-xs text-text2 font-mono uppercase tracking-[0.1em]">{currentDateLabel}</p>
+      <h1 class="text-[22px] font-bold tracking-[-0.02em]">{currentGreeting}, {authStore.user?.user_metadata?.full_name || 'Athlete'}</h1>
     </div>
     <div class="flex items-center gap-2">
       <div class="w-2 h-2 rounded-full bg-teal shadow-[0_0_8px_var(--teal)]"></div>

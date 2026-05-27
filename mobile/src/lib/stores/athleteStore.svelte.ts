@@ -372,6 +372,13 @@ export class AthleteState {
     return true;
   }
 
+  async updateWorkout(workoutId: string, payload: object): Promise<any | boolean> {
+    const result = await api.updateWorkout(workoutId, payload);
+    if (!result || result.status !== 'success') return false;
+    await this.fetchAll(true);
+    return result.workout ?? true;
+  }
+
   async addSleep(payload: object): Promise<boolean> {
     const result = await api.post('/v1/biometrics/daily', payload);
     if (!result) return false;

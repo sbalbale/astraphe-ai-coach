@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import date, datetime, timedelta
+import re
 from typing import Any, Dict, Optional
 
 import numpy as np
@@ -31,7 +32,9 @@ router = APIRouter(prefix="/v1/analysis", tags=["Analysis"])
 _regen_in_flight: set[str] = set()
 _ANALYSIS_PROMPT_POLICY_VERSION: dict[str, str] = {
     "strain": "2026-05-25-strain-scale-v2",
+    "dashboard_summary": "2026-05-26-no-salutation-v1",
 }
+_TIME_OF_DAY_GREETING_RE = re.compile(r"^\s*good\s+(morning|afternoon|evening)\b[\s,!.:-]*", re.IGNORECASE)
 
 
 def _parse_day(day: Optional[str]) -> date:
@@ -402,6 +405,19 @@ def _prompt(analysis_type: str, context: Dict[str, Any]) -> str:
             f"ContextJSON: {context}\n"
         )
 
+    if analysis_type == "dashboard_summary":
+        return (
+            "You are ASTRAPE, a clinical performance analyst.\n"
+            "Task: Write a concise 1-2 sentence dashboard summary with a takeaway and a next-step.\n"
+            "Rules:\n"
+            "- Output 1-2 sentences only. No bullets, no headings, no emojis.\n"
+            "- Do not include a salutation or time-of-day greeting such as Good morning, Good afternoon, or Good evening.\n"
+            "- Mention at least one specific metric value from the JSON (e.g., recovery score, sleep score, HRV, RHR, CTL, ATL, TSB, weekly TSS).\n"
+            "- If data is missing, say what is missing in one sentence.\n\n"
+            f"AnalysisType: {analysis_type}\n"
+            f"ContextJSON: {context}\n"
+        )
+
     return (
         "You are ASTRAPE, a clinical performance analyst.\n"
         "Task: Write a concise 1–2 sentence analysis for the athlete.\n"
@@ -436,6 +452,13 @@ def _fmt_signed(v: Optional[float], decimals: int = 2) -> str:
     if v is None:
         return ""
     return f"{float(v):+.{decimals}f}".rstrip("0").rstrip(".")
+
+
+def _strip_leading_time_of_day_greeting(text: str | None) -> str:
+    cleaned = _TIME_OF_DAY_GREETING_RE.sub("", (text or "").strip(), count=1).lstrip()
+    if not cleaned:
+        return cleaned
+    return cleaned[:1].upper() + cleaned[1:]
 
 
 def _strain_label(strain_score: Optional[float]) -> Optional[str]:
@@ -504,6 +527,8 @@ def _violates_strain_policy(text: str, context: Dict[str, Any]) -> bool:
 def _sanitize_analysis_content(analysis_type: str, context: Dict[str, Any], text: str) -> str:
     if analysis_type == "strain" and _violates_strain_policy(text, context):
         return _fallback_content(analysis_type, context)
+    if analysis_type == "dashboard_summary":
+        return _strip_leading_time_of_day_greeting(text)
     return text
 
 
@@ -989,7 +1014,7 @@ async def dashboard_summary_analysis(
         return {
             "status": "success",
             "analysis": {
-                "content": cached["content"],
+                "content": _sanitize_analysis_content("dashboard_summary", ctx, cached["content"]),
                 "fingerprint": cached.get("fingerprint"),
                 "cached": True,
                 "stale": stale,
