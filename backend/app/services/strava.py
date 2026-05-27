@@ -890,7 +890,17 @@ async def ingest_strava_activity(
         f"[strava.ingest] activity_id={activity_id} athlete={athlete_id} "
         f"sport={sport_type} created={was_created}"
     )
+    if not _load_stored_streams_dict(db, workout_id):
+        asyncio.create_task(_hydrate_streams_background(db, athlete_id, workout_id))
     return workout
+
+
+async def _hydrate_streams_background(db: Any, athlete_id: str, workout_id: str) -> None:
+    """Fetch Strava streams after ingest so opening a workout does not block on hydrate."""
+    try:
+        await hydrate_workout_streams(db, athlete_id, workout_id, delay=True)
+    except Exception as exc:
+        print(f"[strava.hydrate_bg] workout={workout_id} athlete={athlete_id} error={exc}")
 
 
 async def backfill_historical_data(
