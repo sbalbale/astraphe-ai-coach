@@ -64,7 +64,7 @@ GitHub Actions deployment secrets:
 
 Runtime secrets are provided by the deployed Docker environment, not directly by the workflow file. Keep these aligned with `backend/.env.example`:
 
-- `SUPABASE_URL`
+- `SUPABASE_URL` — on Proxmox, **astrape-api** reaches self-hosted Kong via `http://host.docker.internal:8001` (host publish `8001:8000` on **supabase-kong**). Add `extra_hosts: ["host.docker.internal:host-gateway"]` on Linux if the hostname does not resolve. Mobile uses `VITE_SUPABASE_URL` (public URL), not `host.docker.internal`.
 - `SUPABASE_KEY`
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `GEMINI_API_KEY`

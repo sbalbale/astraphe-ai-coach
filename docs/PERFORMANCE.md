@@ -12,13 +12,18 @@ Production: GitHub Actions → GHCR → Proxmox (`astrape-api`, self-hosted Supa
 
 ### Phase 2 (optional): Supabase Storage for stream blobs
 
-Large 1 Hz JSON can be moved out of Postgres JSONB without downsampling:
+Large 1 Hz stream data can move out of Postgres JSONB without downsampling.
 
-1. Store gzip-compressed full `time_series` JSON in Supabase Storage.
-2. Keep `activity_streams.storage_path` + metadata in Postgres.
-3. API serves bytes with `Content-Encoding: gzip` (or signed URL for direct client fetch).
+**How-to:** [STREAM_STORAGE_MIGRATION.md](./STREAM_STORAGE_MIGRATION.md)
 
-Not implemented yet; use when `activity_streams` row size or list-adjacent queries remain slow after combined endpoint + Redis.
+Summary:
+
+1. Store gzip-compressed full `time_series` JSON in bucket `activity-streams` (`{athlete_id}/{workout_id}.json.gz`).
+2. Keep `storage_path` + metadata in Postgres; upload with `upsert: true` for hydrate/refetch.
+3. **API proxy (Option A):** FastAPI gunzips and returns the same `/detail` JSON shape; Redis `detail:` cache unchanged.
+4. Raw `.fit` is a future **Garmin artifact** only (`fit_file_url`), not the canonical stream format.
+
+Not implemented yet; use when `activity_streams` row size remains slow after combined endpoint + Redis.
 
 ## Coach latency
 

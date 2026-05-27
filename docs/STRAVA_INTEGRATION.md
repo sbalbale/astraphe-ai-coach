@@ -51,6 +51,7 @@ Backfill and status:
 
 Activity detail:
 
+- `GET /v1/activities/{workout_id}/detail` (preferred — streams, laps, intervals, zones)
 - `GET /v1/activities/{workout_id}/streams`
 - `GET /v1/activities/{workout_id}/laps`
 - `GET /v1/activities/{workout_id}/intervals`

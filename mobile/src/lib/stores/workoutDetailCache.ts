@@ -1,5 +1,12 @@
 import { browser } from '$app/environment';
-import { getActivityDetail } from '../services/activityService';
+import {
+  getActivityDetail,
+  type ActivityDetail,
+  type ActivityIntervals,
+  type ActivityLap,
+  type ActivityStreams,
+  type ActivityZones,
+} from '../services/activityService';
 
 const CACHE_KEY = 'astrape:workout-detail:v1';
 const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
@@ -7,10 +14,10 @@ const MAX_ENTRIES = 20;
 
 export interface WorkoutDetailEntry {
   savedAt: number;
-  streams: any;
-  laps: any[];
-  intervals: any;
-  zones: any;
+  streams: ActivityStreams | null;
+  laps: ActivityLap[];
+  intervals: ActivityIntervals | null;
+  zones: ActivityZones | null;
 }
 
 export type WorkoutDetailCache = Record<string, WorkoutDetailEntry>;
@@ -65,7 +72,7 @@ function saveRawCache(cache: WorkoutDetailCache): void {
 
 export function saveWorkoutDetailToCache(
   workoutId: string,
-  data: Omit<WorkoutDetailEntry, 'savedAt'>
+  data: Pick<ActivityDetail, 'streams' | 'laps' | 'intervals' | 'zones'>
 ): void {
   if (!browser) return;
   const cache = loadWorkoutDetailCache();
