@@ -119,7 +119,9 @@ def fetch_stream_row_columns(db: Any, workout_id: str, athlete_id: str) -> dict[
     if not isinstance(data, dict):
         return None
     ts = resolve_time_series(data)
-    if ts is None and not data.get("storage_path"):
+    # Treat missing/corrupt Storage blobs the same as missing streams.
+    # If storage_path exists but the blob is missing/corrupt, resolve_time_series returns None.
+    if ts is None:
         return None
     return {
         "time_series": ts or {},

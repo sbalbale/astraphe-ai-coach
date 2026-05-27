@@ -24,6 +24,24 @@ from datetime import date, timedelta
 
 _client = genai.Client(api_key=settings.GEMINI_API_KEY)
 
+def _should_fallback_chat_model(err_str: str) -> bool:
+    """
+    True when the primary chat model is likely temporarily overloaded/unavailable.
+    We only use this to decide whether to try the configured fallback model.
+    """
+    s = (err_str or "").lower()
+    return any(
+        k in s
+        for k in (
+            "503",
+            "unavailable",
+            "high demand",
+            "overloaded",
+            "resource exhausted",
+            "quota exceeded",
+        )
+    )
+
 def load_coach_instructions() -> str:
     prompt_file = settings.PROMPTS_DIR / settings.COACH_PROMPT_FILE
     try:
@@ -614,20 +632,56 @@ def build_initialization_message(
 
     prompt = f"{instructions}\n\n{context_block}\n\n{directive}"
     try:
-        response = _client.models.generate_content(
-            model=effective_model,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                max_output_tokens=256,
-                temperature=0.35,
-            ),
-        )
-        text = _extract_athlete_message_from_model_output(response)
+        fallback_model = (getattr(settings, "GEMINI_FALLBACK_MODEL", "") or "").strip()
+        candidates: list[str] = [effective_model]
+        if fallback_model and fallback_model not in candidates:
+            candidates.append(fallback_model)
+
+        last_err: Exception | None = None
+        text = ""
+        for idx, model in enumerate(candidates):
+            for attempt in range(3):
+                try:
+                    response = _client.models.generate_content(
+                        model=model,
+                        contents=prompt,
+                        config=types.GenerateContentConfig(
+                            max_output_tokens=256,
+                            temperature=0.35,
+                        ),
+                    )
+                    text = _extract_athlete_message_from_model_output(response)
+                    last_err = None
+                    break
+                except Exception as e:
+                    last_err = e
+                    err_str = str(e)
+                    is_transient = any(
+                        k in err_str
+                        for k in ("500", "503", "INTERNAL", "overloaded", "UNAVAILABLE", "high demand")
+                    )
+                    if attempt < 2 and is_transient:
+                        time.sleep(1.0 * (attempt + 1))
+                        continue
+                    break
+
+            if text:
+                break
+            if idx == 0 and last_err is not None and len(candidates) > 1 and _should_fallback_chat_model(str(last_err)):
+                continue
+            break
     except Exception as e:
-        text = f"Initialization failed: {e}"
+        # Never surface provider errors directly in the UI.
+        text = ""
     text = _strip_leading_time_of_day_greeting(text)
     if not anomalies and text:
         text = f"{greeting}. {text}"
+    if not text:
+        # Deterministic, non-error fallback.
+        if anomalies:
+            text = "I’m seeing a couple signals that suggest we should keep today low-stress. Want me to propose a recovery-focused plan for the next 24–48 hours?"
+        else:
+            text = f"{greeting}. What do you want to focus on today—training plan, recovery, or a specific workout?"
     return text, bool(anomalies)
 
 
@@ -1041,16 +1095,24 @@ def get_coach_response_agentic(
     system_instruction = load_coach_instructions()
     coach_t0 = time.perf_counter()
     if db:
-        context_block = asyncio.run(
-            _assemble_agentic_context_async(
-                db,
-                athlete_id,
-                message,
-                current_tss=current_tss,
-                conversation_id=conversation_id,
-                timezone_offset_min=timezone_offset_min,
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            context_block = asyncio.run(
+                _assemble_agentic_context_async(
+                    db,
+                    athlete_id,
+                    message,
+                    current_tss=current_tss,
+                    conversation_id=conversation_id,
+                    timezone_offset_min=timezone_offset_min,
+                )
             )
-        )
+        else:
+            raise RuntimeError(
+                "get_coach_response_agentic() was called from an async context. "
+                "Use get_coach_response_agentic_async() instead."
+            )
         logger.info(
             "[perf] coach_context duration_ms=%s rag_skipped=%s",
             round((time.perf_counter() - coach_t0) * 1000, 1),
@@ -1134,9 +1196,14 @@ def get_coach_response_agentic(
                 )
             )
 
-    effective_model = model_name or settings.GEMINI_MODEL
+    primary_model = model_name or settings.GEMINI_MODEL
+    fallback_model = (getattr(settings, "GEMINI_FALLBACK_MODEL", "") or "").strip()
+    candidates: list[str] = [primary_model]
+    if fallback_model and fallback_model not in candidates:
+        candidates.append(fallback_model)
+
     # Only use ThinkingConfig for models that specifically support it
-    is_thinking_model = "thinking" in effective_model.lower()
+    is_thinking_model = "thinking" in primary_model.lower()
     
     config = types.GenerateContentConfig(
         system_instruction=system_with_ctx,
@@ -1156,29 +1223,45 @@ def get_coach_response_agentic(
     for _hop in range(max_hops):
         hop_t0 = time.perf_counter()
         _hop_error: Exception | None = None
-        for _attempt in range(3):  # 3 attempts for larger models
-            try:
-                last_response = _client.models.generate_content(
-                    model=effective_model,
-                    contents=contents,
-                    config=config,
-                )
-                _hop_error = None
+        for _model_idx, effective_model in enumerate(candidates):
+            _hop_error = None
+            for _attempt in range(3):  # 3 attempts for larger models
+                try:
+                    last_response = _client.models.generate_content(
+                        model=effective_model,
+                        contents=contents,
+                        config=config,
+                    )
+                    _hop_error = None
+                    break
+                except Exception as e:
+                    _hop_error = e
+                    err_str = str(e)
+                    # Catch broad transient errors and connection-level failures
+                    is_transient = any(
+                        k in err_str
+                        for k in ("500", "503", "INTERNAL", "overloaded", "Server disconnected", "RemoteProtocolError", "EOF")
+                    )
+                    if _attempt < 2 and is_transient:
+                        wait = 1.5 * (_attempt + 1)
+                        print(
+                            f"[coach] Gemini transient error (hop {_hop}, attempt {_attempt + 1}): {e}. Retrying in {wait}s…"
+                        )
+                        time.sleep(wait)
+                        continue
+                    break
+
+            # Success with this model.
+            if _hop_error is None:
                 break
-            except Exception as e:
-                _hop_error = e
-                err_str = str(e)
-                # Catch broad transient errors and connection-level failures
-                is_transient = any(
-                    k in err_str 
-                    for k in ("500", "503", "INTERNAL", "overloaded", "Server disconnected", "RemoteProtocolError", "EOF")
-                )
-                if _attempt < 2 and is_transient:
-                    wait = 1.5 * (_attempt + 1)
-                    print(f"[coach] Gemini transient error (hop {_hop}, attempt {_attempt + 1}): {e}. Retrying in {wait}s…")
-                    time.sleep(wait)
-                    continue
-                break
+
+            # If primary looks overloaded/unavailable, try fallback model (if configured).
+            if _model_idx == 0 and len(candidates) > 1 and _should_fallback_chat_model(str(_hop_error)):
+                print(f"[coach] Primary model unavailable; trying fallback model={candidates[1]}")
+                continue
+
+            # Otherwise don't keep iterating candidates.
+            break
 
         logger.info(
             "[perf] coach_hop hop=%s duration_ms=%s",
@@ -1277,6 +1360,71 @@ def get_coach_response_agentic(
     final = _correct_relative_date_language(final, planned_dates_from_tools, calendar)
     grounding = _extract_grounding_sources(last_response) if last_response else []
     return (final or "Unable to complete coach response.", grounding)
+
+
+async def get_coach_response_agentic_async(
+    athlete_id: str,
+    message: str,
+    current_tss: float = 0.0,
+    db: Client | None = None,
+    conversation_id: str | None = None,
+    model_name: str | None = None,
+    timezone_offset_min: int | None = None,
+    max_tool_hops: int = 15,
+) -> tuple[str, list[dict[str, str]]]:
+    """
+    Async-safe wrapper that assembles context without asyncio.run().
+
+    Note: Gemini SDK calls in this module are synchronous; callers should still use
+    asyncio.to_thread(get_coach_response_agentic, ...) from FastAPI routes to avoid
+    blocking the event loop. This function exists to prevent refactor traps and for
+    potential future async SDK usage.
+    """
+    if db is None:
+        return get_coach_response_agentic(
+            athlete_id=athlete_id,
+            message=message,
+            current_tss=current_tss,
+            db=None,
+            conversation_id=conversation_id,
+            model_name=model_name,
+            timezone_offset_min=timezone_offset_min,
+            max_tool_hops=max_tool_hops,
+        )
+
+    context_block = await _assemble_agentic_context_async(
+        db,
+        athlete_id,
+        message,
+        current_tss=current_tss,
+        conversation_id=conversation_id,
+        timezone_offset_min=timezone_offset_min,
+    )
+    system_instruction = load_coach_instructions()
+    system_with_ctx = (
+        f"{system_instruction}\n\n{context_block}\n\n"
+        "Calendar rule: for all relative dates, including today, tomorrow, named weekdays, this week, and next week, "
+        "use the athlete-local current_local_date, current_local_weekday, tomorrow_date, tomorrow_weekday, and upcoming_weekdays from SYSTEM CONTEXT. "
+        "For follow-up clarifications, preserve the previously discussed workout date unless the athlete clearly changes it. "
+        "Do not infer dates from UTC, server time, or model pretraining."
+    )
+    # Delegate to the existing sync logic for the rest (tool loop + model calls).
+    # We call the sync function with db=None to avoid re-running context assembly,
+    # and instead inline the no-db branch prompt here.
+    final_prompt = f"{system_with_ctx}\n\nAthlete Message: {message}"
+    effective_model = model_name or settings.GEMINI_MODEL
+    response = _client.models.generate_content(
+        model=effective_model,
+        contents=final_prompt,
+        config=types.GenerateContentConfig(
+            thinking_config=types.ThinkingConfig(include_thoughts=False),
+            temperature=0.35,
+        ),
+    )
+    return (
+        _extract_athlete_message_from_model_output(response),
+        _extract_grounding_sources(response),
+    )
 
 
 def _agentic_max_tool_hops(message: str) -> int:

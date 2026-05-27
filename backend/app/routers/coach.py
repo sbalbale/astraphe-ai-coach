@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, UploadFile, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Depends, UploadFile, BackgroundTasks, Request
 from fastapi.responses import StreamingResponse
 from pathlib import Path
 from pydantic import BaseModel, field_validator
@@ -51,7 +51,7 @@ async def _run_conversation_title(
             conversation_id,
             model_name,
         )
-        _force_set_conversation_title(db, athlete_id, conversation_id, new_title)
+        await asyncio.to_thread(_force_set_conversation_title, db, athlete_id, conversation_id, new_title)
     except Exception:
         pass
 
@@ -194,6 +194,71 @@ async def list_conversations(
         .execute()
     )
     return {"status": "success", "conversations": res.data or []}
+
+
+@router.get("/memories")
+async def list_memories(
+    memory_type: str | None = None,
+    limit: int = 50,
+    athlete_id: str = Depends(get_current_athlete),
+    config: UserConfig = Depends(get_user_config),
+    db = Depends(get_user_db),
+):
+    _require_premium(config)
+    from app.services.memory import list_coach_memories
+
+    rows = await asyncio.to_thread(
+        list_coach_memories,
+        athlete_id,
+        db=db,
+        memory_type=memory_type,
+        limit=limit,
+    )
+    return {"status": "success", "memories": rows}
+
+
+@router.patch("/memories/{memory_id}")
+async def update_memory(
+    memory_id: str,
+    payload: dict,
+    athlete_id: str = Depends(get_current_athlete),
+    config: UserConfig = Depends(get_user_config),
+    db = Depends(get_user_db),
+):
+    _require_premium(config)
+    update: dict = {}
+    for k in ("content", "memory_type", "entity_key", "event_date"):
+        if k in payload:
+            update[k] = payload.get(k)
+    if not update:
+        raise HTTPException(status_code=400, detail="No fields provided")
+    update["updated_at"] = _now_iso()
+    res = await asyncio.to_thread(
+        db.table("coach_memories")
+        .update(update)
+        .eq("id", memory_id)
+        .eq("athlete_id", athlete_id)
+        .execute
+    )
+    return {"status": "success", "memory": (res.data or [{}])[0] if res else None}
+
+
+@router.delete("/memories/{memory_id}")
+async def delete_memory(
+    memory_id: str,
+    athlete_id: str = Depends(get_current_athlete),
+    config: UserConfig = Depends(get_user_config),
+    db = Depends(get_user_db),
+):
+    _require_premium(config)
+    res = await asyncio.to_thread(
+        db.table("coach_memories")
+        .delete()
+        .eq("id", memory_id)
+        .eq("athlete_id", athlete_id)
+        .execute
+    )
+    return {"status": "success", "deleted": len(res.data or []) if res else 0}
 
 @router.post("/conversations")
 async def create_conversation(
@@ -419,6 +484,7 @@ async def chat_with_coach(
 async def stream_chat_with_coach(
     payload: ChatMessage,
     background_tasks: BackgroundTasks,
+    request: Request,
     athlete_id: str = Depends(get_current_athlete),
     config: UserConfig = Depends(get_user_config),
     _rl: None = Depends(require_ai_rate_limit),
@@ -467,21 +533,26 @@ async def stream_chat_with_coach(
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
         else:
             _insert_message(db, athlete_id, conversation_id, role="ai", content=ai_full, image_urls=None)
-            recent_history = _load_conversation_history(db, athlete_id, conversation_id, limit=10)
-            background_tasks.add_task(
-                _run_memory_extraction,
-                athlete_id,
-                recent_history,
-                db,
-                config.gemini_analysis_model,
-            )
-            background_tasks.add_task(
-                _run_conversation_title,
-                db,
-                athlete_id,
-                conversation_id,
-                config.gemini_model,
-            )
+            try:
+                disconnected = await request.is_disconnected()
+            except Exception:
+                disconnected = False
+            if not disconnected:
+                recent_history = _load_conversation_history(db, athlete_id, conversation_id, limit=10)
+                background_tasks.add_task(
+                    _run_memory_extraction,
+                    athlete_id,
+                    recent_history,
+                    db,
+                    config.gemini_analysis_model,
+                )
+                background_tasks.add_task(
+                    _run_conversation_title,
+                    db,
+                    athlete_id,
+                    conversation_id,
+                    config.gemini_model,
+                )
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")

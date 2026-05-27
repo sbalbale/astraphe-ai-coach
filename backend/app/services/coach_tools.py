@@ -670,6 +670,81 @@ def handle_save_memory(
         return {"error": str(e)}
 
 
+def handle_update_memory(
+    args: dict[str, Any],
+    *,
+    athlete_id: str,
+    db: Client,
+) -> dict[str, Any]:
+    """
+    Update a coach memory row. Prefer selecting a target using list_memories first.
+
+    This handler is resilient to schema drift: if optional columns (event_date, entity_key, memory_type)
+    don't exist yet, it retries with only supported fields.
+    """
+    memory_id = str(args.get("memory_id", "")).strip()
+    if not memory_id:
+        return {"error": "memory_id is required"}
+
+    update: dict[str, Any] = {}
+    for k in ("content", "memory_type", "entity_key", "event_date"):
+        if k in args and args.get(k) is not None:
+            update[k] = args.get(k)
+    if not update:
+        return {"error": "No fields to update"}
+
+    def _try_update(payload: dict[str, Any]) -> Any:
+        return (
+            db.table("coach_memories")
+            .update(payload)
+            .eq("id", memory_id)
+            .eq("athlete_id", athlete_id)
+            .execute()
+        )
+
+    try:
+        res = _try_update(update)
+        return {"status": "success", "memory": (res.data or [{}])[0] if res else None}
+    except Exception as e:
+        err = str(e)
+        # Common failure while local DB hasn't applied the new migration yet.
+        if "does not exist" in err and "coach_memories." in err:
+            safe = dict(update)
+            for drop in ("event_date", "entity_key", "memory_type"):
+                safe.pop(drop, None)
+            if not safe:
+                return {"error": err}
+            try:
+                res2 = _try_update(safe)
+                return {
+                    "status": "partial_success",
+                    "dropped_fields": list(set(update.keys()) - set(safe.keys())),
+                    "memory": (res2.data or [{}])[0] if res2 else None,
+                }
+            except Exception as e2:
+                return {"error": str(e2)}
+        return {"error": err}
+
+
+def handle_list_memories(
+    args: dict[str, Any],
+    *,
+    athlete_id: str,
+    db: Client,
+) -> dict[str, Any]:
+    from app.services.memory import list_coach_memories
+
+    memory_type = args.get("memory_type")
+    limit = args.get("limit", 50)
+    rows = list_coach_memories(
+        athlete_id,
+        db=db,
+        memory_type=str(memory_type) if memory_type else None,
+        limit=int(limit) if isinstance(limit, int | float | str) else 50,
+    )
+    return {"status": "success", "memories": rows}
+
+
 def handle_clear_training_plans(
     args: dict[str, Any],
     *,
@@ -835,6 +910,39 @@ _save_memory_decl = types.FunctionDeclaration(
     ),
 )
 
+_update_memory_decl = types.FunctionDeclaration(
+    name="update_memory",
+    description=(
+        "Update an existing coach memory by id. Use this when the athlete corrects previously saved "
+        "information (e.g. correcting a race date from May 28 to June 28). Prefer calling list_memories "
+        "first to get the correct memory id."
+    ),
+    parameters=types.Schema(
+        type=types.Type.OBJECT,
+        properties={
+            "memory_id": types.Schema(type=types.Type.STRING, description="coach_memories.id to update"),
+            "content": types.Schema(type=types.Type.STRING, description="New memory content (max ~200 chars recommended)"),
+            "memory_type": types.Schema(type=types.Type.STRING, description="Optional type, e.g. 'race' or 'note'"),
+            "entity_key": types.Schema(type=types.Type.STRING, description="Optional normalized key for upserts"),
+            "event_date": types.Schema(type=types.Type.STRING, description="Optional ISO date YYYY-MM-DD"),
+        },
+        required=["memory_id"],
+    ),
+)
+
+_list_memories_decl = types.FunctionDeclaration(
+    name="list_memories",
+    description="List recent coach memories for the athlete. Use to disambiguate when multiple races exist.",
+    parameters=types.Schema(
+        type=types.Type.OBJECT,
+        properties={
+            "memory_type": types.Schema(type=types.Type.STRING, description="Optional filter, e.g. 'race' or 'note'"),
+            "limit": types.Schema(type=types.Type.INTEGER, description="Max rows (default 50)"),
+        },
+        required=[],
+    ),
+)
+
 _clear_training_plans_decl = types.FunctionDeclaration(
     name="clear_training_plans",
     description=(
@@ -890,6 +998,8 @@ TOOLS: list[types.Tool] = [
         _nutrition_decl, 
         _clear_training_plans_decl, 
         _save_memory_decl,
+        _list_memories_decl,
+        _update_memory_decl,
         _scratchpad_decl
     ]),
     types.Tool(google_search=types.GoogleSearch()),
@@ -903,6 +1013,8 @@ TOOL_HANDLERS: dict[str, ToolHandler] = {
     "calculate_nutrition": lambda args, aid, db: handle_calculate_nutrition(args, athlete_id=aid, db=db),
     "clear_training_plans": lambda args, aid, db: handle_clear_training_plans(args, athlete_id=aid, db=db),
     "save_memory": lambda args, aid, db: handle_save_memory(args, athlete_id=aid, db=db),
+    "list_memories": lambda args, aid, db: handle_list_memories(args, athlete_id=aid, db=db),
+    "update_memory": lambda args, aid, db: handle_update_memory(args, athlete_id=aid, db=db),
     "internal_scratchpad": lambda args, aid, db: handle_internal_scratchpad(args, athlete_id=aid, db=db),
 }
 

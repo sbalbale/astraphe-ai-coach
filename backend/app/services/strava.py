@@ -34,6 +34,23 @@ STREAM_KEYS = (
 STRAVA_BACKFILL_REQUEST_GAP_S = 1.5
 STRAVA_RATE_LIMIT_COOLDOWN_S = 900  # 15 min rolling window when no Retry-After
 
+_background_tasks: set[asyncio.Task] = set()
+
+
+def schedule_hydrate_streams_background(db: Any, athlete_id: str, workout_id: str) -> None:
+    """
+    Schedule a background hydration task and keep a strong reference.
+
+    Asyncio tasks without a strong ref may be garbage collected/cancelled.
+    """
+    try:
+        task = asyncio.create_task(_hydrate_streams_background(db, athlete_id, workout_id))
+    except RuntimeError:
+        # No running loop (e.g., called from a sync context); skip silently.
+        return
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
 
 class StravaRateLimitError(Exception):
     """Raised on HTTP 429 from Strava read APIs so callers can back off (backfill/webhook)."""
@@ -891,8 +908,8 @@ async def ingest_strava_activity(
         f"[strava.ingest] activity_id={activity_id} athlete={athlete_id} "
         f"sport={sport_type} created={was_created}"
     )
-    if not _load_stored_streams_dict(db, workout_id):
-        asyncio.create_task(_hydrate_streams_background(db, athlete_id, workout_id))
+    if not streams:
+        schedule_hydrate_streams_background(db, athlete_id, workout_id)
     return workout
 
 
