@@ -44,7 +44,6 @@ def main() -> int:
 
     db = get_admin_db()
     processed = 0
-    offset = 0
 
     while True:
         batch_limit = args.batch_size
@@ -55,7 +54,7 @@ def main() -> int:
             batch_limit = min(batch_limit, remaining)
 
         rows = _fetch_batch(
-            db, athlete_id=args.athlete_id, limit=batch_limit, offset=offset
+            db, athlete_id=args.athlete_id, limit=batch_limit, offset=0
         )
         if not rows:
             break
@@ -83,9 +82,8 @@ def main() -> int:
                 print(f"migrated {path} ({byte_size} bytes)")
             processed += 1
 
-        offset += len(rows)
-        if len(rows) < batch_limit:
-            break
+        # Do not increment an offset here: each successful row updates `storage_path`
+        # and would shift the remaining result set, causing skipped rows.
 
     print(f"done: {processed} row(s)")
     return 0

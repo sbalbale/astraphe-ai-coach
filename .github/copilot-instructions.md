@@ -82,7 +82,7 @@ If multiple packages are touched, keep feedback separated by package to prevent 
 - **Types & API boundaries**
   - Prefer typed request/response models; avoid `any` and unsafe casts.
 
-## Mobile review checklist (`mobile/`, Flutter/Dart)
+## Mobile review checklist (`mobile/`, Svelte 5 + TypeScript + Capacitor)
 - **Correctness**
   - Null-safety is respected; avoid `!` unless well-justified.
   - Async flows handle errors and cancellation; avoid `setState` after dispose.

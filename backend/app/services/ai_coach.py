@@ -1373,58 +1373,22 @@ async def get_coach_response_agentic_async(
     max_tool_hops: int = 15,
 ) -> tuple[str, list[dict[str, str]]]:
     """
-    Async-safe wrapper that assembles context without asyncio.run().
+    Async-safe wrapper for use from `async def` code.
 
-    Note: Gemini SDK calls in this module are synchronous; callers should still use
-    asyncio.to_thread(get_coach_response_agentic, ...) from FastAPI routes to avoid
-    blocking the event loop. This function exists to prevent refactor traps and for
-    potential future async SDK usage.
+    The Gemini SDK calls (and the agentic tool-loop) are synchronous; this helper runs
+    the full agentic implementation in a worker thread so it retains tool calling,
+    retries/fallbacks, and max_tool_hops behavior.
     """
-    if db is None:
-        return get_coach_response_agentic(
-            athlete_id=athlete_id,
-            message=message,
-            current_tss=current_tss,
-            db=None,
-            conversation_id=conversation_id,
-            model_name=model_name,
-            timezone_offset_min=timezone_offset_min,
-            max_tool_hops=max_tool_hops,
-        )
-
-    context_block = await _assemble_agentic_context_async(
-        db,
-        athlete_id,
-        message,
+    return await asyncio.to_thread(
+        get_coach_response_agentic,
+        athlete_id=athlete_id,
+        message=message,
         current_tss=current_tss,
+        db=db,
         conversation_id=conversation_id,
+        model_name=model_name,
         timezone_offset_min=timezone_offset_min,
-    )
-    system_instruction = load_coach_instructions()
-    system_with_ctx = (
-        f"{system_instruction}\n\n{context_block}\n\n"
-        "Calendar rule: for all relative dates, including today, tomorrow, named weekdays, this week, and next week, "
-        "use the athlete-local current_local_date, current_local_weekday, tomorrow_date, tomorrow_weekday, and upcoming_weekdays from SYSTEM CONTEXT. "
-        "For follow-up clarifications, preserve the previously discussed workout date unless the athlete clearly changes it. "
-        "Do not infer dates from UTC, server time, or model pretraining."
-    )
-    # Delegate to the existing sync logic for the rest (tool loop + model calls).
-    # We call the sync function with db=None to avoid re-running context assembly,
-    # and instead inline the no-db branch prompt here.
-    final_prompt = f"{system_with_ctx}\n\nAthlete Message: {message}"
-    effective_model = model_name or settings.GEMINI_MODEL
-    response = await asyncio.to_thread(
-        _client.models.generate_content,
-        model=effective_model,
-        contents=final_prompt,
-        config=types.GenerateContentConfig(
-            thinking_config=types.ThinkingConfig(include_thoughts=False),
-            temperature=0.35,
-        ),
-    )
-    return (
-        _extract_athlete_message_from_model_output(response),
-        _extract_grounding_sources(response),
+        max_tool_hops=max_tool_hops,
     )
 
 

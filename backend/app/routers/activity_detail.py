@@ -19,6 +19,7 @@ router = APIRouter(prefix=f"{settings.API_PREFIX}/activities", tags=["Activity D
 _STREAMS_CACHE_TTL = 86400  # 24 hours (streams are immutable)
 _ZONES_CACHE_TTL = 21600    # 6 hours
 _DETAIL_CACHE_TTL = 86400
+_DETAIL_CACHE_TTL_MISSING_STREAMS = 300  # 5 minutes
 
 
 async def _cache_get(key: str) -> dict | list | None:
@@ -252,7 +253,12 @@ async def get_activity_detail(
             "zones": zones_payload,
         }
         span["bytes"] = payload_bytes(result)
-        await _cache_set(detail_cache_key, result, _DETAIL_CACHE_TTL)
+        detail_cache_ttl = (
+            _DETAIL_CACHE_TTL
+            if streams_payload is not None
+            else _DETAIL_CACHE_TTL_MISSING_STREAMS
+        )
+        await _cache_set(detail_cache_key, result, detail_cache_ttl)
         return result
 
 
