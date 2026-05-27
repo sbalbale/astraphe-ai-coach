@@ -138,12 +138,30 @@ async def _backfill_historical_data_impl(
     try:
         profile = await whoop.fetch_profile(access_token)
         measurements = await whoop.fetch_body_measurement(access_token)
-        
+
+        # Parse weight — WHOOP v2 returns weight_kilograms
+        raw_weight = measurements.get("weight_kilograms") or measurements.get("weight_kg")
+        weight_kg = round(float(raw_weight), 2) if raw_weight else None
+
+        # Parse height — WHOOP v2 returns height_meters; convert to cm
+        raw_height_cm = measurements.get("height_cm")
+        raw_height_m = (measurements.get("height_meters")
+                        or measurements.get("height_meter")
+                        or measurements.get("height_m"))
+        height_cm = (round(float(raw_height_cm), 1) if raw_height_cm
+                     else round(float(raw_height_m) * 100.0, 1) if raw_height_m
+                     else None)
+
         profile_update = {}
-        if profile.get("first_name"): profile_update["display_name"] = profile["first_name"]
-        if measurements.get("weight_kilograms"): profile_update["weight_kg"] = measurements["weight_kilograms"]
-        if measurements.get("max_heart_rate"): profile_update["max_hr"] = measurements["max_heart_rate"]
-        
+        if profile.get("first_name"):
+            profile_update["display_name"] = profile["first_name"]
+        if weight_kg is not None:
+            profile_update["weight_kg"] = weight_kg
+        if height_cm is not None:
+            profile_update["height_cm"] = height_cm
+        if measurements.get("max_heart_rate"):
+            profile_update["max_hr"] = measurements["max_heart_rate"]
+
         # Also update the oauth_token with the external_user_id
         if profile.get("user_id"):
             db.table("oauth_tokens").update({
@@ -152,6 +170,17 @@ async def _backfill_historical_data_impl(
 
         if profile_update:
             db.table("athletes").update(profile_update).eq("id", athlete_id).execute()
+
+        # Upsert weight/height into today's biometrics row
+        today = datetime.now(timezone.utc).date()
+        bio_update: dict = {"athlete_id": athlete_id, "date": today.isoformat()}
+        if weight_kg is not None:
+            bio_update["weight_kg"] = weight_kg
+        if height_cm is not None:
+            bio_update["height_cm"] = height_cm
+        if len(bio_update) > 2:
+            db.table("biometrics").upsert(bio_update, on_conflict="athlete_id,date").execute()
+            print(f"[whoop.backfill] wrote body metrics to biometrics date={today.isoformat()} fields={[k for k in bio_update if k not in ('athlete_id','date')]}")
     except Exception as e:
         print(f"[whoop.backfill] Failed to update profile/measurements: {e}")
 
