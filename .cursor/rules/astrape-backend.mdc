@@ -384,11 +384,21 @@ Second-by-second HR/Watts/Cadence/GPS is stored as a JSON blob, not relational r
 Save the path in `workouts.stream_storage_path`.
 
 ```python
-async def _store_strava_streams(activity_id: int, streams: dict, storage_client):
-    path = f"strava_streams/{activity_id}.json"
-    await storage_client.from_("activity-streams").upload(path, json.dumps(streams).encode())
+import gzip
+import json
+
+async def _store_activity_streams(athlete_id: str, workout_id: str, time_series: dict, storage_client):
+    path = f"{athlete_id}/{workout_id}.json.gz"
+    body = gzip.compress(json.dumps(time_series).encode("utf-8"))
+    await storage_client.from_("activity-streams").upload(
+        path,
+        body,
+        {"content-type": "application/json", "upsert": "true"},
+    )
     return path
 ```
+
+Canonical streams are **gzip JSON** in `activity-streams`, not `.fit`. Raw Garmin `.fit` files (future) go in `workouts.fit_file_url` / `garmin_fit/` and are parsed into the same `time_series` schema.
 
 ### Multi-device deduplication
 

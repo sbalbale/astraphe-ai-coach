@@ -318,6 +318,12 @@
     
     try {
       let accumulated = '';
+      let inputUnlocked = false;
+      const unlockInput = () => {
+        if (inputUnlocked) return;
+        inputUnlocked = true;
+        loading = false;
+      };
       const data = await api.streamCoachMessage({
         message: text || '(image)',
         recent_tss: athleteStore.recent_tss,
@@ -326,7 +332,9 @@
         onConversationId: (id) => {
           conversationId = id;
         },
+        onStarted: unlockInput,
         onChunk: (chunk) => {
+          unlockInput();
           accumulated += chunk;
           const msgIndex = messages.findIndex((m) => m.id === aiMsgId);
           if (msgIndex !== -1) {

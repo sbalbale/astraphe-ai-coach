@@ -100,7 +100,7 @@ Important fields:
 - `tss`
 - `if_value`
 - `strain_score`
-- `fit_file_url`
+- `fit_file_url` — optional URL/path to a **raw Garmin `.fit` artifact** (future direct Garmin ingest). Not the canonical stream store; canonical streams live in `activity_streams` (JSONB today, gzip JSON in Storage after phase 2). Parsed FIT data uses the same `time_series` schema as Strava/WHOOP.
 - Strava-related detail/source columns from later migrations
 
 Allowed sources include `garmin`, `whoop`, `healthkit`, `manual`, and `strava`.

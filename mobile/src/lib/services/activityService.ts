@@ -111,7 +111,7 @@ export async function getActivityDetail(workoutId: string): Promise<ActivityDeta
   };
 }
 
-/** Loads stored streams from the API (not a live Strava fetch). */
+/** @deprecated Use getActivityDetail() — single request for streams, laps, intervals, zones. */
 export async function getActivityStreams(workoutId: string): Promise<ActivityStreams | null> {
   const headers = await getAuthHeaders();
   const res = await fetch(`${API_URL}/v1/activities/${workoutId}/streams`, { headers });
@@ -120,6 +120,7 @@ export async function getActivityStreams(workoutId: string): Promise<ActivityStr
   return (await res.json()) as ActivityStreams;
 }
 
+/** @deprecated Use getActivityDetail(). */
 export async function getActivityLaps(workoutId: string): Promise<ActivityLap[]> {
   const headers = await getAuthHeaders();
   const res = await fetch(`${API_URL}/v1/activities/${workoutId}/laps`, { headers });
@@ -129,6 +130,7 @@ export async function getActivityLaps(workoutId: string): Promise<ActivityLap[]>
   return Array.isArray(data) ? (data as ActivityLap[]) : [];
 }
 
+/** @deprecated Use getActivityDetail(). */
 export async function getActivityIntervals(workoutId: string): Promise<ActivityIntervals | null> {
   const headers = await getAuthHeaders();
   const res = await fetch(`${API_URL}/v1/activities/${workoutId}/intervals`, { headers });
@@ -137,6 +139,7 @@ export async function getActivityIntervals(workoutId: string): Promise<ActivityI
   return (await res.json()) as ActivityIntervals;
 }
 
+/** @deprecated Use getActivityDetail(). */
 export async function getActivityZones(workoutId: string): Promise<ActivityZones | null> {
   try {
     const headers = await getAuthHeaders();

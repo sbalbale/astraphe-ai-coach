@@ -460,6 +460,7 @@ export const api = {
     conversation_id?: string | null;
     image_urls?: string[] | null;
     onConversationId?: (conversationId: string) => void;
+    onStarted?: () => void;
     onChunk: (text: string) => void;
     onSources?: (sources: unknown[]) => void;
   }): Promise<{ conversation_id: string }> {
@@ -494,6 +495,13 @@ export const api = {
     const decoder = new TextDecoder();
     let buffer = '';
     let conversationId = params.conversation_id ?? '';
+    let streamStarted = false;
+
+    const notifyStarted = () => {
+      if (streamStarted) return;
+      streamStarted = true;
+      params.onStarted?.();
+    };
 
     while (true) {
       const { done, value } = await reader.read();
@@ -515,9 +523,11 @@ export const api = {
           }
           if (typeof data.conversation_id === 'string') {
             conversationId = data.conversation_id;
+            notifyStarted();
             params.onConversationId?.(conversationId);
           }
           if (typeof data.text === 'string' && data.text) {
+            notifyStarted();
             params.onChunk(data.text);
           }
           if (Array.isArray(data.sources)) {
