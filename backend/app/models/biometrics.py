@@ -8,6 +8,8 @@ class DailyBiometrics(BaseModel):
     external_id: Optional[str] = None
     hrv_rmssd: Optional[float] = None
     resting_hr: Optional[int] = None
+    weight_kg: Optional[float] = None
+    height_cm: Optional[float] = None
     sleep_duration_min: Optional[int] = None
     sleep_in_bed_min: Optional[int] = None
     sleep_score: Optional[int] = None # Astrape proprietary

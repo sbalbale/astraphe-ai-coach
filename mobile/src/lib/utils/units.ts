@@ -78,6 +78,14 @@ export function formatWorkoutDistance(
   if (s === 'row' || s === 'rowing') {
     return `${Math.round(meters)}m`;
   }
+  if (s === 'swim' || s === 'swimming') {
+    if (units === 'imperial') {
+      // Under 1 mile show yards; otherwise miles.
+      if (meters < METERS_PER_MILE) return `${Math.round(meters / 0.9144)} yd`;
+      return `${(meters / METERS_PER_MILE).toFixed(2)} mi`;
+    }
+    // Metric already naturally does m under 1km and km otherwise.
+  }
   if (units === 'imperial') {
     return `${(meters / METERS_PER_MILE).toFixed(2)} mi`;
   }
@@ -95,6 +103,13 @@ export function workoutDistanceParts(
   const s = (sport || '').toLowerCase();
   if (s === 'row' || s === 'rowing') {
     return { value: String(Math.round(meters)), unit: 'm' };
+  }
+  if (s === 'swim' || s === 'swimming') {
+    if (units === 'imperial') {
+      if (meters < METERS_PER_MILE) return { value: String(Math.round(meters / 0.9144)), unit: 'yd' };
+      return { value: (meters / METERS_PER_MILE).toFixed(2), unit: 'mi' };
+    }
+    // Metric already uses m under 1km and km otherwise (below).
   }
   if (units === 'imperial') {
     return { value: (meters / METERS_PER_MILE).toFixed(2), unit: 'mi' };

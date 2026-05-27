@@ -40,6 +40,11 @@
   );
   let isOnboardingRoute = $derived($page.url.pathname === '/onboarding');
   let isNoShellRoute = $derived(isAuthRoute || isOnboardingRoute);
+  const mobileSubtabRoutes = ['/recovery', '/sleep', '/strain', '/dashboard', '/training', '/zones'];
+  let hasMobileSubtabs = $derived(mobileSubtabRoutes.includes($page.url.pathname));
+  /** Logo header already adds bottom spacing; skip duplicate top pad on these pages. */
+  const mobileTightContentTopRoutes = ['/profile', '/plan'];
+  let hasMobileTightContentTop = $derived(mobileTightContentTopRoutes.includes($page.url.pathname));
 
   onMount(() => {
     // Remove the HTML-only pre-load indicator once Svelte has mounted
@@ -166,7 +171,7 @@
     <div class="flex-1 flex flex-col overflow-hidden relative bg-bg0">
       {#if !wide}
       <!-- Mobile Header -->
-      <div class="px-4 pt-3.5 pb-0 flex items-center justify-between shrink-0">
+      <div class="px-4 pt-3.5 {hasMobileSubtabs ? 'pb-0' : 'pb-2.5'} flex items-center justify-between shrink-0">
         <p class="font-mono font-bold text-sm tracking-[0.12em] text-blue">ASTRAPE</p>
         <div class="flex items-center gap-2">
           <div class="w-1.5 h-1.5 rounded-full bg-teal shadow-[0_0_6px_var(--teal)]"></div>
@@ -220,7 +225,9 @@
         ? 'overflow-hidden p-0'
         : wide
           ? 'overflow-y-auto p-6 px-7'
-          : 'overflow-y-auto p-3 px-4'}"
+          : hasMobileTightContentTop
+            ? 'overflow-y-auto px-4 pb-3 pt-0'
+            : 'overflow-y-auto p-3 px-4'}"
     >
       {@render props.children()}
     </div>

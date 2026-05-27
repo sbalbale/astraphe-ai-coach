@@ -1,6 +1,8 @@
 <script lang="ts">
   import Modal from './Modal.svelte';
-  import FormSelect from './FormSelect.svelte';
+  import DropdownSelect from './DropdownSelect.svelte';
+  import DatePicker from './DatePicker.svelte';
+  import TimePicker from './TimePicker.svelte';
 
   type ActivityMode = 'add' | 'edit';
   type NumericInputValue = string | number | undefined;
@@ -91,11 +93,86 @@
     return Number.isFinite(n) && n > 0 ? String(Math.round(n)) : '';
   }
 
-  function formatDistanceInput(distanceM: unknown) {
+  const METERS_PER_YARD = 0.9144;
+  const METERS_PER_MILE = 1609.34;
+
+  type DistanceUnit = 'm' | 'km' | 'yd' | 'mi';
+
+  function isSwimSport(sport: unknown) {
+    const s = String(sport || '').toLowerCase();
+    return s === 'swim' || s === 'swimming';
+  }
+
+  function distanceUnitForSport(sport: unknown) {
+    const s = String(sport || '').toLowerCase();
+    if (s === 'row' || s === 'rowing') return 'm' as const;
+    if (isSwimSport(s)) return (units === 'imperial' ? ('yd' as const) : ('m' as const));
+    return units === 'imperial' ? ('mi' as const) : ('km' as const);
+  }
+
+  function defaultSwimDistanceUnit(distanceM: unknown): Extract<DistanceUnit, 'm' | 'km' | 'yd' | 'mi'> {
+    const meters = Number(distanceM);
+    if (!Number.isFinite(meters) || meters <= 0) {
+      return units === 'imperial' ? 'yd' : 'm';
+    }
+    if (units === 'imperial') {
+      return meters < 1609.34 ? 'yd' : 'mi';
+    }
+    return meters < 1000 ? 'm' : 'km';
+  }
+
+  let swimDistanceUnit = $state<Extract<DistanceUnit, 'm' | 'km' | 'yd' | 'mi'>>(
+    mode === 'edit' && workout ? defaultSwimDistanceUnit(workout?.distance_m) : units === 'imperial' ? 'yd' : 'm'
+  );
+
+  let lastSwimDistanceUnit = $state(swimDistanceUnit);
+  $effect(() => {
+    if (!isSwimSport(form.sport)) {
+      lastSwimDistanceUnit = swimDistanceUnit;
+      return;
+    }
+    if (swimDistanceUnit === lastSwimDistanceUnit) return;
+
+    const raw = String(form.distanceRaw ?? '').trim();
+    const v = Number(raw);
+    if (!raw || !Number.isFinite(v) || v <= 0) {
+      lastSwimDistanceUnit = swimDistanceUnit;
+      return;
+    }
+
+    const toMeters = (value: number, unit: DistanceUnit) => {
+      if (unit === 'm') return value;
+      if (unit === 'km') return value * 1000;
+      if (unit === 'yd') return value * METERS_PER_YARD;
+      return value * METERS_PER_MILE; // mi
+    };
+    const fromMeters = (meters: number, unit: DistanceUnit) => {
+      if (unit === 'm') return { value: String(Math.round(meters)), step: 'int' as const };
+      if (unit === 'yd') return { value: String(Math.round(meters / METERS_PER_YARD)), step: 'int' as const };
+      if (unit === 'km') return { value: Number((meters / 1000).toFixed(2)).toString(), step: 'dec' as const };
+      return { value: Number((meters / METERS_PER_MILE).toFixed(2)).toString(), step: 'dec' as const };
+    };
+
+    const meters = toMeters(v, lastSwimDistanceUnit);
+    form.distanceRaw = fromMeters(meters, swimDistanceUnit).value;
+    lastSwimDistanceUnit = swimDistanceUnit;
+  });
+
+  function effectiveDistanceUnit(sport: unknown): DistanceUnit {
+    const base = distanceUnitForSport(sport);
+    if (base === 'm') return 'm';
+    if (isSwimSport(sport)) return swimDistanceUnit;
+    return base as Exclude<DistanceUnit, 'm' | 'yd'>;
+  }
+
+  function formatDistanceInput(distanceM: unknown, sport: unknown) {
     const meters = Number(distanceM);
     if (!Number.isFinite(meters) || meters <= 0) return '';
 
-    const value = units === 'imperial' ? meters / 1609.34 : meters / 1000;
+    const unit = effectiveDistanceUnit(sport);
+    if (unit === 'm') return String(Math.round(meters));
+    if (unit === 'yd') return String(Math.round(meters / METERS_PER_YARD));
+    const value = unit === 'mi' ? meters / 1609.34 : meters / 1000;
     return Number(value.toFixed(2)).toString();
   }
 
@@ -127,7 +204,7 @@
       durationHrs: Math.floor(durationMinutes / 60),
       durationMins: durationMinutes % 60,
       title: w?.title ?? '',
-      distanceRaw: formatDistanceInput(w?.distance_m),
+      distanceRaw: formatDistanceInput(w?.distance_m, w?.sport),
       avgHr: formatOptionalNumber(w?.avg_hr),
       maxHr: formatOptionalNumber(w?.max_hr),
       avgPowerW: formatOptionalNumber(w?.avg_power_w ?? w?.average_watts),
@@ -148,12 +225,17 @@
   const modalTitle = $derived(isEditMode ? 'Edit Activity' : 'Log Activity');
   const submitText = $derived(isEditMode ? 'Save Changes' : 'Log Activity');
   const totalDurationSecs = $derived((form.durationHrs || 0) * 3600 + (form.durationMins || 0) * 60);
-  const distanceLabel = $derived(units === 'imperial' ? 'mi' : 'km');
+  const distanceUnit = $derived(effectiveDistanceUnit(form.sport));
+  const distanceLabel = $derived(distanceUnit);
+  const distanceStep = $derived(distanceUnit === 'm' || distanceUnit === 'yd' ? 1 : 0.01);
+  const distancePlaceholder = $derived(distanceUnit === 'm' || distanceUnit === 'yd' ? '0' : '0.00');
+  const distanceInputMode = $derived(distanceUnit === 'm' || distanceUnit === 'yd' ? 'numeric' : 'decimal');
 
   const canSubmit = $derived(!saving);
 
   function resetForm() {
     form = defaultFormValues();
+    swimDistanceUnit = units === 'imperial' ? 'yd' : 'm';
     error = '';
   }
 
@@ -192,7 +274,9 @@
       return { value: null, error: `Enter a valid distance.` };
     }
 
-    const distanceM = units === 'imperial' ? d * 1609.34 : d * 1000;
+    const unit = effectiveDistanceUnit(form.sport);
+    const distanceM =
+      unit === 'm' ? d : unit === 'yd' ? d * METERS_PER_YARD : unit === 'mi' ? d * 1609.34 : d * 1000;
     return { value: Math.round(distanceM), error: '' };
   }
 
@@ -369,27 +453,34 @@
 
     <div>
       <label for="act-sport" class="block text-[11px] text-text2 mb-1">Activity Type</label>
-      <FormSelect id="act-sport" bind:value={form.sport} options={SPORT_OPTIONS} />
+      <DropdownSelect
+        id="act-sport"
+        bind:value={form.sport}
+        options={SPORT_OPTIONS}
+        ariaLabel="Activity type"
+        buttonClass="p-2.5 text-sm"
+      />
     </div>
 
     <div class="grid grid-cols-2 gap-3">
       <div>
         <label for="act-date" class="block text-[11px] text-text2 mb-1">Date</label>
-        <input
+        <DatePicker
           id="act-date"
-          type="date"
           bind:value={form.date}
           max={isEditMode ? undefined : todayStr()}
-          class="w-full p-2.5 bg-glass2 border border-border rounded-lg text-sm text-text0 outline-none focus:border-blue"
+          ariaLabel="Activity date"
+          buttonClass="p-2.5 text-sm"
         />
       </div>
       <div>
         <label for="act-time" class="block text-[11px] text-text2 mb-1">Start Time</label>
-        <input
+        <TimePicker
           id="act-time"
-          type="time"
           bind:value={form.startTime}
-          class="w-full p-2.5 bg-glass2 border border-border rounded-lg text-sm text-text0 outline-none focus:border-blue"
+          ariaLabel="Activity start time"
+          buttonClass="p-2.5 text-sm"
+          minuteStep={1}
         />
       </div>
     </div>
@@ -448,12 +539,33 @@
           id="act-distance"
           type="number"
           min="0"
-          step="0.01"
-          inputmode="decimal"
+          step={distanceStep}
+          inputmode={distanceInputMode}
           bind:value={form.distanceRaw}
-          placeholder="0.00"
+          placeholder={distancePlaceholder}
           class="w-full p-2.5 bg-glass2 border border-border rounded-lg text-sm text-text0 font-mono outline-none focus:border-blue"
         />
+        {#if isSwimSport(form.sport)}
+          <div class="mt-2 flex justify-end">
+            <DropdownSelect
+              id="act-distance-unit"
+              bind:value={swimDistanceUnit}
+              ariaLabel="Swim distance unit"
+              options={units === 'imperial'
+                ? [
+                    { value: 'yd', label: 'Yards' },
+                    { value: 'mi', label: 'Miles' }
+                  ]
+                : [
+                    { value: 'm', label: 'Meters' },
+                    { value: 'km', label: 'Kilometers' }
+                  ]}
+              align="right"
+              buttonClass="px-2 py-1 text-[11px] font-semibold rounded-full bg-glass border border-border/70 hover:border-blue/60 focus:border-blue/80 transition-colors"
+              popoverClass="w-[132px]"
+            />
+          </div>
+        {/if}
       </div>
       <div>
         <label for="act-hr" class="block text-[11px] text-text2 mb-1">

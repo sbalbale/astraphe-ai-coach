@@ -28,6 +28,7 @@ from app.services.processing import (
 )
 from app.services.ai_coach import invalidate_context_cache
 from fastapi import status
+from typing import Optional, Tuple
 
 router = APIRouter(prefix=f"{settings.API_PREFIX}/sync", tags=["Sync & Webhooks"])
 
@@ -378,6 +379,173 @@ async def garmin_webhook(request: Request, background_tasks: BackgroundTasks, db
 WHOOP_RECOVERY_RETRY_DELAYS_SEC = (120, 600)
 
 
+def _coerce_float(v) -> float | None:
+    try:
+        if v is None:
+            return None
+        if isinstance(v, bool):
+            return None
+        f = float(v)
+        return f if f > 0 else None
+    except Exception:
+        return None
+
+
+def _parse_whoop_height_cm(profile: dict | None, body: dict | None) -> float | None:
+    """
+    WHOOP v2 returns different shapes depending on endpoint/version.
+    Be permissive and extract height in cm from either profile/basic or measurement/body.
+    """
+    candidates = []
+    for src in (profile or {}, body or {}):
+        if not isinstance(src, dict):
+            continue
+        # Common/expected keys
+        candidates.append(("height_cm", _coerce_float(src.get("height_cm"))))
+        candidates.append(("height_centimeter", _coerce_float(src.get("height_centimeter"))))
+        candidates.append(("height_m", _coerce_float(src.get("height_m"))))
+        candidates.append(("height_meter", _coerce_float(src.get("height_meter"))))
+        candidates.append(("height_in", _coerce_float(src.get("height_in"))))
+        candidates.append(("height_inch", _coerce_float(src.get("height_inch"))))
+
+        # Nested payloads sometimes wrap values
+        meas = src.get("measurements") if isinstance(src.get("measurements"), dict) else None
+        if meas:
+            candidates.append(("measurements.height_cm", _coerce_float(meas.get("height_cm"))))
+            candidates.append(("measurements.height_m", _coerce_float(meas.get("height_m"))))
+            candidates.append(("measurements.height_in", _coerce_float(meas.get("height_in"))))
+
+    # Convert to cm (prefer cm > m > in)
+    for key, val in candidates:
+        if val is None:
+            continue
+        if "cm" in key or "centimeter" in key:
+            return val
+    for key, val in candidates:
+        if val is None:
+            continue
+        if "meter" in key or key.endswith("_m"):
+            return val * 100.0
+    for key, val in candidates:
+        if val is None:
+            continue
+        if "in" in key or "inch" in key:
+            return val * 2.54
+    return None
+
+
+def _parse_whoop_weight_kg(profile: dict | None, body: dict | None) -> float | None:
+    """Extract weight in kg from WHOOP body measurement payloads."""
+    candidates = []
+    for src in (body or {}, profile or {}):
+        if not isinstance(src, dict):
+            continue
+        candidates.append(("weight_kg", _coerce_float(src.get("weight_kg"))))
+        candidates.append(("weight_kilogram", _coerce_float(src.get("weight_kilogram"))))
+        candidates.append(("weight_lbs", _coerce_float(src.get("weight_lbs"))))
+        candidates.append(("weight_lb", _coerce_float(src.get("weight_lb"))))
+
+        meas = src.get("measurements") if isinstance(src.get("measurements"), dict) else None
+        if meas:
+            candidates.append(("measurements.weight_kg", _coerce_float(meas.get("weight_kg"))))
+            candidates.append(("measurements.weight_lbs", _coerce_float(meas.get("weight_lbs"))))
+
+    for key, val in candidates:
+        if val is None:
+            continue
+        if "kg" in key or "kilogram" in key:
+            return val
+    for key, val in candidates:
+        if val is None:
+            continue
+        if "lb" in key:
+            return val / 2.2046226218
+    return None
+
+
+async def _whoop_sync_height_weight_if_missing(
+    athlete_id: str,
+    *,
+    bio_date: date,
+    access_token: str,
+    refresh_token: str | None,
+    external_user_id: str,
+    db,
+) -> None:
+    """
+    Fetch WHOOP height/weight and persist onto biometrics (time series), plus
+    fill athletes.* if those fields are missing.
+    Runs in the background so webhook latency stays low.
+    """
+    try:
+        existing = (
+            db.table("athletes")
+            .select("height_cm,weight_kg")
+            .eq("id", athlete_id)
+            .maybe_single()
+            .execute()
+        )
+        row = existing.data or {}
+        have_height = _coerce_float(row.get("height_cm")) is not None
+        have_weight = _coerce_float(row.get("weight_kg")) is not None
+        if have_height and have_weight:
+            return
+
+        token = access_token
+
+        async def _refresh() -> str | None:
+            if not refresh_token:
+                return None
+            token_data = await whoop.refresh_oauth_token(refresh_token)
+            new_access = token_data.get("access_token")
+            new_refresh = token_data.get("refresh_token") or refresh_token
+            new_expires = token_expires_at(token_data)
+            if new_access:
+                update: dict = {"access_token": new_access, "refresh_token": new_refresh}
+                if new_expires:
+                    update["expires_at"] = new_expires
+                db.table("oauth_tokens").update(update).eq("provider", "whoop").eq("external_user_id", str(external_user_id)).execute()
+            return new_access
+
+        try:
+            profile = await whoop.fetch_profile(token)
+            body = await whoop.fetch_body_measurement(token)
+        except HTTPException as e:
+            if e.status_code == status.HTTP_401_UNAUTHORIZED:
+                new_access = await _refresh()
+                if not new_access:
+                    return
+                token = new_access
+                profile = await whoop.fetch_profile(token)
+                body = await whoop.fetch_body_measurement(token)
+            else:
+                return
+
+        height_cm = None if have_height else _parse_whoop_height_cm(profile, body)
+        weight_kg = None if have_weight else _parse_whoop_weight_kg(profile, body)
+
+        update: dict = {}
+        if height_cm is not None:
+            update["height_cm"] = round(float(height_cm), 1)
+        if weight_kg is not None:
+            update["weight_kg"] = round(float(weight_kg), 2)
+        # Always write to biometrics for the day if we have values.
+        bio_update: dict = {"athlete_id": athlete_id, "date": bio_date.isoformat()}
+        if height_cm is not None:
+            bio_update["height_cm"] = round(float(height_cm), 1)
+        if weight_kg is not None:
+            bio_update["weight_kg"] = round(float(weight_kg), 2)
+        if len(bio_update.keys()) > 2:
+            db.table("biometrics").upsert(bio_update, on_conflict="athlete_id,date").execute()
+
+        # Fill athlete profile only when currently missing.
+        if update:
+            db.table("athletes").update(update).eq("id", athlete_id).execute()
+            print(f"[whoop.body] updated athlete_id={athlete_id} fields={list(update.keys())} date={bio_date.isoformat()}")
+    except Exception as e:
+        print(f"[whoop.body] sync failed athlete_id={athlete_id}: {repr(e)}")
+
+
 def _apply_whoop_recovery_vitals(bio_payload: DailyBiometrics, recovery_data: dict) -> None:
     """Merge scored recovery vitals into an existing DailyBiometrics payload."""
     vitals = whoop.build_whoop_vitals_from_recovery(recovery_data)
@@ -641,6 +809,16 @@ async def whoop_webhook(request: Request, background_tasks: BackgroundTasks, db=
             bio_payload = DailyBiometrics(date=bio_date, source="whoop")
             _apply_whoop_recovery_vitals(bio_payload, recovery_data)
             background_tasks.add_task(process_and_save_biometrics, bio_payload, athlete_id, db)
+            if athlete_id and access_token and user_id is not None:
+                background_tasks.add_task(
+                    _whoop_sync_height_weight_if_missing,
+                    athlete_id,
+                    bio_date=bio_date,
+                    access_token=access_token,
+                    refresh_token=refresh_token,
+                    external_user_id=str(user_id),
+                    db=db,
+                )
             
         elif event_type == "sleep.updated":
             if not event_id:
@@ -721,6 +899,16 @@ async def whoop_webhook(request: Request, background_tasks: BackgroundTasks, db=
                     )
 
             background_tasks.add_task(process_and_save_biometrics, bio_payload, athlete_id, db)
+            if athlete_id and access_token and user_id is not None:
+                background_tasks.add_task(
+                    _whoop_sync_height_weight_if_missing,
+                    athlete_id,
+                    bio_date=local_wake_dt.date(),
+                    access_token=access_token,
+                    refresh_token=refresh_token,
+                    external_user_id=str(user_id),
+                    db=db,
+                )
             if not is_nap and not recovery_merged:
                 print(
                     f"[whoop.sleep] recovery pending — scheduled retries "

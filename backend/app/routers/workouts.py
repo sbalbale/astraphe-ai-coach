@@ -144,7 +144,7 @@ def _patch_refresh_days(existing: dict, updated: dict) -> set:
 
 @router.get("")
 def get_workouts(
-    limit: int = Query(20, ge=1, le=100),
+    limit: int = Query(20, ge=1, le=200),
     athlete_id: str = Depends(get_current_athlete),
     db = Depends(get_user_db)
 ):
