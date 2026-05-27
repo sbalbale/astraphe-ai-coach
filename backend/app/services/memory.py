@@ -69,6 +69,28 @@ def save_coach_memory(athlete_id: str, content: str, db: Client) -> None:
         print(f"[memory] save failed: {e}")
 
 
+_RAG_HINT_KEYWORDS = frozenset({
+    "race", "goal", "marathon", "ironman", "injury", "pain", "hurt", "limitation",
+    "plan", "schedule", "week", "ftp", "threshold", "ctl", "atl", "tsb", "taper",
+    "nutrition", "diet", "equipment", "bike", "shoe", "remember", "allergy",
+})
+
+
+def should_skip_rag_for_message(message: str) -> bool:
+    """
+    Skip embedding + vector search for short casual messages with no coaching-data cues.
+    """
+    text = (message or "").strip().lower()
+    if len(text) < 12:
+        return True
+    if any(k in text for k in _RAG_HINT_KEYWORDS):
+        return False
+    words = text.split()
+    if len(words) <= 4 and "?" not in text:
+        return True
+    return False
+
+
 def retrieve_relevant_memories(athlete_id: str, query: str, db: Client, top_k: int = 5) -> list[dict]:
     try:
         embedding = _extract_embedding(query)
