@@ -35,7 +35,7 @@ ALTER POLICY "streams_self_access" ON public.activity_streams
 ALTER POLICY "laps_self_access" ON public.activity_laps
   USING (athlete_id IN (SELECT id FROM athletes WHERE user_id = (SELECT auth.uid())));
 
-ALTER POLICY "Athletes manage own push tokens" ON public.push_tokens
+ALTER POLICY "push_tokens_athlete_access" ON public.push_tokens
   USING (athlete_id IN (SELECT id FROM athletes WHERE user_id = (SELECT auth.uid())));
 
 ALTER POLICY "coach_memories_athlete_access" ON public.coach_memories
