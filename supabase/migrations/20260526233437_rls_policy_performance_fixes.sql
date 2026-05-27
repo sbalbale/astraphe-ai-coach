@@ -246,5 +246,3 @@ DROP INDEX IF EXISTS public.idx_workouts_athlete_started;
 -- trigger behavior while removing REST/RPC exposure.
 REVOKE ALL ON FUNCTION public.handle_new_user() FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION public.handle_new_user() FROM anon, authenticated;
-REVOKE ALL ON FUNCTION public.rls_auto_enable() FROM PUBLIC;
-REVOKE EXECUTE ON FUNCTION public.rls_auto_enable() FROM anon, authenticated;
