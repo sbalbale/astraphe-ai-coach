@@ -35,10 +35,7 @@
   import { CHART_ATL_STROKE, CHART_CTL_STROKE, formCssColor, getWeeklyLoadDeltaColor } from '$lib/scoreColors';
   import { Lightbulb } from '@lucide/svelte';
   import {
-    getActivityStreams,
-    getActivityLaps,
-    getActivityIntervals,
-    getActivityZones,
+    getActivityDetail,
     hydrateActivityStreams,
     refetchWorkoutFromStrava,
     streamsHaveVelocity,
@@ -54,7 +51,6 @@
     clearWorkoutDetailFromCache,
     preloadWorkoutDetail,
   } from '$lib/stores/workoutDetailCache';
-  import { stravaPolylineFromPayload } from '$lib/utils/polyline';
   import { formatWorkoutDistance, normalizeUnits } from '$lib/utils/units';
   import { supportsPaceChart } from '$lib/utils/paceChart';
   import { intervalsToSplits, lapsToSplits } from '$lib/utils/lapSplits';
@@ -147,10 +143,6 @@
   let lastRepullWorkoutId = $state<string | null>(null);
   let repullDismissedWorkoutIds = new SvelteSet<string>();
 
-  const detailStravaPolyline = $derived(
-    selectedWorkout ? stravaPolylineFromPayload(selectedWorkout.raw_strava_payload) : null
-  );
-
   const mergedHrZoneDefs = $derived(
     mergeWorkoutZoneDefs(detailZones?.zones, athleteStore.profile?.hr_zones?.zones)
   );
@@ -162,14 +154,13 @@
   /** True when streams/laps/intervals loaded enough for the detail charts to render. */
   const detailChartsReady = $derived.by(() => {
     const w = selectedWorkout;
-    if (!w?.strava_activity_id || detailLoading || detailRepulling || detailHydrating) {
+    if (!w?.strava_activity_id || detailLoading || detailRepulling) {
       return false;
     }
     if (detailError) return false;
 
     const hasHrStream = (detailStreams?.time_series?.heartrate?.length ?? 0) > 1;
-    const hasRoute =
-      (detailStreams?.time_series?.latlng?.length ?? 0) > 1 || Boolean(detailStravaPolyline);
+    const hasRoute = (detailStreams?.time_series?.latlng?.length ?? 0) > 1;
     const hasIntervals = (detailIntervals?.intervals?.length ?? 0) >= 2;
 
     if (w.sport === 'row') {
@@ -182,7 +173,7 @@
     const w = selectedWorkout;
     if (!w?.strava_activity_id) return false;
     if (repullDismissedWorkoutIds.has(w.id)) return false;
-    if (detailLoading || detailHydrating) return false;
+    if (detailLoading) return false;
     if (detailRepulling) return true;
     return !detailChartsReady;
   });
@@ -579,57 +570,45 @@
 
     (async () => {
       try {
-        const fetchStreams = getActivityStreams(w.id).then(async (s) => {
-          if (cancelled) return;
-          if (!s && w.strava_activity_id && w.strava_streams_fetched === false) {
-            detailHydrating = true;
+        let detail = await getActivityDetail(w.id);
+        if (cancelled) return;
+
+        detailStreams = detail.streams;
+        detailLaps = detail.laps ?? [];
+        detailIntervals = detail.intervals;
+        detailZones = detail.zones;
+        detailLoading = false;
+
+        if (
+          !detail.streams &&
+          w.strava_activity_id &&
+          w.strava_streams_fetched === false
+        ) {
+          detailHydrating = true;
+          try {
             const hydrated = await hydrateActivityStreams(w.id);
             if (cancelled) return;
             if (hydrated.status === 'hydrated' || hydrated.status === 'already_stored') {
-              s = await getActivityStreams(w.id);
-              clearWorkoutDetailFromCache(w.id); // Invalidate cache so we save the new hydrated data
+              detail = await getActivityDetail(w.id);
+              if (cancelled) return;
+              detailStreams = detail.streams;
+              detailLaps = detail.laps ?? [];
+              detailIntervals = detail.intervals;
+              detailZones = detail.zones;
+              clearWorkoutDetailFromCache(w.id);
             }
-            detailHydrating = false;
+          } finally {
+            if (!cancelled) detailHydrating = false;
           }
-          if (cancelled) return;
-          detailStreams = s;
-          detailLoading = false; // Primary visual centerpiece landed
-          return s;
-        });
-
-        const fetchLaps = getActivityLaps(w.id).then((l) => {
-          if (cancelled) return;
-          detailLaps = l ?? [];
-          return l;
-        });
-
-        const fetchIntervals = getActivityIntervals(w.id).then((i) => {
-          if (cancelled) return;
-          detailIntervals = i;
-          return i;
-        });
-
-        const fetchZones = getActivityZones(w.id).then((z) => {
-          if (cancelled) return;
-          detailZones = z;
-          return z;
-        });
-
-        const [streams, laps, intervals, zones] = await Promise.all([
-          fetchStreams,
-          fetchLaps,
-          fetchIntervals,
-          fetchZones,
-        ]);
+        }
 
         if (cancelled) return;
 
-        // Save to cache
         saveWorkoutDetailToCache(w.id, {
-          streams,
-          laps: laps ?? [],
-          intervals,
-          zones,
+          streams: detail.streams,
+          laps: detail.laps ?? [],
+          intervals: detail.intervals,
+          zones: detail.zones,
         });
       } catch (e: unknown) {
         if (!cancelled) detailError = e instanceof Error ? e.message : 'Failed to load workout details';
@@ -1020,16 +999,12 @@
               <p class="text-[11px] text-red mt-3 font-mono">{detailError}</p>
 
             {:else}
-              {#if selectedWorkout.strava_streams_fetched === false}
+              {#if selectedWorkout.strava_streams_fetched === false && !detailHydrating && !detailStreams}
                 <p class="text-[11px] text-text2 font-mono mt-3 leading-relaxed">
                   Strava is linked, but stream data has not been imported for this workout yet. Reconnect
                   Strava or run the Strava backfill script to load charts and GPS.
                 </p>
-              {:else if detailHydrating}
-                <p class="text-[11px] text-text2 font-mono mt-3 animate-pulse">
-                  Loading stream data from Strava…
-                </p>
-              {:else if !detailStreams && selectedWorkout.strava_streams_fetched}
+              {:else if !detailStreams && selectedWorkout.strava_streams_fetched && !detailHydrating}
                 <p class="text-[11px] text-text2 font-mono mt-3">
                   No stream data stored for this workout (Strava may have returned no streams for this activity).
                 </p>
@@ -1053,7 +1028,14 @@
                 </p>
               {/if}
 
-              {#if detailStreams}
+              {#if detailHydrating && !detailStreams}
+                <div class="mt-4 space-y-2">
+                  <div class="rounded-2xl bg-glass animate-pulse" style="height: 150px;"></div>
+                  <p class="text-[11px] text-text2 font-mono animate-pulse">
+                    Loading stream data from Strava…
+                  </p>
+                </div>
+              {:else if detailStreams}
                 <div class="mt-4 min-h-[260px]">
                   <StreamCharts
                     streams={detailStreams}
@@ -1065,11 +1047,10 @@
                 </div>
               {/if}
 
-              {#if (detailStreams?.time_series?.latlng && detailStreams.time_series.latlng.length > 1) || detailStravaPolyline}
+              {#if detailStreams?.time_series?.latlng && detailStreams.time_series.latlng.length > 1}
                 <div class="mt-4 min-h-[300px]">
                   <GpsTrace
-                    latlng={detailStreams?.time_series?.latlng}
-                    polyline={detailStravaPolyline}
+                    latlng={detailStreams.time_series.latlng}
                     heartrate={detailStreams?.time_series?.heartrate}
                     time={detailStreams?.time_series?.time}
                     zones={mergedHrZoneDefs}

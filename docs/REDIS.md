@@ -1,6 +1,6 @@
 # Redis
 
-Redis is optional in local development and recommended in production/multi-container deployments.
+Redis is optional in local development and **required in production** (self-hosted on Proxmox) so rate limits and activity stream caches are shared across API restarts.
 
 ## Uses
 
@@ -24,7 +24,7 @@ docker compose up -d redis
 Add this to `backend/.env`:
 
 ```env
-REDIS_URL=redis://localhost:6379
+REDIS_URL=redis://127.0.0.1:6379
 ```
 
 Stop Redis:
@@ -33,15 +33,22 @@ Stop Redis:
 docker compose down
 ```
 
-## Production
+## Production (self-hosted)
 
-Use any Redis-compatible URL. Upstash-style TLS URLs work:
+Production runs on the Proxmox Docker host (`~/astrape`), deployed via [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml). The API container must use the **Docker service hostname** for Redis on the shared `astrape` network:
 
 ```env
-REDIS_URL=rediss://default:<token>@<host>.upstash.io:6380
+REDIS_URL=redis://astrape-redis:6379
 ```
 
-For the current Proxmox/docker-compose deployment, provide `REDIS_URL` through the server environment used by the `astrape-api` container.
+| Container | Image | Role |
+|-----------|-------|------|
+| `astrape-api` | GHCR `astrape-api` | FastAPI |
+| `astrape-redis` | `redis:7-alpine` | Cache + rate limits |
+
+Set `REDIS_URL` in the compose environment for `astrape-api` on the server (not `localhost:6379` from inside the API container unless you intentionally bridge host networking).
+
+See [DEPLOYMENT.md](./DEPLOYMENT.md) for the full deploy model.
 
 ## Health Check
 

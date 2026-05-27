@@ -38,6 +38,22 @@ class UserConfigUpdate(BaseModel):
         return v
 
 
+class MergeCoachMemoryDuplicatesRequest(BaseModel):
+    athlete_id: str
+    dry_run: bool = True
+    # Safety limits: scan up to N newest rows for this athlete.
+    max_scan: int = 1000
+    # Delete in chunks to avoid URL/query limits.
+    delete_chunk_size: int = 50
+
+    @field_validator("max_scan", "delete_chunk_size")
+    @classmethod
+    def validate_positive_ints(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("Value must be >= 1")
+        return v
+
+
 # ---------------------------------------------------------------------------
 # Admin auth dependency
 # ---------------------------------------------------------------------------
@@ -201,3 +217,127 @@ async def clear_user_config_field(
         return {"status": "success", "cleared": field, "user_id": user_id}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to clear field: {str(e)}")
+
+
+def _normalize_memory_content_for_dedupe(text: str | None) -> str:
+    # Conservative normalization: trim, collapse whitespace, casefold.
+    # (Avoid aggressive punctuation stripping that might merge distinct facts.)
+    s = (text or "").strip()
+    s = " ".join(s.split())
+    return s.casefold()
+
+
+@router.post("/coach-memories/merge-duplicates")
+def merge_coach_memory_duplicates(
+    payload: MergeCoachMemoryDuplicatesRequest,
+    _admin: dict = Depends(get_admin_user),
+    admin_db: Client = Depends(get_admin_db),
+):
+    """
+    One-off maintenance endpoint.
+
+    Finds duplicates in `coach_memories` for a specific athlete by normalized `content`,
+    keeps the newest row, and deletes the rest.
+
+    Defaults to dry-run. Set dry_run=false to actually delete.
+    """
+    athlete_id = payload.athlete_id.strip()
+    if not athlete_id:
+        raise HTTPException(status_code=400, detail="athlete_id is required")
+
+    max_scan = min(int(payload.max_scan), 10000)
+    delete_chunk_size = min(int(payload.delete_chunk_size), 200)
+
+    try:
+        res = (
+            admin_db.table("coach_memories")
+            .select("id,content,created_at,updated_at")
+            .eq("athlete_id", athlete_id)
+            # Prefer updated_at if present; otherwise created_at
+            .order("updated_at", desc=True)
+            .limit(max_scan)
+            .execute()
+        )
+        rows = res.data or []
+    except Exception as e:
+        # Some local schemas may not have updated_at; fall back to created_at ordering.
+        try:
+            res = (
+                admin_db.table("coach_memories")
+                .select("id,content,created_at")
+                .eq("athlete_id", athlete_id)
+                .order("created_at", desc=True)
+                .limit(max_scan)
+                .execute()
+            )
+            rows = res.data or []
+        except Exception as e2:
+            raise HTTPException(status_code=500, detail=f"Failed to load coach_memories: {str(e2)}") from e
+
+    groups: dict[str, list[dict]] = {}
+    for r in rows:
+        key = _normalize_memory_content_for_dedupe(str(r.get("content") or ""))
+        if not key:
+            continue
+        groups.setdefault(key, []).append(r)
+
+    duplicates = {k: v for k, v in groups.items() if len(v) > 1}
+    if not duplicates:
+        return {
+            "status": "success",
+            "dry_run": payload.dry_run,
+            "athlete_id": athlete_id,
+            "scanned": len(rows),
+            "duplicate_groups": 0,
+            "would_delete": 0,
+            "deleted": 0,
+            "groups": [],
+        }
+
+    groups_out: list[dict] = []
+    ids_to_delete: list[str] = []
+
+    def _sort_key(r: dict) -> str:
+        # ISO timestamps sort lexicographically.
+        return str(r.get("updated_at") or r.get("created_at") or "")
+
+    for key, items in duplicates.items():
+        # Sort newest-first.
+        items_sorted = sorted(items, key=_sort_key, reverse=True)
+        keep = items_sorted[0]
+        drop = items_sorted[1:]
+        drop_ids = [str(d.get("id")) for d in drop if d.get("id")]
+        ids_to_delete.extend(drop_ids)
+        groups_out.append(
+            {
+                "content": keep.get("content"),
+                "normalized_key": key,
+                "keep_id": keep.get("id"),
+                "drop_ids": drop_ids,
+                "count": len(items_sorted),
+            }
+        )
+
+    deleted = 0
+    if not payload.dry_run and ids_to_delete:
+        # Chunk deletes to keep requests small and reduce the blast radius if something fails.
+        for i in range(0, len(ids_to_delete), delete_chunk_size):
+            chunk = ids_to_delete[i : i + delete_chunk_size]
+            if not chunk:
+                continue
+            try:
+                admin_db.table("coach_memories").delete().in_("id", chunk).execute()
+                deleted += len(chunk)
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"Delete failed after deleting {deleted}: {str(e)}")
+
+    return {
+        "status": "success",
+        "dry_run": payload.dry_run,
+        "athlete_id": athlete_id,
+        "scanned": len(rows),
+        "duplicate_groups": len(groups_out),
+        "would_delete": len(ids_to_delete),
+        "deleted": deleted,
+        "groups": groups_out[:200],  # cap response size
+    }

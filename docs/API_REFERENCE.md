@@ -111,6 +111,10 @@ Calculates TSS from a workout payload without saving a new completed workout.
 
 ## Activity Detail
 
+### `GET /v1/activities/{workout_id}/detail`
+
+Returns streams, laps, intervals, and HR zones in one response (single `time_series` read server-side). Prefer this over separate stream/lap/interval/zones calls. Cached in Redis (`detail:{athlete_id}:{workout_id}`) when Redis is configured.
+
 ### `GET /v1/activities/{workout_id}/streams`
 
 Returns stored per-second stream data for a workout when available. Strava stream payloads are cached in Redis when Redis is configured.

@@ -317,16 +317,36 @@
     messages.push({ id: aiMsgId, role: 'ai', text: '', streaming: true });
     
     try {
-      const data = await api.sendCoachMessage({
+      let accumulated = '';
+      let inputUnlocked = false;
+      const unlockInput = () => {
+        if (inputUnlocked) return;
+        inputUnlocked = true;
+        loading = false;
+      };
+      const data = await api.streamCoachMessage({
         message: text || '(image)',
         recent_tss: athleteStore.recent_tss,
         conversation_id: cid,
-        image_urls
+        image_urls,
+        onConversationId: (id) => {
+          conversationId = id;
+        },
+        onStarted: unlockInput,
+        onChunk: (chunk) => {
+          unlockInput();
+          accumulated += chunk;
+          const msgIndex = messages.findIndex((m) => m.id === aiMsgId);
+          if (msgIndex !== -1) {
+            messages[msgIndex].text = accumulated;
+          }
+          scrollToBottom();
+        }
       });
       if (data.conversation_id) conversationId = data.conversation_id;
       const msgIndex = messages.findIndex((m) => m.id === aiMsgId);
-      if (msgIndex !== -1) {
-        messages[msgIndex].text = data.reply ?? '';
+      if (msgIndex !== -1 && !messages[msgIndex].text) {
+        messages[msgIndex].text = accumulated;
       }
       scrollToBottom();
     } catch (e) {

@@ -90,7 +90,28 @@ async function parseApiError(res: Response, fallback: string): Promise<string> {
   return `${fallback} (${res.status})`;
 }
 
-/** Loads stored streams from the API (not a live Strava fetch). */
+export interface ActivityDetail {
+  streams: ActivityStreams | null;
+  laps: ActivityLap[];
+  intervals: ActivityIntervals | null;
+  zones: ActivityZones | null;
+}
+
+/** Single request: streams, laps, intervals, zones (one time_series read server-side). */
+export async function getActivityDetail(workoutId: string): Promise<ActivityDetail> {
+  const headers = await getAuthHeaders();
+  const res = await fetch(`${API_URL}/v1/activities/${workoutId}/detail`, { headers });
+  if (!res.ok) throw new Error(await parseApiError(res, 'Failed to load workout detail'));
+  const data = (await res.json()) as ActivityDetail;
+  return {
+    streams: data.streams ?? null,
+    laps: Array.isArray(data.laps) ? data.laps : [],
+    intervals: data.intervals ?? null,
+    zones: data.zones ?? null,
+  };
+}
+
+/** @deprecated Use getActivityDetail() — single request for streams, laps, intervals, zones. */
 export async function getActivityStreams(workoutId: string): Promise<ActivityStreams | null> {
   const headers = await getAuthHeaders();
   const res = await fetch(`${API_URL}/v1/activities/${workoutId}/streams`, { headers });
@@ -99,6 +120,7 @@ export async function getActivityStreams(workoutId: string): Promise<ActivityStr
   return (await res.json()) as ActivityStreams;
 }
 
+/** @deprecated Use getActivityDetail(). */
 export async function getActivityLaps(workoutId: string): Promise<ActivityLap[]> {
   const headers = await getAuthHeaders();
   const res = await fetch(`${API_URL}/v1/activities/${workoutId}/laps`, { headers });
@@ -108,6 +130,7 @@ export async function getActivityLaps(workoutId: string): Promise<ActivityLap[]>
   return Array.isArray(data) ? (data as ActivityLap[]) : [];
 }
 
+/** @deprecated Use getActivityDetail(). */
 export async function getActivityIntervals(workoutId: string): Promise<ActivityIntervals | null> {
   const headers = await getAuthHeaders();
   const res = await fetch(`${API_URL}/v1/activities/${workoutId}/intervals`, { headers });
@@ -116,6 +139,7 @@ export async function getActivityIntervals(workoutId: string): Promise<ActivityI
   return (await res.json()) as ActivityIntervals;
 }
 
+/** @deprecated Use getActivityDetail(). */
 export async function getActivityZones(workoutId: string): Promise<ActivityZones | null> {
   try {
     const headers = await getAuthHeaders();
