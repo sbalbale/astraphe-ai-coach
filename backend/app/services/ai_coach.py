@@ -3,7 +3,10 @@ from google.genai import types
 from app.config import settings
 from app.services import coach_tools
 from app.services.algorithms import compute_z_score
-from app.services.memory import retrieve_relevant_memories
+from app.services.memory import retrieve_relevant_memories, should_skip_rag_for_message
+import logging
+
+logger = logging.getLogger(__name__)
 from app.services.time_utils import (
     coerce_timezone_offset_min,
     local_datetime_from_timezone_offset,
@@ -20,6 +23,24 @@ from datetime import date, timedelta
 
 
 _client = genai.Client(api_key=settings.GEMINI_API_KEY)
+
+def _should_fallback_chat_model(err_str: str) -> bool:
+    """
+    True when the primary chat model is likely temporarily overloaded/unavailable.
+    We only use this to decide whether to try the configured fallback model.
+    """
+    s = (err_str or "").lower()
+    return any(
+        k in s
+        for k in (
+            "503",
+            "unavailable",
+            "high demand",
+            "overloaded",
+            "resource exhausted",
+            "quota exceeded",
+        )
+    )
 
 def load_coach_instructions() -> str:
     prompt_file = settings.PROMPTS_DIR / settings.COACH_PROMPT_FILE
@@ -611,20 +632,56 @@ def build_initialization_message(
 
     prompt = f"{instructions}\n\n{context_block}\n\n{directive}"
     try:
-        response = _client.models.generate_content(
-            model=effective_model,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                max_output_tokens=256,
-                temperature=0.35,
-            ),
-        )
-        text = _extract_athlete_message_from_model_output(response)
+        fallback_model = (getattr(settings, "GEMINI_FALLBACK_MODEL", "") or "").strip()
+        candidates: list[str] = [effective_model]
+        if fallback_model and fallback_model not in candidates:
+            candidates.append(fallback_model)
+
+        last_err: Exception | None = None
+        text = ""
+        for idx, model in enumerate(candidates):
+            for attempt in range(3):
+                try:
+                    response = _client.models.generate_content(
+                        model=model,
+                        contents=prompt,
+                        config=types.GenerateContentConfig(
+                            max_output_tokens=256,
+                            temperature=0.35,
+                        ),
+                    )
+                    text = _extract_athlete_message_from_model_output(response)
+                    last_err = None
+                    break
+                except Exception as e:
+                    last_err = e
+                    err_str = str(e)
+                    is_transient = any(
+                        k in err_str
+                        for k in ("500", "503", "INTERNAL", "overloaded", "UNAVAILABLE", "high demand")
+                    )
+                    if attempt < 2 and is_transient:
+                        time.sleep(1.0 * (attempt + 1))
+                        continue
+                    break
+
+            if text:
+                break
+            if idx == 0 and last_err is not None and len(candidates) > 1 and _should_fallback_chat_model(str(last_err)):
+                continue
+            break
     except Exception as e:
-        text = f"Initialization failed: {e}"
+        # Never surface provider errors directly in the UI.
+        text = ""
     text = _strip_leading_time_of_day_greeting(text)
     if not anomalies and text:
         text = f"{greeting}. {text}"
+    if not text:
+        # Deterministic, non-error fallback.
+        if anomalies:
+            text = "I’m seeing a couple signals that suggest we should keep today low-stress. Want me to propose a recovery-focused plan for the next 24–48 hours?"
+        else:
+            text = f"{greeting}. What do you want to focus on today—training plan, recovery, or a specific workout?"
     return text, bool(anomalies)
 
 
@@ -1036,19 +1093,36 @@ def get_coach_response_agentic(
     Returns (athlete-facing message, web search citation sources when present).
     """
     system_instruction = load_coach_instructions()
-    memories = retrieve_relevant_memories(athlete_id, message, db, top_k=5) if db else []
-    context_block = (
-        _build_system_context(
-            db,
-            athlete_id,
-            current_tss=current_tss,
-            conversation_id=conversation_id,
-            memories=memories,
-            timezone_offset_min=timezone_offset_min,
+    coach_t0 = time.perf_counter()
+    if db:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            context_block = asyncio.run(
+                _assemble_agentic_context_async(
+                    db,
+                    athlete_id,
+                    message,
+                    current_tss=current_tss,
+                    conversation_id=conversation_id,
+                    timezone_offset_min=timezone_offset_min,
+                )
+            )
+        else:
+            raise RuntimeError(
+                "get_coach_response_agentic() was called from an async context. "
+                "Use get_coach_response_agentic_async() instead."
+            )
+        logger.info(
+            "[perf] coach_context duration_ms=%s rag_skipped=%s",
+            round((time.perf_counter() - coach_t0) * 1000, 1),
+            should_skip_rag_for_message(message),
         )
-        if db
-        else f"[SYSTEM CONTEXT - DO NOT SHOW TO USER]\nAthlete ID: {athlete_id}\nMost recent workout TSS: {current_tss}\n[END CONTEXT]"
-    )
+    else:
+        context_block = (
+            f"[SYSTEM CONTEXT - DO NOT SHOW TO USER]\nAthlete ID: {athlete_id}\n"
+            f"Most recent workout TSS: {current_tss}\n[END CONTEXT]"
+        )
     system_with_ctx = (
         f"{system_instruction}\n\n{context_block}\n\n"
         "Calendar rule: for all relative dates, including today, tomorrow, named weekdays, this week, and next week, "
@@ -1122,9 +1196,14 @@ def get_coach_response_agentic(
                 )
             )
 
-    effective_model = model_name or settings.GEMINI_MODEL
+    primary_model = model_name or settings.GEMINI_MODEL
+    fallback_model = (getattr(settings, "GEMINI_FALLBACK_MODEL", "") or "").strip()
+    candidates: list[str] = [primary_model]
+    if fallback_model and fallback_model not in candidates:
+        candidates.append(fallback_model)
+
     # Only use ThinkingConfig for models that specifically support it
-    is_thinking_model = "thinking" in effective_model.lower()
+    is_thinking_model = "thinking" in primary_model.lower()
     
     config = types.GenerateContentConfig(
         system_instruction=system_with_ctx,
@@ -1140,32 +1219,55 @@ def get_coach_response_agentic(
 
     last_response = None
     planned_dates_from_tools: list[str] = []
-    # Reduced max hops to prevent long hangs on heavy models or tool-call oscillations
-    for _hop in range(8):
+    max_hops = _agentic_max_tool_hops(message)
+    for _hop in range(max_hops):
+        hop_t0 = time.perf_counter()
         _hop_error: Exception | None = None
-        for _attempt in range(3):  # 3 attempts for larger models
-            try:
-                last_response = _client.models.generate_content(
-                    model=effective_model,
-                    contents=contents,
-                    config=config,
-                )
-                _hop_error = None
+        for _model_idx, effective_model in enumerate(candidates):
+            _hop_error = None
+            for _attempt in range(3):  # 3 attempts for larger models
+                try:
+                    last_response = _client.models.generate_content(
+                        model=effective_model,
+                        contents=contents,
+                        config=config,
+                    )
+                    _hop_error = None
+                    break
+                except Exception as e:
+                    _hop_error = e
+                    err_str = str(e)
+                    # Catch broad transient errors and connection-level failures
+                    is_transient = any(
+                        k in err_str
+                        for k in ("500", "503", "INTERNAL", "overloaded", "Server disconnected", "RemoteProtocolError", "EOF")
+                    )
+                    if _attempt < 2 and is_transient:
+                        wait = 1.5 * (_attempt + 1)
+                        print(
+                            f"[coach] Gemini transient error (hop {_hop}, attempt {_attempt + 1}): {e}. Retrying in {wait}s…"
+                        )
+                        time.sleep(wait)
+                        continue
+                    break
+
+            # Success with this model.
+            if _hop_error is None:
                 break
-            except Exception as e:
-                _hop_error = e
-                err_str = str(e)
-                # Catch broad transient errors and connection-level failures
-                is_transient = any(
-                    k in err_str 
-                    for k in ("500", "503", "INTERNAL", "overloaded", "Server disconnected", "RemoteProtocolError", "EOF")
-                )
-                if _attempt < 2 and is_transient:
-                    wait = 1.5 * (_attempt + 1)
-                    print(f"[coach] Gemini transient error (hop {_hop}, attempt {_attempt + 1}): {e}. Retrying in {wait}s…")
-                    time.sleep(wait)
-                    continue
-                break
+
+            # If primary looks overloaded/unavailable, try fallback model (if configured).
+            if _model_idx == 0 and len(candidates) > 1 and _should_fallback_chat_model(str(_hop_error)):
+                print(f"[coach] Primary model unavailable; trying fallback model={candidates[1]}")
+                continue
+
+            # Otherwise don't keep iterating candidates.
+            break
+
+        logger.info(
+            "[perf] coach_hop hop=%s duration_ms=%s",
+            _hop,
+            round((time.perf_counter() - hop_t0) * 1000, 1),
+        )
 
         if _hop_error is not None:
             print(f"CRITICAL: generate_content failed after retry (hop {_hop}): {_hop_error}")
@@ -1258,6 +1360,123 @@ def get_coach_response_agentic(
     final = _correct_relative_date_language(final, planned_dates_from_tools, calendar)
     grounding = _extract_grounding_sources(last_response) if last_response else []
     return (final or "Unable to complete coach response.", grounding)
+
+
+async def get_coach_response_agentic_async(
+    athlete_id: str,
+    message: str,
+    current_tss: float = 0.0,
+    db: Client | None = None,
+    conversation_id: str | None = None,
+    model_name: str | None = None,
+    timezone_offset_min: int | None = None,
+    max_tool_hops: int = 15,
+) -> tuple[str, list[dict[str, str]]]:
+    """
+    Async-safe wrapper for use from `async def` code.
+
+    The Gemini SDK calls (and the agentic tool-loop) are synchronous; this helper runs
+    the full agentic implementation in a worker thread so it retains tool calling,
+    retries/fallbacks, and max_tool_hops behavior.
+    """
+    return await asyncio.to_thread(
+        get_coach_response_agentic,
+        athlete_id=athlete_id,
+        message=message,
+        current_tss=current_tss,
+        db=db,
+        conversation_id=conversation_id,
+        model_name=model_name,
+        timezone_offset_min=timezone_offset_min,
+        max_tool_hops=max_tool_hops,
+    )
+
+
+def _agentic_max_tool_hops(message: str) -> int:
+    msg_l = (message or "").lower()
+    if any(
+        w in msg_l
+        for w in (
+            "schedule",
+            "plan my",
+            "build my",
+            "clear my",
+            "delete my",
+            "this week",
+            "next week",
+            "training week",
+        )
+    ):
+        return 8
+    if should_skip_rag_for_message(message):
+        return 3
+    return 5
+
+
+async def _assemble_agentic_context_async(
+    db: Client,
+    athlete_id: str,
+    message: str,
+    current_tss: float = 0.0,
+    conversation_id: str | None = None,
+    timezone_offset_min: int | None = None,
+) -> str:
+    """Parallel DB reads + optional RAG for agentic coach."""
+    use_rag = not should_skip_rag_for_message(message)
+
+    async def load_memories() -> list[dict]:
+        if not use_rag:
+            return []
+        return await asyncio.to_thread(
+            retrieve_relevant_memories, athlete_id, message, db, 5
+        )
+
+    async def load_hist() -> list[dict]:
+        if not conversation_id:
+            return []
+        return await asyncio.to_thread(
+            _load_conversation_history, db, athlete_id, conversation_id, 24
+        )
+
+    training, bio, profile, memories, hist_rows = await asyncio.gather(
+        asyncio.to_thread(_summarize_training_load, db, athlete_id, current_tss),
+        asyncio.to_thread(_summarize_biometrics, db, athlete_id),
+        asyncio.to_thread(_summarize_athlete_profile, db, athlete_id),
+        load_memories(),
+        load_hist(),
+    )
+    offset = coerce_timezone_offset_min(
+        profile.get("timezone_offset_min") if timezone_offset_min is None else timezone_offset_min
+    )
+    calendar = _calendar_context_for_offset(offset)
+    today = calendar["current_local_date"]
+    profile = {**profile, "timezone_offset_min": offset}
+    ctx: dict = {
+        "date": today,
+        **calendar,
+        "timezone_offset_min": offset,
+        "calendar_rules": {
+            "today": "Resolve today from current_local_date in the athlete's timezone.",
+            "tomorrow": "Resolve tomorrow from tomorrow_date in the athlete's timezone.",
+            "named_weekdays": "Resolve weekday names from upcoming_weekdays.",
+            "followups": "If the athlete clarifies a plan with words like this, that, it, or all, keep the previously discussed workout date unless they clearly change it.",
+        },
+        "athlete_id": athlete_id,
+        "training_load": training,
+        "biometrics": bio,
+        "athlete_profile": profile,
+    }
+    if memories:
+        ctx["memories"] = [
+            {"content": m.get("content"), "created_at": m.get("created_at")}
+            for m in memories
+        ]
+    if conversation_id:
+        ctx["conversation"] = {
+            "id": conversation_id,
+            "recent_messages": hist_rows,
+        }
+    return "[SYSTEM CONTEXT - DO NOT SHOW TO USER]\n" + json.dumps(ctx, ensure_ascii=False) + "\n[END CONTEXT]"
 
 
 async def _build_system_context_string_async(

@@ -34,6 +34,23 @@ STREAM_KEYS = (
 STRAVA_BACKFILL_REQUEST_GAP_S = 1.5
 STRAVA_RATE_LIMIT_COOLDOWN_S = 900  # 15 min rolling window when no Retry-After
 
+_background_tasks: set[asyncio.Task] = set()
+
+
+def schedule_hydrate_streams_background(db: Any, athlete_id: str, workout_id: str) -> None:
+    """
+    Schedule a background hydration task and keep a strong reference.
+
+    Asyncio tasks without a strong ref may be garbage collected/cancelled.
+    """
+    try:
+        task = asyncio.create_task(_hydrate_streams_background(db, athlete_id, workout_id))
+    except RuntimeError:
+        # No running loop (e.g., called from a sync context); skip silently.
+        return
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
 
 class StravaRateLimitError(Exception):
     """Raised on HTTP 429 from Strava read APIs so callers can back off (backfill/webhook)."""
@@ -428,24 +445,19 @@ def compute_500m_splits_from_streams(streams: dict) -> list[dict]:
 
 
 def _time_series_to_streams_dict(time_series: Any) -> dict[str, Any]:
-    """Rebuild Strava-style stream objects from ``activity_streams.time_series`` JSON."""
-    if not isinstance(time_series, dict) or not time_series:
-        return {}
-    out: dict[str, Any] = {}
-    for k, v in time_series.items():
-        key = str(k)
-        if isinstance(v, list):
-            out[key] = {"data": v}
-        elif isinstance(v, dict) and isinstance(v.get("data"), list):
-            out[key] = v
-    return out
+    """Rebuild Strava-style stream objects from stored time_series JSON."""
+    from app.services import stream_storage
+
+    return stream_storage.time_series_to_streams_dict(time_series)
 
 
 def _load_stored_streams_dict(db: Any, workout_id: str) -> dict[str, Any]:
-    """Return Strava-style streams from ``activity_streams``, or {} if no row."""
+    """Return Strava-style streams from Storage or legacy JSONB, or {} if no row."""
+    from app.services import stream_storage
+
     ts_row = (
         db.table("activity_streams")
-        .select("time_series")
+        .select("time_series, storage_path, content_encoding")
         .eq("workout_id", workout_id)
         .maybe_single()
         .execute()
@@ -453,7 +465,8 @@ def _load_stored_streams_dict(db: Any, workout_id: str) -> dict[str, Any]:
     ts_holder = _supabase_single_row(ts_row)
     if not ts_holder:
         return {}
-    return _time_series_to_streams_dict(ts_holder.get("time_series"))
+    ts = stream_storage.resolve_time_series(ts_holder)
+    return stream_storage.time_series_to_streams_dict(ts)
 
 
 def _upsert_activity_streams(
@@ -461,14 +474,19 @@ def _upsert_activity_streams(
 ) -> None:
     if not streams:
         return
+    from app.services import stream_storage
+
+    time_series = stream_storage.streams_dict_to_time_series(streams)
+    storage_path, byte_size = stream_storage.upload_time_series_gzip(
+        athlete_id, workout_id, time_series
+    )
     payload = {
         "workout_id": workout_id,
         "athlete_id": athlete_id,
-        "time_series": {
-            k: v.get("data", [])
-            for k, v in streams.items()
-            if isinstance(v, dict)
-        },
+        "time_series": None,
+        "storage_path": storage_path,
+        "byte_size": byte_size,
+        "content_encoding": stream_storage.CONTENT_ENCODING,
         "resolution_seconds": 1,
     }
     existing = (
@@ -890,7 +908,17 @@ async def ingest_strava_activity(
         f"[strava.ingest] activity_id={activity_id} athlete={athlete_id} "
         f"sport={sport_type} created={was_created}"
     )
+    if not streams:
+        schedule_hydrate_streams_background(db, athlete_id, workout_id)
     return workout
+
+
+async def _hydrate_streams_background(db: Any, athlete_id: str, workout_id: str) -> None:
+    """Fetch Strava streams after ingest so opening a workout does not block on hydrate."""
+    try:
+        await hydrate_workout_streams(db, athlete_id, workout_id, delay=True)
+    except Exception as exc:
+        print(f"[strava.hydrate_bg] workout={workout_id} athlete={athlete_id} error={exc}")
 
 
 async def backfill_historical_data(
@@ -1066,14 +1094,16 @@ def reprocess_rowing_intervals_from_stored_data(db: Any, workout_id: str) -> tup
 
         ts_row = (
             db.table("activity_streams")
-            .select("time_series")
+            .select("time_series, storage_path, content_encoding")
             .eq("workout_id", workout_id)
             .maybe_single()
             .execute()
         )
         ts_holder = _supabase_single_row(ts_row)
-        ts = ts_holder.get("time_series") if ts_holder else None
-        streams = _time_series_to_streams_dict(ts)
+        from app.services import stream_storage
+
+        ts = stream_storage.resolve_time_series(ts_holder) if ts_holder else None
+        streams = stream_storage.time_series_to_streams_dict(ts)
 
         laps_db = _load_cached_laps_for_workout(db, workout_id)
         emb = activity.get("laps")

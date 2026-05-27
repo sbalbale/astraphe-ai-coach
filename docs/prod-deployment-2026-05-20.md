@@ -1,7 +1,9 @@
 # ASTRAPE Production Deployment Guide
 
+> **Superseded for backend/Redis/DB deploy:** Use [DEPLOYMENT.md](./DEPLOYMENT.md) — self-hosted FastAPI, Supabase, and Redis on Proxmox via GitHub Actions. This document is retained for historical Firebase/Cloud Run/Upstash steps.
+
 **Date:** 2026-05-20
-**Stack:** FastAPI (GCP Cloud Run) · SvelteKit SPA (Firebase Hosting) · Supabase · Google Gemini · Upstash Redis · Firebase (FCM for iOS/Android push)
+**Stack (historical):** FastAPI (GCP Cloud Run) · SvelteKit SPA (Firebase Hosting) · Supabase · Google Gemini · Upstash Redis · Firebase (FCM for iOS/Android push)
 
 ---
 

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Query
 from app.models.workout import WorkoutPayload, WorkoutUpdatePayload
 from app.services.algorithms import compute_tss_power
 from app.services.processing import (
@@ -11,6 +11,14 @@ from app.dependencies import get_current_athlete, get_user_db
 from datetime import datetime, timezone, timedelta
 
 router = APIRouter(prefix="/v1/workouts", tags=["Workouts"])
+
+_WORKOUT_LIST_COLUMNS = (
+    "id, athlete_id, source, sport, title, started_at, ended_at, duration_seconds, "
+    "distance_m, avg_hr, max_hr, avg_power_w, norm_power_w, avg_pace_sec_km, tss, "
+    "strain_score, strava_activity_id, strava_streams_fetched, intervals_source, "
+    "hr_zone_0_pct, hr_zone_1_pct, hr_zone_2_pct, hr_zone_3_pct, hr_zone_4_pct, "
+    "hr_zone_5_pct, elevation_gain_m, primary_source"
+)
 
 def _parse_dt(v):
     if v is None:
@@ -135,13 +143,20 @@ def _patch_refresh_days(existing: dict, updated: dict) -> set:
     return days
 
 @router.get("")
-async def get_workouts(
-    limit: int = 20,
+def get_workouts(
+    limit: int = Query(20, ge=1, le=100),
     athlete_id: str = Depends(get_current_athlete),
     db = Depends(get_user_db)
 ):
     """Fetch past workouts for the training history tab."""
-    res = db.table("workouts").select("*").eq("athlete_id", athlete_id).order("started_at", desc=True).limit(limit).execute()
+    res = (
+        db.table("workouts")
+        .select(_WORKOUT_LIST_COLUMNS)
+        .eq("athlete_id", athlete_id)
+        .order("started_at", desc=True)
+        .limit(limit)
+        .execute()
+    )
     rows = res.data or []
     # Add a computed duration_secs for the mobile app + any clients expecting it.
     for r in rows:
