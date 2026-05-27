@@ -1,10 +1,5 @@
 import { browser } from '$app/environment';
-import {
-  getActivityStreams,
-  getActivityLaps,
-  getActivityIntervals,
-  getActivityZones,
-} from '../services/activityService';
+import { getActivityDetail } from '../services/activityService';
 
 const CACHE_KEY = 'astrape:workout-detail:v1';
 const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
@@ -116,18 +111,12 @@ export async function preloadWorkoutDetail(workoutId: string): Promise<void> {
 
   activePreloads.add(workoutId);
   try {
-    const [streams, laps, intervals, zones] = await Promise.all([
-      getActivityStreams(workoutId),
-      getActivityLaps(workoutId),
-      getActivityIntervals(workoutId),
-      getActivityZones(workoutId),
-    ]);
-
+    const detail = await getActivityDetail(workoutId);
     saveWorkoutDetailToCache(workoutId, {
-      streams,
-      laps: laps ?? [],
-      intervals,
-      zones,
+      streams: detail.streams,
+      laps: detail.laps ?? [],
+      intervals: detail.intervals,
+      zones: detail.zones,
     });
   } catch (e) {
     console.error(`[WorkoutCache] Preload failed for ${workoutId}:`, e);
