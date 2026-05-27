@@ -35,10 +35,7 @@
   import { CHART_ATL_STROKE, CHART_CTL_STROKE, formCssColor, getWeeklyLoadDeltaColor } from '$lib/scoreColors';
   import { Lightbulb } from '@lucide/svelte';
   import {
-    getActivityStreams,
-    getActivityLaps,
-    getActivityIntervals,
-    getActivityZones,
+    getActivityDetail,
     hydrateActivityStreams,
     refetchWorkoutFromStrava,
     streamsHaveVelocity,
@@ -579,57 +576,35 @@
 
     (async () => {
       try {
-        const fetchStreams = getActivityStreams(w.id).then(async (s) => {
+        let detail = await getActivityDetail(w.id);
+        if (
+          !detail.streams &&
+          w.strava_activity_id &&
+          w.strava_streams_fetched === false
+        ) {
+          detailHydrating = true;
+          const hydrated = await hydrateActivityStreams(w.id);
           if (cancelled) return;
-          if (!s && w.strava_activity_id && w.strava_streams_fetched === false) {
-            detailHydrating = true;
-            const hydrated = await hydrateActivityStreams(w.id);
-            if (cancelled) return;
-            if (hydrated.status === 'hydrated' || hydrated.status === 'already_stored') {
-              s = await getActivityStreams(w.id);
-              clearWorkoutDetailFromCache(w.id); // Invalidate cache so we save the new hydrated data
-            }
-            detailHydrating = false;
+          if (hydrated.status === 'hydrated' || hydrated.status === 'already_stored') {
+            detail = await getActivityDetail(w.id);
+            clearWorkoutDetailFromCache(w.id);
           }
-          if (cancelled) return;
-          detailStreams = s;
-          detailLoading = false; // Primary visual centerpiece landed
-          return s;
-        });
-
-        const fetchLaps = getActivityLaps(w.id).then((l) => {
-          if (cancelled) return;
-          detailLaps = l ?? [];
-          return l;
-        });
-
-        const fetchIntervals = getActivityIntervals(w.id).then((i) => {
-          if (cancelled) return;
-          detailIntervals = i;
-          return i;
-        });
-
-        const fetchZones = getActivityZones(w.id).then((z) => {
-          if (cancelled) return;
-          detailZones = z;
-          return z;
-        });
-
-        const [streams, laps, intervals, zones] = await Promise.all([
-          fetchStreams,
-          fetchLaps,
-          fetchIntervals,
-          fetchZones,
-        ]);
+          detailHydrating = false;
+        }
 
         if (cancelled) return;
 
-        // Save to cache
+        detailStreams = detail.streams;
+        detailLaps = detail.laps ?? [];
+        detailIntervals = detail.intervals;
+        detailZones = detail.zones;
+        detailLoading = false;
+
         saveWorkoutDetailToCache(w.id, {
-          streams,
-          laps: laps ?? [],
-          intervals,
-          zones,
+          streams: detail.streams,
+          laps: detail.laps ?? [],
+          intervals: detail.intervals,
+          zones: detail.zones,
         });
       } catch (e: unknown) {
         if (!cancelled) detailError = e instanceof Error ? e.message : 'Failed to load workout details';

@@ -454,19 +454,17 @@ export const api = {
     return data.publicUrl;
   },
 
-  async sendCoachMessage(params: {
+  async streamCoachMessage(params: {
     message: string;
     recent_tss: number;
     conversation_id?: string | null;
     image_urls?: string[] | null;
-  }): Promise<{
-    status: string;
-    conversation_id: string;
-    reply: string;
-    sources?: unknown[];
-  }> {
+    onConversationId?: (conversationId: string) => void;
+    onChunk: (text: string) => void;
+    onSources?: (sources: unknown[]) => void;
+  }): Promise<{ conversation_id: string }> {
     const headers = await getAuthHeaders({ 'Content-Type': 'application/json' });
-    const response = await fetch(`${API_URL}/v1/coach/message`, {
+    const response = await fetch(`${API_URL}/v1/coach/stream`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
@@ -478,40 +476,94 @@ export const api = {
       })
     });
 
-    const text = await response.text();
-    let body: Record<string, unknown> | null = null;
-    try {
-      body = text ? (JSON.parse(text) as Record<string, unknown>) : null;
-    } catch {
-      body = null;
-    }
-
     if (!response.ok) {
-      const detail =
-        typeof body?.detail === 'string'
-          ? body.detail
-          : Array.isArray(body?.detail)
-            ? JSON.stringify(body.detail)
-            : typeof body?.message === 'string'
-              ? body.message
-              : text?.trim() || `HTTP ${response.status}`;
+      const text = await response.text();
+      let detail = text?.trim() || `HTTP ${response.status}`;
+      try {
+        const body = JSON.parse(text) as { detail?: unknown };
+        if (typeof body.detail === 'string') detail = body.detail;
+      } catch {
+        /* ignore */
+      }
       throw new Error(detail);
     }
 
-    const reply =
-      typeof body?.reply === 'string'
-        ? body.reply
-        : typeof body?.message === 'string'
-          ? body.message
-          : '';
-    const cid = typeof body?.conversation_id === 'string' ? body.conversation_id : '';
-    if (!cid) throw new Error('Invalid coach response: missing conversation_id');
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error('Streaming not supported');
 
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let conversationId = params.conversation_id ?? '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split('\n\n');
+      buffer = parts.pop() ?? '';
+
+      for (const part of parts) {
+        for (const line of part.split('\n')) {
+          if (!line.startsWith('data: ')) continue;
+          const payload = line.slice(6).trim();
+          if (!payload || payload === '[DONE]') continue;
+          let data: Record<string, unknown>;
+          try {
+            data = JSON.parse(payload) as Record<string, unknown>;
+          } catch {
+            continue;
+          }
+          if (typeof data.conversation_id === 'string') {
+            conversationId = data.conversation_id;
+            params.onConversationId?.(conversationId);
+          }
+          if (typeof data.text === 'string' && data.text) {
+            params.onChunk(data.text);
+          }
+          if (Array.isArray(data.sources)) {
+            params.onSources?.(data.sources);
+          }
+          if (typeof data.error === 'string') {
+            throw new Error(data.error);
+          }
+        }
+      }
+    }
+
+    if (!conversationId) {
+      throw new Error('Invalid coach stream: missing conversation_id');
+    }
+    return { conversation_id: conversationId };
+  },
+
+  /** @deprecated Prefer streamCoachMessage for lower perceived latency */
+  async sendCoachMessage(params: {
+    message: string;
+    recent_tss: number;
+    conversation_id?: string | null;
+    image_urls?: string[] | null;
+  }): Promise<{
+    status: string;
+    conversation_id: string;
+    reply: string;
+    sources?: unknown[];
+  }> {
+    let reply = '';
+    let sources: unknown[] | undefined;
+    const result = await this.streamCoachMessage({
+      ...params,
+      onChunk: (chunk) => {
+        reply += chunk;
+      },
+      onSources: (s) => {
+        sources = s;
+      }
+    });
     return {
-      status: typeof body?.status === 'string' ? body.status : 'success',
-      conversation_id: cid,
+      status: 'success',
+      conversation_id: result.conversation_id,
       reply,
-      sources: Array.isArray(body?.sources) ? body.sources : undefined
+      sources
     };
   }
 };

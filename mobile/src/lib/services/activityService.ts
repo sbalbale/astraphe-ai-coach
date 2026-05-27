@@ -90,6 +90,27 @@ async function parseApiError(res: Response, fallback: string): Promise<string> {
   return `${fallback} (${res.status})`;
 }
 
+export interface ActivityDetail {
+  streams: ActivityStreams | null;
+  laps: ActivityLap[];
+  intervals: ActivityIntervals | null;
+  zones: ActivityZones | null;
+}
+
+/** Single request: streams, laps, intervals, zones (one time_series read server-side). */
+export async function getActivityDetail(workoutId: string): Promise<ActivityDetail> {
+  const headers = await getAuthHeaders();
+  const res = await fetch(`${API_URL}/v1/activities/${workoutId}/detail`, { headers });
+  if (!res.ok) throw new Error(await parseApiError(res, 'Failed to load workout detail'));
+  const data = (await res.json()) as ActivityDetail;
+  return {
+    streams: data.streams ?? null,
+    laps: Array.isArray(data.laps) ? data.laps : [],
+    intervals: data.intervals ?? null,
+    zones: data.zones ?? null,
+  };
+}
+
 /** Loads stored streams from the API (not a live Strava fetch). */
 export async function getActivityStreams(workoutId: string): Promise<ActivityStreams | null> {
   const headers = await getAuthHeaders();
