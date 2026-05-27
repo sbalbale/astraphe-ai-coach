@@ -71,17 +71,39 @@ def _hr_from_time_series(time_series: dict | None) -> list:
 
 
 async def _fetch_stream_row(db, workout_id: str, athlete_id: str) -> dict | None:
-    res = await asyncio.to_thread(
-        db.table("activity_streams")
-        .select("time_series, resolution_seconds, created_at")
-        .eq("workout_id", workout_id)
-        .eq("athlete_id", athlete_id)
-        .maybe_single()
-        .execute
-    )
-    if not res or not res.data:
-        return None
-    return res.data
+    from app.services import stream_storage
+
+    def _load():
+        res = (
+            db.table("activity_streams")
+            .select(
+                "time_series, storage_path, byte_size, content_encoding, "
+                "resolution_seconds, created_at"
+            )
+            .eq("workout_id", workout_id)
+            .eq("athlete_id", athlete_id)
+            .maybe_single()
+            .execute()
+        )
+        data = getattr(res, "data", None)
+        if not data:
+            return None
+        if isinstance(data, list):
+            if not data:
+                return None
+            data = data[0]
+        if not isinstance(data, dict):
+            return None
+        ts = stream_storage.resolve_time_series(data)
+        if ts is None and not data.get("storage_path") and not data.get("time_series"):
+            return None
+        return {
+            "time_series": ts or {},
+            "resolution_seconds": data.get("resolution_seconds") or 1,
+            "created_at": data.get("created_at"),
+        }
+
+    return await asyncio.to_thread(_load)
 
 
 async def _fetch_laps(db, workout_id: str, athlete_id: str) -> list:
