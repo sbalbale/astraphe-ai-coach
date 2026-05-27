@@ -3,7 +3,10 @@ from google.genai import types
 from app.config import settings
 from app.services import coach_tools
 from app.services.algorithms import compute_z_score
-from app.services.memory import retrieve_relevant_memories
+from app.services.memory import retrieve_relevant_memories, should_skip_rag_for_message
+import logging
+
+logger = logging.getLogger(__name__)
 from app.services.time_utils import (
     coerce_timezone_offset_min,
     local_datetime_from_timezone_offset,
@@ -1036,19 +1039,28 @@ def get_coach_response_agentic(
     Returns (athlete-facing message, web search citation sources when present).
     """
     system_instruction = load_coach_instructions()
-    memories = retrieve_relevant_memories(athlete_id, message, db, top_k=5) if db else []
-    context_block = (
-        _build_system_context(
-            db,
-            athlete_id,
-            current_tss=current_tss,
-            conversation_id=conversation_id,
-            memories=memories,
-            timezone_offset_min=timezone_offset_min,
+    coach_t0 = time.perf_counter()
+    if db:
+        context_block = asyncio.run(
+            _assemble_agentic_context_async(
+                db,
+                athlete_id,
+                message,
+                current_tss=current_tss,
+                conversation_id=conversation_id,
+                timezone_offset_min=timezone_offset_min,
+            )
         )
-        if db
-        else f"[SYSTEM CONTEXT - DO NOT SHOW TO USER]\nAthlete ID: {athlete_id}\nMost recent workout TSS: {current_tss}\n[END CONTEXT]"
-    )
+        logger.info(
+            "[perf] coach_context duration_ms=%s rag_skipped=%s",
+            round((time.perf_counter() - coach_t0) * 1000, 1),
+            should_skip_rag_for_message(message),
+        )
+    else:
+        context_block = (
+            f"[SYSTEM CONTEXT - DO NOT SHOW TO USER]\nAthlete ID: {athlete_id}\n"
+            f"Most recent workout TSS: {current_tss}\n[END CONTEXT]"
+        )
     system_with_ctx = (
         f"{system_instruction}\n\n{context_block}\n\n"
         "Calendar rule: for all relative dates, including today, tomorrow, named weekdays, this week, and next week, "
@@ -1140,8 +1152,9 @@ def get_coach_response_agentic(
 
     last_response = None
     planned_dates_from_tools: list[str] = []
-    # Reduced max hops to prevent long hangs on heavy models or tool-call oscillations
-    for _hop in range(8):
+    max_hops = _agentic_max_tool_hops(message)
+    for _hop in range(max_hops):
+        hop_t0 = time.perf_counter()
         _hop_error: Exception | None = None
         for _attempt in range(3):  # 3 attempts for larger models
             try:
@@ -1166,6 +1179,12 @@ def get_coach_response_agentic(
                     time.sleep(wait)
                     continue
                 break
+
+        logger.info(
+            "[perf] coach_hop hop=%s duration_ms=%s",
+            _hop,
+            round((time.perf_counter() - hop_t0) * 1000, 1),
+        )
 
         if _hop_error is not None:
             print(f"CRITICAL: generate_content failed after retry (hop {_hop}): {_hop_error}")
@@ -1258,6 +1277,93 @@ def get_coach_response_agentic(
     final = _correct_relative_date_language(final, planned_dates_from_tools, calendar)
     grounding = _extract_grounding_sources(last_response) if last_response else []
     return (final or "Unable to complete coach response.", grounding)
+
+
+def _agentic_max_tool_hops(message: str) -> int:
+    msg_l = (message or "").lower()
+    if any(
+        w in msg_l
+        for w in (
+            "schedule",
+            "plan my",
+            "build my",
+            "clear my",
+            "delete my",
+            "this week",
+            "next week",
+            "training week",
+        )
+    ):
+        return 8
+    if should_skip_rag_for_message(message):
+        return 3
+    return 5
+
+
+async def _assemble_agentic_context_async(
+    db: Client,
+    athlete_id: str,
+    message: str,
+    current_tss: float = 0.0,
+    conversation_id: str | None = None,
+    timezone_offset_min: int | None = None,
+) -> str:
+    """Parallel DB reads + optional RAG for agentic coach."""
+    use_rag = not should_skip_rag_for_message(message)
+
+    async def load_memories() -> list[dict]:
+        if not use_rag:
+            return []
+        return await asyncio.to_thread(
+            retrieve_relevant_memories, athlete_id, message, db, 5
+        )
+
+    async def load_hist() -> list[dict]:
+        if not conversation_id:
+            return []
+        return await asyncio.to_thread(
+            _load_conversation_history, db, athlete_id, conversation_id, 24
+        )
+
+    training, bio, profile, memories, hist_rows = await asyncio.gather(
+        asyncio.to_thread(_summarize_training_load, db, athlete_id, current_tss),
+        asyncio.to_thread(_summarize_biometrics, db, athlete_id),
+        asyncio.to_thread(_summarize_athlete_profile, db, athlete_id),
+        load_memories(),
+        load_hist(),
+    )
+    offset = coerce_timezone_offset_min(
+        profile.get("timezone_offset_min") if timezone_offset_min is None else timezone_offset_min
+    )
+    calendar = _calendar_context_for_offset(offset)
+    today = calendar["current_local_date"]
+    profile = {**profile, "timezone_offset_min": offset}
+    ctx: dict = {
+        "date": today,
+        **calendar,
+        "timezone_offset_min": offset,
+        "calendar_rules": {
+            "today": "Resolve today from current_local_date in the athlete's timezone.",
+            "tomorrow": "Resolve tomorrow from tomorrow_date in the athlete's timezone.",
+            "named_weekdays": "Resolve weekday names from upcoming_weekdays.",
+            "followups": "If the athlete clarifies a plan with words like this, that, it, or all, keep the previously discussed workout date unless they clearly change it.",
+        },
+        "athlete_id": athlete_id,
+        "training_load": training,
+        "biometrics": bio,
+        "athlete_profile": profile,
+    }
+    if memories:
+        ctx["memories"] = [
+            {"content": m.get("content"), "created_at": m.get("created_at")}
+            for m in memories
+        ]
+    if conversation_id:
+        ctx["conversation"] = {
+            "id": conversation_id,
+            "recent_messages": hist_rows,
+        }
+    return "[SYSTEM CONTEXT - DO NOT SHOW TO USER]\n" + json.dumps(ctx, ensure_ascii=False) + "\n[END CONTEXT]"
 
 
 async def _build_system_context_string_async(
