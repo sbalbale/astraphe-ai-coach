@@ -150,6 +150,24 @@ def _fetch_latest_bio_sync(db, athlete_id: str) -> dict:
     return res.data[0] if res.data else {}
 
 
+def _fetch_latest_weight_kg_sync(db, athlete_id: str) -> float | None:
+    res = (
+        db.table("biometrics")
+        .select("weight_kg")
+        .eq("athlete_id", athlete_id)
+        .not_.is_("weight_kg", "null")
+        .order("date", desc=True)
+        .limit(1)
+        .execute()
+    )
+    if not res.data:
+        return None
+    raw = res.data[0].get("weight_kg")
+    if raw is None:
+        return None
+    return float(raw)
+
+
 def _fetch_bio_window_sync(db, athlete_id: str) -> list:
     res = (
         db.table("biometrics")
@@ -312,6 +330,11 @@ async def get_athlete_profile(
     """Fetch current athlete physiological anchors."""
     cached = await _cache_get(f"profile:{athlete_id}")
     if cached is not None:
+        latest_weight_kg = await asyncio.to_thread(_fetch_latest_weight_kg_sync, db, athlete_id)
+        if latest_weight_kg is not None:
+            cached["latest_weight_kg"] = latest_weight_kg
+        else:
+            cached.pop("latest_weight_kg", None)
         return cached
 
     try:
@@ -324,6 +347,9 @@ async def get_athlete_profile(
         raise HTTPException(status_code=404, detail="Athlete not found")
 
     result = athlete_dict_with_hr_zones(res.data)
+    latest_weight_kg = await asyncio.to_thread(_fetch_latest_weight_kg_sync, db, athlete_id)
+    if latest_weight_kg is not None:
+        result["latest_weight_kg"] = latest_weight_kg
     await _cache_set(f"profile:{athlete_id}", result)
     return result
 

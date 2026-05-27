@@ -1,5 +1,7 @@
 <script lang="ts">
   import Modal from './Modal.svelte';
+  import DatePicker from './DatePicker.svelte';
+  import TimePicker from './TimePicker.svelte';
 
   let {
     show,
@@ -115,32 +117,34 @@
 
     <div>
       <label for="sleep-night" class="block text-[11px] text-text2 mb-1">Night of</label>
-      <input
+      <DatePicker
         id="sleep-night"
-        type="date"
         bind:value={nightOf}
         max={todayStr()}
-        class="w-full p-2.5 bg-glass2 border border-border rounded-lg text-sm text-text0 outline-none focus:border-blue"
+        ariaLabel="Night of"
+        buttonClass="p-2.5 text-sm"
       />
     </div>
 
     <div class="grid grid-cols-2 gap-3">
       <div>
         <label for="sleep-bedtime" class="block text-[11px] text-text2 mb-1">Bedtime</label>
-        <input
+        <TimePicker
           id="sleep-bedtime"
-          type="time"
           bind:value={bedtime}
-          class="w-full p-2.5 bg-glass2 border border-border rounded-lg text-sm text-text0 outline-none focus:border-blue"
+          ariaLabel="Bedtime"
+          buttonClass="p-2.5 text-sm"
+          minuteStep={1}
         />
       </div>
       <div>
         <label for="sleep-wake" class="block text-[11px] text-text2 mb-1">Wake time</label>
-        <input
+        <TimePicker
           id="sleep-wake"
-          type="time"
           bind:value={wakeTime}
-          class="w-full p-2.5 bg-glass2 border border-border rounded-lg text-sm text-text0 outline-none focus:border-blue"
+          ariaLabel="Wake time"
+          buttonClass="p-2.5 text-sm"
+          minuteStep={1}
         />
       </div>
     </div>

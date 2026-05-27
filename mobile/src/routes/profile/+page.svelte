@@ -5,7 +5,8 @@
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { goto } from '$app/navigation';
   import { navTo } from '$lib/nav';
-  import { normalizeUnits, type Units } from '$lib/utils/units';
+  import { latestWeightKg } from '$lib/utils/biometrics';
+  import { normalizeUnits, kgToLbRoundedHalf, type Units } from '$lib/utils/units';
 
   const menu = [
     { label: 'Personal Information', href: '/profile/personal-info' },
@@ -17,6 +18,25 @@
 
   const units = $derived<Units>(normalizeUnits((athleteStore.profile as any)?.measurement_units));
   const thresholdPaceUnit = $derived(units === 'imperial' ? '/mile' : '/km');
+
+  const weightKg = $derived(
+    latestWeightKg(
+      athleteStore.biometrics?.series,
+      athleteStore.profile?.weight_kg,
+      (athleteStore.profile as { latest_weight_kg?: unknown } | null)?.latest_weight_kg
+    )
+  );
+
+  const weightDisplay = $derived.by(() => {
+    const kg = weightKg;
+    if (kg == null) {
+      return units === 'imperial' ? '-- lb' : '-- kg';
+    }
+    if (units === 'imperial') {
+      return `${kgToLbRoundedHalf(kg)} lb`;
+    }
+    return `${Math.round(kg)} kg`;
+  });
 
   async function handleSignOut() {
     try {
@@ -72,6 +92,13 @@
         <p class="text-[11px] text-text2 uppercase tracking-wider">Threshold Pace</p>
         <p class="mt-1 text-[16px] font-semibold font-mono text-teal">
           {athleteStore.profile?.threshold_pace ? `${athleteStore.profile.threshold_pace} ${thresholdPaceUnit}` : `-- ${thresholdPaceUnit}`}
+        </p>
+      </div>
+
+      <div class="p-3 rounded-xl bg-glass border border-border">
+        <p class="text-[11px] text-text2 uppercase tracking-wider">Weight</p>
+        <p class="mt-1 text-[16px] font-semibold font-mono text-amber">
+          {weightDisplay}
         </p>
       </div>
 

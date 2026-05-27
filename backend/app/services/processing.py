@@ -1019,6 +1019,8 @@ def process_and_save_biometrics(
         "date": payload.date.isoformat(),
         "hrv_rmssd": final_hrv,
         "resting_hr": int(round(final_rhr)) if final_rhr is not None else None,
+        "weight_kg": payload.weight_kg if payload.weight_kg is not None else existing.get("weight_kg"),
+        "height_cm": payload.height_cm if payload.height_cm is not None else existing.get("height_cm"),
         "sleep_duration_min": total_sleep_min,
         "sleep_in_bed_min": total_in_bed_min,
         "sleep_score": sleep_score, # Astrape Score
@@ -1100,6 +1102,8 @@ async def reprocess_athlete_metrics(athlete_id: str, db) -> dict[str, int]:
             source=b.get("hrv_source") or "whoop",
             hrv_rmssd=float(b["hrv_rmssd"]) if b.get("hrv_rmssd") is not None else None,
             resting_hr=b.get("resting_hr"),
+            weight_kg=float(b["weight_kg"]) if b.get("weight_kg") is not None else None,
+            height_cm=float(b["height_cm"]) if b.get("height_cm") is not None else None,
             sleep_duration_min=None,
             sleep_score=b.get("sleep_score"),
             sleep_deep_pct=float(b["sleep_deep_pct"]) if b.get("sleep_deep_pct") is not None else None,

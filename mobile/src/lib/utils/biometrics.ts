@@ -37,6 +37,27 @@ export function calculateSleepScore(data: SleepData): number {
 }
 
 /**
+ * Resolve display weight (kg): newest in loaded biometrics series, then
+ * profile.latest_weight_kg (full history from API), then athletes.weight_kg.
+ */
+export function latestWeightKg(
+  series: Array<{ weight_kg?: unknown }> | null | undefined,
+  profileWeightKg: unknown,
+  latestWeightKgFromProfile?: unknown
+): number | null {
+  const rows = series ?? [];
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const w = Number(rows[i]?.weight_kg);
+    if (Number.isFinite(w) && w > 0) return w;
+  }
+  const fromBiometrics = Number(latestWeightKgFromProfile);
+  if (Number.isFinite(fromBiometrics) && fromBiometrics > 0) return fromBiometrics;
+  const profile = Number(profileWeightKg);
+  if (Number.isFinite(profile) && profile > 0) return profile;
+  return null;
+}
+
+/**
  * Calculates a custom Astrape Recovery Score (0-100)
  * Weights: 45% HRV, 25% RHR, 30% Sleep
  */
