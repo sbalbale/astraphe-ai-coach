@@ -23,7 +23,7 @@ Summary:
 3. **API proxy (Option A):** FastAPI gunzips and returns the same `/detail` JSON shape; Redis `detail:` cache unchanged.
 4. Raw `.fit` is a future **Garmin artifact** only (`fit_file_url`), not the canonical stream format.
 
-Not implemented yet; use when `activity_streams` row size remains slow after combined endpoint + Redis.
+Optional optimization; use when `activity_streams` row size remains slow after combined endpoint + Redis.
 
 ## Coach latency
 
