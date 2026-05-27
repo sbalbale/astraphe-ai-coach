@@ -1413,7 +1413,8 @@ async def get_coach_response_agentic_async(
     # and instead inline the no-db branch prompt here.
     final_prompt = f"{system_with_ctx}\n\nAthlete Message: {message}"
     effective_model = model_name or settings.GEMINI_MODEL
-    response = _client.models.generate_content(
+    response = await asyncio.to_thread(
+        _client.models.generate_content,
         model=effective_model,
         contents=final_prompt,
         config=types.GenerateContentConfig(
