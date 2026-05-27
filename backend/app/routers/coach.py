@@ -37,6 +37,25 @@ async def _run_memory_extraction(
     await asyncio.to_thread(extract_and_save_memories, athlete_id, conversation_excerpt, db, model_name)
 
 
+async def _run_conversation_title(
+    db,
+    athlete_id: str,
+    conversation_id: str,
+    model_name: str | None,
+) -> None:
+    try:
+        new_title = await asyncio.to_thread(
+            generate_coach_conversation_title,
+            db,
+            athlete_id,
+            conversation_id,
+            model_name,
+        )
+        _force_set_conversation_title(db, athlete_id, conversation_id, new_title)
+    except Exception:
+        pass
+
+
 class ChatMessage(BaseModel):
     conversation_id: Optional[str] = None
     message: str
@@ -362,11 +381,13 @@ async def chat_with_coach(
             config.gemini_analysis_model,
         )
 
-        try:
-            new_title = generate_coach_conversation_title(db, athlete_id, conversation_id, model_name=config.gemini_model)
-            _force_set_conversation_title(db, athlete_id, conversation_id, new_title)
-        except Exception:
-            pass
+        background_tasks.add_task(
+            _run_conversation_title,
+            db,
+            athlete_id,
+            conversation_id,
+            config.gemini_model,
+        )
         try:
             from app.services.push import send_push_to_athlete
             from app.services.text_format import notification_preview
@@ -454,17 +475,13 @@ async def stream_chat_with_coach(
                 db,
                 config.gemini_analysis_model,
             )
-            try:
-                new_title = await asyncio.to_thread(
-                    generate_coach_conversation_title,
-                    db,
-                    athlete_id,
-                    conversation_id,
-                    config.gemini_model,
-                )
-                _force_set_conversation_title(db, athlete_id, conversation_id, new_title)
-            except Exception:
-                pass
+            background_tasks.add_task(
+                _run_conversation_title,
+                db,
+                athlete_id,
+                conversation_id,
+                config.gemini_model,
+            )
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
