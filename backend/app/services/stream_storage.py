@@ -119,10 +119,13 @@ def fetch_stream_row_columns(db: Any, workout_id: str, athlete_id: str) -> dict[
     if not isinstance(data, dict):
         return None
     ts = resolve_time_series(data)
-    # Treat missing/corrupt Storage blobs the same as missing streams.
-    # If storage_path exists but the blob is missing/corrupt, resolve_time_series returns None.
+    # If we have a Storage pointer but the blob is missing/corrupt, return an empty time_series
+    # so callers can treat it as missing streams and trigger re-hydration.
     if ts is None:
-        return None
+        if data.get("storage_path"):
+            ts = {}
+        else:
+            return None
     return {
         "time_series": ts or {},
         "resolution_seconds": data.get("resolution_seconds") or 1,
