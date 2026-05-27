@@ -75,20 +75,21 @@ async def _fetch_stream_row(db, workout_id: str, athlete_id: str) -> dict | None
     from app.services.strava import schedule_hydrate_streams_background
 
     def _load():
-        row = stream_storage.fetch_stream_row_columns(db, workout_id, athlete_id)
-        if not row:
-            return None
-        if not row.get("time_series") and row.get("storage_path"):
-            # If Storage path exists but the blob is unreadable, treat as missing streams.
-            schedule_hydrate_streams_background(db, athlete_id, workout_id)
-            return None
-        return {
-            "time_series": row.get("time_series") or {},
-            "resolution_seconds": row.get("resolution_seconds") or 1,
-            "created_at": row.get("created_at"),
-        }
+        return stream_storage.fetch_stream_row_columns(db, workout_id, athlete_id)
 
-    return await asyncio.to_thread(_load)
+    row = await asyncio.to_thread(_load)
+    if not row:
+        return None
+    if not row.get("time_series") and row.get("storage_path"):
+        # If Storage path exists but the blob is unreadable, treat as missing streams.
+        # Schedule this on the event loop thread (schedule_hydrate_streams_background uses create_task).
+        schedule_hydrate_streams_background(db, athlete_id, workout_id)
+        return None
+    return {
+        "time_series": row.get("time_series") or {},
+        "resolution_seconds": row.get("resolution_seconds") or 1,
+        "created_at": row.get("created_at"),
+    }
 
 
 async def _fetch_laps(db, workout_id: str, athlete_id: str) -> list:

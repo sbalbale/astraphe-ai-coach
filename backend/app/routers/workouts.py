@@ -143,7 +143,7 @@ def _patch_refresh_days(existing: dict, updated: dict) -> set:
     return days
 
 @router.get("")
-async def get_workouts(
+def get_workouts(
     limit: int = Query(20, ge=1, le=100),
     athlete_id: str = Depends(get_current_athlete),
     db = Depends(get_user_db)

@@ -26,6 +26,7 @@ from app.dependencies import (
 
 _ALLOWED_DOC_EXTENSIONS = {".pdf", ".csv", ".xlsx", ".xls"}
 _MAX_DOC_BYTES = 10 * 1024 * 1024  # 10 MB
+_stream_bg_tasks: set[asyncio.Task] = set()
 
 
 async def _run_memory_extraction(
@@ -539,20 +540,25 @@ async def stream_chat_with_coach(
                 disconnected = False
             if not disconnected:
                 recent_history = _load_conversation_history(db, athlete_id, conversation_id, limit=10)
-                background_tasks.add_task(
-                    _run_memory_extraction,
-                    athlete_id,
-                    recent_history,
-                    db,
-                    config.gemini_analysis_model,
+                mem_task = asyncio.create_task(
+                    _run_memory_extraction(
+                        athlete_id,
+                        recent_history,
+                        db,
+                        config.gemini_analysis_model,
+                    )
                 )
-                background_tasks.add_task(
-                    _run_conversation_title,
-                    db,
-                    athlete_id,
-                    conversation_id,
-                    config.gemini_model,
+                title_task = asyncio.create_task(
+                    _run_conversation_title(
+                        db,
+                        athlete_id,
+                        conversation_id,
+                        config.gemini_model,
+                    )
                 )
+                _stream_bg_tasks.update({mem_task, title_task})
+                mem_task.add_done_callback(_stream_bg_tasks.discard)
+                title_task.add_done_callback(_stream_bg_tasks.discard)
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")

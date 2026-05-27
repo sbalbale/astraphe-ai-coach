@@ -228,7 +228,7 @@ def _normalize_memory_content_for_dedupe(text: str | None) -> str:
 
 
 @router.post("/coach-memories/merge-duplicates")
-async def merge_coach_memory_duplicates(
+def merge_coach_memory_duplicates(
     payload: MergeCoachMemoryDuplicatesRequest,
     _admin: dict = Depends(get_admin_user),
     admin_db: Client = Depends(get_admin_db),
