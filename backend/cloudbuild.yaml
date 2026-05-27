@@ -1,3 +1,5 @@
+# Historical GCP Cloud Run pipeline — NOT the active deploy path.
+# Production: GitHub Actions -> GHCR -> Proxmox docker compose (see docs/DEPLOYMENT.md).
 steps:
   - name: 'gcr.io/cloud-builders/docker'
     args:
@@ -19,7 +21,7 @@ steps:
       - deploy
       - astrape-api
       - --image=gcr.io/$PROJECT_ID/astrape-api:$COMMIT_SHA
-      # us-east4: align Upstash REDIS_URL region with this (see prod-deployment §4).
+      # Legacy Cloud Run deploy — production uses self-hosted Redis (astrape-redis).
       - --region=us-east4
       - --allow-unauthenticated
       - --min-instances=1
