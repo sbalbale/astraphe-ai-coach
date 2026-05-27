@@ -42,7 +42,13 @@
       "Bash(Select-Object FullName)",
       "Bash(Head -30)",
       "Bash(python -c \"import pydantic_settings; help\\(pydantic_settings.BaseSettings.settings_customise_sources\\)\")",
-      "Bash(.venvScriptspython.exe -c ' *)"
+      "Bash(.venvScriptspython.exe -c ' *)",
+      "PowerShell(npx supabase migration up --local 2>&1)",
+      "PowerShell(npx supabase migration list --local 2>&1)",
+      "PowerShell(npx supabase db query --local \"$\\(Get-Content 'supabase/migrations/20260527014001_fix_rls_initplan_and_duplicate_indexes.sql' -Raw\\)\" 2>&1)",
+      "PowerShell(psql *)",
+      "PowerShell(npx supabase db query --db-url \"postgresql://postgres:postgres@127.0.0.1:54322/postgres\" -f supabase/migrations/20260527014001_fix_rls_initplan_and_duplicate_indexes.sql 2>&1)",
+      "PowerShell(docker exec *)"
     ]
   },
   "enableAllProjectMcpServers": true,
