@@ -72,35 +72,20 @@ def _hr_from_time_series(time_series: dict | None) -> list:
 
 async def _fetch_stream_row(db, workout_id: str, athlete_id: str) -> dict | None:
     from app.services import stream_storage
+    from app.services.strava import schedule_hydrate_streams_background
 
     def _load():
-        res = (
-            db.table("activity_streams")
-            .select(
-                "time_series, storage_path, byte_size, content_encoding, "
-                "resolution_seconds, created_at"
-            )
-            .eq("workout_id", workout_id)
-            .eq("athlete_id", athlete_id)
-            .maybe_single()
-            .execute()
-        )
-        data = getattr(res, "data", None)
-        if not data:
+        row = stream_storage.fetch_stream_row_columns(db, workout_id, athlete_id)
+        if not row:
             return None
-        if isinstance(data, list):
-            if not data:
-                return None
-            data = data[0]
-        if not isinstance(data, dict):
-            return None
-        ts = stream_storage.resolve_time_series(data)
-        if ts is None and not data.get("storage_path") and not data.get("time_series"):
+        if not row.get("time_series") and row.get("storage_path"):
+            # If Storage path exists but the blob is unreadable, treat as missing streams.
+            schedule_hydrate_streams_background(db, athlete_id, workout_id)
             return None
         return {
-            "time_series": ts or {},
-            "resolution_seconds": data.get("resolution_seconds") or 1,
-            "created_at": data.get("created_at"),
+            "time_series": row.get("time_series") or {},
+            "resolution_seconds": row.get("resolution_seconds") or 1,
+            "created_at": row.get("created_at"),
         }
 
     return await asyncio.to_thread(_load)
@@ -217,8 +202,8 @@ async def get_activity_detail(
     Single round-trip: streams (full time_series), laps, intervals, and zones.
     Zones are computed from the same time_series row (no second DB read).
     """
-    detail_cache_key = f"detail:{athlete_id}:{workout_id}"
     version = await _get_zones_version(athlete_id)
+    detail_cache_key = f"detail:{athlete_id}:v{version}:{workout_id}"
     zones_cache_key = f"zones:workout:{athlete_id}:v{version}:{workout_id}"
 
     cached_detail = await _cache_get(detail_cache_key)
@@ -227,7 +212,7 @@ async def get_activity_detail(
             "activity_detail",
             workout_id=workout_id,
             cache="detail_hit",
-            bytes=payload_bytes(cached_detail),
+            # payload_bytes() JSON-serializes; avoid hot-path CPU on cache hits.
         ):
             return cached_detail
 
@@ -280,7 +265,7 @@ async def get_streams(
     cache_key = f"streams:{athlete_id}:{workout_id}"
     cached = await _cache_get(cache_key)
     if cached:
-        with perf_span("activity_streams", workout_id=workout_id, cache="hit", bytes=payload_bytes(cached)):
+        with perf_span("activity_streams", workout_id=workout_id, cache="hit"):
             return cached
 
     with perf_span("activity_streams", workout_id=workout_id, cache="miss") as span:
@@ -324,7 +309,7 @@ async def hydrate_streams(
     await asyncio.gather(
         _cache_del(f"streams:{athlete_id}:{workout_id}"),
         _cache_del(f"zones:workout:{athlete_id}:v{version}:{workout_id}"),
-        _cache_del(f"detail:{athlete_id}:{workout_id}"),
+        _cache_del(f"detail:{athlete_id}:v{version}:{workout_id}"),
     )
     return res
 
@@ -341,7 +326,7 @@ async def refetch_strava(
     await asyncio.gather(
         _cache_del(f"streams:{athlete_id}:{workout_id}"),
         _cache_del(f"zones:workout:{athlete_id}:v{version}:{workout_id}"),
-        _cache_del(f"detail:{athlete_id}:{workout_id}"),
+        _cache_del(f"detail:{athlete_id}:v{version}:{workout_id}"),
     )
     return res
 
