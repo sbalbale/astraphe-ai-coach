@@ -1,8 +1,8 @@
-﻿# Tech Stack
+# Tech Stack
 
 ## Summary
 
-ASTRAPE is a SvelteKit/Svelte 5 frontend, FastAPI Python backend, Supabase data/auth/storage layer, Redis-assisted cache/rate-limit layer, and Google GenAI-powered coaching system.
+ASTRAPHE is a SvelteKit/Svelte 5 frontend, FastAPI Python backend, Supabase data/auth/storage layer, Redis-assisted cache/rate-limit layer, and Google GenAI-powered coaching system.
 
 ## Frontend
 
@@ -136,7 +136,7 @@ If Redis is unavailable, rate limiting falls back to process-local memory.
 
 Current repo automation:
 
-- Backend: `.github/workflows/deploy.yml` builds `ghcr.io/sbalbale/astrape-api`, deploys to Proxmox over Cloudflare Access SSH, and runs migrations in the remote database container.
+- Backend: `.github/workflows/deploy.yml` builds `ghcr.io/sbalbale/astraphe-api`, deploys to Proxmox over Cloudflare Access SSH, and runs migrations in the remote database container.
 - Frontend: Firebase Hosting workflows build `mobile/` with pnpm and deploy live/preview channels.
 
 `backend/cloudbuild.yaml` remains in the repo as an alternate/historical Cloud Run build pipeline and should not be described as the primary deployment path unless it is reactivated.

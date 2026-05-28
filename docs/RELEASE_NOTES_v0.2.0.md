@@ -1,7 +1,7 @@
-# ASTRAPE AI Coach — Release Notes (v0.2.0)
+# ASTRAPHE AI Coach — Release Notes (v0.2.0)
 
 **Tag:** `v0.2.0`  
-**Base:** Builds on [v0.1.0](https://github.com/sbalbale/ASTRAPE-AI-Coach/releases/tag/v0.1.0) MVP.
+**Base:** Builds on [v0.1.0](https://github.com/sbalbale/ASTRAPHE-AI-Coach/releases/tag/v0.1.0) MVP.
 
 ---
 

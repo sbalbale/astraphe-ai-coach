@@ -3,7 +3,7 @@
 ## Base URL
 
 ```text
-Production:  https://api.astrapeai.com/v1
+Production:  https://api.astrapheai.com/v1
 Development: http://localhost:8000/v1
 ```
 
@@ -34,7 +34,7 @@ No auth. Returns API, Redis, and Supabase status.
 ```json
 {
   "status": "healthy",
-  "service": "ASTRAPE API",
+  "service": "ASTRAPHE API",
   "version": "1.0.0",
   "redis": "connected",
   "supabase": "connected"

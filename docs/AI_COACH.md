@@ -1,8 +1,8 @@
-﻿# AI Coach System
+# AI Coach System
 
 ## Overview
 
-The ASTRAPE coach is implemented in `backend/app/services/ai_coach.py`, `backend/app/services/coach_tools.py`, `backend/app/services/memory.py`, and `backend/app/routers/coach.py`.
+The ASTRAPHE coach is implemented in `backend/app/services/ai_coach.py`, `backend/app/services/coach_tools.py`, `backend/app/services/memory.py`, and `backend/app/routers/coach.py`.
 
 It uses the current `google-genai` SDK, prompt-file instructions, structured athlete context, tool calls, Google Search grounding, image/document inputs, and pgvector-backed long-term memory.
 

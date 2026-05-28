@@ -2,7 +2,7 @@
 
 ## Overview
 
-ASTRAPE is a Supabase-backed coaching app with a SvelteKit mobile/web client, a stateless FastAPI backend, a Google GenAI coach layer, Redis-assisted rate limiting/caching, and third-party training data integrations.
+ASTRAPHE is a Supabase-backed coaching app with a SvelteKit mobile/web client, a stateless FastAPI backend, a Google GenAI coach layer, Redis-assisted rate limiting/caching, and third-party training data integrations.
 
 ```text
 SvelteKit SPA / PWA / Capacitor iOS
@@ -102,9 +102,9 @@ When `REDIS_URL` is not set or Redis is unreachable, the rate limiter falls back
 
 Current repo automation deploys the backend through GitHub Actions:
 
-1. Build and push `ghcr.io/sbalbale/astrape-api`.
+1. Build and push `ghcr.io/sbalbale/astraphe-api`.
 2. Connect to the Proxmox host through Cloudflare Access SSH.
-3. Run `docker compose pull astrape-api` and `docker compose up -d astrape-api`.
+3. Run `docker compose pull astraphe-api` and `docker compose up -d astraphe-api`.
 4. Run migrations on the remote Supabase/Postgres container.
 
 The frontend is deployed to Firebase Hosting via the Firebase hosting workflows. `backend/cloudbuild.yaml` still exists as an alternate/historical Cloud Run pipeline, but it is not the primary workflow in the current repo.

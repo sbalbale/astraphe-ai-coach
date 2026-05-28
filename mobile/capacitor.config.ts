@@ -1,8 +1,8 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-  appId: 'com.astrape.coach',
-  appName: 'astrape',
+  appId: 'com.astraphe.coach',
+  appName: 'astraphe',
   webDir: 'build'
 };
 

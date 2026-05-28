@@ -1,5 +1,5 @@
 """
-Canonical HR zone calculation for Astrape.
+Canonical HR zone calculation for Astraphe.
 
 Priority (when `hr_zone_method` is not set on the athlete):
   1. Coggan LTHR  (threshold_hr > 0 AND threshold_hr_source == 'manual')

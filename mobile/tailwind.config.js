@@ -49,7 +49,7 @@ export default {
         text0: '#F0F0FF',
         text1: 'rgba(240,240,255,0.65)',
         text2: 'rgba(240,240,255,0.35)',
-        astrape: {
+        astraphe: {
           neutral: '#F0F0FF',
           muted: 'rgba(240,240,255,0.65)',
           teal: '#00C8A8',

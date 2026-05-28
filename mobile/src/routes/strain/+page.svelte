@@ -654,7 +654,7 @@
         <div class="mt-4 pt-4 border-t border-border/40 rounded-xl p-3 bg-gradient-to-br from-blue/10 via-transparent to-transparent">
           <div class="flex items-center gap-1.5 mb-2">
             <span class="text-[11px] font-mono uppercase tracking-[0.08em] text-blue">AI Insight</span>
-            <Tag color="var(--blue)">ASTRAPE</Tag>
+            <Tag color="var(--blue)">ASTRAPHE</Tag>
           </div>
           {#if workoutAnalysisLoading && !workoutAnalysisMemo.has(selectedWorkout.id)}
             <p class="text-xs text-text2 animate-pulse">Analyzing workout...</p>

@@ -51,7 +51,7 @@
 
   <div class="w-full max-w-sm z-10">
     <div class="mb-10 text-center">
-      <h1 class="text-3xl font-bold tracking-tight mb-2">Join ASTRAPE</h1>
+      <h1 class="text-3xl font-bold tracking-tight mb-2">Join ASTRAPHE</h1>
       <p class="text-text2 text-sm">Create your AI-powered training hub</p>
     </div>
 

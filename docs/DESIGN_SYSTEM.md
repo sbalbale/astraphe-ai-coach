@@ -1,6 +1,6 @@
-﻿# Design System
+# Design System
 
-ASTRAPE's visual language is "Spectral": dark-first, high-contrast, data dense, and built from translucent layers with surgical accent color.
+ASTRAPHE's visual language is "Spectral": dark-first, high-contrast, data dense, and built from translucent layers with surgical accent color.
 
 The source of truth is:
 
@@ -175,7 +175,7 @@ Avoid:
 
 ## Tailwind Rules
 
-- Use Astrape tokens instead of standard Tailwind palette colors for UI.
+- Use Astraphe tokens instead of standard Tailwind palette colors for UI.
 - Opacity modifiers should be standard Tailwind steps such as `/5`, `/10`, `/15`, `/20`, `/25`, `/30`, `/40`, `/50`.
 - Keep exact non-token colors in `style=""`, canvas/SVG/D3/MapLibre constants, or documented third-party brand cases.
 - Do not use `pb-safe` or `pt-safe`; they are not configured.

@@ -245,7 +245,7 @@ def compute_atl(tss_series: np.ndarray, time_constant: int = 7) -> np.ndarray:
     return compute_ctl(tss_series, time_constant=time_constant)
 
 # ==========================================
-# PROPRIETARY ASTRAPE SCORES (0-100)
+# PROPRIETARY ASTRAPHE SCORES (0-100)
 # ==========================================
 
 def compute_strain_score(zone_minutes: Dict[int, float], sport: str = "other") -> int:
@@ -273,7 +273,7 @@ def compute_readiness_score(
 ) -> int:
     """
     Compute Readiness Score (0-100).
-    Blends TSB-based form with the Astrape Recovery Score (ANS + sleep + load).
+    Blends TSB-based form with the Astraphe Recovery Score (ANS + sleep + load).
     When recovery_score is unavailable, falls back to TSB-only sigmoid.
     """
     # Softer slope: TSB ±20 → ~40–60 range, not near extremes
@@ -288,7 +288,7 @@ def compute_readiness_score(
     score = (float(recovery_score) * 0.70) + (tsb_component * 0.30)
     return int(round(np.clip(score, 0, 100)))
 
-def calculate_astrape_sleep_score(
+def calculate_astraphe_sleep_score(
     actual_sleep_min: float,
     sleep_need_min: float,
     rem_min: float,
@@ -336,8 +336,8 @@ def compute_sleep_score(
     deep_min: float,
     awake_min: float,
 ) -> int:
-    """Astrape sleep score (0-100); delegates to the strict athlete sleep model."""
-    return calculate_astrape_sleep_score(
+    """Astraphe sleep score (0-100); delegates to the strict athlete sleep model."""
+    return calculate_astraphe_sleep_score(
         actual_sleep_min,
         sleep_need_min,
         rem_min,

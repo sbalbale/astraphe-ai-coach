@@ -1,16 +1,16 @@
 -- 20260429000000_unify_score_names.sql
--- This migration standardizes the column names for Astrape proprietary scores.
+-- This migration standardizes the column names for Astraphe proprietary scores.
 
 -- 1. Biometrics Table
--- Rename existing Astrape columns if they exist
+-- Rename existing Astraphe columns if they exist
 DO $$ 
 BEGIN
     -- strain_score
     IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='biometrics' AND column_name='strain_score') THEN
         -- already standardized
         NULL;
-    ELSIF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='biometrics' AND column_name='astrape_strain_score') THEN
-        ALTER TABLE biometrics RENAME COLUMN astrape_strain_score TO strain_score;
+    ELSIF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='biometrics' AND column_name='astraphe_strain_score') THEN
+        ALTER TABLE biometrics RENAME COLUMN astraphe_strain_score TO strain_score;
     ELSE
         ALTER TABLE biometrics ADD COLUMN strain_score SMALLINT;
     END IF;
@@ -18,8 +18,8 @@ BEGIN
     -- readiness_score
     IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='biometrics' AND column_name='readiness_score') THEN
         NULL;
-    ELSIF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='biometrics' AND column_name='astrape_readiness_score') THEN
-        ALTER TABLE biometrics RENAME COLUMN astrape_readiness_score TO readiness_score;
+    ELSIF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='biometrics' AND column_name='astraphe_readiness_score') THEN
+        ALTER TABLE biometrics RENAME COLUMN astraphe_readiness_score TO readiness_score;
     ELSE
         ALTER TABLE biometrics ADD COLUMN readiness_score SMALLINT;
     END IF;
@@ -33,8 +33,8 @@ BEGIN
     
     IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='biometrics' AND column_name='sleep_score') THEN
         NULL;
-    ELSIF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='biometrics' AND column_name='astrape_sleep_score') THEN
-        ALTER TABLE biometrics RENAME COLUMN astrape_sleep_score TO sleep_score;
+    ELSIF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='biometrics' AND column_name='astraphe_sleep_score') THEN
+        ALTER TABLE biometrics RENAME COLUMN astraphe_sleep_score TO sleep_score;
     ELSE
         ALTER TABLE biometrics ADD COLUMN sleep_score SMALLINT;
     END IF;
@@ -48,8 +48,8 @@ BEGIN
 
     IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='biometrics' AND column_name='recovery_score') THEN
         NULL;
-    ELSIF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='biometrics' AND column_name='astrape_recovery_score') THEN
-        ALTER TABLE biometrics RENAME COLUMN astrape_recovery_score TO recovery_score;
+    ELSIF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='biometrics' AND column_name='astraphe_recovery_score') THEN
+        ALTER TABLE biometrics RENAME COLUMN astraphe_recovery_score TO recovery_score;
     ELSE
         ALTER TABLE biometrics ADD COLUMN recovery_score SMALLINT;
     END IF;
@@ -57,13 +57,13 @@ BEGIN
 END $$;
 
 -- 2. Workouts Table
--- Rename astrape_strain_score to strain_score
+-- Rename astraphe_strain_score to strain_score
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='workouts' AND column_name='strain_score') THEN
         NULL;
-    ELSIF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='workouts' AND column_name='astrape_strain_score') THEN
-        ALTER TABLE workouts RENAME COLUMN astrape_strain_score TO strain_score;
+    ELSIF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='workouts' AND column_name='astraphe_strain_score') THEN
+        ALTER TABLE workouts RENAME COLUMN astraphe_strain_score TO strain_score;
     ELSE
         ALTER TABLE workouts ADD COLUMN strain_score SMALLINT;
     END IF;

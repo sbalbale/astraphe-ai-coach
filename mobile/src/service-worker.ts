@@ -47,7 +47,7 @@ async function focusOrOpenClient(targetUrl: string): Promise<void> {
 
 self.addEventListener('push', (event) => {
 	let payload: { title?: string; body?: string; data?: { url?: string } } = {
-		title: 'ASTRAPE',
+		title: 'ASTRAPHE',
 		body: '',
 		data: {},
 	};
@@ -58,9 +58,9 @@ self.addEventListener('push', (event) => {
 	}
 
 	event.waitUntil(
-		self.registration.showNotification(payload.title ?? 'ASTRAPE', {
+		self.registration.showNotification(payload.title ?? 'ASTRAPHE', {
 			body: payload.body ?? '',
-			icon: '/astrape-logo.png',
+			icon: '/astraphe-logo.png',
 			badge: '/icons/icon-192.png',
 			data: payload.data ?? {},
 		})

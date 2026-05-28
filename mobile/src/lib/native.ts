@@ -6,7 +6,7 @@ export async function setupNativeIntegrations() {
   // Setup Deep Links
   App.addListener('appUrlOpen', data => {
     console.log('App opened with URL:', data.url);
-    if (data.url.includes('astrape://connected')) {
+    if (data.url.includes('astraphe://connected')) {
       // Handle OAuth handshake return
       // For instance: goto('/connect?success=true')
     }
@@ -19,7 +19,7 @@ export async function setupNativeIntegrations() {
     });
 
     await BackgroundRunner.dispatchEvent({
-      label: 'com.astrape.coach.syncHealthKit',
+      label: 'com.astraphe.coach.syncHealthKit',
       event: 'sync',
       details: {}
     });

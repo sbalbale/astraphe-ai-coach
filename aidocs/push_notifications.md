@@ -49,7 +49,7 @@ RLS: athletes can only CRUD their own rows (via `user_id = auth.uid()` join).
 - `FCM_SERVICE_ACCOUNT_JSON: Optional[str]` — full service account JSON as single-line string
 - `VAPID_PUBLIC_KEY: Optional[str]`
 - `VAPID_PRIVATE_KEY: Optional[str]`
-- `VAPID_SUBJECT: str` — defaults to `"mailto:admin@astrape.app"`
+- `VAPID_SUBJECT: str` — defaults to `"mailto:admin@astraphe.app"`
 
 ### Coach trigger (`backend/app/routers/coach.py`)
 After `_insert_message(... role="ai" ...)` in `chat_with_coach`, calls `send_push_to_athlete` with `notification_type="coach"`. Wrapped in try/except so push failure never breaks the coach response.
@@ -91,7 +91,7 @@ Backend `send_push_to_athlete(..., notification_type="coach")` checks this befor
 from app.services.push import send_push_to_athlete
 send_push_to_athlete(
     athlete_id=athlete_id,
-    title="ASTRAPE",
+    title="ASTRAPHE",
     body="Your readiness score is ready.",
     db=db,
     data={"url": "/dashboard"},

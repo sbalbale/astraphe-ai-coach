@@ -48,7 +48,7 @@ def load_coach_instructions() -> str:
         with open(prompt_file, "r", encoding="utf-8") as f:
             return f.read()
     except FileNotFoundError:
-        return "You are ASTRAPE, an elite, data-driven performance coach."
+        return "You are ASTRAPHE, an elite, data-driven performance coach."
 
 def _safe_float(v: object) -> float | None:
     try:
@@ -620,14 +620,14 @@ def build_initialization_message(
             + json.dumps(anomalies, ensure_ascii=False)
             + "\n\nWrite exactly 2–3 sentences. Name the triggering metric(s). Recommend a decisive action. "
             "Do not include a time-of-day greeting such as Good morning, Good afternoon, or Good evening. "
-            "ASTRAPE voice: conversational, supportive, and measured. Use emoji only if it adds clear signal; do not make it a default closer. Wrap your final message in <response> ... </response> tags."
+            "ASTRAPHE voice: conversational, supportive, and measured. Use emoji only if it adds clear signal; do not make it a default closer. Wrap your final message in <response> ... </response> tags."
         )
     else:
         directive = (
             "[INITIAL GREETING]\nNo severe anomaly triggers fired. "
             "Write at most 2 sentences, context-aware, and cite TSB or HRV from the context. "
             "Do not include a time-of-day greeting such as Good morning, Good afternoon, or Good evening; the server will add the correct local greeting. "
-            "ASTRAPE voice: conversational, supportive, and measured. Use emoji only if it adds clear signal; do not make it a default closer. Wrap your final message in <response> ... </response> tags."
+            "ASTRAPHE voice: conversational, supportive, and measured. Use emoji only if it adds clear signal; do not make it a default closer. Wrap your final message in <response> ... </response> tags."
         )
 
     prompt = f"{instructions}\n\n{context_block}\n\n{directive}"

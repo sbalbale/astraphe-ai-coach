@@ -1,6 +1,6 @@
--- Drop legacy astrape_* score columns no longer used by the API.
+-- Drop legacy astraphe_* score columns no longer used by the API.
 -- Canonical columns: sleep_score, recovery_score, readiness_score, strain_score.
--- Idempotent: safe on dev (columns already renamed/absent) and prod (may still have astrape_*).
+-- Idempotent: safe on dev (columns already renamed/absent) and prod (may still have astraphe_*).
 
 -- 1. Ensure canonical columns exist (matches 20260429000000_unify_score_names.sql)
 DO $$
@@ -27,7 +27,7 @@ BEGIN
         WHERE table_schema = 'public' AND table_name = 'biometrics' AND column_name = 'sleep_score'
     ) AND EXISTS (
         SELECT 1 FROM information_schema.columns
-        WHERE table_schema = 'public' AND table_name = 'biometrics' AND column_name = 'astrape_sleep_score'
+        WHERE table_schema = 'public' AND table_name = 'biometrics' AND column_name = 'astraphe_sleep_score'
     ) THEN
         ALTER TABLE biometrics RENAME COLUMN sleep_score TO source_sleep_score;
     END IF;
@@ -47,7 +47,7 @@ BEGIN
         WHERE table_schema = 'public' AND table_name = 'biometrics' AND column_name = 'recovery_score'
     ) AND EXISTS (
         SELECT 1 FROM information_schema.columns
-        WHERE table_schema = 'public' AND table_name = 'biometrics' AND column_name = 'astrape_recovery_score'
+        WHERE table_schema = 'public' AND table_name = 'biometrics' AND column_name = 'astraphe_recovery_score'
     ) THEN
         ALTER TABLE biometrics RENAME COLUMN recovery_score TO source_recovery_score;
     END IF;
@@ -67,74 +67,74 @@ BEGIN
     END IF;
 END $$;
 
--- 2. Backfill canonical columns from legacy astrape_* where both columns coexist
+-- 2. Backfill canonical columns from legacy astraphe_* where both columns coexist
 DO $$
 BEGIN
     IF EXISTS (
         SELECT 1 FROM information_schema.columns
-        WHERE table_schema = 'public' AND table_name = 'biometrics' AND column_name = 'astrape_sleep_score'
+        WHERE table_schema = 'public' AND table_name = 'biometrics' AND column_name = 'astraphe_sleep_score'
     ) THEN
         EXECUTE $sql$
             UPDATE biometrics
-            SET sleep_score = astrape_sleep_score
+            SET sleep_score = astraphe_sleep_score
             WHERE sleep_score IS NULL
-              AND astrape_sleep_score IS NOT NULL
+              AND astraphe_sleep_score IS NOT NULL
         $sql$;
     END IF;
 
     IF EXISTS (
         SELECT 1 FROM information_schema.columns
-        WHERE table_schema = 'public' AND table_name = 'biometrics' AND column_name = 'astrape_recovery_score'
+        WHERE table_schema = 'public' AND table_name = 'biometrics' AND column_name = 'astraphe_recovery_score'
     ) THEN
         EXECUTE $sql$
             UPDATE biometrics
-            SET recovery_score = astrape_recovery_score
+            SET recovery_score = astraphe_recovery_score
             WHERE recovery_score IS NULL
-              AND astrape_recovery_score IS NOT NULL
+              AND astraphe_recovery_score IS NOT NULL
         $sql$;
     END IF;
 
     IF EXISTS (
         SELECT 1 FROM information_schema.columns
-        WHERE table_schema = 'public' AND table_name = 'biometrics' AND column_name = 'astrape_readiness_score'
+        WHERE table_schema = 'public' AND table_name = 'biometrics' AND column_name = 'astraphe_readiness_score'
     ) THEN
         EXECUTE $sql$
             UPDATE biometrics
-            SET readiness_score = astrape_readiness_score
+            SET readiness_score = astraphe_readiness_score
             WHERE readiness_score IS NULL
-              AND astrape_readiness_score IS NOT NULL
+              AND astraphe_readiness_score IS NOT NULL
         $sql$;
     END IF;
 
     IF EXISTS (
         SELECT 1 FROM information_schema.columns
-        WHERE table_schema = 'public' AND table_name = 'biometrics' AND column_name = 'astrape_strain_score'
+        WHERE table_schema = 'public' AND table_name = 'biometrics' AND column_name = 'astraphe_strain_score'
     ) THEN
         EXECUTE $sql$
             UPDATE biometrics
-            SET strain_score = astrape_strain_score
+            SET strain_score = astraphe_strain_score
             WHERE strain_score IS NULL
-              AND astrape_strain_score IS NOT NULL
+              AND astraphe_strain_score IS NOT NULL
         $sql$;
     END IF;
 
     IF EXISTS (
         SELECT 1 FROM information_schema.columns
-        WHERE table_schema = 'public' AND table_name = 'workouts' AND column_name = 'astrape_strain_score'
+        WHERE table_schema = 'public' AND table_name = 'workouts' AND column_name = 'astraphe_strain_score'
     ) THEN
         EXECUTE $sql$
             UPDATE workouts
-            SET strain_score = astrape_strain_score
+            SET strain_score = astraphe_strain_score
             WHERE strain_score IS NULL
-              AND astrape_strain_score IS NOT NULL
+              AND astraphe_strain_score IS NOT NULL
         $sql$;
     END IF;
 END $$;
 
 -- 3. Drop unused legacy columns
-ALTER TABLE biometrics DROP COLUMN IF EXISTS astrape_sleep_score;
-ALTER TABLE biometrics DROP COLUMN IF EXISTS astrape_recovery_score;
-ALTER TABLE biometrics DROP COLUMN IF EXISTS astrape_readiness_score;
-ALTER TABLE biometrics DROP COLUMN IF EXISTS astrape_strain_score;
+ALTER TABLE biometrics DROP COLUMN IF EXISTS astraphe_sleep_score;
+ALTER TABLE biometrics DROP COLUMN IF EXISTS astraphe_recovery_score;
+ALTER TABLE biometrics DROP COLUMN IF EXISTS astraphe_readiness_score;
+ALTER TABLE biometrics DROP COLUMN IF EXISTS astraphe_strain_score;
 
-ALTER TABLE workouts DROP COLUMN IF EXISTS astrape_strain_score;
+ALTER TABLE workouts DROP COLUMN IF EXISTS astraphe_strain_score;
