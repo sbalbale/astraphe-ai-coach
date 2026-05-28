@@ -373,7 +373,7 @@ CREATE TABLE IF NOT EXISTS "public"."training_plans" (
     "target_zones" "jsonb",
     "status" "text" DEFAULT 'planned'::"text" NOT NULL,
     "completed_workout_id" "uuid",
-    "generated_by" "text" DEFAULT 'astrape_ai'::"text",
+    "generated_by" "text" DEFAULT 'astraphe_ai'::"text",
     "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
     "primary_zone" "text",
     "structure" "jsonb",

@@ -90,7 +90,7 @@
         <label class="flex justify-between items-center py-3 border-b border-border cursor-pointer group">
           <div class="pr-4">
             <p class="text-[13px] font-medium text-text0 transition-colors">Anonymous AI Training</p>
-            <p class="text-[10px] text-text2 mt-1 leading-relaxed">Allow ASTRAPE to use your anonymized performance data to improve our global coaching models.</p>
+            <p class="text-[10px] text-text2 mt-1 leading-relaxed">Allow ASTRAPHE to use your anonymized performance data to improve our global coaching models.</p>
           </div>
           <input type="checkbox" checked={settings.share_data} onchange={() => toggleSetting('share_data')} disabled={saving} class="w-4 h-4 accent-teal shrink-0" />
         </label>

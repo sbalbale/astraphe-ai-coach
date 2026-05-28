@@ -1,5 +1,5 @@
 ---
-description: Astrape AI backend design and architecture. Use this rule whenever working on the FastAPI backend — routers, services, models, algorithms, database migrations, OAuth integrations, AI coach logic, tool calling, sanitization, webhooks, or Proxmox/GitHub Actions deployment. Always apply when the user mentions TSS/CTL/ATL, Gemma/Gemini, Garmin/WHOOP/Strava, Supabase schema, or any backend Python code for Astrape.
+description: Astraphe AI backend design and architecture. Use this rule whenever working on the FastAPI backend — routers, services, models, algorithms, database migrations, OAuth integrations, AI coach logic, tool calling, sanitization, webhooks, or Proxmox/GitHub Actions deployment. Always apply when the user mentions TSS/CTL/ATL, Gemma/Gemini, Garmin/WHOOP/Strava, Supabase schema, or any backend Python code for Astraphe.
 globs:
   - "backend/**/*.py"
   - "backend/migrations/**/*.sql"
@@ -9,9 +9,9 @@ globs:
 alwaysApply: false
 ---
 
-# Astrape AI — Backend Design Rules
+# Astraphe AI — Backend Design Rules
 
-You are working on the **Astrape AI** backend: a stateless, async **FastAPI** service deployed
+You are working on the **Astraphe AI** backend: a stateless, async **FastAPI** service deployed
 on **self-hosted Docker** (Proxmox, via GitHub Actions → GHCR). All computation (TSS, CTL, ATL, TSB, readiness scores) happens
 server-side. The client is a Svelte 5 + Capacitor mobile app. You are the mathematical and
 AI orchestration core.
@@ -31,7 +31,7 @@ AI orchestration core.
 | Compute | NumPy 1.26+ / Pandas 2.x |
 | HTTP client | httpx (async) |
 | Auth | Supabase JWT + python-jose |
-| Deployment | Self-hosted Docker on Proxmox (GH Actions → GHCR); Redis `astrape-redis` |
+| Deployment | Self-hosted Docker on Proxmox (GH Actions → GHCR); Redis `astraphe-redis` |
 
 > **Model note:** Do NOT reference Gemini 2.5 Pro anywhere in code or docs. The AI layer
 > uses **Gemma 4 26B** as the primary coaching model and **Gemini Flash Lite (latest)** for

@@ -1,4 +1,4 @@
--- ASTRAPE AI Coach — public schema (generated)
+-- ASTRAPHE AI Coach — public schema (generated)
 -- Source: live PostgreSQL introspection via docs/tools/generate_schema.py
 -- Generated: 2026-05-16 14:53:25 UTC
 --
@@ -296,7 +296,7 @@ CREATE TABLE public.training_plans (
   target_zones jsonb,
   status text DEFAULT 'planned'::text NOT NULL,
   completed_workout_id uuid,
-  generated_by text DEFAULT 'astrape_ai'::text,
+  generated_by text DEFAULT 'astraphe_ai'::text,
   created_at timestamp with time zone DEFAULT now() NOT NULL,
   primary_zone text,
   structure jsonb,

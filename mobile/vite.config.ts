@@ -11,8 +11,8 @@ export default defineConfig({
 			srcDir: 'src',
 			filename: 'service-worker.ts',
 			manifest: {
-				name: 'AstrapeAI',
-				short_name: 'AstrapeAI',
+				name: 'AstrapheAI',
+				short_name: 'AstrapheAI',
 				description: 'AI endurance coaching',
 				start_url: '/dashboard',
 				scope: '/',

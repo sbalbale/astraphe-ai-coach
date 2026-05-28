@@ -18,8 +18,8 @@ _ip_rate_limiter = RateLimiter()
 _docs_enabled = settings.APP_ENV != "production"
 
 app = FastAPI(
-    title="ASTRAPE Backend API",
-    description="Mathematical and AI orchestration core for the ASTRAPE Coach",
+    title="ASTRAPHE Backend API",
+    description="Mathematical and AI orchestration core for the ASTRAPHE Coach",
     version=settings.APP_VERSION,
     docs_url="/docs" if _docs_enabled else None,
     redoc_url="/redoc" if _docs_enabled else None,
@@ -141,14 +141,14 @@ class IPRateLimitMiddleware(BaseHTTPMiddleware):
 # Enumerate the actual origins that should be allowed.
 # allow_origins=["*"] is incompatible with allow_credentials=True per the CORS spec.
 ALLOWED_ORIGINS = [
-    "https://app.astrapeai.com",
+    "https://app.astrapheai.com",
     "capacitor://localhost",   # Capacitor iOS webview
     "http://localhost",        # Capacitor Android webview
     "http://localhost:5173",   # local dev (vite)
     "http://localhost:4173",   # local preview
     "http://127.0.0.1:5173",
-    "https://astrape-ai-coach.web.app",
-    "https://astrape-ai-coach.firebaseapp.com",
+    "https://astraphe-ai-coach.web.app",
+    "https://astraphe-ai-coach.firebaseapp.com",
 ]
 
 # Middleware order matters — Starlette wraps in reverse add order, so the last
@@ -191,7 +191,7 @@ async def health_check():
     overall = "healthy" if supabase_ok else "degraded"
     return {
         "status": overall,
-        "service": "ASTRAPE API",
+        "service": "ASTRAPHE API",
         "version": settings.APP_VERSION,
         "redis": "connected" if redis_ok else "unavailable",
         "supabase": "connected" if supabase_ok else "unavailable",

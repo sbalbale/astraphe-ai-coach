@@ -1,8 +1,8 @@
-﻿# ASTRAPE — AI Coaching Platform
+# ASTRAPHE — AI Coaching Platform
 
 > **Precision endurance coaching, powered by real-time physiological telemetry and Gemini AI.**
 
-ASTRAPE is a multi-source, AI-driven health and fitness coaching platform that ingests data from Apple HealthKit, Garmin Connect, and WHOOP to deliver personalized, scientifically-grounded training recommendations through a conversational AI coach.
+ASTRAPHE is a multi-source, AI-driven health and fitness coaching platform that ingests data from Apple HealthKit, Garmin Connect, and WHOOP to deliver personalized, scientifically-grounded training recommendations through a conversational AI coach.
 
 ![Svelte](https://img.shields.io/badge/Svelte-5-FF3E00?logo=svelte&logoColor=white)
 ![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
@@ -13,18 +13,18 @@ ASTRAPE is a multi-source, AI-driven health and fitness coaching platform that i
 
 ---
 
-## What ASTRAPE Does
+## What ASTRAPHE Does
 
-ASTRAPE operates as an always-on performance intelligence layer between an athlete's wearable ecosystem and their training decisions.
+ASTRAPHE operates as an always-on performance intelligence layer between an athlete's wearable ecosystem and their training decisions.
 
 **1. Aggregates physiological truth.**
-Rather than trusting a single device, ASTRAPE ingests heart rate, HRV, sleep staging, GPS workouts, and power data from Apple HealthKit, Garmin Connect, and WHOOP — reconciling them into a single unified athlete state model updated in real time.
+Rather than trusting a single device, ASTRAPHE ingests heart rate, HRV, sleep staging, GPS workouts, and power data from Apple HealthKit, Garmin Connect, and WHOOP — reconciling them into a single unified athlete state model updated in real time.
 
 **2. Computes the metrics that matter.**
 TSS, CTL, ATL, and TSB are computed server-side using NumPy-vectorized operations over rolling windows. Recovery and strain scores are derived from transparent, auditable weighted multi-factor models — not black-box device algorithms.
 
 **3. Speaks like a coach, thinks like a physiologist.**
-The ASTRAPE AI agent receives structured athletic context on every query — CTL, HRV trend, sleep debt, TSB position — and responds with concise, data-anchored recommendations. Every answer references at least one real number from the athlete's actual data.
+The ASTRAPHE AI agent receives structured athletic context on every query — CTL, HRV trend, sleep debt, TSB position — and responds with concise, data-anchored recommendations. Every answer references at least one real number from the athlete's actual data.
 
 ---
 
@@ -38,7 +38,7 @@ The ASTRAPE AI agent receives structured athletic context on every query — CTL
 └────────────────┬────────────────────────┘
                  │ HTTPS / SSE
 ┌────────────────▼────────────────────────┐
-│     ASTRAPE API (FastAPI · Cloud Run)   │
+│     ASTRAPHE API (FastAPI · Cloud Run)   │
 │     Stateless · Dockerized · Auto-scale │
 └──────┬──────────────┬────────────┬──────┘
        │              │            │
@@ -55,7 +55,7 @@ The ASTRAPE AI agent receives structured athletic context on every query — CTL
 ## Repository Structure
 
 ```
-astrape-coach/
+astraphe-coach/
 ├── LICENSE
 ├── README.md                          ← This file
 ├── .env.example
@@ -198,6 +198,7 @@ astrape-coach/
 | [AI_COACH.md](./docs/AI_COACH.md) | Gemini integration, system prompt, RAG pipeline, function calling |
 | [API_REFERENCE.md](./docs/API_REFERENCE.md) | All FastAPI endpoints with request/response shapes |
 | [SETUP.md](./docs/SETUP.md) | Local development environment setup across all three services |
+| [ASTRAPHE_REBRAND_CHECKLIST.md](./docs/ASTRAPHE_REBRAND_CHECKLIST.md) | Post-rebrand ops: DNS, Docker/GHCR, Firebase, Gemini, Resend, OAuth, local relaunch |
 | [DEPLOYMENT.md](./docs/DEPLOYMENT.md) | Cloud Run, Secret Manager, CI/CD pipeline, cost estimates |
 | [DESIGN_SYSTEM.md](./docs/DESIGN_SYSTEM.md) | Spectral glassmorphism — color tokens, typography, components |
 | [MOBILE.md](./docs/MOBILE.md) | Svelte 5 runes, Capacitor config, HealthKit background runner |
@@ -208,8 +209,8 @@ astrape-coach/
 
 ```bash
 # 1. Clone
-git clone https://github.com/seanbalbale/astrape-coach.git
-cd astrape-coach
+git clone https://github.com/seanbalbale/astraphe-coach.git
+cd astraphe-coach
 cp .env.example .env  # Fill in Supabase, Gemini, Garmin, WHOOP keys
 
 # 2. Start local Supabase

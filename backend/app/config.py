@@ -8,16 +8,16 @@ BACKEND_DIR = Path(__file__).resolve().parent.parent
 
 
 class Settings(BaseSettings):
-    """Centralized configuration for the ASTRAPE backend."""
+    """Centralized configuration for the ASTRAPHE backend."""
     
     # --- General App Configuration ---
-    APP_NAME: str = "ASTRAPE-Backend"
+    APP_NAME: str = "ASTRAPHE-Backend"
     APP_VERSION: str = "1.0.0"
     APP_ENV: str = "development" 
     PORT: int = 8000
     APP_BASE_URL: str = "http://localhost:8000"
     API_PREFIX: str = "/v1"
-    MOBILE_DEEP_LINK_SCHEME: str = "astrape"
+    MOBILE_DEEP_LINK_SCHEME: str = "astraphe"
 
     # --- Supabase ---
     # Defaults allow unit tests to import the app without a real .env.
@@ -83,7 +83,7 @@ class Settings(BaseSettings):
     # VAPID keys for web push. Generate with:  npx web-push generate-vapid-keys
     VAPID_PUBLIC_KEY: Optional[str] = None
     VAPID_PRIVATE_KEY: Optional[str] = None
-    VAPID_SUBJECT: str = "mailto:admin@astrape.app"
+    VAPID_SUBJECT: str = "mailto:admin@astraphe.app"
 
     # --- Manual Testing ---
     TEST_ATHLETE_ID: str | None = None

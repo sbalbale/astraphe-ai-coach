@@ -1,5 +1,5 @@
 /**
- * Astrape Biometric Intelligence
+ * Astraphe Biometric Intelligence
  * Custom algorithms for Sleep and Recovery scoring
  */
 
@@ -20,7 +20,7 @@ export interface RecoveryData {
 }
 
 /**
- * Calculates a custom Astrape Sleep Score (0-100)
+ * Calculates a custom Astraphe Sleep Score (0-100)
  * Weights: 60% Duration, 40% Quality (REM + Deep)
  */
 export function calculateSleepScore(data: SleepData): number {
@@ -58,7 +58,7 @@ export function latestWeightKg(
 }
 
 /**
- * Calculates a custom Astrape Recovery Score (0-100)
+ * Calculates a custom Astraphe Recovery Score (0-100)
  * Weights: 45% HRV, 25% RHR, 30% Sleep
  */
 export function calculateRecoveryScore(data: RecoveryData): number {

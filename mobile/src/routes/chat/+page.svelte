@@ -22,7 +22,7 @@
 
   let greetingMessage = $state<string>('');
   
-  const initialText = $derived(greetingMessage || `Hey ${authStore.user?.user_metadata?.full_name?.split(' ')[0] || 'there'}! I'm your ASTRAPE Coach. ${athleteStore.ctl > 0 ? `I've analyzed your current fitness (CTL: ${Math.round(athleteStore.ctl)}).` : "Link your data so I can start analyzing your training."} How can I help you today?`);
+  const initialText = $derived(greetingMessage || `Hey ${authStore.user?.user_metadata?.full_name?.split(' ')[0] || 'there'}! I'm your ASTRAPHE Coach. ${athleteStore.ctl > 0 ? `I've analyzed your current fitness (CTL: ${Math.round(athleteStore.ctl)}).` : "Link your data so I can start analyzing your training."} How can I help you today?`);
   
   let conversations = $state<Conversation[]>([]);
   let conversationId = $state<string | null>(null);
@@ -377,13 +377,13 @@
   >
     <!-- Mockup header -->
     <div class="shrink-0 px-4 pt-4 pb-3 flex items-center justify-between gap-3 border-b border-border">
-      <span class="text-[11px] sm:text-xs tracking-wide font-semibold text-text1">Astrape AI Coach Chat</span>
+      <span class="text-[11px] sm:text-xs tracking-wide font-semibold text-text1">Astraphe AI Coach Chat</span>
       <div class="flex items-center gap-1.5 shrink-0">
         <span
           class="inline-flex h-2 w-2 rounded-full bg-teal animate-pulse shadow-[0_0_10px_rgba(0,200,168,0.55)]"
           aria-hidden="true"
         ></span>
-        <span class="text-[11px] uppercase tracking-wider font-semibold text-astrape-teal">Live</span>
+        <span class="text-[11px] uppercase tracking-wider font-semibold text-astraphe-teal">Live</span>
       </div>
     </div>
 

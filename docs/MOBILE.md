@@ -1,4 +1,4 @@
-﻿# Mobile
+# Mobile
 
 ## Overview
 
@@ -107,8 +107,8 @@ Chat state lives in `mobile/src/routes/chat/+page.svelte`; there is no standalon
 
 ```ts
 const config: CapacitorConfig = {
-  appId: 'com.astrape.coach',
-  appName: 'astrape',
+  appId: 'com.astraphe.coach',
+  appName: 'astraphe',
   webDir: 'build'
 };
 ```

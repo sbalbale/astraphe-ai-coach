@@ -16,7 +16,7 @@ from app.services.ai_coach import (
 def test_markdown_prompt_loading():
     # Ensure the coach behavior file is successfully read
     instructions = load_coach_instructions()
-    assert "ASTRAPE" in instructions
+    assert "ASTRAPHE" in instructions
     assert "Tool Use Discipline" in instructions or "simulate_training_impact" in instructions
     assert "Live Web Search" in instructions
     assert "<response>" in instructions

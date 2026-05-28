@@ -249,7 +249,7 @@
 
   // Stage colors are categorical (deep/rem/light/awake), not bounded scores
   // — they encode a *category* of sleep architecture, so they're allowed to
-  // stay distinct and are not driven by the semantic ASTRAPE rules.
+  // stay distinct and are not driven by the semantic ASTRAPHE rules.
   const stageColors: Record<string, string> = {
     deep: 'var(--blue)',
     rem: 'var(--teal)',

@@ -35,18 +35,18 @@ docker compose down
 
 ## Production (self-hosted)
 
-Production runs on the Proxmox Docker host (`~/astrape`), deployed via [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml). The API container must use the **Docker service hostname** for Redis on the shared `astrape` network:
+Production runs on the Proxmox Docker host (`~/astraphe`), deployed via [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml). The API container must use the **Docker service hostname** for Redis on the shared `astraphe` network:
 
 ```env
-REDIS_URL=redis://astrape-redis:6379
+REDIS_URL=redis://astraphe-redis:6379
 ```
 
 | Container | Image | Role |
 |-----------|-------|------|
-| `astrape-api` | GHCR `astrape-api` | FastAPI |
-| `astrape-redis` | `redis:7-alpine` | Cache + rate limits |
+| `astraphe-api` | GHCR `astraphe-api` | FastAPI |
+| `astraphe-redis` | `redis:7-alpine` | Cache + rate limits |
 
-Set `REDIS_URL` in the compose environment for `astrape-api` on the server (not `localhost:6379` from inside the API container unless you intentionally bridge host networking).
+Set `REDIS_URL` in the compose environment for `astraphe-api` on the server (not `localhost:6379` from inside the API container unless you intentionally bridge host networking).
 
 See [DEPLOYMENT.md](./DEPLOYMENT.md) for the full deploy model.
 

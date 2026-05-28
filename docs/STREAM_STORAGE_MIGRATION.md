@@ -27,7 +27,7 @@ flowchart LR
     subgraph storage [Supabase Storage]
         Bucket["activity-streams *.json.gz"]
     end
-    subgraph api [astrape-api]
+    subgraph api [astraphe-api]
         Gunzip[gunzip plus json.loads]
         Detail[GET /detail]
         Redis[Redis detail cache]
@@ -51,10 +51,10 @@ flowchart LR
 ```env
 SUPABASE_URL=http://host.docker.internal:8001
 SUPABASE_SERVICE_ROLE_KEY=<from supabase .env>
-REDIS_URL=redis://astrape-redis:6379
+REDIS_URL=redis://astraphe-redis:6379
 ```
 
-**astrape-api** reaches Kong via host publish `8001:8000` on **supabase-kong**. On Linux/Proxmox, if `host.docker.internal` does not resolve:
+**astraphe-api** reaches Kong via host publish `8001:8000` on **supabase-kong**. On Linux/Proxmox, if `host.docker.internal` does not resolve:
 
 ```yaml
 extra_hosts:
@@ -70,15 +70,15 @@ extra_hosts:
 | **supabase-kong** | REST + Storage gateway (`8001:8000` on host) |
 | **supabase-storage** | Storage API (internal; use via Kong) |
 | **supabase-db** | Postgres — migrations via GitHub Actions `migrate` job |
-| **astrape-api** | FastAPI — `REDIS_URL=redis://astrape-redis:6379` |
-| **astrape-redis** | `detail:` / `streams:` cache + rate limits |
+| **astraphe-api** | FastAPI — `REDIS_URL=redis://astraphe-redis:6379` |
+| **astraphe-redis** | `detail:` / `streams:` cache + rate limits |
 | **supabase-studio** | Host port `8012` — inspect buckets |
 
 ## Pre-migration checks
 
 1. `supabase-kong` and `supabase-storage` healthy.
-2. From **astrape-api**: `curl -s -o /dev/null -w "%{http_code}\n" "$SUPABASE_URL/rest/v1/"` → `200` or `401`.
-3. `SUPABASE_SERVICE_ROLE_KEY` set on **astrape-api**.
+2. From **astraphe-api**: `curl -s -o /dev/null -w "%{http_code}\n" "$SUPABASE_URL/rest/v1/"` → `200` or `401`.
+3. `SUPABASE_SERVICE_ROLE_KEY` set on **astraphe-api**.
 
 ## Step 1 — Bucket and schema (SQL migration)
 
@@ -170,7 +170,7 @@ Keep JSONB until backfill verified. API dual-reads Storage + JSONB until column 
 - [x] Migration `20260528100000_activity_streams_gzip_storage.sql` (bucket, columns, RLS, `NOTIFY pgrst`)
 - [x] Backend `stream_storage.py` + Strava upsert + `/detail` dual-read
 - [x] Backfill: `python backend/scripts/migrate_streams_to_storage.py`
-- [ ] `SUPABASE_URL=http://host.docker.internal:8001` on **astrape-api** (deploy)
+- [ ] `SUPABASE_URL=http://host.docker.internal:8001` on **astraphe-api** (deploy)
 - [x] Bucket `activity-streams` exists, `public = false` (local dev)
 - [x] Upload uses `upsert: true` on hydrate/refetch
 - [x] RLS: athletes cannot read another athlete’s `{athlete_id}/…` prefix

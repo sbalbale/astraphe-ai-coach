@@ -1,5 +1,5 @@
 """
-Document parsing utilities for the ASTRAPE AI coach.
+Document parsing utilities for the ASTRAPHE AI coach.
 Supports PDF, CSV, and Excel (XLSX/XLS) file types.
 """
 from __future__ import annotations
