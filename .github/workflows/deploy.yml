@@ -36,8 +36,8 @@ jobs:
           context: ./backend
           push: true
           tags: |
-            ghcr.io/sbalbale/astrape-api:latest
-            ghcr.io/sbalbale/astrape-api:${{ github.sha }}
+            ghcr.io/sbalbale/astraphe-api:latest
+            ghcr.io/sbalbale/astraphe-api:${{ github.sha }}
 
   deploy:
     needs: build
@@ -85,8 +85,8 @@ jobs:
           chmod +x /tmp/cf-proxy.sh
 
           cat >> ~/.ssh/config << 'EOF'
-          Host ssh.astrapeai.com
-            HostName ssh.astrapeai.com
+          Host ssh.astrapheai.com
+            HostName ssh.astrapheai.com
             User docker
             IdentityFile ~/.ssh/id_ed25519_deploy
             ProxyCommand /tmp/cf-proxy.sh %h
@@ -96,16 +96,16 @@ jobs:
 
       - name: Deploy email templates
         run: |
-          ssh docker@ssh.astrapeai.com 'mkdir -p ~/astrape/supabase/templates'
-          scp supabase/templates/confirm.html docker@ssh.astrapeai.com:~/astrape/supabase/templates/confirm.html
-          scp supabase/templates/recovery.html docker@ssh.astrapeai.com:~/astrape/supabase/templates/recovery.html
+          ssh docker@ssh.astrapheai.com 'mkdir -p ~/astraphe/supabase/templates'
+          scp supabase/templates/confirm.html docker@ssh.astrapheai.com:~/astraphe/supabase/templates/confirm.html
+          scp supabase/templates/recovery.html docker@ssh.astrapheai.com:~/astraphe/supabase/templates/recovery.html
 
       - name: Deploy to Proxmox
         run: |
-          ssh docker@ssh.astrapeai.com << 'ENDSSH'
-            cd ~/astrape
-            docker compose pull astrape-api
-            docker compose up -d astrape-api
+          ssh docker@ssh.astrapheai.com << 'ENDSSH'
+            cd ~/astraphe
+            docker compose pull astraphe-api
+            docker compose up -d astraphe-api
             docker image prune -f
             docker compose ps
           ENDSSH
@@ -140,8 +140,8 @@ jobs:
           chmod +x /tmp/cf-proxy.sh
 
           cat >> ~/.ssh/config << 'EOF'
-          Host ssh.astrapeai.com
-            HostName ssh.astrapeai.com
+          Host ssh.astrapheai.com
+            HostName ssh.astrapheai.com
             User docker
             IdentityFile ~/.ssh/id_ed25519_deploy
             ProxyCommand /tmp/cf-proxy.sh %h
@@ -151,9 +151,9 @@ jobs:
 
       - name: Run new migrations
         run: |
-          ssh docker@ssh.astrapeai.com << ENDSSH
+          ssh docker@ssh.astrapheai.com << ENDSSH
             export PATH="\$HOME/.local/share/supabase:\$PATH"
-            cd ~/astrape/repo
+            cd ~/astraphe/repo
             git pull origin main
             PGSSLMODE=disable supabase db push \
               --db-url "postgresql://postgres:${{ secrets.SUPABASE_DB_PASSWORD }}@172.21.0.3:5432/postgres" \

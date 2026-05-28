@@ -24,7 +24,7 @@ jobs:
       - uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           repoToken: ${{ secrets.GITHUB_TOKEN }}
-          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_ASTRAPE_AI_COACH }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_ASTRAPHE_AI_COACH }}
           channelId: live
-          projectId: astrape-ai-coach
+          projectId: astraphe-ai-coach
           entryPoint: mobile
