@@ -106,7 +106,7 @@
         <label class="flex justify-between items-center py-3 border-b border-border cursor-pointer group">
           <div>
             <p class="text-[13px] font-medium text-text0 group-hover:text-teal transition-colors">Coach Messages</p>
-            <p class="text-[10px] text-text2 mt-0.5">Real-time alerts when ASTRAPE updates your plan.</p>
+            <p class="text-[10px] text-text2 mt-0.5">Real-time alerts when ASTRAPHE updates your plan.</p>
           </div>
           <input type="checkbox" checked={settings.coach} onchange={() => toggleSetting('coach')} disabled={saving} class="w-4 h-4 accent-teal" />
         </label>

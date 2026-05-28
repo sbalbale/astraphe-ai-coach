@@ -156,7 +156,7 @@
 <!-- Show loading state briefly while checking auth -->
 {#if authStore.loading}
   <div class="h-full flex items-center justify-center bg-bg0 text-text0 font-mono tracking-widest text-xs">
-    ASTRAPE
+    ASTRAPHE
   </div>
 {:else if isNoShellRoute}
   <div class="h-full bg-bg0 text-text0 font-sans overflow-y-auto">
@@ -172,7 +172,7 @@
       {#if !wide}
       <!-- Mobile Header -->
       <div class="px-4 pt-3.5 {hasMobileSubtabs ? 'pb-0' : 'pb-2.5'} flex items-center justify-between shrink-0">
-        <p class="font-mono font-bold text-sm tracking-[0.12em] text-blue">ASTRAPE</p>
+        <p class="font-mono font-bold text-sm tracking-[0.12em] text-blue">ASTRAPHE</p>
         <div class="flex items-center gap-2">
           <div class="w-1.5 h-1.5 rounded-full bg-teal shadow-[0_0_6px_var(--teal)]"></div>
           <span class="text-[10px] text-text2 font-mono tracking-widest">SYNCED</span>

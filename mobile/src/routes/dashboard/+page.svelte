@@ -2,7 +2,7 @@
   import { SvelteMap } from 'svelte/reactivity';
   import { stripLeadingTimeOfDayGreeting } from '$lib/utils/greeting';
 
-  const AI_SUMMARY_CACHE_KEY = 'astrape:dashboard-ai-summary:v2';
+  const AI_SUMMARY_CACHE_KEY = 'astraphe:dashboard-ai-summary:v2';
 
   function _sanitizeAiSummary(content: string) {
     return stripLeadingTimeOfDayGreeting(content);
@@ -628,7 +628,7 @@
 >
   <div class="space-y-4">
     <p class="text-[14px] leading-relaxed text-text1">
-      While often used interchangeably, <span class="font-bold text-text0">Readiness</span> and <span class="font-bold text-text0">Recovery</span> measure two different aspects of your training capacity in Astrape.
+      While often used interchangeably, <span class="font-bold text-text0">Readiness</span> and <span class="font-bold text-text0">Recovery</span> measure two different aspects of your training capacity in Astraphe.
     </p>
 
     <div class="space-y-3">

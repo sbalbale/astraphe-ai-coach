@@ -2,7 +2,7 @@ import { api } from '../api';
 import { authStore } from './authStore.svelte';
 import { calculateSleepScore, calculateRecoveryScore } from '../utils/biometrics';
 
-const CACHE_KEY = 'astrape:athlete-cache:v1';
+const CACHE_KEY = 'astraphe:athlete-cache:v1';
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 type CachePayload = {

@@ -568,7 +568,7 @@
       <Card class="!bg-gradient-to-br from-blue/10 via-transparent to-transparent border-blue/20">
         <div class="flex items-center gap-1.5 mb-2">
           <span class="text-[11px] font-mono uppercase tracking-[0.08em] text-blue">Zone Insight</span>
-          <Tag color="var(--blue)">ASTRAPE</Tag>
+          <Tag color="var(--blue)">ASTRAPHE</Tag>
         </div>
         {#if zonesAnalysisLoading && zonesAnalysisText === null}
           <p class="text-xs text-text2 animate-pulse">Analyzing zone distribution...</p>

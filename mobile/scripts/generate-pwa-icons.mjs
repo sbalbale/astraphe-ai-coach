@@ -1,5 +1,5 @@
 /**
- * Generates PWA / apple-touch PNGs from static/astrape-logo.svg
+ * Generates PWA / apple-touch PNGs from static/astraphe-logo.svg
  * Run: node scripts/generate-pwa-icons.mjs
  */
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
@@ -9,7 +9,7 @@ import { Resvg } from '@resvg/resvg-js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, '..');
-const svgPath = join(root, 'static', 'astrape-logo.svg');
+const svgPath = join(root, 'static', 'astraphe-logo.svg');
 const iconsDir = join(root, 'static', 'icons');
 
 const svg = readFileSync(svgPath, 'utf8');
@@ -26,7 +26,7 @@ function renderPng(size, outPath) {
 
 mkdirSync(iconsDir, { recursive: true });
 
-renderPng(180, join(root, 'static', 'astrape-logo.png'));
+renderPng(180, join(root, 'static', 'astraphe-logo.png'));
 renderPng(192, join(iconsDir, 'icon-192.png'));
 renderPng(512, join(iconsDir, 'icon-512.png'));
 renderPng(512, join(iconsDir, 'icon-512-maskable.png'));

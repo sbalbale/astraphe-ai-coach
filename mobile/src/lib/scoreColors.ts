@@ -1,7 +1,7 @@
-// ASTRAPE color rules — centralized semantic styling.
+// ASTRAPHE color rules — centralized semantic styling.
 //
 // High-level metrics (recovery/sleep/strain scores, form/TSB, z-scores) map
-// to tailwind-compatible classes (`text-astrape-*`). Many raw physiologic values
+// to tailwind-compatible classes (`text-astraphe-*`). Many raw physiologic values
 // on dashboard / vitals intentionally inherit their *underlying* semantic
 // quality (sleep duration → sleep score band, HRV ms → z-score bands, workout
 // TSS → strain band) per the current product spec.
@@ -9,10 +9,10 @@
 export type ScoreTone = 'teal' | 'blue' | 'amber' | 'red' | 'muted';
 
 const toneToTextClass: Record<ScoreTone, string> = {
-  teal: 'text-astrape-teal',
-  blue: 'text-astrape-blue',
-  amber: 'text-astrape-amber',
-  red: 'text-astrape-red',
+  teal: 'text-astraphe-teal',
+  blue: 'text-astraphe-blue',
+  amber: 'text-astraphe-amber',
+  red: 'text-astraphe-red',
   muted: 'text-text2'
 };
 
