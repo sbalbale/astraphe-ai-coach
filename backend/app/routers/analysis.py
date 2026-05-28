@@ -362,7 +362,7 @@ def _prompt(analysis_type: str, context: Dict[str, Any]) -> str:
     # We embed JSON so the model can quote exact numbers.
     if analysis_type == "strain":
         return (
-            "You are ASTRAPE, a clinical performance analyst.\n"
+            "You are ASTRAPHE, a clinical performance analyst.\n"
             "Task: Write a concise 1-2 sentence analysis of today's strain/load status with a takeaway and a next-step.\n"
             "Rules:\n"
             "- Output 1-2 sentences only. No bullets, no headings, no emojis.\n"
@@ -379,7 +379,7 @@ def _prompt(analysis_type: str, context: Dict[str, Any]) -> str:
 
     if analysis_type == "workout":
         return (
-            "You are ASTRAPE, a clinical performance analyst.\n"
+            "You are ASTRAPHE, a clinical performance analyst.\n"
             "Task: Write a concise 1–2 sentence analysis for this specific workout that includes a takeaway and a next-step.\n"
             "Rules:\n"
             "- Output 1–2 sentences only. No bullets, no headings, no emojis.\n"
@@ -394,7 +394,7 @@ def _prompt(analysis_type: str, context: Dict[str, Any]) -> str:
 
     if analysis_type == "time_in_zones":
         return (
-            "You are ASTRAPE, a clinical performance analyst.\n"
+            "You are ASTRAPHE, a clinical performance analyst.\n"
             "Task: Write a concise 1–2 sentence analysis of the athlete's time-in-zones distribution for the selected window.\n"
             "Rules:\n"
             "- Output 1–2 sentences only. No bullets, no headings, no emojis.\n"
@@ -407,7 +407,7 @@ def _prompt(analysis_type: str, context: Dict[str, Any]) -> str:
 
     if analysis_type == "dashboard_summary":
         return (
-            "You are ASTRAPE, a clinical performance analyst.\n"
+            "You are ASTRAPHE, a clinical performance analyst.\n"
             "Task: Write a concise 1-2 sentence dashboard summary with a takeaway and a next-step.\n"
             "Rules:\n"
             "- Output 1-2 sentences only. No bullets, no headings, no emojis.\n"
@@ -419,7 +419,7 @@ def _prompt(analysis_type: str, context: Dict[str, Any]) -> str:
         )
 
     return (
-        "You are ASTRAPE, a clinical performance analyst.\n"
+        "You are ASTRAPHE, a clinical performance analyst.\n"
         "Task: Write a concise 1–2 sentence analysis for the athlete.\n"
         "Rules:\n"
         "- Output 1–2 sentences only. No bullets, no headings, no emojis.\n"

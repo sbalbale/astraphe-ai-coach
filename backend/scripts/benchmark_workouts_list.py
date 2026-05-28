@@ -28,7 +28,7 @@ ATHLETE_ID = "1868283c-5a27-4c32-925e-fd7c2fecfdf5"
 USER_ID = "61cd603a-819e-459f-9524-50579eb53873"
 LIMIT = 20
 ROUNDS = 10
-DOCKER_DB = "supabase_db_astrape-ai-coach"
+DOCKER_DB = "supabase_db_astraphe-ai-coach"
 JWT_SECRET = "super-secret-jwt-token-with-at-least-32-characters-long"
 
 RLS_FIXED = (

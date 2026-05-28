@@ -874,7 +874,7 @@ def process_and_save_biometrics(
     prev_strain = 0
     if prev_res and prev_res.data:
         prev_debt = prev_res.data.get("sleep_debt_min") or 0.0
-        # Priority: Astrape Custom Strain Score
+        # Priority: Astraphe Custom Strain Score
         prev_strain = prev_res.data.get("strain_score") or 0
     
     baseline_rhr = 50.0
@@ -969,7 +969,7 @@ def process_and_save_biometrics(
     if existing_res and existing_res.data:
         existing = existing_res.data
 
-    # 7.5 Calculate Daily Astrape Strain from Workouts
+    # 7.5 Calculate Daily Astraphe Strain from Workouts
     day_workouts_res = (
         db.table("workouts")
         .select(
@@ -982,7 +982,7 @@ def process_and_save_biometrics(
         .execute()
     )
     day_rows = (day_workouts_res.data if day_workouts_res else None) or []
-    astrape_strain_score = _compute_daily_strain_from_workout_rows(day_rows)
+    astraphe_strain_score = _compute_daily_strain_from_workout_rows(day_rows)
 
     final_hrv = payload.hrv_rmssd if payload.hrv_rmssd is not None else existing.get("hrv_rmssd")
     final_rhr = payload.resting_hr if payload.resting_hr is not None else existing.get("resting_hr")
@@ -1023,12 +1023,12 @@ def process_and_save_biometrics(
         "height_cm": payload.height_cm if payload.height_cm is not None else existing.get("height_cm"),
         "sleep_duration_min": total_sleep_min,
         "sleep_in_bed_min": total_in_bed_min,
-        "sleep_score": sleep_score, # Astrape Score
-        "recovery_score": recovery_score, # Astrape Score
+        "sleep_score": sleep_score, # Astraphe Score
+        "recovery_score": recovery_score, # Astraphe Score
         "sleep_need_min": int(round(sleep_need)),
         "sleep_debt_min": int(round(next_night_debt)),
         "readiness_score": readiness_score,
-        "strain_score": astrape_strain_score,
+        "strain_score": astraphe_strain_score,
         "hrv_source": final_source,
         "sleep_deep_pct": agg_deep,
         "sleep_rem_pct": agg_rem,

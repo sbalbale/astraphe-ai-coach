@@ -461,7 +461,7 @@ async def chat_with_coach(
             preview = notification_preview(coach_reply or "")
             send_push_to_athlete(
                 athlete_id=athlete_id,
-                title="ASTRAPE Coach",
+                title="ASTRAPHE Coach",
                 body=preview,
                 db=db,
                 data={"url": "/chat"},

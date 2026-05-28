@@ -1,5 +1,5 @@
 """
-Semantic memory service for the ASTRAPE AI coach.
+Semantic memory service for the ASTRAPHE AI coach.
 Stores per-athlete facts with vector embeddings for RAG retrieval.
 """
 from __future__ import annotations

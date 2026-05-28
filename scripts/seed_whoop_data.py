@@ -126,13 +126,13 @@ def hr_zones_to_tss(duration_min: float, zones: dict[int, int]) -> float:
     return round(weighted_hours * 100, 2)
 
 
-def calculate_astrape_sleep_need(baseline_min, previous_strain, current_debt_min):
-    # Astrape Need = Baseline + (Strain * 1.8) + Current Debt
+def calculate_astraphe_sleep_need(baseline_min, previous_strain, current_debt_min):
+    # Astraphe Need = Baseline + (Strain * 1.8) + Current Debt
     # We cap the strain impact to 2 hours (120 mins)
     strain_impact = min(120, (previous_strain or 0) * 1.8)
     return int(round(baseline_min + strain_impact + (current_debt_min or 0)))
 
-def calculate_astrape_sleep_score(duration_min, sleep_need_min, rem_pct, deep_pct):
+def calculate_astraphe_sleep_score(duration_min, sleep_need_min, rem_pct, deep_pct):
     if not duration_min or not sleep_need_min: return 0
     
     # Fulfillment score (70%)
@@ -145,7 +145,7 @@ def calculate_astrape_sleep_score(duration_min, sleep_need_min, rem_pct, deep_pc
     return int(round(fulfillment_score * 0.7 + qual_score * 0.3))
 
 
-def calculate_astrape_recovery_score(hrv, rhr, sleep_score, hrv_baseline=55, rhr_baseline=52):
+def calculate_astraphe_recovery_score(hrv, rhr, sleep_score, hrv_baseline=55, rhr_baseline=52):
     if hrv is None or rhr is None or sleep_score is None: return None
     # HRV score (45%)
     hrv_ratio = hrv / (hrv_baseline or 50)
@@ -242,7 +242,7 @@ def ingest_biometrics(db: Client, athlete_id: str):
         row["_wake_date"] = wake_date
         row["_start_date"] = start_date
 
-    # Second pass: Calculate Astrape scores
+    # Second pass: Calculate Astraphe scores
     for row in all_phys:
         wake_date = row["_wake_date"]
         start_date = row["_start_date"]
@@ -250,19 +250,19 @@ def ingest_biometrics(db: Client, athlete_id: str):
         
         # Use previous day strain if needed for sleep need, but for seeding we might just use 0 or a proxy
         # Since we are not storing day_strain anymore, we'll use a fixed impact or ignore for seed
-        s_need = calculate_astrape_sleep_need(480, 0, current_rolling_debt)
+        s_need = calculate_astraphe_sleep_need(480, 0, current_rolling_debt)
         s_actual = to_int(row.get("Asleep duration (min)", 0)) or 0
         current_rolling_debt = min(120, max(0, s_need - s_actual))
 
         detail = sleep_detail.get(cycle_start, {})
-        s_score = calculate_astrape_sleep_score(
+        s_score = calculate_astraphe_sleep_score(
             s_actual,
             s_need,
             detail.get("rem_pct"),
             detail.get("deep_pct")
         )
         
-        r_score = calculate_astrape_recovery_score(
+        r_score = calculate_astraphe_recovery_score(
             to_float(row.get("Heart rate variability (ms)", "")),
             to_int(row.get("Resting heart rate (bpm)", "")),
             s_score
@@ -279,8 +279,8 @@ def ingest_biometrics(db: Client, athlete_id: str):
             "sleep_duration_min": s_actual,
             "sleep_debt_min":     current_rolling_debt,
             "sleep_need_min":     s_need,
-            "sleep_score":        s_score, # Using astrape score as primary
-            "recovery_score":     r_score, # Using astrape score as primary
+            "sleep_score":        s_score, # Using astraphe score as primary
+            "recovery_score":     r_score, # Using astraphe score as primary
             "sleep_deep_pct":     detail.get("deep_pct"),
             "sleep_rem_pct":      detail.get("rem_pct"),
             "sleep_light_pct":    detail.get("light_pct"),
@@ -423,7 +423,7 @@ def ingest_tss_history(db: Client, athlete_id: str, daily_tss: dict[date, float]
 
 def main():
     print("=" * 60)
-    print("  ASTRAPE - WHOOP Data Ingestion Script")
+    print("  ASTRAPHE - WHOOP Data Ingestion Script")
     print("=" * 60)
     cfg = load_env()
     db: Client = create_client(cfg["url"], cfg["key"])

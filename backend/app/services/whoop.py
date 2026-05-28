@@ -322,7 +322,7 @@ def hr_zone_pct_from_whoop_zone_millis(
 ) -> tuple[Optional[int], Optional[int], Optional[int], Optional[int], Optional[int]]:
     """
     Map WHOOP ``zone_durations`` (milliseconds per zone) to five integer percentages Z1-Z5 summing to 100.
-    WHOOP Z0 time is folded into Astrape Z1 (active recovery begins at 0 bpm).
+    WHOOP Z0 time is folded into Astraphe Z1 (active recovery begins at 0 bpm).
     """
     zone = zone_durations or {}
     hr0 = int(zone.get("zone_zero_milli") or 0)
