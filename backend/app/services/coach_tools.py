@@ -1,5 +1,5 @@
 """
-Gemini function-calling tool schemas and handlers for the ASTRAPE agentic coach.
+Gemini function-calling tool schemas and handlers for the ASTRAPHE agentic coach.
 """
 from __future__ import annotations
 
@@ -540,7 +540,7 @@ def handle_schedule_workout(
                     "primary_zone": focus_zone,
                     "structure": clean_structure,
                     "status": "planned",
-                    "generated_by": "astrape_ai",
+                    "generated_by": "astraphe_ai",
                 }
             )
             .execute()

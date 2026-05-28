@@ -273,7 +273,7 @@ async def get_athlete_state(athlete_id: str = Depends(get_current_athlete), db =
         "recovery_score": bio.get("recovery_score"),
         "readiness_score": bio.get("readiness_score") or 0,
         "readiness_label": "Optimal" if (bio.get("readiness_score") or 0) > 70 else "Moderate",
-        "readiness_recommendation": "Calculated by Astrape Intelligence."
+        "readiness_recommendation": "Calculated by Astraphe Intelligence."
     }
     await _cache_set_state(f"state:{athlete_id}", state_response)
     return state_response

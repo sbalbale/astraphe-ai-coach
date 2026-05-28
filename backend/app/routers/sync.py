@@ -35,8 +35,8 @@ router = APIRouter(prefix=f"{settings.API_PREFIX}/sync", tags=["Sync & Webhooks"
 # Allowlist of hosts that may be used as a post-OAuth web_return redirect target.
 # Add your production and staging domains here.
 _ALLOWED_RETURN_HOSTS: frozenset[str] = frozenset({
-    "astrapeai.com",
-    "app.astrapeai.com",
+    "astrapheai.com",
+    "app.astrapheai.com",
     "localhost",
     "127.0.0.1",
 })
@@ -47,7 +47,7 @@ def _safe_web_return(url: str | None) -> str | None:
         return None
     try:
         host = urlparse(url).hostname or ""
-        if host in _ALLOWED_RETURN_HOSTS or host.endswith(".astrapeai.com"):
+        if host in _ALLOWED_RETURN_HOSTS or host.endswith(".astrapheai.com"):
             return url
     except Exception:
         pass
@@ -104,9 +104,9 @@ def _oauth_connected_success_response(deep_link: str, provider: str) -> HTMLResp
     """In-app browser landing page after OAuth — same UX as WHOOP, themed per provider."""
     themes = {
         "whoop": {
-            "page_title": "ASTRAPE • WHOOP Connected",
+            "page_title": "ASTRAPHE • WHOOP Connected",
             "headline": "WHOOP connected",
-            "body": "Your WHOOP account is now linked to ASTRAPE. You can safely return to the app.",
+            "body": "Your WHOOP account is now linked to ASTRAPHE. You can safely return to the app.",
             "grad1": "rgba(124, 58, 237, 0.35)",
             "grad2": "rgba(34, 211, 238, 0.22)",
             "brand_a": "#7C3AED",
@@ -115,9 +115,9 @@ def _oauth_connected_success_response(deep_link: str, provider: str) -> HTMLResp
             "btn_shadow": "rgba(124, 58, 237, 0.22)",
         },
         "strava": {
-            "page_title": "ASTRAPE • Strava Connected",
+            "page_title": "ASTRAPHE • Strava Connected",
             "headline": "Strava connected",
-            "body": "Your Strava account is now linked to ASTRAPE. Recent activities will sync in the background—you can return to the app whenever you're ready.",
+            "body": "Your Strava account is now linked to ASTRAPHE. Recent activities will sync in the background—you can return to the app whenever you're ready.",
             "grad1": "rgba(252, 76, 2, 0.42)",
             "grad2": "rgba(255, 140, 90, 0.20)",
             "brand_a": "#FC4C02",
@@ -265,7 +265,7 @@ def _oauth_connected_success_response(deep_link: str, provider: str) -> HTMLResp
       <div class="card">
         <div class="brand">
           <div class="logo" aria-hidden="true"></div>
-          <h1>ASTRAPE AI Coach</h1>
+          <h1>ASTRAPHE AI Coach</h1>
         </div>
 
         <div class="title">
@@ -275,7 +275,7 @@ def _oauth_connected_success_response(deep_link: str, provider: str) -> HTMLResp
         <p>{t["body"]}</p>
 
         <div class="actions">
-          <a class="btn primary" href="{escape(deep_link, quote=True)}">Open ASTRAPE</a>
+          <a class="btn primary" href="{escape(deep_link, quote=True)}">Open ASTRAPHE</a>
           <button class="btn secondary" type="button" id="copyBtn">Copy link</button>
         </div>
 

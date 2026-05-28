@@ -4,7 +4,7 @@ from app.config import settings
 
 async def sync_marketing_contact(email: str, subscribed: bool) -> None:
     """
-    Add or unsubscribe a contact in the Resend "Astrape Marketing" segment.
+    Add or unsubscribe a contact in the Resend "Astraphe Marketing" segment.
     Uses upsert semantics — safe to call on every toggle regardless of prior state.
     Failures are logged but never surfaced to the caller so a Resend outage
     cannot block a profile save.

@@ -64,7 +64,7 @@ async def send_test_notification(
 
     sent = send_push_to_athlete(
         athlete_id=athlete_id,
-        title="ASTRAPE",
+        title="ASTRAPHE",
         body="Push notifications are working!",
         db=db,
         data={"url": "/dashboard"},
