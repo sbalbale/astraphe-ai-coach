@@ -15,6 +15,7 @@
 google-cloud-credentials.json
 astrape-ai-coach-firebase-*.json
 astraphe-ai-coach-firebase-*.json
+astrapheai-firebase-*.json
 
 # ------------------------------------------
 # 2. Frontend: Svelte 5 & Node.js

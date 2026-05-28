@@ -1,6 +1,6 @@
 # Setup Guide
 
-This is the short local setup checklist. For more detail, see `docs/GETTING_STARTED.md`.
+This is the short local setup checklist. For more detail, see `docs/GETTING_STARTED.md`. After the Astrape → Astraphe rebrand, use [ASTRAPHE_REBRAND_CHECKLIST.md](./ASTRAPHE_REBRAND_CHECKLIST.md) for infra, DNS, Firebase, and third-party console updates.
 
 ## Prerequisites
 
