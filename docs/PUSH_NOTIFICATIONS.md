@@ -1,6 +1,6 @@
 # Push Notifications
 
-ASTRAPE supports web push and a Capacitor native push scaffold. The current repo includes an iOS Capacitor project; Android setup is not present.
+ASTRAPHE supports web push and a Capacitor native push scaffold. The current repo includes an iOS Capacitor project; Android setup is not present.
 
 ## How It Works
 
@@ -28,7 +28,7 @@ Push registration is initialized from `mobile/src/routes/+layout.svelte` after a
 FCM_SERVICE_ACCOUNT_JSON=
 VAPID_PUBLIC_KEY=
 VAPID_PRIVATE_KEY=
-VAPID_SUBJECT=mailto:admin@astrape.app
+VAPID_SUBJECT=mailto:admin@astraphe.app
 ```
 
 All are optional at runtime. If missing, the push service degrades without crashing and sends zero notifications for that transport.
@@ -114,7 +114,7 @@ The primary implemented trigger is coach reply notification support after a back
 ## iOS Setup
 
 1. Create a Firebase project.
-2. Add iOS app ID `com.astrape.coach`.
+2. Add iOS app ID `com.astraphe.coach`.
 3. Place `GoogleService-Info.plist` in `mobile/ios/App/App/`.
 4. Generate a Firebase service account key and set `FCM_SERVICE_ACCOUNT_JSON`.
 5. In Xcode, enable Push Notifications and Remote notifications background mode.

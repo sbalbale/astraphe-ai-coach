@@ -1,6 +1,6 @@
 Supabase dump set
 Project ref: rsbrectarojhvclwvuwy
-Project name: ASTRAPE AI Coach
+Project name: ASTRAPHE AI Coach
 Region: us-east-2
 Dumped at: 2026-05-26 18:08-18:09 local time
 Tooling: pg_dump/pg_dumpall PostgreSQL 17.10

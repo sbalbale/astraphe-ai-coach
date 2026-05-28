@@ -2,8 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(git check-ignore *)",
-      "Bash(Remove-Item \"C:\\\\Users\\\\seanb\\\\Documents\\\\astrape-ai-coach\\\\mobile\\\\src\\\\lib\\\\components\\\\RacePredictor.svelte\")",
-      "Bash(Remove-Item \"C:\\\\Users\\\\seanb\\\\Documents\\\\astrape-ai-coach\\\\mobile\\\\src\\\\routes\\\\profile\\\\calculators\\\\+page.svelte\")",
+      "Bash(Remove-Item \"C:\\\\Users\\\\seanb\\\\Documents\\\\astraphe-ai-coach\\\\mobile\\\\src\\\\lib\\\\components\\\\RacePredictor.svelte\")",
+      "Bash(Remove-Item \"C:\\\\Users\\\\seanb\\\\Documents\\\\astraphe-ai-coach\\\\mobile\\\\src\\\\routes\\\\profile\\\\calculators\\\\+page.svelte\")",
       "Bash(git status:*)",
       "Bash(git diff:*)",
       "Bash(git log:*)",
@@ -27,7 +27,7 @@
       "Bash(python -c \"from app.routers import athlete, sync, analysis; from app.services import processing, strava, whoop_backfill; print\\('ALL OK'\\)\")",
       "Bash(xargs grep -l \"workout\")",
       "Bash(grep -E \"\\\\.\\(ts|tsx|svelte\\)$\")",
-      "Bash(cd C:\\\\Users\\\\seanb\\\\Documents\\\\astrape-ai-coach\\\\mobile *)",
+      "Bash(cd C:\\\\Users\\\\seanb\\\\Documents\\\\astraphe-ai-coach\\\\mobile *)",
       "Bash(xargs grep -l \"sendCoachMessage\\\\|getCoachMessages\")",
       "Bash(python -c \"import sys, json; pkg = json.load\\(sys.stdin\\); print\\('marked:', pkg.get\\('dependencies', {}\\).get\\('marked', 'not found'\\)\\); print\\('dompurify:', pkg.get\\('dependencies', {}\\).get\\('dompurify', 'not found'\\)\\)\")",
       "Bash(Get-ChildItem *)",

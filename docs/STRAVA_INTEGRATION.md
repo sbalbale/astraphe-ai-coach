@@ -14,7 +14,7 @@ Implemented pieces:
 - Activity detail ingestion into `workouts`.
 - Stream and lap storage in `activity_streams` and `activity_laps`.
 - Activity detail routes for streams, laps, intervals, refetch/hydration, and zones.
-- Sport normalization to ASTRAPE sports, including `row`.
+- Sport normalization to ASTRAPHE sports, including `row`.
 
 ## Configuration
 
@@ -26,7 +26,7 @@ STRAVA_CLIENT_SECRET=
 STRAVA_WEBHOOK_VERIFY_TOKEN=
 STRAVA_WEBHOOK_SUBSCRIPTION_ID=
 APP_BASE_URL=http://localhost:8000
-MOBILE_DEEP_LINK_SCHEME=astrape
+MOBILE_DEEP_LINK_SCHEME=astraphe
 ```
 
 Set the Strava app callback domain to the production API host. Locally, expose the backend with ngrok or Cloudflare Tunnel and update `APP_BASE_URL` to the public URL when testing OAuth/webhooks.
@@ -129,9 +129,9 @@ General source priorities:
 
 ## Sport Mapping
 
-Strava sport types are normalized to ASTRAPE's canonical sport tokens:
+Strava sport types are normalized to ASTRAPHE's canonical sport tokens:
 
-| ASTRAPE sport | Examples |
+| ASTRAPHE sport | Examples |
 |---|---|
 | `run` | Run, TrailRun, VirtualRun |
 | `bike` | Ride, VirtualRide, EBikeRide |

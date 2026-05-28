@@ -1,4 +1,4 @@
-﻿# Deployment
+# Deployment
 
 ## Current Deployment Model
 
@@ -30,8 +30,8 @@ Jobs:
    - Logs in to GitHub Container Registry.
    - Builds `./backend`.
    - Pushes:
-     - `ghcr.io/sbalbale/astrape-api:latest`
-     - `ghcr.io/sbalbale/astrape-api:${{ github.sha }}`
+     - `ghcr.io/sbalbale/astraphe-api:latest`
+     - `ghcr.io/sbalbale/astraphe-api:${{ github.sha }}`
 
 2. `deploy`
    - Installs `cloudflared`.
@@ -40,16 +40,16 @@ Jobs:
    - Runs:
 
 ```bash
-cd ~/astrape
-docker compose pull astrape-api
-docker compose up -d astrape-api
+cd ~/astraphe
+docker compose pull astraphe-api
+docker compose up -d astraphe-api
 docker image prune -f
 docker compose ps
 ```
 
 3. `migrate`
    - Reuses the Cloudflare SSH path.
-   - Applies SQL files from `~/astrape/repo/supabase/migrations/*.sql` into the `supabase-db` container with `psql`.
+   - Applies SQL files from `~/astraphe/repo/supabase/migrations/*.sql` into the `supabase-db` container with `psql`.
 
 ## Backend Required Secrets
 
@@ -60,11 +60,11 @@ GitHub Actions deployment secrets:
 | `GITHUB_TOKEN` | GHCR push via GitHub Actions. |
 | `CF_ACCESS_CLIENT_ID` | Cloudflare Access service token ID. |
 | `CF_ACCESS_CLIENT_SECRET` | Cloudflare Access service token secret. |
-| `PROXMOX_SSH_KEY` | SSH private key for `docker@ssh.astrapeai.com`. |
+| `PROXMOX_SSH_KEY` | SSH private key for `docker@ssh.astrapheai.com`. |
 
 Runtime secrets are provided by the deployed Docker environment, not directly by the workflow file. Keep these aligned with `backend/.env.example`:
 
-- `SUPABASE_URL` — on Proxmox, **astrape-api** reaches self-hosted Kong via `http://host.docker.internal:8001` (host publish `8001:8000` on **supabase-kong**). Add `extra_hosts: ["host.docker.internal:host-gateway"]` on Linux if the hostname does not resolve. Mobile uses `VITE_SUPABASE_URL` (public URL), not `host.docker.internal`.
+- `SUPABASE_URL` — on Proxmox, **astraphe-api** reaches self-hosted Kong via `http://host.docker.internal:8001` (host publish `8001:8000` on **supabase-kong**). Add `extra_hosts: ["host.docker.internal:host-gateway"]` on Linux if the hostname does not resolve. Mobile uses `VITE_SUPABASE_URL` (public URL), not `host.docker.internal`.
 - `SUPABASE_KEY`
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `GEMINI_API_KEY`
@@ -101,7 +101,7 @@ Frontend secrets:
 
 | Secret | Purpose |
 |---|---|
-| `FIREBASE_SERVICE_ACCOUNT_ASTRAPE_AI_COACH` | Firebase hosting deploy auth. |
+| `FIREBASE_SERVICE_ACCOUNT_ASTRAPHE_AI_COACH` | Firebase hosting deploy auth. |
 | `VITE_API_URL` | Public API base URL. |
 | `VITE_SUPABASE_URL` | Supabase project URL. |
 | `VITE_SUPABASE_KEY` | Supabase anon key. |
@@ -138,7 +138,7 @@ For production, use the workflow or the operational process for the deployed Sup
 After backend deployment:
 
 ```bash
-curl https://api.astrapeai.com/health
+curl https://api.astrapheai.com/health
 ```
 
 Expected shape:
@@ -146,7 +146,7 @@ Expected shape:
 ```json
 {
   "status": "healthy",
-  "service": "ASTRAPE API",
+  "service": "ASTRAPHE API",
   "version": "1.0.0",
   "redis": "connected",
   "supabase": "connected"

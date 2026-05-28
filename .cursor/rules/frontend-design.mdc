@@ -1,5 +1,5 @@
 ---
-description: Astrape AI frontend design system and UI engineering standards. Apply when creating or editing Svelte components, layouts, screens, or any UI code. Enforces the "Spectral" glassmorphism aesthetic, design tokens, Svelte 5 rune patterns, and Tailwind conventions for the mobile-first Capacitor app.
+description: Astraphe AI frontend design system and UI engineering standards. Apply when creating or editing Svelte components, layouts, screens, or any UI code. Enforces the "Spectral" glassmorphism aesthetic, design tokens, Svelte 5 rune patterns, and Tailwind conventions for the mobile-first Capacitor app.
 globs:
   - "mobile/src/**/*.svelte"
   - "mobile/src/**/*.ts"
@@ -7,11 +7,11 @@ globs:
 alwaysApply: false
 ---
 
-# Astrape AI — Frontend Design System
+# Astraphe AI — Frontend Design System
 
 ## Design Language: "Spectral" Glassmorphism
 
-Astrape uses a **dark-first, translucent aesthetic** — layered depth, continuous gradient meshes, surgical accent colors. Every screen should feel like a data terminal floating in deep space. Never produce generic, flat, or "light-mode-ported-dark" UI.
+Astraphe uses a **dark-first, translucent aesthetic** — layered depth, continuous gradient meshes, surgical accent colors. Every screen should feel like a data terminal floating in deep space. Never produce generic, flat, or "light-mode-ported-dark" UI.
 
 ### Core Principles
 
@@ -105,7 +105,7 @@ import { CHART_CTL_STROKE, CHART_ATL_STROKE } from '$lib/scoreColors';
 
 ### Brand Namespace
 
-`astrape.*` tokens exist in Tailwind config as aliases. Prefer the semantic tokens above; use `astrape-*` only for cross-platform brand consistency requirements.
+`astraphe.*` tokens exist in Tailwind config as aliases. Prefer the semantic tokens above; use `astraphe-*` only for cross-platform brand consistency requirements.
 
 ---
 
@@ -138,9 +138,9 @@ Tailwind v3 utility opacity modifiers must be multiples of 5 (`/5`, `/10`, `/15`
 
 ### Standard Tailwind Palette is Forbidden for UI
 
-Never use `slate-*`, `gray-*`, `zinc-*`, `indigo-*`, `white`, `black`, `blue-500`, `red-300`, etc. as UI colors. Map everything to Astrape tokens:
+Never use `slate-*`, `gray-*`, `zinc-*`, `indigo-*`, `white`, `black`, `blue-500`, `red-300`, etc. as UI colors. Map everything to Astraphe tokens:
 
-| Forbidden | Astrape replacement |
+| Forbidden | Astraphe replacement |
 |-----------|---------------------|
 | `text-white`, `text-slate-100/200` | `text-text0` |
 | `text-slate-300/400` | `text-text1` |
@@ -154,7 +154,7 @@ Never use `slate-*`, `gray-*`, `zinc-*`, `indigo-*`, `white`, `black`, `blue-500
 | `text-blue-500` | `text-blue` |
 | `text-red-300/400` | `text-red` |
 
-**Exception:** Third-party brand colors (Strava `#FC4C02`, Garmin `#009CDE`, Apple, WHOOP) and sport-type colors with no Astrape equivalent (`#a855f7` mobility, `#eab308` other) are kept as hex literals with a comment.
+**Exception:** Third-party brand colors (Strava `#FC4C02`, Garmin `#009CDE`, Apple, WHOOP) and sport-type colors with no Astraphe equivalent (`#a855f7` mobility, `#eab308` other) are kept as hex literals with a comment.
 
 ### CSS Variables in Tailwind Class Strings
 
@@ -437,7 +437,7 @@ One glow per screen section maximum. No glow on non-modal blur elements.
 2. **Never** use light-mode color values (`white`, `gray-100`, etc.) as backgrounds.
 3. **Never** use more than one accent glow per screen section.
 4. **Never** use Inter, Roboto, or system-ui as primary fonts.
-5. **Never** use standard Tailwind palette colors (`slate-*`, `indigo-*`, `white`, `black`, `blue-500`, `red-300`, etc.) as UI colors — map to Astrape tokens.
+5. **Never** use standard Tailwind palette colors (`slate-*`, `indigo-*`, `white`, `black`, `blue-500`, `red-300`, etc.) as UI colors — map to Astraphe tokens.
 6. **Never** hardcode hex or `rgba()` literals in Tailwind `class=""` attributes — use tokens; keep hex only in canvas, D3, Mapbox paint, and SVG presentation attributes.
 7. **Never** use `var(--*)` in canvas `fillStyle`/`strokeStyle`, D3 `.attr()` calls, Mapbox `paint`, or SVG presentation attributes — CSS variables do not resolve in these contexts.
 8. **Never** use `text-text3` — it is not defined. Use `text-text2`.

@@ -1,4 +1,4 @@
-﻿# Setup Guide
+# Setup Guide
 
 This is the short local setup checklist. For more detail, see `docs/GETTING_STARTED.md`.
 
@@ -122,7 +122,7 @@ Expected shape:
 ```json
 {
   "status": "healthy",
-  "service": "ASTRAPE API",
+  "service": "ASTRAPHE API",
   "version": "1.0.0",
   "redis": "connected",
   "supabase": "connected"

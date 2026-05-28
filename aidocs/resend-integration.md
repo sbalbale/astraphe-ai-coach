@@ -2,7 +2,7 @@
 
 ## What this system does
 
-When a user enables the "Product Updates" toggle on the Privacy settings page, they are automatically added to the **Astrape Marketing** Resend audience. When they disable it, they are marked as `unsubscribed` in that audience.
+When a user enables the "Product Updates" toggle on the Privacy settings page, they are automatically added to the **Astraphe Marketing** Resend audience. When they disable it, they are marked as `unsubscribed` in that audience.
 
 ## Architecture
 

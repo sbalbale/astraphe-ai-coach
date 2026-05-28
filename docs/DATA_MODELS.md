@@ -4,7 +4,7 @@
 
 The authoritative schema history is `supabase/migrations/`. This document describes the current public data model at a high level; it is not a generated schema snapshot.
 
-Generated schema output, when used, lives at `docs/schema/astrape_public_schema.sql` and can lag behind migrations unless regenerated manually.
+Generated schema output, when used, lives at `docs/schema/astraphe_public_schema.sql` and can lag behind migrations unless regenerated manually.
 
 ## Auth And User Configuration
 
@@ -316,4 +316,4 @@ Important files:
 
 ## Schema Maintenance
 
-When migrations change tables, update this document manually and optionally regenerate `docs/schema/astrape_public_schema.sql` with `docs/tools/generate_schema.py`.
+When migrations change tables, update this document manually and optionally regenerate `docs/schema/astraphe_public_schema.sql` with `docs/tools/generate_schema.py`.

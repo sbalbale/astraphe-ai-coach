@@ -5,7 +5,7 @@ url = "http://127.0.0.1:57321"
 key = "sb_secret_N7UND0UgjKTVK-Uodkm0Hg_xSvEMPvz"
 db: Client = create_client(url, key)
 
-migration_path = r"c:\Users\seanb\Documents\ASTRAPE-AI-Coach\supabase\migrations\20260428000006_add_sleep_periods.sql"
+migration_path = r"c:\Users\seanb\Documents\ASTRAPHE-AI-Coach\supabase\migrations\20260428000006_add_sleep_periods.sql"
 
 with open(migration_path, "r") as f:
     sql = f.read()
