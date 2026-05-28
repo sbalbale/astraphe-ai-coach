@@ -111,7 +111,7 @@ CREATE TABLE training_plans (
   status          TEXT NOT NULL DEFAULT 'planned'
                   CHECK (status IN ('planned','done','skipped','modified')),
   completed_workout_id UUID REFERENCES workouts(id),
-  generated_by    TEXT DEFAULT 'astrape_ai',
+  generated_by    TEXT DEFAULT 'astraphe_ai',
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 ALTER TABLE training_plans ENABLE ROW LEVEL SECURITY;
