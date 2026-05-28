@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Generate a runnable PostgreSQL schema for ASTRAPE public tables from a live database.
+Generate a runnable PostgreSQL schema for ASTRAPHE public tables from a live database.
 
 Reads SUPABASE_DB_URL from the environment or backend/.env, introspects public.*,
 topologically sorts tables by foreign-key dependencies, and writes SQL suitable for
@@ -8,7 +8,7 @@ fresh installs (local Supabase, CI, or documentation).
 
 Usage (from repo root):
   backend/.venv/Scripts/python docs/tools/generate_schema.py
-  backend/.venv/Scripts/python docs/tools/generate_schema.py --output docs/schema/astrape_public_schema.sql
+  backend/.venv/Scripts/python docs/tools/generate_schema.py --output docs/schema/astraphe_public_schema.sql
   backend/.venv/Scripts/python docs/tools/generate_schema.py --database-url "$SUPABASE_DB_URL"
 
 Requires: psycopg[binary]  (pip install "psycopg[binary]")
@@ -36,14 +36,14 @@ except ImportError:
     sys.exit(1)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_OUTPUT = REPO_ROOT / "docs" / "schema" / "astrape_public_schema.sql"
+DEFAULT_OUTPUT = REPO_ROOT / "docs" / "schema" / "astraphe_public_schema.sql"
 ENV_CANDIDATES = (
     REPO_ROOT / "backend" / ".env",
     REPO_ROOT / ".env",
 )
 
 HEADER = """\
--- ASTRAPE AI Coach — public schema (generated)
+-- ASTRAPHE AI Coach — public schema (generated)
 -- Source: live PostgreSQL introspection via docs/tools/generate_schema.py
 -- Generated: {generated_at}
 --

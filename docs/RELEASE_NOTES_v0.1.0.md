@@ -1,6 +1,6 @@
-# ASTRAPE AI Coach — Release Notes (v0.1.0 / MVP)
+# ASTRAPHE AI Coach — Release Notes (v0.1.0 / MVP)
 
-**Tag:** [`v0.1.0`](https://github.com/sbalbale/astrape-ai-coach/releases/tag/v0.1.0)  
+**Tag:** [`v0.1.0`](https://github.com/sbalbale/astraphe-ai-coach/releases/tag/v0.1.0)  
 **Purpose:** Detailed description of what is implemented today (MVP-ready slice), how the pieces fit together, and how this release differs from future roadmap items.
 
 ---
@@ -22,11 +22,11 @@ Non-goals in *code* at this tag: **Strava** ingestion is specified in [`STRAVA_I
 | Item | Value |
 |------|------|
 | **Semantic version** | `0.1.0` (first tagged MVP slice) |
-| **Backend OpenAPI title** | ASTRAPE Backend API (`main.py`; internal `version` field is `"1.0.0"` — marketing vs. semver are separate) |
+| **Backend OpenAPI title** | ASTRAPHE Backend API (`main.py`; internal `version` field is `"1.0.0"` — marketing vs. semver are separate) |
 | **Mobile npm version** | `0.0.1` (`mobile/package.json`; app store versioning is orthogonal) |
 | **Primary docs** | `README.md`, `docs/ARCHITECTURE.md`, `docs/API_REFERENCE.md`, `docs/DATA_MODELS.md`, `docs/DEPLOYMENT.md`, `docs/AI_COACH.md`, `docs/ALGORITHMS.md` |
 
-Canonical GitHub repo name (per remote hint): **`sbalbale/astrape-ai-coach`**.
+Canonical GitHub repo name (per remote hint): **`sbalbale/astraphe-ai-coach`**.
 
 ---
 
@@ -115,7 +115,7 @@ Operators should set tiers via **Supabase Auth metadata** (or align metadata wit
 
 #### WHOOP (implemented)
 
-- **OAuth 2.0** authorize + callback with deep-link **`astrape://connected?...`** and polished HTML splash for desktop browsers.
+- **OAuth 2.0** authorize + callback with deep-link **`astraphe://connected?...`** and polished HTML splash for desktop browsers.
 - **Token persistence** in `oauth_tokens` (plaintext fields in MVP schema — tighten for production vault encryption per your threat model).
 - **90-day historical backfill** kicked off post-callback (`whoop_backfill`).
 - **Webhooks:** Fetch enriched records by id; handles token rotation; tolerant of flaky disconnects (**returns `200`** to discourage harmful retries where appropriate).

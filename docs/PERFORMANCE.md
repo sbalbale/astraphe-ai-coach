@@ -2,7 +2,7 @@
 
 ## Self-hosted stack
 
-Production: GitHub Actions → GHCR → Proxmox (`astrape-api`, self-hosted Supabase, `astrape-redis`). See [DEPLOYMENT.md](./DEPLOYMENT.md) and [REDIS.md](./REDIS.md).
+Production: GitHub Actions → GHCR → Proxmox (`astraphe-api`, self-hosted Supabase, `astraphe-redis`). See [DEPLOYMENT.md](./DEPLOYMENT.md) and [REDIS.md](./REDIS.md).
 
 ## Activity streams (full fidelity)
 

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>ASTRAPE — AI Coaching</title>
+<title>ASTRAPHE — AI Coaching</title>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
 <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
@@ -1003,7 +1003,7 @@ function ChatScreen() {
     try {
       const reply = await window.claude.complete({
         messages: [
-          { role: 'user', content: `You are ASTRAPE, an AI endurance sports coach. You have access to the athlete's data: CTL=68, ATL=38, TSB=+28, HRV=78ms (↑+6 this week), Sleep=7.5h avg, last workout was an easy 45min recovery run today with TSS=38. Be concise, data-driven, and motivating. Keep responses to 2-3 sentences. Athlete asks: ${text}` }
+          { role: 'user', content: `You are ASTRAPHE, an AI endurance sports coach. You have access to the athlete's data: CTL=68, ATL=38, TSB=+28, HRV=78ms (↑+6 this week), Sleep=7.5h avg, last workout was an easy 45min recovery run today with TSS=38. Be concise, data-driven, and motivating. Keep responses to 2-3 sentences. Athlete asks: ${text}` }
         ]
       });
       setMessages(m => [...m, { id: Date.now() + 1, role: 'ai', text: reply }]);
@@ -1027,7 +1027,7 @@ function ChatScreen() {
             fontSize: 18, flexShrink: 0
           }}>⚡</div>
           <div>
-            <p style={{ fontWeight: 600, fontSize: 15 }}>ASTRAPE Coach</p>
+            <p style={{ fontWeight: 600, fontSize: 15 }}>ASTRAPHE Coach</p>
             <p style={{ fontSize: 11, color: 'var(--teal)' }}>● Online · analyzing your data</p>
           </div>
         </div>
@@ -1354,7 +1354,7 @@ function PlanScreen() {
     24: { type: 'Run', title: 'Long Run', duration: '2h 15m', tss: 80, status: 'done', note: 'Steady Z2. Last 20min at marathon pace.' },
     25: { type: 'Bike', title: 'Long Ride', duration: '3h', tss: 95, status: 'done', note: 'Endurance Z2. High cadence focus.' },
     26: { type: 'Rest', title: 'Recovery', duration: '30 min', tss: 18, status: 'today', note: 'Optional easy swim or walk.' },
-    27: { type: 'Run', title: 'VO2max Intervals', duration: '65 min', tss: 85, status: 'planned', note: '5×4min @95% FTP / Z5 HR. ASTRAPE recommended.' },
+    27: { type: 'Run', title: 'VO2max Intervals', duration: '65 min', tss: 85, status: 'planned', note: '5×4min @95% FTP / Z5 HR. ASTRAPHE recommended.' },
     28: { type: 'Bike', title: 'Endurance Ride', duration: '2h', tss: 60, status: 'planned', note: 'Z2 only. Keep HR below 145.' },
     29: { type: 'Run', title: 'Easy Run', duration: '40 min', tss: 35, status: 'planned', note: 'Pure aerobic. No watch pressure.' },
     30: { type: 'Strength', title: 'Strength & Core', duration: '50 min', tss: 40, status: 'planned', note: 'Gym. Focus on glutes and hip stability.' },
@@ -1728,9 +1728,9 @@ function RecoveryScreen() {
         </div>
       </Card>
 
-      {/* ASTRAPE insight */}
+      {/* ASTRAPHE insight */}
       <Card style={{ background: 'linear-gradient(135deg, rgba(70,33,255,0.12), transparent)', borderColor: 'rgba(70,33,255,0.25)' }}>
-        <p style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>ASTRAPE Recommendation</p>
+        <p style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>ASTRAPHE Recommendation</p>
         <p style={{ fontSize: 12, color: 'var(--text1)', lineHeight: 1.6 }}>Score of 78 with HRV peaking — this is your optimal window. Attack Tuesday's VO2max session with full confidence. Tomorrow: keep it to Z2 regardless of how good you feel.</p>
       </Card>
     </div>
@@ -2131,7 +2131,7 @@ function Sidebar({ screen, setScreen }) {
       display: 'flex', flexDirection: 'column', padding: '24px 16px', gap: 4, flexShrink: 0
     }}>
       <div style={{ marginBottom: 24, paddingLeft: 8 }}>
-        <p style={{ fontFamily: 'var(--mono)', fontWeight: 700, fontSize: 15, letterSpacing: '0.1em', color: '#4621FF' }}>ASTRAPE</p>
+        <p style={{ fontFamily: 'var(--mono)', fontWeight: 700, fontSize: 15, letterSpacing: '0.1em', color: '#4621FF' }}>ASTRAPHE</p>
         <p style={{ fontSize: 10, color: 'var(--text2)', fontFamily: 'var(--mono)', letterSpacing: '0.08em' }}>AI COACH · v2.1</p>
       </div>
       {[
@@ -2190,7 +2190,7 @@ function App() {
         {/* Mobile Header */}
         {!wide && (
           <div style={{ padding: '14px 16px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
-            <p style={{ fontFamily: 'var(--mono)', fontWeight: 700, fontSize: 14, letterSpacing: '0.12em', color: '#4621FF' }}>ASTRAPE</p>
+            <p style={{ fontFamily: 'var(--mono)', fontWeight: 700, fontSize: 14, letterSpacing: '0.12em', color: '#4621FF' }}>ASTRAPHE</p>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--teal)', boxShadow: '0 0 6px var(--teal)' }} />
               <span style={{ fontSize: 10, color: 'var(--text2)', fontFamily: 'var(--mono)' }}>SYNCED</span>

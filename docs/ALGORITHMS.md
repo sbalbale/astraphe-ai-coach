@@ -1,4 +1,4 @@
-﻿# Algorithms
+# Algorithms
 
 The metric layer is implemented in `backend/app/services/algorithms.py` and related helpers such as `backend/app/services/hr_zones.py`. Algorithms are pure Python/NumPy functions; database reads/writes happen in routers or processing services.
 
@@ -72,7 +72,7 @@ Some views may show the latest computed values directly from `tss_history`; when
 
 ## Strain Score
 
-ASTRAPE strain is a 0-100 cardiovascular strain score, not the old 0-21 scale.
+ASTRAPHE strain is a 0-100 cardiovascular strain score, not the old 0-21 scale.
 
 Zone coefficients:
 
@@ -108,7 +108,7 @@ If recovery score is unavailable, readiness falls back to the TSB-only sigmoid.
 
 ## Sleep Score
 
-`calculate_astrape_sleep_score()` is a strict 0-100 score based on:
+`calculate_astraphe_sleep_score()` is a strict 0-100 score based on:
 
 - actual sleep minutes
 - sleep need minutes
