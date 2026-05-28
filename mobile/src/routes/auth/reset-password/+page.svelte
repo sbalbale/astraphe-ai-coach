@@ -137,7 +137,7 @@
     {:else}
       <div class="mb-10">
         <h1 class="text-3xl font-bold tracking-tight mb-2">Set New Password</h1>
-        <p class="text-text2 text-sm">Choose a strong password for your Astrape account.</p>
+        <p class="text-text2 text-sm">Choose a strong password for your Astraphe account.</p>
       </div>
 
       {#if errorMsg}

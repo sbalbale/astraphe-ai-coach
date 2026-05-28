@@ -37,7 +37,7 @@
 
   {#if showTooltip}
     <div class="tooltip">
-      ASTRAPE's physiological models require 42 days of continuous data to fully establish your cardiovascular baseline. Long-term fitness and form scores are currently estimates.
+      ASTRAPHE's physiological models require 42 days of continuous data to fully establish your cardiovascular baseline. Long-term fitness and form scores are currently estimates.
     </div>
   {/if}
 </button>

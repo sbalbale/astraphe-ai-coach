@@ -447,7 +447,7 @@
   }
 
   function getHrZonePctsTopDown(w: any): Array<number | null> {
-    // Display order: Z5 (top) → Z1 (bottom); Astrape model is always Z1–Z5 (no WHOOP Z0 bucket).
+    // Display order: Z5 (top) → Z1 (bottom); Astraphe model is always Z1–Z5 (no WHOOP Z0 bucket).
     return getHrZonePcts(w).slice().reverse();
   }
 
@@ -951,7 +951,7 @@
             <div class="mt-4 pt-4 border-t border-border/40 rounded-xl p-3 bg-gradient-to-br from-blue/10 via-transparent to-transparent">
               <div class="flex items-center gap-1.5 mb-2">
                 <span class="text-[11px] font-mono uppercase tracking-[0.08em] text-blue">AI Insight</span>
-                <Tag color="var(--blue)">ASTRAPE</Tag>
+                <Tag color="var(--blue)">ASTRAPHE</Tag>
               </div>
               {#if workoutAnalysisLoading && !workoutAnalysisMemo.has(selectedWorkout.id)}
                 <p class="text-xs text-text2 animate-pulse">Analyzing workout...</p>

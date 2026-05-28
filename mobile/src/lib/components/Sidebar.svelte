@@ -70,7 +70,7 @@
 
 <div class="w-[220px] bg-bg1 border-r border-border flex flex-col p-6 px-4 gap-1 shrink-0">
   <div class="mb-6 pl-2">
-    <p class="font-mono font-bold text-[15px] tracking-[0.1em] text-blue">ASTRAPE</p>
+    <p class="font-mono font-bold text-[15px] tracking-[0.1em] text-blue">ASTRAPHE</p>
     <p class="text-[10px] text-text2 font-mono tracking-[0.08em]">AI COACH · v2.1</p>
   </div>
   
