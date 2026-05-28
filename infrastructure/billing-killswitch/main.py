@@ -2,7 +2,7 @@ import json
 import base64
 from googleapiclient import discovery
 
-PROJECT_ID = "astrape-ai-coach"
+PROJECT_ID = "astraphe-ai-coach"
 
 def stop_billing(event, context):
     pubsub_data = base64.b64decode(event["data"]).decode("utf-8")
