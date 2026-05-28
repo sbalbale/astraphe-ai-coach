@@ -198,6 +198,7 @@ astraphe-coach/
 | [AI_COACH.md](./docs/AI_COACH.md) | Gemini integration, system prompt, RAG pipeline, function calling |
 | [API_REFERENCE.md](./docs/API_REFERENCE.md) | All FastAPI endpoints with request/response shapes |
 | [SETUP.md](./docs/SETUP.md) | Local development environment setup across all three services |
+| [ASTRAPHE_REBRAND_CHECKLIST.md](./docs/ASTRAPHE_REBRAND_CHECKLIST.md) | Post-rebrand ops: DNS, Docker/GHCR, Firebase, Gemini, Resend, OAuth, local relaunch |
 | [DEPLOYMENT.md](./docs/DEPLOYMENT.md) | Cloud Run, Secret Manager, CI/CD pipeline, cost estimates |
 | [DESIGN_SYSTEM.md](./docs/DESIGN_SYSTEM.md) | Spectral glassmorphism — color tokens, typography, components |
 | [MOBILE.md](./docs/MOBILE.md) | Svelte 5 runes, Capacitor config, HealthKit background runner |
