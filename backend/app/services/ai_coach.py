@@ -2,6 +2,7 @@ from google import genai
 from google.genai import types
 from app.config import settings
 from app.services import coach_tools
+from app.services.coach_workout_data import recent_workouts_teaser
 from app.services.algorithms import compute_z_score
 from app.services.memory import retrieve_relevant_memories, should_skip_rag_for_message
 import logging
@@ -456,6 +457,9 @@ def _build_system_context(
             "id": conversation_id,
             "recent_messages": _load_conversation_history(db, athlete_id, conversation_id, limit=24),
         }
+    recent = recent_workouts_teaser(db, athlete_id, limit=2)
+    if recent:
+        ctx["recent_workouts"] = recent
     return "[SYSTEM CONTEXT - DO NOT SHOW TO USER]\n" + json.dumps(ctx, ensure_ascii=False) + "\n[END CONTEXT]"
 
 
@@ -1645,12 +1649,16 @@ async def _build_system_context_string_async(
             return []
         return await asyncio.to_thread(retrieve_relevant_memories, athlete_id, query, db, 5)
 
-    training, bio, profile, hist_rows, memories = await asyncio.gather(
+    async def load_recent_workouts() -> list[dict]:
+        return await asyncio.to_thread(recent_workouts_teaser, db, athlete_id, 2)
+
+    training, bio, profile, hist_rows, memories, recent_workouts = await asyncio.gather(
         asyncio.to_thread(_summarize_training_load, db, athlete_id, current_tss),
         asyncio.to_thread(_summarize_biometrics, db, athlete_id),
         asyncio.to_thread(_summarize_athlete_profile, db, athlete_id),
         load_hist(),
         load_memories(),
+        load_recent_workouts(),
     )
     offset = coerce_timezone_offset_min(
         profile.get("timezone_offset_min") if timezone_offset_min is None else timezone_offset_min
@@ -1683,6 +1691,8 @@ async def _build_system_context_string_async(
             "id": conversation_id,
             "recent_messages": hist_rows,
         }
+    if recent_workouts:
+        ctx["recent_workouts"] = recent_workouts
     return "[SYSTEM CONTEXT - DO NOT SHOW TO USER]\n" + json.dumps(ctx, ensure_ascii=False) + "\n[END CONTEXT]"
 
 
