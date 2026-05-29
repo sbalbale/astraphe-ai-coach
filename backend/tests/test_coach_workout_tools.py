@@ -372,3 +372,18 @@ def test_build_log_workout_payload_bike_norm_from_avg():
     )
     assert payload.normalized_power == 200
     assert payload.ftp_at_time == 250
+
+
+def test_all_workout_tool_handlers_registered():
+    expected = {
+        "list_workouts",
+        "get_workout_summary",
+        "get_workout_streams_window",
+        "log_workout",
+        "update_workout",
+        "log_biometrics",
+        "get_athlete_zones",
+        "update_planned_workout",
+        "delete_planned_workout",
+    }
+    assert expected.issubset(set(coach_tools.TOOL_HANDLERS.keys()))
