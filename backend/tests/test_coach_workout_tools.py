@@ -396,5 +396,10 @@ def test_all_workout_tool_handlers_registered():
         "get_athlete_zones",
         "update_planned_workout",
         "delete_planned_workout",
+        "list_planned_workouts",
+        "get_training_load_series",
+        "get_biometrics_for_dates",
+        "summarize_workouts",
+        "compare_workouts",
     }
     assert expected.issubset(set(coach_tools.TOOL_HANDLERS.keys()))

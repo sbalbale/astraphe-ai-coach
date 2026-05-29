@@ -86,6 +86,11 @@ The coach exposes custom Python tools through Gemini function declarations:
 | `get_athlete_zones` | HR zone boundaries plus FTP/threshold anchors. |
 | `update_planned_workout` | Reschedule or edit one future planned workout. |
 | `delete_planned_workout` | Remove one future planned workout. |
+| `list_planned_workouts` | List future planned workouts for a date range. |
+| `get_training_load_series` | PMC history (daily TSS, CTL, ATL, TSB) for a date range. |
+| `get_biometrics_for_dates` | Sleep/HRV/recovery for up to 7 specific dates. |
+| `summarize_workouts` | Week/month or range rollup: TSS, hours, sport mix, hardest session. |
+| `compare_workouts` | Side-by-side two completed workouts with numeric deltas. |
 | `save_memory` | Persist an important athlete fact to `coach_memories`. |
 | `internal_scratchpad` | Sink private model reasoning so it is never shown to the athlete. |
 
