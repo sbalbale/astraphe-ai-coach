@@ -3,6 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
+from app.config import settings
 from app.main import app
 from app.dependencies import (
     get_current_athlete,
@@ -42,6 +43,13 @@ def override_get_user_config():
 
 async def override_require_ai_rate_limit():
     return None
+
+
+@pytest.fixture(autouse=True)
+def disable_startup_backfills(monkeypatch):
+    """Prevent TestClient startup from scheduling real Strava/WHOOP API backfills."""
+    monkeypatch.setattr(settings, "STRAVA_STARTUP_BACKFILL_ENABLED", False)
+    monkeypatch.setattr(settings, "WHOOP_STARTUP_BACKFILL_ENABLED", False)
 
 
 @pytest.fixture
