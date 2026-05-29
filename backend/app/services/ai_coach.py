@@ -743,8 +743,12 @@ def _extract_non_thought_text_from_response(
 
     Some Gemini thinking models expose reasoning as `part.thought=True`; Gemma-style
     models may not, so this is one layer before the XML/fallback sanitizer.
+
+    When every structured part is thought-only, fall back to ``response.text`` or the
+    joined thought text so Gemma 4 does not produce empty coach replies.
     """
     text_parts: list[str] = []
+    thought_parts: list[str] = []
     saw_structured_parts = False
     try:
         candidates = getattr(response, "candidates", None) or []
@@ -753,17 +757,29 @@ def _extract_non_thought_text_from_response(
         parts = getattr(content, "parts", None) or []
         for part in parts:
             saw_structured_parts = True
-            if getattr(part, "thought", False):
-                continue
             text = getattr(part, "text", None)
-            if text:
-                text_parts.append(str(text))
+            if not text:
+                continue
+            if getattr(part, "thought", False):
+                thought_parts.append(str(text))
+                continue
+            text_parts.append(str(text))
     except Exception:
         text_parts = []
 
     joined = "".join(text_parts).strip()
     if joined:
         return joined
+
+    if allow_text_fallback:
+        fallback_text = (getattr(response, "text", None) or "").strip()
+        if fallback_text:
+            return fallback_text
+
+    # Gemma 4 sometimes labels the entire athlete reply as thought=True.
+    if thought_parts:
+        return "".join(thought_parts).strip()
+
     if allow_text_fallback and not saw_structured_parts:
         return (getattr(response, "text", None) or "").strip()
     return ""
@@ -779,6 +795,58 @@ _RESPONSE_RE = re.compile(r"<response>(.*?)</response>", re.DOTALL | re.IGNORECA
 _SCRATCHPAD_RE = re.compile(r"<scratchpad>.*?</scratchpad>", re.DOTALL | re.IGNORECASE)
 _THOUGHT_BLOCK_RE = re.compile(r"(?:^|\n)\s*THOUGHT:\s*.*?(?=\n\s*\n|$)", re.DOTALL | re.IGNORECASE)
 _READY_MARKER_RE = re.compile(r"\*Ready\.\*", re.IGNORECASE)
+_DRAFT_MARKER_RE = re.compile(r"(?:^|\n)\s*(?:\*+\s*)?Draft:\s*", re.IGNORECASE | re.MULTILINE)
+_PLANNING_DUMP_MARKERS = (
+    "* trigger:",
+    "trigger:",
+    "* goal:",
+    "goal:",
+    "* athlete:",
+    "athlete:",
+    "* current state:",
+    "current state:",
+    "constraint check:",
+    "metric to cite:",
+    "* action:",
+    "action:",
+    "* draft:",
+    "draft:",
+)
+
+
+def _looks_like_planning_dump(text: str) -> bool:
+    low = (text or "").lower()
+    if not low:
+        return False
+    hits = sum(1 for marker in _PLANNING_DUMP_MARKERS if marker in low)
+    return hits >= 2 or ("trigger:" in low and "draft:" in low)
+
+
+def _dedupe_repeated_suffix(text: str) -> str:
+    """Gemma sometimes repeats the draft reply inline after an emoji."""
+    t = (text or "").strip()
+    if len(t) < 80:
+        return t
+    probe = t[: min(48, len(t))]
+    second = t.find(probe, len(probe))
+    if second > 0:
+        return t[:second].strip()
+    return t
+
+
+def _extract_draft_or_final_reply(text: str) -> str:
+    """Pull athlete-facing copy from Gemma-style planning bullet dumps."""
+    t = (text or "").strip()
+    if not t:
+        return ""
+
+    draft_matches = list(_DRAFT_MARKER_RE.finditer(t))
+    if draft_matches:
+        segment = t[draft_matches[-1].end() :].strip()
+        segment = re.split(r"\n\s*(?:\*+\s*)?Draft:\s*", segment, maxsplit=1, flags=re.I)[0].strip()
+        return _dedupe_repeated_suffix(segment)
+
+    return ""
 _COACH_REPLY_START_RE = re.compile(
     r"(?:^|\n)\s*(?:"
     r"Because (?:the |your |with |how )|"
@@ -788,6 +856,7 @@ _COACH_REPLY_START_RE = re.compile(
     r"Here are|"
     r"That \d|"
     r"That (?:is|was|sounds|looks|effort)|"
+    r"Your (?:sleep|recovery|HRV|CTL|ATL|TSB|readiness)|"
     r"To answer your question|"
     r"The short answer|"
     r"Yes(?:,|\s|-)|"
@@ -819,7 +888,20 @@ def _extract_athlete_message_from_text(raw_text: str) -> str:
     # Fallback for older outputs or malformed XML.
     raw = _SCRATCHPAD_RE.sub("", raw).strip()
     raw = _THOUGHT_BLOCK_RE.sub("", raw).strip()
+
+    draft = _extract_draft_or_final_reply(raw)
+    if draft:
+        cleaned = _strip_internal_reasoning(draft)
+        if cleaned and not _looks_like_planning_dump(cleaned):
+            return cleaned
+
     cleaned = _strip_internal_reasoning(raw)
+    if cleaned and _looks_like_planning_dump(cleaned):
+        draft = _extract_draft_or_final_reply(cleaned)
+        if draft:
+            cleaned = _strip_internal_reasoning(draft)
+        elif _looks_like_planning_dump(cleaned):
+            cleaned = ""
     return cleaned or "I encountered an error processing your request."
 
 
@@ -876,6 +958,12 @@ def _strip_internal_reasoning(text: str) -> str:
         "wetsuits are",
         "upcoming load",
         "constraint check",
+        "metric to cite",
+        "current state",
+        "trigger:",
+        "goal:",
+        "action:",
+        "draft:",
         "role:",
         "wait,",
         "actually,",
@@ -943,6 +1031,12 @@ def _strip_internal_reasoning(text: str) -> str:
         "step 3",
         "the user",
         "wait,",
+        "trigger",
+        "goal:",
+        "action:",
+        "athlete:",
+        "current state",
+        "metric to cite",
         "constraint check",
         "final check",
         "final plan",
@@ -1011,6 +1105,7 @@ def _strip_internal_reasoning(text: str) -> str:
             "here is how",
             "here are",
             "that ",
+            "your ",
             "to answer your question",
             "the short answer",
             "yes,",
@@ -1064,7 +1159,12 @@ def _strip_internal_reasoning(text: str) -> str:
             i += 1
             continue
         low = lines[i].strip().lower()
-        if low.startswith(("wait", "actually", "final", "draft")) or (
+        draft_match = re.match(r"^(?:\*+\s*)?draft:\s*(.+)$", lines[i].strip(), re.I)
+        if draft_match and draft_match.group(1).strip():
+            return _dedupe_repeated_suffix(draft_match.group(1).strip())
+        if low.startswith(("wait", "actually", "final")) or (
+            low.startswith("draft:") and not draft_match
+        ) or (
             low.startswith("the user") and "asking" in low
         ):
             i += 1
@@ -1072,8 +1172,14 @@ def _strip_internal_reasoning(text: str) -> str:
         break
 
     out = "\n".join(ln for ln in lines[i:] if ln.strip()).strip()
-    if out:
+    if out and not _looks_like_planning_dump(out):
         return out
+
+    if _looks_like_planning_dump(t):
+        draft = _extract_draft_or_final_reply(t)
+        if draft:
+            return _dedupe_repeated_suffix(draft)
+        return ""
 
     return t
 

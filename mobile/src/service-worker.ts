@@ -2,7 +2,11 @@
 /// <reference types="vite-plugin-pwa/client" />
 
 import { clientsClaim } from 'workbox-core';
-import { createHandlerBoundToURL, precacheAndRoute } from 'workbox-precaching';
+import {
+	cleanupOutdatedCaches,
+	createHandlerBoundToURL,
+	precacheAndRoute,
+} from 'workbox-precaching';
 import { NavigationRoute, registerRoute } from 'workbox-routing';
 
 declare let self: ServiceWorkerGlobalScope;
@@ -11,13 +15,18 @@ self.skipWaiting();
 clientsClaim();
 
 precacheAndRoute(self.__WB_MANIFEST);
+cleanupOutdatedCaches();
 
-const navigationHandler = createHandlerBoundToURL('/index.html');
-registerRoute(
-	new NavigationRoute(navigationHandler, {
-		denylist: [/^\/_/, /\/[^/?]+\.[^/]+$/],
-	})
-);
+try {
+	const navigationHandler = createHandlerBoundToURL('/');
+	registerRoute(
+		new NavigationRoute(navigationHandler, {
+			denylist: [/^\/_/, /\/[^/?]+\.[^/]+$/],
+		})
+	);
+} catch (error) {
+	console.warn('[service-worker] Offline navigation fallback unavailable:', error);
+}
 
 function resolveNotificationUrl(raw: string | undefined): string {
 	const fallback = '/dashboard';
