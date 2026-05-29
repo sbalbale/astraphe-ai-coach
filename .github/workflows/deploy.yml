@@ -150,18 +150,68 @@ jobs:
           EOF
 
       - name: Run new migrations
+        env:
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
         run: |
-          ssh docker@ssh.astrapheai.com << ENDSSH
-            export PATH="\$HOME/.local/share/supabase:\$PATH"
-            cd ~/astraphe/repo
+          # Password is expanded here; the remote script is single-quoted via ssh bash -s.
+          ssh docker@ssh.astrapheai.com env SUPABASE_DB_PASSWORD="${SUPABASE_DB_PASSWORD}" bash -s <<'REMOTE'
+            set -euo pipefail
+            export PATH="${HOME}/.local/share/supabase:${PATH}"
+            REPO="${HOME}/astraphe/repo"
+            SUPABASE_DOCKER="${HOME}/astraphe/supabase/docker"
+
+            cd "${REPO}"
             git pull origin main
-            # 172.21.0.3 is supabase-pooler (Supavisor), not Postgres — use supabase-db directly.
-            DB_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' supabase-db)
-            if [ -z "\$DB_IP" ]; then
-              echo "::error::Could not resolve supabase-db container IP"
+
+            # Resolve current supabase-db IP on supabase_default (changes when containers restart).
+            # Never use supabase-pooler / host :5432 — that is Supavisor, not Postgres.
+            resolve_db_ip() {
+              if docker inspect supabase-db >/dev/null 2>&1; then
+                docker inspect -f '{{index .NetworkSettings.Networks "supabase_default" "IPAddress"}}' supabase-db
+                return 0
+              fi
+              if [ -f "${SUPABASE_DOCKER}/docker-compose.yml" ]; then
+                local cid
+                cid="$(cd "${SUPABASE_DOCKER}" && docker compose ps -q db 2>/dev/null | head -1)"
+                if [ -n "${cid}" ]; then
+                  docker inspect -f '{{index .NetworkSettings.Networks "supabase_default" "IPAddress"}}' "${cid}"
+                  return 0
+                fi
+              fi
+              return 1
+            }
+
+            db_push_host() {
+              local host="$1"
+              echo "Running supabase db push against ${host}:5432"
+              PGSSLMODE=disable supabase db push \
+                --db-url "postgresql://postgres:${SUPABASE_DB_PASSWORD}@${host}:5432/postgres" \
+                --yes
+            }
+
+            # Fallback: run Supabase CLI on supabase_default and use compose DNS name "db".
+            db_push_network() {
+              echo "Running supabase db push via supabase_default (host=db)"
+              docker run --rm \
+                --network supabase_default \
+                -v "${REPO}:/workspace" \
+                -w /workspace \
+                -e PGSSLMODE=disable \
+                -e SUPABASE_DB_PASSWORD \
+                public.ecr.aws/supabase/cli:latest \
+                db push \
+                --db-url "postgresql://postgres:${SUPABASE_DB_PASSWORD}@db:5432/postgres" \
+                --yes
+            }
+
+            if DB_IP="$(resolve_db_ip)"; then
+              db_push_host "${DB_IP}"
+            elif docker network inspect supabase_default >/dev/null 2>&1; then
+              db_push_network
+            else
+              echo "::error::Could not find supabase-db or supabase_default on this host."
+              echo "Ensure ssh.astrapheai.com is the Docker host that runs ~/astraphe/supabase/docker."
+              docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}' 2>/dev/null | head -25 || true
               exit 1
             fi
-            PGSSLMODE=disable supabase db push \
-              --db-url "postgresql://postgres:${{ secrets.SUPABASE_DB_PASSWORD }}@\${DB_IP}:5432/postgres" \
-              --yes
-          ENDSSH
+          REMOTE
