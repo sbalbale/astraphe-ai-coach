@@ -31,6 +31,24 @@ async def start_token_refresh_loop():
     asyncio.create_task(token_refresh_loop())
 
 
+@app.on_event("startup")
+async def start_strava_startup_backfill():
+    if not settings.STRAVA_STARTUP_BACKFILL_ENABLED:
+        return
+    from app.services.strava import backfill_recent
+
+    asyncio.create_task(backfill_recent(hours=settings.STRAVA_STARTUP_BACKFILL_HOURS))
+
+
+@app.on_event("startup")
+async def start_whoop_startup_backfill():
+    if not settings.WHOOP_STARTUP_BACKFILL_ENABLED:
+        return
+    from app.services.whoop_backfill import backfill_recent
+
+    asyncio.create_task(backfill_recent(hours=settings.WHOOP_STARTUP_BACKFILL_HOURS))
+
+
 @app.on_event("shutdown")
 async def shutdown_redis():
     await close_redis()
