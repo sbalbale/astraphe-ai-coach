@@ -155,8 +155,6 @@ async def _backfill_historical_data_impl(
         profile_update = {}
         if profile.get("first_name"):
             profile_update["display_name"] = profile["first_name"]
-        if weight_kg is not None:
-            profile_update["weight_kg"] = weight_kg
         if height_cm is not None:
             profile_update["height_cm"] = height_cm
         if measurements.get("max_heart_rate"):
