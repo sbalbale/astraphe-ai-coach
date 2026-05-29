@@ -1333,6 +1333,7 @@ def get_coach_response_agentic(
         system_instruction=system_with_ctx,
         tools=coach_tools.TOOLS,
         automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+        tool_config=types.ToolConfig(include_server_side_tool_invocations=True),
         temperature=0.4,
     )
     if is_thinking_model:
