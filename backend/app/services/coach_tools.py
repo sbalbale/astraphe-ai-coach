@@ -12,6 +12,7 @@ from google.genai import types
 from supabase import Client
 
 from app.services.algorithms import compute_atl, compute_ctl
+from app.services import coach_workout_data as workout_data
 from app.services.time_utils import athlete_local_date
 
 # Zone-derived intensity factors for TSS estimation (IF^2 * duration_h * 100)
@@ -781,6 +782,164 @@ def handle_clear_training_plans(
         return {"error": f"training_plans_delete_failed: {e}"}
 
 
+def handle_list_workouts(
+    args: dict[str, Any],
+    *,
+    athlete_id: str,
+    db: Client,
+) -> dict[str, Any]:
+    return workout_data.list_workouts_compact(db, athlete_id, args)
+
+
+def handle_get_workout_summary(
+    args: dict[str, Any],
+    *,
+    athlete_id: str,
+    db: Client,
+) -> dict[str, Any]:
+    return workout_data.get_workout_summary(db, athlete_id, args)
+
+
+def handle_get_workout_streams_window(
+    args: dict[str, Any],
+    *,
+    athlete_id: str,
+    db: Client,
+) -> dict[str, Any]:
+    workout_id = args.get("workout_id")
+    if not workout_id:
+        row = workout_data.resolve_workout_row(db, athlete_id, args)
+        if not row:
+            return {"error": "workout_not_found"}
+        workout_id = row["id"]
+
+    if args.get("center_min") is not None and args.get("window_min") is not None:
+        center = float(args["center_min"])
+        half = float(args["window_min"]) / 2.0
+        start_off = max(0.0, center - half)
+        end_off = center + half
+    else:
+        try:
+            start_off = float(args.get("start_offset_min", 0))
+            end_off = float(args.get("end_offset_min", start_off + 5))
+        except (TypeError, ValueError):
+            return {"error": "invalid offset minutes"}
+
+    metrics = args.get("metrics")
+    if isinstance(metrics, str):
+        metrics = [metrics]
+    elif not isinstance(metrics, list):
+        metrics = None
+
+    return workout_data.slice_stream_window(
+        db,
+        athlete_id,
+        str(workout_id),
+        start_offset_min=start_off,
+        end_offset_min=end_off,
+        metrics=metrics,
+    )
+
+
+def handle_log_workout(
+    args: dict[str, Any],
+    *,
+    athlete_id: str,
+    db: Client,
+) -> dict[str, Any]:
+    return workout_data.log_workout_sync(db, athlete_id, args)
+
+
+def handle_update_workout(
+    args: dict[str, Any],
+    *,
+    athlete_id: str,
+    db: Client,
+) -> dict[str, Any]:
+    return workout_data.update_workout_sync(db, athlete_id, args)
+
+
+def handle_log_biometrics(
+    args: dict[str, Any],
+    *,
+    athlete_id: str,
+    db: Client,
+) -> dict[str, Any]:
+    return workout_data.log_biometrics_sync(db, athlete_id, args)
+
+
+def handle_get_athlete_zones(
+    args: dict[str, Any],
+    *,
+    athlete_id: str,
+    db: Client,
+) -> dict[str, Any]:
+    return workout_data.get_athlete_zones_payload(db, athlete_id)
+
+
+def handle_update_planned_workout(
+    args: dict[str, Any],
+    *,
+    athlete_id: str,
+    db: Client,
+) -> dict[str, Any]:
+    return workout_data.update_planned_workout_sync(db, athlete_id, args)
+
+
+def handle_delete_planned_workout(
+    args: dict[str, Any],
+    *,
+    athlete_id: str,
+    db: Client,
+) -> dict[str, Any]:
+    return workout_data.delete_planned_workout_sync(db, athlete_id, args)
+
+
+def handle_list_planned_workouts(
+    args: dict[str, Any],
+    *,
+    athlete_id: str,
+    db: Client,
+) -> dict[str, Any]:
+    return workout_data.list_planned_workouts_compact(db, athlete_id, args)
+
+
+def handle_get_training_load_series(
+    args: dict[str, Any],
+    *,
+    athlete_id: str,
+    db: Client,
+) -> dict[str, Any]:
+    return workout_data.get_training_load_series(db, athlete_id, args)
+
+
+def handle_get_biometrics_for_dates(
+    args: dict[str, Any],
+    *,
+    athlete_id: str,
+    db: Client,
+) -> dict[str, Any]:
+    return workout_data.get_biometrics_for_dates(db, athlete_id, args)
+
+
+def handle_summarize_workouts(
+    args: dict[str, Any],
+    *,
+    athlete_id: str,
+    db: Client,
+) -> dict[str, Any]:
+    return workout_data.summarize_workouts(db, athlete_id, args)
+
+
+def handle_compare_workouts(
+    args: dict[str, Any],
+    *,
+    athlete_id: str,
+    db: Client,
+) -> dict[str, Any]:
+    return workout_data.compare_workouts(db, athlete_id, args)
+
+
 # --- Gemini tool declarations ---
 
 _simulate_decl = types.FunctionDeclaration(
@@ -959,6 +1118,262 @@ _clear_training_plans_decl = types.FunctionDeclaration(
     ),
 )
 
+_list_workouts_decl = types.FunctionDeclaration(
+    name="list_workouts",
+    description=(
+        "List completed workouts for the athlete. Use before discussing a specific session. "
+        "Resolve on_date from athlete-local current_local_date in SYSTEM CONTEXT."
+    ),
+    parameters=types.Schema(
+        type=types.Type.OBJECT,
+        properties={
+            "on_date": types.Schema(type=types.Type.STRING, description="Single athlete-local day YYYY-MM-DD"),
+            "start_date": types.Schema(type=types.Type.STRING),
+            "end_date": types.Schema(type=types.Type.STRING),
+            "sport": types.Schema(type=types.Type.STRING, description="run, bike, swim, row, etc."),
+            "limit": types.Schema(type=types.Type.INTEGER, description="Max rows (default 10, max 25)"),
+        },
+        required=[],
+    ),
+)
+
+_get_workout_summary_decl = types.FunctionDeclaration(
+    name="get_workout_summary",
+    description="Get coaching summary for one completed workout (TSS, zones, duration). No raw streams.",
+    parameters=types.Schema(
+        type=types.Type.OBJECT,
+        properties={
+            "workout_id": types.Schema(type=types.Type.STRING),
+            "on_date": types.Schema(type=types.Type.STRING, description="Athlete-local date if resolving by day"),
+            "sport": types.Schema(type=types.Type.STRING),
+            "which": types.Schema(type=types.Type.STRING, description="most_recent or only"),
+        },
+        required=[],
+    ),
+)
+
+_get_workout_streams_window_decl = types.FunctionDeclaration(
+    name="get_workout_streams_window",
+    description=(
+        "Get downsampled HR/power/pace for a time segment of a workout. "
+        "Use only when the athlete asks about a specific minute or interval."
+    ),
+    parameters=types.Schema(
+        type=types.Type.OBJECT,
+        properties={
+            "workout_id": types.Schema(type=types.Type.STRING),
+            "start_offset_min": types.Schema(type=types.Type.NUMBER),
+            "end_offset_min": types.Schema(type=types.Type.NUMBER),
+            "center_min": types.Schema(type=types.Type.NUMBER),
+            "window_min": types.Schema(type=types.Type.NUMBER),
+            "metrics": types.Schema(
+                type=types.Type.ARRAY,
+                items=types.Schema(type=types.Type.STRING),
+                description="hr, power, pace, cadence",
+            ),
+        },
+        required=[],
+    ),
+)
+
+_log_workout_decl = types.FunctionDeclaration(
+    name="log_workout",
+    description=(
+        "Record a completed workout the athlete already did (past tense). "
+        "Writes to workouts table with TSS calculation. Not for future plan entries."
+    ),
+    parameters=types.Schema(
+        type=types.Type.OBJECT,
+        properties={
+            "sport": types.Schema(type=types.Type.STRING),
+            "duration_minutes": types.Schema(type=types.Type.INTEGER),
+            "on_date": types.Schema(type=types.Type.STRING, description="Athlete-local date, default today"),
+            "start_time_local": types.Schema(type=types.Type.STRING, description="HH:MM local time"),
+            "avg_power_w": types.Schema(type=types.Type.INTEGER),
+            "norm_power_w": types.Schema(type=types.Type.INTEGER),
+            "avg_hr": types.Schema(type=types.Type.INTEGER),
+            "max_hr": types.Schema(type=types.Type.INTEGER),
+            "distance_m": types.Schema(type=types.Type.NUMBER),
+            "avg_pace_sec_km": types.Schema(type=types.Type.INTEGER),
+            "title": types.Schema(type=types.Type.STRING),
+            "tss": types.Schema(type=types.Type.NUMBER, description="Override only if athlete states TSS"),
+        },
+        required=["sport", "duration_minutes"],
+    ),
+)
+
+_update_workout_decl = types.FunctionDeclaration(
+    name="update_workout",
+    description="Correct fields on an existing completed workout (duration, power, date, etc.).",
+    parameters=types.Schema(
+        type=types.Type.OBJECT,
+        properties={
+            "workout_id": types.Schema(type=types.Type.STRING),
+            "on_date": types.Schema(type=types.Type.STRING),
+            "sport": types.Schema(type=types.Type.STRING),
+            "duration_minutes": types.Schema(type=types.Type.INTEGER),
+            "avg_power_w": types.Schema(type=types.Type.INTEGER),
+            "norm_power_w": types.Schema(type=types.Type.INTEGER),
+            "avg_hr": types.Schema(type=types.Type.INTEGER),
+            "max_hr": types.Schema(type=types.Type.INTEGER),
+            "distance_m": types.Schema(type=types.Type.NUMBER),
+            "title": types.Schema(type=types.Type.STRING),
+            "tss": types.Schema(type=types.Type.NUMBER),
+        },
+        required=[],
+    ),
+)
+
+_log_biometrics_decl = types.FunctionDeclaration(
+    name="log_biometrics",
+    description=(
+        "Save manual sleep, HRV, resting HR, or weight when the athlete reports it and "
+        "device data is missing."
+    ),
+    parameters=types.Schema(
+        type=types.Type.OBJECT,
+        properties={
+            "on_date": types.Schema(type=types.Type.STRING),
+            "sleep_duration_min": types.Schema(type=types.Type.INTEGER),
+            "sleep_score": types.Schema(type=types.Type.INTEGER),
+            "resting_hr": types.Schema(type=types.Type.INTEGER),
+            "hrv_rmssd": types.Schema(type=types.Type.NUMBER),
+            "weight_kg": types.Schema(type=types.Type.NUMBER),
+            "sleep_bedtime": types.Schema(type=types.Type.STRING, description="ISO datetime"),
+            "sleep_wakeup": types.Schema(type=types.Type.STRING, description="ISO datetime"),
+        },
+        required=[],
+    ),
+)
+
+_get_athlete_zones_decl = types.FunctionDeclaration(
+    name="get_athlete_zones",
+    description="Fetch HR zone boundaries and FTP/threshold anchors for prescriptions.",
+    parameters=types.Schema(type=types.Type.OBJECT, properties={}, required=[]),
+)
+
+_update_planned_workout_decl = types.FunctionDeclaration(
+    name="update_planned_workout",
+    description="Reschedule or edit one future planned workout on the calendar.",
+    parameters=types.Schema(
+        type=types.Type.OBJECT,
+        properties={
+            "plan_id": types.Schema(type=types.Type.STRING),
+            "on_date": types.Schema(type=types.Type.STRING),
+            "sport": types.Schema(type=types.Type.STRING),
+            "new_date": types.Schema(type=types.Type.STRING),
+            "duration_minutes": types.Schema(type=types.Type.INTEGER),
+            "title": types.Schema(type=types.Type.STRING),
+            "focus_zone": types.Schema(type=types.Type.STRING),
+            "structure": types.Schema(type=types.Type.ARRAY, items=types.Schema(type=types.Type.OBJECT)),
+        },
+        required=[],
+    ),
+)
+
+_delete_planned_workout_decl = types.FunctionDeclaration(
+    name="delete_planned_workout",
+    description="Remove one future planned workout from the calendar.",
+    parameters=types.Schema(
+        type=types.Type.OBJECT,
+        properties={
+            "plan_id": types.Schema(type=types.Type.STRING),
+            "on_date": types.Schema(type=types.Type.STRING),
+            "sport": types.Schema(type=types.Type.STRING),
+        },
+        required=[],
+    ),
+)
+
+_list_planned_workouts_decl = types.FunctionDeclaration(
+    name="list_planned_workouts",
+    description="List future planned workouts on the training calendar for a date range.",
+    parameters=types.Schema(
+        type=types.Type.OBJECT,
+        properties={
+            "start_date": types.Schema(type=types.Type.STRING, description="ISO date YYYY-MM-DD"),
+            "end_date": types.Schema(type=types.Type.STRING, description="ISO date YYYY-MM-DD"),
+        },
+        required=[],
+    ),
+)
+
+_get_training_load_series_decl = types.FunctionDeclaration(
+    name="get_training_load_series",
+    description=(
+        "Fetch PMC history (daily TSS, CTL, ATL, TSB) for coaching load trends. "
+        "Default last 42 days."
+    ),
+    parameters=types.Schema(
+        type=types.Type.OBJECT,
+        properties={
+            "start_date": types.Schema(type=types.Type.STRING),
+            "end_date": types.Schema(type=types.Type.STRING),
+        },
+        required=[],
+    ),
+)
+
+_get_biometrics_for_dates_decl = types.FunctionDeclaration(
+    name="get_biometrics_for_dates",
+    description=(
+        "Fetch sleep, HRV, recovery, and strain for specific dates (max 7). "
+        "Use to tie workout days to recovery context."
+    ),
+    parameters=types.Schema(
+        type=types.Type.OBJECT,
+        properties={
+            "dates": types.Schema(
+                type=types.Type.ARRAY,
+                items=types.Schema(type=types.Type.STRING),
+                description="ISO dates YYYY-MM-DD",
+            ),
+        },
+        required=["dates"],
+    ),
+)
+
+_summarize_workouts_decl = types.FunctionDeclaration(
+    name="summarize_workouts",
+    description=(
+        "Roll up completed workouts for a week/month or date range: total TSS, hours, "
+        "sport mix, and hardest session."
+    ),
+    parameters=types.Schema(
+        type=types.Type.OBJECT,
+        properties={
+            "period": types.Schema(
+                type=types.Type.STRING,
+                description="Shorthand: week or month (athlete-local)",
+            ),
+            "start_date": types.Schema(type=types.Type.STRING),
+            "end_date": types.Schema(type=types.Type.STRING),
+            "sport": types.Schema(type=types.Type.STRING),
+        },
+        required=[],
+    ),
+)
+
+_compare_workouts_decl = types.FunctionDeclaration(
+    name="compare_workouts",
+    description=(
+        "Side-by-side comparison of two completed workouts (same sport preferred). "
+        "Returns summaries and numeric deltas (B minus A)."
+    ),
+    parameters=types.Schema(
+        type=types.Type.OBJECT,
+        properties={
+            "workout_id_a": types.Schema(type=types.Type.STRING),
+            "workout_id_b": types.Schema(type=types.Type.STRING),
+            "workout_id": types.Schema(
+                type=types.Type.STRING,
+                description="Alias for workout_id_a",
+            ),
+        },
+        required=["workout_id_b"],
+    ),
+)
+
 def handle_internal_scratchpad(
     args: dict[str, Any],
     *,
@@ -996,7 +1411,21 @@ TOOLS: list[types.Tool] = [
         _simulate_decl, 
         _schedule_decl, 
         _nutrition_decl, 
-        _clear_training_plans_decl, 
+        _clear_training_plans_decl,
+        _list_workouts_decl,
+        _get_workout_summary_decl,
+        _get_workout_streams_window_decl,
+        _log_workout_decl,
+        _update_workout_decl,
+        _log_biometrics_decl,
+        _get_athlete_zones_decl,
+        _update_planned_workout_decl,
+        _delete_planned_workout_decl,
+        _list_planned_workouts_decl,
+        _get_training_load_series_decl,
+        _get_biometrics_for_dates_decl,
+        _summarize_workouts_decl,
+        _compare_workouts_decl,
         _save_memory_decl,
         _list_memories_decl,
         _update_memory_decl,
@@ -1012,6 +1441,20 @@ TOOL_HANDLERS: dict[str, ToolHandler] = {
     "schedule_workout": lambda args, aid, db: handle_schedule_workout(args, athlete_id=aid, db=db),
     "calculate_nutrition": lambda args, aid, db: handle_calculate_nutrition(args, athlete_id=aid, db=db),
     "clear_training_plans": lambda args, aid, db: handle_clear_training_plans(args, athlete_id=aid, db=db),
+    "list_workouts": lambda args, aid, db: handle_list_workouts(args, athlete_id=aid, db=db),
+    "get_workout_summary": lambda args, aid, db: handle_get_workout_summary(args, athlete_id=aid, db=db),
+    "get_workout_streams_window": lambda args, aid, db: handle_get_workout_streams_window(args, athlete_id=aid, db=db),
+    "log_workout": lambda args, aid, db: handle_log_workout(args, athlete_id=aid, db=db),
+    "update_workout": lambda args, aid, db: handle_update_workout(args, athlete_id=aid, db=db),
+    "log_biometrics": lambda args, aid, db: handle_log_biometrics(args, athlete_id=aid, db=db),
+    "get_athlete_zones": lambda args, aid, db: handle_get_athlete_zones(args, athlete_id=aid, db=db),
+    "update_planned_workout": lambda args, aid, db: handle_update_planned_workout(args, athlete_id=aid, db=db),
+    "delete_planned_workout": lambda args, aid, db: handle_delete_planned_workout(args, athlete_id=aid, db=db),
+    "list_planned_workouts": lambda args, aid, db: handle_list_planned_workouts(args, athlete_id=aid, db=db),
+    "get_training_load_series": lambda args, aid, db: handle_get_training_load_series(args, athlete_id=aid, db=db),
+    "get_biometrics_for_dates": lambda args, aid, db: handle_get_biometrics_for_dates(args, athlete_id=aid, db=db),
+    "summarize_workouts": lambda args, aid, db: handle_summarize_workouts(args, athlete_id=aid, db=db),
+    "compare_workouts": lambda args, aid, db: handle_compare_workouts(args, athlete_id=aid, db=db),
     "save_memory": lambda args, aid, db: handle_save_memory(args, athlete_id=aid, db=db),
     "list_memories": lambda args, aid, db: handle_list_memories(args, athlete_id=aid, db=db),
     "update_memory": lambda args, aid, db: handle_update_memory(args, athlete_id=aid, db=db),

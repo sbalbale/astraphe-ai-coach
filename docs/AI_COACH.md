@@ -77,6 +77,20 @@ The coach exposes custom Python tools through Gemini function declarations:
 | `schedule_workout` | Create a structured planned workout in `training_plans`. |
 | `calculate_nutrition` | Estimate kJ, carb, fluid, and sodium targets for a planned effort. |
 | `clear_training_plans` | Delete planned workouts in a date range before replacing a week. |
+| `list_workouts` | List completed activities by athlete-local date range or sport. |
+| `get_workout_summary` | Fetch TSS, zones, duration, and load metrics for one workout. |
+| `get_workout_streams_window` | Downsampled HR/power/pace for a specific time segment. |
+| `log_workout` | Record a completed session the athlete reports in chat. |
+| `update_workout` | Correct duration, power, or date on an existing workout. |
+| `log_biometrics` | Save manual sleep, HRV, resting HR, or weight. |
+| `get_athlete_zones` | HR zone boundaries plus FTP/threshold anchors. |
+| `update_planned_workout` | Reschedule or edit one future planned workout. |
+| `delete_planned_workout` | Remove one future planned workout. |
+| `list_planned_workouts` | List future planned workouts for a date range. |
+| `get_training_load_series` | PMC history (daily TSS, CTL, ATL, TSB) for a date range. |
+| `get_biometrics_for_dates` | Sleep/HRV/recovery for up to 7 specific dates. |
+| `summarize_workouts` | Week/month or range rollup: TSS, hours, sport mix, hardest session. |
+| `compare_workouts` | Side-by-side two completed workouts with numeric deltas. |
 | `save_memory` | Persist an important athlete fact to `coach_memories`. |
 | `internal_scratchpad` | Sink private model reasoning so it is never shown to the athlete. |
 
