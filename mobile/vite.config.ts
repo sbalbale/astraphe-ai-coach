@@ -39,7 +39,7 @@ export default defineConfig({
 				],
 			},
 			injectManifest: {
-				globPatterns: ['client/**/*.{js,css,ico,png,svg,webp,woff,woff2}'],
+				globPatterns: ['**/*.{js,css,ico,png,svg,webp,woff,woff2}'],
 			},
 			workbox: {
 				navigateFallback: '/index.html',

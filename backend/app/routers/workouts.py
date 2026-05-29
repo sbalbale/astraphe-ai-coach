@@ -17,7 +17,7 @@ _WORKOUT_LIST_COLUMNS = (
     "distance_m, avg_hr, max_hr, avg_power_w, norm_power_w, avg_pace_sec_km, tss, "
     "strain_score, strava_activity_id, strava_streams_fetched, intervals_source, "
     "hr_zone_0_pct, hr_zone_1_pct, hr_zone_2_pct, hr_zone_3_pct, hr_zone_4_pct, "
-    "hr_zone_5_pct, elevation_gain_m, primary_source"
+    "hr_zone_5_pct, elevation_gain_m, primary_source, source_ids"
 )
 
 def _parse_dt(v):

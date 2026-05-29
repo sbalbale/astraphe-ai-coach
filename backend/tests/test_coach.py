@@ -67,7 +67,32 @@ def test_extract_model_output_filters_thought_parts():
     assert _extract_athlete_message_from_model_output(response) == "Keep the swim easy today."
 
 
-def test_extract_model_output_does_not_fallback_when_only_thought_parts():
+def test_extract_model_output_uses_thought_parts_when_no_visible_text():
+    response = SimpleNamespace(
+        candidates=[
+            SimpleNamespace(
+                content=SimpleNamespace(
+                    parts=[
+                        SimpleNamespace(
+                            text="<response>Nice ride — keep tomorrow aerobic.</response>",
+                            thought=True,
+                        ),
+                    ]
+                )
+            )
+        ],
+        text="",
+    )
+
+    assert _extract_non_thought_text_from_response(response) == (
+        "<response>Nice ride — keep tomorrow aerobic.</response>"
+    )
+    assert _extract_athlete_message_from_model_output(response) == (
+        "Nice ride — keep tomorrow aerobic."
+    )
+
+
+def test_extract_model_output_prefers_response_text_over_thought_only_parts():
     response = SimpleNamespace(
         candidates=[
             SimpleNamespace(
@@ -81,7 +106,53 @@ def test_extract_model_output_does_not_fallback_when_only_thought_parts():
         text="THOUGHT: Hidden reasoning.",
     )
 
-    assert _extract_non_thought_text_from_response(response) == ""
+    assert _extract_non_thought_text_from_response(response) == "THOUGHT: Hidden reasoning."
+
+
+def test_extract_athlete_message_strips_gemma_proactive_planning_dump():
+    raw = (
+        "* Trigger: sleep_debt_min is 102.0 (threshold 90).\n"
+        "* Athlete: Sean.\n"
+        "* Current state: Recovery score is 75 (Recovered), TSB is -5.07 (Productive/Fresh), "
+        "but there is a significant sleep debt.\n"
+        "* Goal: 2-3 sentences, name the metric, recommend decisive action, no time-of-day greeting, "
+        "ASTRAPHE voice.\n"
+        "* Constraint check: No quotation marks. Use bolding/italics for emphasis.\n"
+        "* Metric to cite: Sleep debt (102 minutes).\n"
+        "* Action: Prioritize early sleep tonight to clear the debt.\n"
+        "* Draft: Your sleep debt has climbed to 102 minutes, which is starting to outweigh your "
+        "otherwise solid recovery score of 75. I recommend getting to bed an hour earlier tonight "
+        "to clear that deficit and protect your readiness for the weekend. 🔋 Your sleep debt has "
+        "climbed to 102 minutes, which is starting to outweigh your otherwise solid recovery score "
+        "of 75. I recommend getting to bed an hour earlier tonight."
+    )
+    out = _extract_athlete_message_from_text(raw)
+    assert "* Trigger:" not in out
+    assert "Constraint check" not in out
+    assert "Metric to cite" not in out
+    assert out.startswith("Your sleep debt has climbed")
+    assert "102 minutes" in out
+    assert out.count("Your sleep debt has climbed") == 1
+
+
+def test_extract_model_output_sanitizes_thought_only_gemma_planning_dump():
+    planning = (
+        "* Trigger: sleep_debt_min is 102.0 (threshold 90).\n"
+        "* Draft: Your sleep debt has climbed to 102 minutes. Get to bed earlier tonight."
+    )
+    response = SimpleNamespace(
+        candidates=[
+            SimpleNamespace(
+                content=SimpleNamespace(
+                    parts=[SimpleNamespace(text=planning, thought=True)]
+                )
+            )
+        ],
+        text="",
+    )
+    assert _extract_athlete_message_from_model_output(response) == (
+        "Your sleep debt has climbed to 102 minutes. Get to bed earlier tonight."
+    )
 
 
 def test_extract_athlete_message_strips_thought_prefix_fallback():

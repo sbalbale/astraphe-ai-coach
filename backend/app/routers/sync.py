@@ -1107,9 +1107,9 @@ async def strava_webhook(
         owner_token = await _lookup_strava_owner_token(db, owner_strava_id)
     except Exception as e:
         print(
-            f"[strava.webhook] oauth_tokens lookup failed strava_id={owner_strava_id}: {e} — dropping"
+            f"[strava.webhook] oauth_tokens lookup failed strava_id={owner_strava_id}: {e}"
         )
-        return Response(status_code=200)
+        raise HTTPException(status_code=500, detail="Database lookup failed")
 
     if not owner_token.data:
         print(f"[strava.webhook] unknown owner strava_id={owner_strava_id} — dropping")
