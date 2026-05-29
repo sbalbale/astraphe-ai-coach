@@ -90,15 +90,23 @@ async def backfill_historical_data(
     db: Any = None,
     days: int = 90,
     *,
+    hours: int | None = None,
     include_workouts: bool = True,
 ) -> None:
     """
     Pull historical WHOOP sleep/recovery/workouts and persist into Supabase.
     This is intended to run right after OAuth connect.
+
+    When ``hours`` is set it takes precedence over ``days`` (startup self-heal window).
     """
     try:
         await _backfill_historical_data_impl(
-            athlete_id, access_token, db, days, include_workouts=include_workouts
+            athlete_id,
+            access_token,
+            db,
+            days,
+            hours=hours,
+            include_workouts=include_workouts,
         )
     except Exception as e:
         print(f"[whoop.backfill] FAILED athlete_id={athlete_id}: {e!r}\n{traceback.format_exc()}")
@@ -119,6 +127,7 @@ async def _backfill_historical_data_impl(
     db: Any = None,
     days: int = 90,
     *,
+    hours: int | None = None,
     include_workouts: bool = True,
 ) -> None:
     # If no DB provided (common for background tasks), create one.
@@ -183,7 +192,10 @@ async def _backfill_historical_data_impl(
         print(f"[whoop.backfill] Failed to update profile/measurements: {e}")
 
     end = datetime.now(timezone.utc)
-    start = end - timedelta(days=days)
+    if hours is not None:
+        start = end - timedelta(hours=hours)
+    else:
+        start = end - timedelta(days=days)
     start_s = start.isoformat(timespec="milliseconds").replace("+00:00", "Z")
     end_s = end.isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
@@ -443,3 +455,42 @@ async def _backfill_historical_data_impl(
 
     invalidate_context_cache(athlete_id)
     print(f"[whoop.backfill] complete athlete_id={athlete_id}")
+
+
+async def backfill_recent(hours: int = 24) -> None:
+    """Self-heal missed WHOOP webhooks after deploy/restart for all connected athletes."""
+    db = get_admin_db()
+    try:
+        res = (
+            db.table("oauth_tokens")
+            .select("athlete_id, access_token")
+            .eq("provider", "whoop")
+            .execute()
+        )
+        rows = res.data or []
+    except Exception as e:
+        print(f"[whoop.startup_backfill] failed to list WHOOP tokens: {e}")
+        return
+
+    print(f"[whoop.startup_backfill] starting hours={hours} athletes={len(rows)}")
+    processed = 0
+    for row in rows:
+        athlete_id = row.get("athlete_id")
+        access_token = row.get("access_token")
+        if not athlete_id:
+            continue
+        if not access_token:
+            print(f"[whoop.startup_backfill] skip athlete_id={athlete_id} (no access_token)")
+            continue
+        try:
+            await backfill_historical_data(
+                athlete_id, access_token, db, hours=hours, include_workouts=True
+            )
+            processed += 1
+        except Exception as e:
+            print(f"[whoop.startup_backfill] failed athlete_id={athlete_id}: {e!r}")
+
+    print(
+        f"[whoop.startup_backfill] complete hours={hours} "
+        f"athletes={len(rows)} processed={processed}"
+    )
