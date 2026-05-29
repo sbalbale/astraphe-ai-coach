@@ -665,15 +665,20 @@ def build_initialization_message(
                         continue
                     break
 
-            if text:
+            if text and not _is_failed_extraction(text):
                 break
-            if idx == 0 and last_err is not None and len(candidates) > 1 and _should_fallback_chat_model(str(last_err)):
+            text = ""
+            if idx == 0 and len(candidates) > 1 and (
+                last_err is None or _should_fallback_chat_model(str(last_err))
+            ):
                 continue
             break
     except Exception as e:
         # Never surface provider errors directly in the UI.
         text = ""
     text = _strip_leading_time_of_day_greeting(text)
+    if _is_failed_extraction(text):
+        text = ""
     if not anomalies and text:
         text = f"{greeting}. {text}"
     if not text:
@@ -757,6 +762,8 @@ def _extract_non_thought_text_from_response(
         parts = getattr(content, "parts", None) or []
         for part in parts:
             saw_structured_parts = True
+            if getattr(part, "function_call", None) or getattr(part, "function_response", None):
+                continue
             text = getattr(part, "text", None)
             if not text:
                 continue
@@ -789,6 +796,14 @@ def _extract_athlete_message_from_model_output(response: Any) -> str:
     """Extract visible model text and pass it to the response parser."""
     raw_text = _extract_non_thought_text_from_response(response)
     return _extract_athlete_message_from_text(raw_text)
+
+
+_EXTRACTION_FAILURE_MESSAGE = "I encountered an error processing your request."
+
+
+def _is_failed_extraction(text: str) -> bool:
+    cleaned = (text or "").strip()
+    return not cleaned or cleaned == _EXTRACTION_FAILURE_MESSAGE
 
 
 _RESPONSE_RE = re.compile(r"<response>(.*?)</response>", re.DOTALL | re.IGNORECASE)
@@ -845,8 +860,9 @@ def _extract_draft_or_final_reply(text: str) -> str:
         segment = t[draft_matches[-1].end() :].strip()
         segment = re.split(r"\n\s*(?:\*+\s*)?Draft:\s*", segment, maxsplit=1, flags=re.I)[0].strip()
         return _dedupe_repeated_suffix(segment)
-
     return ""
+
+
 _COACH_REPLY_START_RE = re.compile(
     r"(?:^|\n)\s*(?:"
     r"Because (?:the |your |with |how )|"
@@ -856,7 +872,9 @@ _COACH_REPLY_START_RE = re.compile(
     r"Here are|"
     r"That \d|"
     r"That (?:is|was|sounds|looks|effort)|"
-    r"Your (?:sleep|recovery|HRV|CTL|ATL|TSB|readiness)|"
+    r"Your (?:sleep|recovery|HRV|CTL|ATL|TSB|readiness|ride|bike)|"
+    r"Sounds like|"
+    r"I(?:'m| am) excited|"
     r"To answer your question|"
     r"The short answer|"
     r"Yes(?:,|\s|-)|"
@@ -883,9 +901,8 @@ def _extract_athlete_message_from_text(raw_text: str) -> str:
     matches = list(_RESPONSE_RE.finditer(raw))
     if matches:
         cleaned = _strip_internal_reasoning(matches[-1].group(1))
-        return cleaned or "I encountered an error processing your request."
+        return cleaned or _EXTRACTION_FAILURE_MESSAGE
 
-    # Fallback for older outputs or malformed XML.
     raw = _SCRATCHPAD_RE.sub("", raw).strip()
     raw = _THOUGHT_BLOCK_RE.sub("", raw).strip()
 
@@ -902,7 +919,7 @@ def _extract_athlete_message_from_text(raw_text: str) -> str:
             cleaned = _strip_internal_reasoning(draft)
         elif _looks_like_planning_dump(cleaned):
             cleaned = ""
-    return cleaned or "I encountered an error processing your request."
+    return cleaned or _EXTRACTION_FAILURE_MESSAGE
 
 
 def _strip_internal_reasoning(text: str) -> str:
@@ -1106,6 +1123,7 @@ def _strip_internal_reasoning(text: str) -> str:
             "here are",
             "that ",
             "your ",
+            "sounds like",
             "to answer your question",
             "the short answer",
             "yes,",
@@ -1315,9 +1333,6 @@ def get_coach_response_agentic(
         system_instruction=system_with_ctx,
         tools=coach_tools.TOOLS,
         automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
-        tool_config=types.ToolConfig(
-            include_server_side_tool_invocations=True
-        ),
         temperature=0.4,
     )
     if is_thinking_model:
@@ -1397,11 +1412,9 @@ def get_coach_response_agentic(
 
         parts = list(cand.content.parts)
         fcs = [getattr(p, "function_call", None) for p in parts if getattr(p, "function_call", None)]
-        texts = [
-            p.text
-            for p in parts
-            if not getattr(p, "thought", False) and getattr(p, "text", None)
-        ]
+        has_tool_results = any(
+            getattr(p, "function_response", None) is not None for p in parts
+        )
 
         if fcs:
             fc_parts: list[types.Part] = []
@@ -1445,26 +1458,48 @@ def get_coach_response_agentic(
                     contents.append(types.Content(role="user", parts=[types.Part.from_text(text=reminder)]))
             continue
 
-        joined = "".join(t for t in texts if t)
+        if has_tool_results:
+            contents.append(cand.content)
+            continue
+
+        joined = _extract_non_thought_text_from_response(last_response)
         if joined.strip():
             final_text = _extract_athlete_message_from_text(joined)
-            return (
-                _correct_relative_date_language(final_text, planned_dates_from_tools, calendar),
-                _extract_grounding_sources(last_response),
-            )
-        fallback = _extract_non_thought_text_from_response(last_response)
-        if fallback.strip():
-            final_text = _extract_athlete_message_from_text(fallback)
-            return (
-                _correct_relative_date_language(final_text, planned_dates_from_tools, calendar),
-                _extract_grounding_sources(last_response),
-            )
+            if not _is_failed_extraction(final_text):
+                return (
+                    _correct_relative_date_language(final_text, planned_dates_from_tools, calendar),
+                    _extract_grounding_sources(last_response),
+                )
         break
 
     fallback = _extract_non_thought_text_from_response(last_response) if last_response else ""
     final = _extract_athlete_message_from_text(fallback)
+    if _is_failed_extraction(final):
+        final = ""
     final = _correct_relative_date_language(final, planned_dates_from_tools, calendar)
     grounding = _extract_grounding_sources(last_response) if last_response else []
+    if not final and last_response is not None:
+        part_kinds = []
+        try:
+            cand = (last_response.candidates or [None])[0]
+            for p in getattr(getattr(cand, "content", None), "parts", None) or []:
+                if getattr(p, "function_call", None):
+                    part_kinds.append("function_call")
+                elif getattr(p, "function_response", None):
+                    part_kinds.append("function_response")
+                elif getattr(p, "thought", False):
+                    part_kinds.append("thought")
+                elif getattr(p, "text", None):
+                    part_kinds.append("text")
+                else:
+                    part_kinds.append(type(p).__name__)
+        except Exception:
+            part_kinds = ["unknown"]
+        logger.warning(
+            "[coach] empty athlete reply after %s hop(s); part_kinds=%s",
+            _hop + 1 if last_response else 0,
+            part_kinds,
+        )
     return (final or "Unable to complete coach response.", grounding)
 
 
