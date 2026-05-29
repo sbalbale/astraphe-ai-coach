@@ -90,6 +90,25 @@ def test_strava_webhook_unknown_owner_returns_200(capsys):
     assert "[strava.webhook] unknown owner strava_id=99999 — dropping" in out
 
 
+def test_strava_webhook_db_lookup_failure_returns_500(capsys):
+    payload = {
+        "aspect_type": "create",
+        "object_type": "activity",
+        "object_id": 123,
+        "owner_id": 111,
+    }
+    with patch(
+        "app.routers.sync._lookup_strava_owner_token",
+        new_callable=AsyncMock,
+        side_effect=RuntimeError("connection timeout"),
+    ):
+        with _client_with_db(None) as client:
+            resp = client.post(WEBHOOK_URL, json=payload)
+    assert resp.status_code == 500
+    assert resp.json()["detail"] == "Database lookup failed"
+    assert "oauth_tokens lookup failed strava_id=111" in capsys.readouterr().out
+
+
 def test_strava_webhook_queues_ingest_for_known_owner():
     payload = {
         "aspect_type": "create",
