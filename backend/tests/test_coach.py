@@ -32,6 +32,22 @@ def test_coach_prompt_discourages_habitual_emoji_use():
     assert "Response Calibration Examples" in instructions
 
 
+def test_coach_prompt_session_feedback_includes_performance_metrics():
+    instructions = load_coach_instructions()
+    assert "session performance" in instructions.lower() or "what they actually did" in instructions
+    assert "avg_hr" in instructions or "avg HR" in instructions
+    assert "Load Only, Ignores What They Did" in instructions
+
+
+def test_coach_prompt_prefers_selective_data_over_dashboard_dumps():
+    instructions = load_coach_instructions()
+    assert "selective" in instructions.lower() or "one or two" in instructions.lower()
+    assert "metric-heavy" in instructions.lower() or "dashboard dump" in instructions.lower()
+    assert "strengthen" in instructions.lower() or "backs up" in instructions.lower()
+    assert "Metric Stack" in instructions or "Dashboard Voice" in instructions
+    assert "Route / Opinion" in instructions
+
+
 def test_extract_athlete_message_strips_scratchpad_tags():
     raw = (
         "<scratchpad>Internal planning only.</scratchpad>"

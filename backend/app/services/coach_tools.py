@@ -1121,7 +1121,9 @@ _clear_training_plans_decl = types.FunctionDeclaration(
 _list_workouts_decl = types.FunctionDeclaration(
     name="list_workouts",
     description=(
-        "List completed workouts for the athlete. Use before discussing a specific session. "
+        "List completed workouts for the athlete. Returns duration, avg_hr, avg_power_w, TSS, "
+        "and strain per row. Use before discussing a specific session; cite session performance "
+        "metrics (HR, power, pace, duration) in your reply, not only load scores. "
         "Resolve on_date from athlete-local current_local_date in SYSTEM CONTEXT."
     ),
     parameters=types.Schema(
@@ -1139,7 +1141,11 @@ _list_workouts_decl = types.FunctionDeclaration(
 
 _get_workout_summary_decl = types.FunctionDeclaration(
     name="get_workout_summary",
-    description="Get coaching summary for one completed workout (TSS, zones, duration). No raw streams.",
+    description=(
+        "Get coaching summary for one completed workout: duration, avg_hr, avg_power_w, "
+        "norm_power_w, HR zone split, TSS, strain. Use when feedback needs zone detail or "
+        "when list_workouts is insufficient. No raw streams."
+    ),
     parameters=types.Schema(
         type=types.Type.OBJECT,
         properties={
