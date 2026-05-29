@@ -155,7 +155,13 @@ jobs:
             export PATH="\$HOME/.local/share/supabase:\$PATH"
             cd ~/astraphe/repo
             git pull origin main
+            # 172.21.0.3 is supabase-pooler (Supavisor), not Postgres — use supabase-db directly.
+            DB_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' supabase-db)
+            if [ -z "\$DB_IP" ]; then
+              echo "::error::Could not resolve supabase-db container IP"
+              exit 1
+            fi
             PGSSLMODE=disable supabase db push \
-              --db-url "postgresql://postgres:${{ secrets.SUPABASE_DB_PASSWORD }}@172.21.0.3:5432/postgres" \
+              --db-url "postgresql://postgres:${{ secrets.SUPABASE_DB_PASSWORD }}@\${DB_IP}:5432/postgres" \
               --yes
           ENDSSH
