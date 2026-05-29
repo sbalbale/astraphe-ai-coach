@@ -48,8 +48,11 @@ docker compose ps
 ```
 
 3. `migrate`
-   - Reuses the Cloudflare SSH path.
-   - Applies SQL files from `~/astraphe/repo/supabase/migrations/*.sql` into the `supabase-db` container with `psql`.
+   - Reuses the Cloudflare SSH path on the same Docker host as the Supabase stack (`~/astraphe/supabase/docker`).
+   - Runs `supabase db push` from `~/astraphe/repo`.
+   - Resolves the current `supabase-db` IP on network `supabase_default` via `docker inspect` (survives container restarts).
+   - If inspect fails, runs the Supabase CLI in a one-off container on `supabase_default` with host `db` (compose DNS).
+   - Never connects to `supabase-pooler` / host port `5432` (that is Supavisor).
 
 ## Backend Required Secrets
 
@@ -61,6 +64,7 @@ GitHub Actions deployment secrets:
 | `CF_ACCESS_CLIENT_ID` | Cloudflare Access service token ID. |
 | `CF_ACCESS_CLIENT_SECRET` | Cloudflare Access service token secret. |
 | `PROXMOX_SSH_KEY` | SSH private key for `docker@ssh.astrapheai.com`. |
+| `SUPABASE_DB_PASSWORD` | Postgres password for `supabase db push` (migrate job). Must match `POSTGRES_PASSWORD` in `~/astraphe/supabase/docker/.env`. |
 
 Runtime secrets are provided by the deployed Docker environment, not directly by the workflow file. Keep these aligned with `backend/.env.example`:
 

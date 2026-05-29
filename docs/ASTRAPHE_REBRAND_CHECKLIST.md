@@ -73,7 +73,7 @@ Current remote (verify): `git@github.com:sbalbale/astrape-ai-coach.git`
 | `CF_ACCESS_CLIENT_ID` | [deploy.yml](../.github/workflows/deploy.yml) | Unchanged unless Cloudflare app renamed |
 | `CF_ACCESS_CLIENT_SECRET` | deploy.yml | Unchanged unless Cloudflare app renamed |
 | `PROXMOX_SSH_KEY` | deploy.yml | Unchanged |
-| `SUPABASE_DB_PASSWORD` | deploy.yml migrate job | Unchanged |
+| `SUPABASE_DB_PASSWORD` | deploy.yml migrate job | Must match `POSTGRES_PASSWORD` in `~/astraphe/supabase/docker/.env` |
 
 `GITHUB_TOKEN` is automatic for GHCR pushes to `ghcr.io/sbalbale/astraphe-api`.
 
