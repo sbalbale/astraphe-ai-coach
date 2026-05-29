@@ -441,6 +441,7 @@ def _parse_whoop_weight_kg(profile: dict | None, body: dict | None) -> float | N
         if not isinstance(src, dict):
             continue
         candidates.append(("weight_kg", _coerce_float(src.get("weight_kg"))))
+        candidates.append(("weight_kilograms", _coerce_float(src.get("weight_kilograms"))))
         candidates.append(("weight_kilogram", _coerce_float(src.get("weight_kilogram"))))
         candidates.append(("weight_lbs", _coerce_float(src.get("weight_lbs"))))
         candidates.append(("weight_lb", _coerce_float(src.get("weight_lb"))))
@@ -463,7 +464,36 @@ def _parse_whoop_weight_kg(profile: dict | None, body: dict | None) -> float | N
     return None
 
 
-async def _whoop_sync_height_weight_if_missing(
+def _whoop_local_date_from_iso(iso_ts: str | None, offset_min: int) -> date | None:
+    if not iso_ts:
+        return None
+    try:
+        dt = datetime.fromisoformat(iso_ts.replace("Z", "+00:00"))
+        return (dt + timedelta(minutes=offset_min)).date()
+    except Exception:
+        return None
+
+
+def _whoop_biometrics_weight_kg_missing(db, athlete_id: str, bio_date: date) -> bool:
+    """True when there is no non-null biometrics.weight_kg for athlete_id + date."""
+    try:
+        res = (
+            db.table("biometrics")
+            .select("weight_kg")
+            .eq("athlete_id", athlete_id)
+            .eq("date", bio_date.isoformat())
+            .maybe_single()
+            .execute()
+        )
+        row = res.data if res else None
+    except Exception:
+        return True
+    if not row:
+        return True
+    return _coerce_float(row.get("weight_kg")) is None
+
+
+async def _whoop_sync_whoop_body_measurements(
     athlete_id: str,
     *,
     bio_date: date,
@@ -471,25 +501,23 @@ async def _whoop_sync_height_weight_if_missing(
     refresh_token: str | None,
     external_user_id: str,
     db,
+    sync_weight_kg: bool = True,
 ) -> None:
     """
-    Fetch WHOOP height/weight and persist onto biometrics (time series), plus
-    fill athletes.* if those fields are missing.
+    Fetch WHOOP body measurements and upsert biometrics.weight_kg (time series).
+    Fills athletes.height_cm only when missing. Never writes athletes.weight_kg.
     Runs in the background so webhook latency stays low.
     """
     try:
         existing = (
             db.table("athletes")
-            .select("height_cm,weight_kg")
+            .select("height_cm")
             .eq("id", athlete_id)
             .maybe_single()
             .execute()
         )
         row = existing.data or {}
         have_height = _coerce_float(row.get("height_cm")) is not None
-        have_weight = _coerce_float(row.get("weight_kg")) is not None
-        if have_height and have_weight:
-            return
 
         token = access_token
 
@@ -522,26 +550,20 @@ async def _whoop_sync_height_weight_if_missing(
                 return
 
         height_cm = None if have_height else _parse_whoop_height_cm(profile, body)
-        weight_kg = None if have_weight else _parse_whoop_weight_kg(profile, body)
+        weight_kg = _parse_whoop_weight_kg(profile, body) if sync_weight_kg else None
 
-        update: dict = {}
-        if height_cm is not None:
-            update["height_cm"] = round(float(height_cm), 1)
-        if weight_kg is not None:
-            update["weight_kg"] = round(float(weight_kg), 2)
-        # Always write to biometrics for the day if we have values.
         bio_update: dict = {"athlete_id": athlete_id, "date": bio_date.isoformat()}
-        if height_cm is not None:
-            bio_update["height_cm"] = round(float(height_cm), 1)
-        if weight_kg is not None:
+        if sync_weight_kg and weight_kg is not None:
             bio_update["weight_kg"] = round(float(weight_kg), 2)
+        if height_cm is not None and not have_height:
+            bio_update["height_cm"] = round(float(height_cm), 1)
         if len(bio_update.keys()) > 2:
             db.table("biometrics").upsert(bio_update, on_conflict="athlete_id,date").execute()
+            fields = [k for k in bio_update if k not in ("athlete_id", "date")]
+            print(f"[whoop.body] biometrics athlete_id={athlete_id} date={bio_date.isoformat()} fields={fields}")
 
-        # Fill athlete profile only when currently missing.
-        if update:
-            db.table("athletes").update(update).eq("id", athlete_id).execute()
-            print(f"[whoop.body] updated athlete_id={athlete_id} fields={list(update.keys())} date={bio_date.isoformat()}")
+        if height_cm is not None and not have_height:
+            db.table("athletes").update({"height_cm": round(float(height_cm), 1)}).eq("id", athlete_id).execute()
     except Exception as e:
         print(f"[whoop.body] sync failed athlete_id={athlete_id}: {repr(e)}")
 
@@ -811,7 +833,7 @@ async def whoop_webhook(request: Request, background_tasks: BackgroundTasks, db=
             background_tasks.add_task(process_and_save_biometrics, bio_payload, athlete_id, db)
             if athlete_id and access_token and user_id is not None:
                 background_tasks.add_task(
-                    _whoop_sync_height_weight_if_missing,
+                    _whoop_sync_whoop_body_measurements,
                     athlete_id,
                     bio_date=bio_date,
                     access_token=access_token,
@@ -901,7 +923,7 @@ async def whoop_webhook(request: Request, background_tasks: BackgroundTasks, db=
             background_tasks.add_task(process_and_save_biometrics, bio_payload, athlete_id, db)
             if athlete_id and access_token and user_id is not None:
                 background_tasks.add_task(
-                    _whoop_sync_height_weight_if_missing,
+                    _whoop_sync_whoop_body_measurements,
                     athlete_id,
                     bio_date=local_wake_dt.date(),
                     access_token=access_token,
@@ -965,6 +987,32 @@ async def whoop_webhook(request: Request, background_tasks: BackgroundTasks, db=
                 hr_zone_5_pct=z5_pct,
             )
             background_tasks.add_task(process_and_save_workout, workout_payload, athlete_id, db)
+            if athlete_id and access_token and user_id is not None:
+                athlete_res = (
+                    db.table("athletes")
+                    .select("timezone_offset_min")
+                    .eq("id", athlete_id)
+                    .maybe_single()
+                    .execute()
+                )
+                offset = (
+                    (athlete_res.data.get("timezone_offset_min") or 0)
+                    if athlete_res and athlete_res.data
+                    else 0
+                )
+                bio_date = _whoop_local_date_from_iso(end, offset) or _whoop_local_date_from_iso(
+                    start, offset
+                )
+                if bio_date and _whoop_biometrics_weight_kg_missing(db, athlete_id, bio_date):
+                    background_tasks.add_task(
+                        _whoop_sync_whoop_body_measurements,
+                        athlete_id,
+                        bio_date=bio_date,
+                        access_token=access_token,
+                        refresh_token=refresh_token,
+                        external_user_id=str(user_id),
+                        db=db,
+                    )
             
     except Exception as e:
         print(f"Error processing WHOOP webhook: {e}")
