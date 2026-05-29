@@ -61,6 +61,12 @@ class Settings(BaseSettings):
     STRAVA_CLIENT_SECRET: str = ""
     STRAVA_WEBHOOK_VERIFY_TOKEN: str = ""  # a static secret string you choose, used to verify Strava's hub challenge
     STRAVA_WEBHOOK_SUBSCRIPTION_ID: int = 0  # filled in after you register the webhook
+    STRAVA_STARTUP_BACKFILL_ENABLED: bool = True
+    STRAVA_STARTUP_BACKFILL_HOURS: int = 24
+
+    # --- WHOOP startup backfill (self-heal missed webhooks after deploy/restart) ---
+    WHOOP_STARTUP_BACKFILL_ENABLED: bool = True
+    WHOOP_STARTUP_BACKFILL_HOURS: int = 24
 
     # --- Resend Email ---
     RESEND_API_KEY: Optional[str] = None

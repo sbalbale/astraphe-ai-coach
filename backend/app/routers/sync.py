@@ -751,7 +751,8 @@ async def whoop_webhook(request: Request, background_tasks: BackgroundTasks, db=
         .execute()
     )
     if not token_record.data:
-        return Response(status_code=200) 
+        print(f"[whoop.webhook] unknown user_id={user_id} — dropping")
+        return Response(status_code=200)
         
     token_row = token_record.data[0]
     access_token = token_row.get("access_token")
@@ -1046,6 +1047,30 @@ async def strava_webhook_verify(
     raise HTTPException(status_code=403, detail="Verification failed")
 
 
+async def _lookup_strava_owner_token(db, owner_strava_id: int):
+    """Resolve athlete_id from Strava owner id; one retry on transient DB errors."""
+    query = (
+        db.table("oauth_tokens")
+        .select("athlete_id")
+        .eq("provider", "strava")
+        .eq("external_user_id", str(owner_strava_id))
+        .maybe_single()
+    )
+    last_err: Exception | None = None
+    for attempt in range(2):
+        try:
+            return query.execute()
+        except Exception as e:
+            last_err = e
+            if attempt == 0:
+                print(
+                    f"[strava.webhook] oauth_tokens lookup failed strava_id={owner_strava_id} "
+                    f"(retrying): {e}"
+                )
+                await asyncio.sleep(0.5)
+    raise last_err  # type: ignore[misc]
+
+
 @router.post("/strava/webhook")
 async def strava_webhook(
     request: Request,
@@ -1056,6 +1081,7 @@ async def strava_webhook(
     try:
         payload = await request.json()
     except Exception:
+        print("[strava.webhook] invalid JSON — dropping")
         return Response(status_code=200)
 
     print(
@@ -1072,17 +1098,21 @@ async def strava_webhook(
     # own database before acting on any event. This prevents unauthenticated
     # callers from triggering ingestion or corrupting workout data.
     if owner_strava_id is None:
+        print(
+            f"[strava.webhook] missing owner_id — dropping payload keys={list(payload.keys())}"
+        )
         return Response(status_code=200)
 
-    owner_token = (
-        db.table("oauth_tokens")
-        .select("athlete_id")
-        .eq("provider", "strava")
-        .eq("external_user_id", str(owner_strava_id))
-        .maybe_single()
-        .execute()
-    )
+    try:
+        owner_token = await _lookup_strava_owner_token(db, owner_strava_id)
+    except Exception as e:
+        print(
+            f"[strava.webhook] oauth_tokens lookup failed strava_id={owner_strava_id}: {e} — dropping"
+        )
+        return Response(status_code=200)
+
     if not owner_token.data:
+        print(f"[strava.webhook] unknown owner strava_id={owner_strava_id} — dropping")
         return Response(status_code=200)
 
     athlete_id = owner_token.data["athlete_id"]
