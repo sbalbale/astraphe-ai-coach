@@ -156,6 +156,25 @@ def _compact_list_row(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def recent_workouts_teaser(db: Client, athlete_id: str, limit: int = 2) -> list[dict[str, Any]]:
+    """Compact last-N completed workouts for system context (id, sport, date, tss)."""
+    rows = query_workouts(db, athlete_id, limit=limit)
+    teaser: list[dict[str, Any]] = []
+    for row in rows:
+        started = row.get("started_at")
+        local_date = str(started)[:10] if started else None
+        teaser.append(
+            {
+                "id": row.get("id"),
+                "sport": row.get("sport"),
+                "date": local_date,
+                "tss": row.get("tss"),
+                "duration_min": _compact_list_row(row).get("duration_min"),
+            }
+        )
+    return teaser
+
+
 def format_workout_summary(row: dict[str, Any], *, lap_count: int | None = None) -> dict[str, Any]:
     dur = _duration_secs(row)
     dist_m = row.get("distance_m")

@@ -374,6 +374,17 @@ def test_build_log_workout_payload_bike_norm_from_avg():
     assert payload.ftp_at_time == 250
 
 
+def test_recent_workouts_teaser():
+    db = WorkoutMockDB()
+    db.workouts.append(_sample_workout(wid="w1", tss=80))
+    db.workouts.append(_sample_workout(wid="w2", sport="row", tss=42))
+
+    teaser = coach_workout_data.recent_workouts_teaser(db, "ath-1", limit=2)  # type: ignore[arg-type]
+    assert len(teaser) == 2
+    assert teaser[0]["id"] == "w1"
+    assert teaser[0]["tss"] == 80
+
+
 def test_all_workout_tool_handlers_registered():
     expected = {
         "list_workouts",
