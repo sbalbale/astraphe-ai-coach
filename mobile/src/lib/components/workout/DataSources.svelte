@@ -11,8 +11,27 @@
     manual: { label: 'Manual', color: '#6B7280', icon: 'M' },
   };
 
-  const sources = $derived(Object.keys(workout?.source_ids ?? {}));
-  const primary = $derived(workout?.primary_source ?? '');
+  const effectiveSourceIds = $derived.by((): Record<string, string | string[]> => {
+    const raw = workout?.source_ids;
+    if (raw && typeof raw === 'object' && Object.keys(raw).length > 0) {
+      return raw;
+    }
+    // Fallback for cached/list payloads missing source_ids (legacy API responses).
+    const out: Record<string, string | string[]> = {};
+    const legacy = workout?.primary_source || workout?.source;
+    if (!legacy) return out;
+    if (legacy === 'strava' && workout?.strava_activity_id != null) {
+      out.strava = [String(workout.strava_activity_id)];
+    } else if (workout?.external_id != null) {
+      out[legacy] = String(workout.external_id);
+    } else {
+      out[legacy] = '—';
+    }
+    return out;
+  });
+
+  const sources = $derived(Object.keys(effectiveSourceIds));
+  const primary = $derived(workout?.primary_source ?? workout?.source ?? '');
   const merged = $derived(sources.length > 1);
 </script>
 
@@ -26,7 +45,7 @@
 
     {#each sources as source (source)}
       {@const meta = SOURCE_META[source] ?? { label: source, color: '#6B7280', icon: '?' }}
-      {@const ids = workout.source_ids[source]}
+      {@const ids = effectiveSourceIds[source]}
       <div class="flex flex-wrap items-center gap-1.5">
         <span
           class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium border"
@@ -70,7 +89,7 @@
     {#if expanded}
       <div class="font-mono text-[10px] text-text2 space-y-0.5 pl-1">
         {#each sources as source (source)}
-          {@const raw = workout.source_ids[source]}
+          {@const raw = effectiveSourceIds[source]}
           <p>
             <span class="text-text1">{source}:</span>
             {Array.isArray(raw) ? raw.join(', ') : String(raw ?? '—')}

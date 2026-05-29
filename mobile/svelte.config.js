@@ -9,6 +9,9 @@ const config = {
 		runes: ({ filename }) => (filename.split(/[/\\]/).includes('node_modules') ? undefined : true)
 	},
 	kit: {
+		serviceWorker: {
+			register: false,
+		},
 		// SPA: one index.html for all routes so Firebase + iOS PWA never full-load recovery.html etc.
 		prerender: {
 			crawl: false,

@@ -10,6 +10,10 @@ from app.models.workout import WorkoutPayload, WorkoutUpdatePayload
 from app.routers import workouts as workouts_router
 
 
+def test_workout_list_columns_include_source_ids():
+    assert "source_ids" in workouts_router._WORKOUT_LIST_COLUMNS
+
+
 def test_workout_payload_accepts_average_watts_aliases():
     base = {
         "source": "manual",
