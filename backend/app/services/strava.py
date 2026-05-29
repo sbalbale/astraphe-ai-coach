@@ -927,7 +927,9 @@ async def backfill_historical_data(
     access_token: str,
     db,
     days: int = 90,
-) -> None:
+    *,
+    hours: int | None = None,
+) -> int:
     """
     Fetches last N days of Strava activities and ingests each one, **newest first**.
 
@@ -935,16 +937,25 @@ async def backfill_historical_data(
     ``page``/``per_page`` only (default **newest first**) and stop once ``start_date`` is
     before the cutoff so recent activities land in the DB first.
 
+    When ``hours`` is set it takes precedence over ``days`` (startup self-heal window).
+
     Spaces detail fetches (get activity + streams + laps) using ``STRAVA_BACKFILL_REQUEST_GAP_S``;
     on HTTP 429 sleeps ``Retry-After`` or 15 minutes and retries the same activity.
+
+    Returns the number of activities ingested.
     """
-    cutoff_start = datetime.now(timezone.utc) - timedelta(days=days)
+    if hours is not None:
+        cutoff_start = datetime.now(timezone.utc) - timedelta(hours=hours)
+        window_label = f"{hours}h"
+    else:
+        cutoff_start = datetime.now(timezone.utc) - timedelta(days=days)
+        window_label = f"{days}d"
     page = 1
     per_page = 50
     total_ingested = 0
     max_rate_limit_retries = 6
 
-    print(f"[strava.backfill] Starting {days}d backfill for athlete={athlete_id}")
+    print(f"[strava.backfill] Starting {window_label} backfill for athlete={athlete_id}")
 
     while True:
         await asyncio.sleep(STRAVA_BACKFILL_REQUEST_GAP_S)
@@ -1057,6 +1068,67 @@ async def backfill_historical_data(
     print(
         f"[strava.backfill] Complete. Ingested {total_ingested} activities "
         f"for athlete={athlete_id}"
+    )
+    return total_ingested
+
+
+async def backfill_recent(hours: int = 24) -> None:
+    """Self-heal missed Strava webhooks after deploy/restart for all connected athletes."""
+    from app.dependencies import get_admin_db
+
+    db = get_admin_db()
+    try:
+        res = (
+            db.table("oauth_tokens")
+            .select("athlete_id, external_user_id")
+            .eq("provider", "strava")
+            .execute()
+        )
+        rows = res.data or []
+    except Exception as e:
+        print(f"[strava.startup_backfill] failed to list Strava tokens: {e}")
+        return
+
+    print(f"[strava.startup_backfill] starting hours={hours} athletes={len(rows)}")
+    total_ingested = 0
+    for row in rows:
+        athlete_id = row.get("athlete_id")
+        external_user_id = row.get("external_user_id")
+        if not athlete_id or not external_user_id:
+            print(
+                f"[strava.startup_backfill] skip athlete_id={athlete_id!r} "
+                "(missing external_user_id)"
+            )
+            continue
+        try:
+            owner_strava_id = int(external_user_id)
+        except (TypeError, ValueError):
+            print(
+                f"[strava.startup_backfill] skip athlete_id={athlete_id} "
+                f"invalid external_user_id={external_user_id!r}"
+            )
+            continue
+
+        access_token = await get_valid_token(athlete_id, db)
+        if not access_token:
+            print(f"[strava.startup_backfill] skip athlete_id={athlete_id} (no valid token)")
+            continue
+
+        try:
+            n = await backfill_historical_data(
+                athlete_id,
+                owner_strava_id,
+                access_token,
+                db,
+                hours=hours,
+            )
+            total_ingested += n
+        except Exception as e:
+            print(f"[strava.startup_backfill] failed athlete_id={athlete_id}: {e!r}")
+
+    print(
+        f"[strava.startup_backfill] complete hours={hours} "
+        f"athletes={len(rows)} ingested={total_ingested}"
     )
 
 
