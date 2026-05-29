@@ -38,6 +38,9 @@ WORKOUT_LIST_COLUMNS = (
 LIST_WORKOUTS_MAX = 25
 STREAM_WINDOW_MAX_MIN = 15
 STREAM_TARGET_POINTS = 45
+TRAINING_LOAD_DEFAULT_DAYS = 42
+BIOMETRICS_DATES_MAX = 7
+SUMMARIZE_WORKOUTS_MAX = 100
 
 METRIC_KEYS = {
     "hr": ("heartrate", "bpm"),
@@ -797,3 +800,251 @@ def delete_planned_workout_sync(db: Client, athlete_id: str, args: dict[str, Any
         return {"error": f"delete_plan_failed: {e}"}
 
     return {"status": "deleted", "plan_id": plan_id, "planned_date": row.get("planned_date")}
+
+
+def _resolve_date_range(
+    db: Client,
+    athlete_id: str,
+    args: dict[str, Any],
+    *,
+    default_days_back: int = 7,
+) -> tuple[date, date]:
+    today = athlete_local_date(db, athlete_id)
+    if args.get("start_date"):
+        start = parse_coach_date(str(args["start_date"]))
+    else:
+        start = today - timedelta(days=default_days_back)
+    if args.get("end_date"):
+        end = parse_coach_date(str(args["end_date"]))
+    else:
+        end = today
+    if end < start:
+        raise ValueError("end_date must be on or after start_date")
+    return start, end
+
+
+def _period_bounds(db: Client, athlete_id: str, period: str) -> tuple[date, date]:
+    today = athlete_local_date(db, athlete_id)
+    p = str(period).strip().lower()
+    if p == "week":
+        return today - timedelta(days=6), today
+    if p == "month":
+        return today - timedelta(days=29), today
+    raise ValueError("period must be 'week' or 'month'")
+
+
+def _compact_plan_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": row.get("id"),
+        "planned_date": row.get("planned_date"),
+        "sport": row.get("sport"),
+        "title": row.get("title"),
+        "duration_min": row.get("duration_min"),
+        "target_tss": row.get("target_tss"),
+        "primary_zone": row.get("primary_zone"),
+        "status": row.get("status"),
+    }
+
+
+def list_planned_workouts_compact(db: Client, athlete_id: str, args: dict[str, Any]) -> dict[str, Any]:
+    try:
+        today = athlete_local_date(db, athlete_id)
+        start = parse_coach_date(args.get("start_date"), default=today)
+        end = parse_coach_date(args.get("end_date"), default=today + timedelta(days=7))
+        if end < start:
+            return {"error": "end_date must be on or after start_date"}
+    except ValueError as e:
+        return {"error": f"invalid date: {e}"}
+
+    rows = query_planned_workouts(db, athlete_id, start, end)
+    return {
+        "start_date": start.isoformat(),
+        "end_date": end.isoformat(),
+        "count": len(rows),
+        "plans": [_compact_plan_row(r) for r in rows],
+    }
+
+
+def get_training_load_series(db: Client, athlete_id: str, args: dict[str, Any]) -> dict[str, Any]:
+    try:
+        today = athlete_local_date(db, athlete_id)
+        end = parse_coach_date(args.get("end_date"), default=today)
+        start = parse_coach_date(
+            args.get("start_date"),
+            default=end - timedelta(days=TRAINING_LOAD_DEFAULT_DAYS - 1),
+        )
+        if end < start:
+            return {"error": "end_date must be on or after start_date"}
+    except ValueError as e:
+        return {"error": f"invalid date: {e}"}
+
+    try:
+        res = (
+            db.table("tss_history")
+            .select("date,daily_tss,ctl,atl,tsb")
+            .eq("athlete_id", athlete_id)
+            .gte("date", start.isoformat())
+            .lte("date", end.isoformat())
+            .order("date")
+            .execute()
+        )
+        rows = list(res.data or [])
+    except Exception as e:
+        return {"error": f"tss_history_query_failed: {e}"}
+
+    series = [
+        {
+            "date": r.get("date"),
+            "daily_tss": r.get("daily_tss"),
+            "ctl": r.get("ctl"),
+            "atl": r.get("atl"),
+            "tsb": r.get("tsb"),
+        }
+        for r in rows
+    ]
+    return {
+        "start_date": start.isoformat(),
+        "end_date": end.isoformat(),
+        "count": len(series),
+        "series": series,
+    }
+
+
+def get_biometrics_for_dates(db: Client, athlete_id: str, args: dict[str, Any]) -> dict[str, Any]:
+    raw_dates = args.get("dates")
+    if not isinstance(raw_dates, list) or not raw_dates:
+        return {"error": "dates array is required"}
+    if len(raw_dates) > BIOMETRICS_DATES_MAX:
+        return {"error": f"max {BIOMETRICS_DATES_MAX} dates per request"}
+
+    try:
+        dates = [parse_coach_date(str(d)) for d in raw_dates]
+    except ValueError as e:
+        return {"error": f"invalid date: {e}"}
+
+    iso_dates = [d.isoformat() for d in dates]
+    try:
+        res = (
+            db.table("biometrics")
+            .select(
+                "date,hrv_rmssd,resting_hr,sleep_duration_min,sleep_score,"
+                "recovery_score,readiness_score,strain_score"
+            )
+            .eq("athlete_id", athlete_id)
+            .in_("date", iso_dates)
+            .order("date")
+            .execute()
+        )
+        rows = list(res.data or [])
+    except Exception as e:
+        return {"error": f"biometrics_query_failed: {e}"}
+
+    by_date = {str(r.get("date"))[:10]: r for r in rows}
+    out_rows: list[dict[str, Any]] = []
+    for d in iso_dates:
+        row = by_date.get(d)
+        if row:
+            out_rows.append(
+                {
+                    "date": d,
+                    "hrv_rmssd": row.get("hrv_rmssd"),
+                    "resting_hr": row.get("resting_hr"),
+                    "sleep_duration_min": row.get("sleep_duration_min"),
+                    "sleep_score": row.get("sleep_score"),
+                    "recovery_score": row.get("recovery_score"),
+                    "readiness_score": row.get("readiness_score"),
+                    "strain_score": row.get("strain_score"),
+                }
+            )
+        else:
+            out_rows.append({"date": d, "available": False})
+
+    return {"count": len(out_rows), "days": out_rows}
+
+
+def summarize_workouts(db: Client, athlete_id: str, args: dict[str, Any]) -> dict[str, Any]:
+    try:
+        if args.get("period"):
+            start, end = _period_bounds(db, athlete_id, str(args["period"]))
+        else:
+            start, end = _resolve_date_range(db, athlete_id, args, default_days_back=6)
+    except ValueError as e:
+        return {"error": str(e)}
+
+    rows = query_workouts(
+        db,
+        athlete_id,
+        start_date=start,
+        end_date=end,
+        sport=str(args["sport"]) if args.get("sport") else None,
+        limit=SUMMARIZE_WORKOUTS_MAX,
+    )
+
+    total_tss = 0.0
+    total_min = 0.0
+    sport_mix: dict[str, int] = {}
+    hardest: dict[str, Any] | None = None
+    hardest_tss = -1.0
+
+    for row in rows:
+        tss = float(row.get("tss") or 0)
+        total_tss += tss
+        dur = _duration_secs(row) or 0
+        total_min += dur / 60.0
+        sport = str(row.get("sport") or "other")
+        sport_mix[sport] = sport_mix.get(sport, 0) + 1
+        if tss > hardest_tss:
+            hardest_tss = tss
+            hardest = _compact_list_row(row)
+
+    return {
+        "start_date": start.isoformat(),
+        "end_date": end.isoformat(),
+        "workout_count": len(rows),
+        "total_tss": round(total_tss, 1),
+        "total_hours": round(total_min / 60.0, 2),
+        "sport_mix": sport_mix,
+        "hardest_session": hardest,
+    }
+
+
+def _numeric_delta(a: Any, b: Any) -> float | None:
+    try:
+        if a is None or b is None:
+            return None
+        return round(float(b) - float(a), 2)
+    except (TypeError, ValueError):
+        return None
+
+
+def compare_workouts(db: Client, athlete_id: str, args: dict[str, Any]) -> dict[str, Any]:
+    id_a = args.get("workout_id_a") or args.get("workout_id")
+    id_b = args.get("workout_id_b")
+    if not id_a or not id_b:
+        return {"error": "workout_id_a and workout_id_b are required"}
+
+    row_a = fetch_workout_by_id(db, athlete_id, str(id_a))
+    row_b = fetch_workout_by_id(db, athlete_id, str(id_b))
+    if not row_a or not row_b:
+        return {"error": "workout_not_found"}
+
+    summary_a = format_workout_summary(row_a)
+    summary_b = format_workout_summary(row_b)
+    same_sport = summary_a.get("sport") == summary_b.get("sport")
+
+    deltas = {
+        "duration_min": _numeric_delta(summary_a.get("duration_min"), summary_b.get("duration_min")),
+        "tss": _numeric_delta(summary_a.get("tss"), summary_b.get("tss")),
+        "strain_score": _numeric_delta(summary_a.get("strain_score"), summary_b.get("strain_score")),
+        "avg_hr": _numeric_delta(summary_a.get("avg_hr"), summary_b.get("avg_hr")),
+        "avg_power_w": _numeric_delta(summary_a.get("avg_power_w"), summary_b.get("avg_power_w")),
+        "distance_km": _numeric_delta(summary_a.get("distance_km"), summary_b.get("distance_km")),
+    }
+
+    return {
+        "workout_a": summary_a,
+        "workout_b": summary_b,
+        "same_sport": same_sport,
+        "deltas_b_minus_a": deltas,
+    }
+

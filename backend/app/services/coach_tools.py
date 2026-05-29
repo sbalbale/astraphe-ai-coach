@@ -895,6 +895,51 @@ def handle_delete_planned_workout(
     return workout_data.delete_planned_workout_sync(db, athlete_id, args)
 
 
+def handle_list_planned_workouts(
+    args: dict[str, Any],
+    *,
+    athlete_id: str,
+    db: Client,
+) -> dict[str, Any]:
+    return workout_data.list_planned_workouts_compact(db, athlete_id, args)
+
+
+def handle_get_training_load_series(
+    args: dict[str, Any],
+    *,
+    athlete_id: str,
+    db: Client,
+) -> dict[str, Any]:
+    return workout_data.get_training_load_series(db, athlete_id, args)
+
+
+def handle_get_biometrics_for_dates(
+    args: dict[str, Any],
+    *,
+    athlete_id: str,
+    db: Client,
+) -> dict[str, Any]:
+    return workout_data.get_biometrics_for_dates(db, athlete_id, args)
+
+
+def handle_summarize_workouts(
+    args: dict[str, Any],
+    *,
+    athlete_id: str,
+    db: Client,
+) -> dict[str, Any]:
+    return workout_data.summarize_workouts(db, athlete_id, args)
+
+
+def handle_compare_workouts(
+    args: dict[str, Any],
+    *,
+    athlete_id: str,
+    db: Client,
+) -> dict[str, Any]:
+    return workout_data.compare_workouts(db, athlete_id, args)
+
+
 # --- Gemini tool declarations ---
 
 _simulate_decl = types.FunctionDeclaration(
@@ -1240,6 +1285,95 @@ _delete_planned_workout_decl = types.FunctionDeclaration(
     ),
 )
 
+_list_planned_workouts_decl = types.FunctionDeclaration(
+    name="list_planned_workouts",
+    description="List future planned workouts on the training calendar for a date range.",
+    parameters=types.Schema(
+        type=types.Type.OBJECT,
+        properties={
+            "start_date": types.Schema(type=types.Type.STRING, description="ISO date YYYY-MM-DD"),
+            "end_date": types.Schema(type=types.Type.STRING, description="ISO date YYYY-MM-DD"),
+        },
+        required=[],
+    ),
+)
+
+_get_training_load_series_decl = types.FunctionDeclaration(
+    name="get_training_load_series",
+    description=(
+        "Fetch PMC history (daily TSS, CTL, ATL, TSB) for coaching load trends. "
+        "Default last 42 days."
+    ),
+    parameters=types.Schema(
+        type=types.Type.OBJECT,
+        properties={
+            "start_date": types.Schema(type=types.Type.STRING),
+            "end_date": types.Schema(type=types.Type.STRING),
+        },
+        required=[],
+    ),
+)
+
+_get_biometrics_for_dates_decl = types.FunctionDeclaration(
+    name="get_biometrics_for_dates",
+    description=(
+        "Fetch sleep, HRV, recovery, and strain for specific dates (max 7). "
+        "Use to tie workout days to recovery context."
+    ),
+    parameters=types.Schema(
+        type=types.Type.OBJECT,
+        properties={
+            "dates": types.Schema(
+                type=types.Type.ARRAY,
+                items=types.Schema(type=types.Type.STRING),
+                description="ISO dates YYYY-MM-DD",
+            ),
+        },
+        required=["dates"],
+    ),
+)
+
+_summarize_workouts_decl = types.FunctionDeclaration(
+    name="summarize_workouts",
+    description=(
+        "Roll up completed workouts for a week/month or date range: total TSS, hours, "
+        "sport mix, and hardest session."
+    ),
+    parameters=types.Schema(
+        type=types.Type.OBJECT,
+        properties={
+            "period": types.Schema(
+                type=types.Type.STRING,
+                description="Shorthand: week or month (athlete-local)",
+            ),
+            "start_date": types.Schema(type=types.Type.STRING),
+            "end_date": types.Schema(type=types.Type.STRING),
+            "sport": types.Schema(type=types.Type.STRING),
+        },
+        required=[],
+    ),
+)
+
+_compare_workouts_decl = types.FunctionDeclaration(
+    name="compare_workouts",
+    description=(
+        "Side-by-side comparison of two completed workouts (same sport preferred). "
+        "Returns summaries and numeric deltas (B minus A)."
+    ),
+    parameters=types.Schema(
+        type=types.Type.OBJECT,
+        properties={
+            "workout_id_a": types.Schema(type=types.Type.STRING),
+            "workout_id_b": types.Schema(type=types.Type.STRING),
+            "workout_id": types.Schema(
+                type=types.Type.STRING,
+                description="Alias for workout_id_a",
+            ),
+        },
+        required=["workout_id_b"],
+    ),
+)
+
 def handle_internal_scratchpad(
     args: dict[str, Any],
     *,
@@ -1287,6 +1421,11 @@ TOOLS: list[types.Tool] = [
         _get_athlete_zones_decl,
         _update_planned_workout_decl,
         _delete_planned_workout_decl,
+        _list_planned_workouts_decl,
+        _get_training_load_series_decl,
+        _get_biometrics_for_dates_decl,
+        _summarize_workouts_decl,
+        _compare_workouts_decl,
         _save_memory_decl,
         _list_memories_decl,
         _update_memory_decl,
@@ -1311,6 +1450,11 @@ TOOL_HANDLERS: dict[str, ToolHandler] = {
     "get_athlete_zones": lambda args, aid, db: handle_get_athlete_zones(args, athlete_id=aid, db=db),
     "update_planned_workout": lambda args, aid, db: handle_update_planned_workout(args, athlete_id=aid, db=db),
     "delete_planned_workout": lambda args, aid, db: handle_delete_planned_workout(args, athlete_id=aid, db=db),
+    "list_planned_workouts": lambda args, aid, db: handle_list_planned_workouts(args, athlete_id=aid, db=db),
+    "get_training_load_series": lambda args, aid, db: handle_get_training_load_series(args, athlete_id=aid, db=db),
+    "get_biometrics_for_dates": lambda args, aid, db: handle_get_biometrics_for_dates(args, athlete_id=aid, db=db),
+    "summarize_workouts": lambda args, aid, db: handle_summarize_workouts(args, athlete_id=aid, db=db),
+    "compare_workouts": lambda args, aid, db: handle_compare_workouts(args, athlete_id=aid, db=db),
     "save_memory": lambda args, aid, db: handle_save_memory(args, athlete_id=aid, db=db),
     "list_memories": lambda args, aid, db: handle_list_memories(args, athlete_id=aid, db=db),
     "update_memory": lambda args, aid, db: handle_update_memory(args, athlete_id=aid, db=db),
