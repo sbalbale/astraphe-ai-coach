@@ -42,6 +42,7 @@
 		"@vite-pwa/sveltekit": "^1.1.0",
 		"autoprefixer": "10.5.0",
 		"firebase-tools": "^15.18.0",
+		"jsdom": "^29.1.1",
 		"postcss": "8.5.12",
 		"svelte": "5.55.5",
 		"svelte-check": "4.4.6",

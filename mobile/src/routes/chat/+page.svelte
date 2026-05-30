@@ -634,6 +634,17 @@
   :global(.chat-md :where(ul, ol)) {
     padding-left: 1.1rem;
   }
+  :global(.chat-md :where(ul)) {
+    list-style-type: disc;
+    list-style-position: outside;
+  }
+  :global(.chat-md :where(ol)) {
+    list-style-type: decimal;
+    list-style-position: outside;
+  }
+  :global(.chat-md :where(ul ul)) {
+    list-style-type: circle;
+  }
   :global(.chat-md :where(li)) {
     margin: 0.15rem 0;
   }
