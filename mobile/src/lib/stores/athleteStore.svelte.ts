@@ -1,6 +1,11 @@
 import { api } from '../api';
 import { authStore } from './authStore.svelte';
-import { calculateSleepScore, calculateRecoveryScore } from '../utils/biometrics';
+import {
+  calculateSleepScore,
+  calculateRecoveryScore,
+  currentRecoveryState,
+  firstPositiveFiniteNumber
+} from '../utils/biometrics';
 
 const CACHE_KEY = 'astraphe:athlete-cache:v1';
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
@@ -279,10 +284,19 @@ export class AthleteState {
       if (biometricsData) {
         this.biometrics = biometricsData;
         if (this.biometrics?.series?.length > 0) {
-          const latest = this.biometrics.series[this.biometrics.series.length - 1];
-          this.readiness = latest.readiness_score || latest.recovery_score || state?.readiness_score || 0;
-          this.hrv = Math.round(latest.hrv_rmssd || 0);
-          this.sleep = Number(((latest.sleep_duration_min || 0) / 60).toFixed(1));
+          const { row } = currentRecoveryState(
+            this.biometrics.series,
+            this.profile?.timezone_offset_min
+          );
+          this.readiness =
+            firstPositiveFiniteNumber(row?.readiness_score, row?.recovery_score) ??
+            state?.readiness_score ??
+            0;
+          this.hrv = Math.round(Number(row?.hrv_rmssd ?? state?.hrv_rmssd ?? 0));
+          const sleepMin =
+            Number(row?.sleep_duration_min) ||
+            (state?.sleep_hours != null ? Number(state.sleep_hours) * 60 : 0);
+          this.sleep = Number((sleepMin / 60).toFixed(1));
         }
       }
       if (planData) this.plan = planData;

@@ -3,6 +3,126 @@
  * Custom algorithms for Sleep and Recovery scoring
  */
 
+import { format } from 'date-fns';
+
+const STALE_AFTER_HOURS = 36;
+
+export type BiometricsRow = Record<string, unknown>;
+
+export type CurrentRecoveryState = {
+  row: BiometricsRow | null;
+  date: string | null;
+  hasTodayRow: boolean;
+  isStale: boolean;
+  ageHours: number | null;
+};
+
+export function firstPositiveFiniteNumber(...candidates: unknown[]): number | null {
+  for (const v of candidates) {
+    if (typeof v === 'number' && Number.isFinite(v) && v > 0) return v;
+    if (typeof v === 'string' && v.trim() !== '') {
+      const n = Number(v);
+      if (Number.isFinite(n) && n > 0) return n;
+    }
+  }
+  return null;
+}
+
+function finiteRecoveryScore(row: BiometricsRow | null | undefined): number | null {
+  if (!row) return null;
+  const n = Number(row.recovery_score);
+  return Number.isFinite(n) ? n : null;
+}
+
+function rowWakeMs(row: BiometricsRow, timezoneOffsetMin: number): number | null {
+  const wakeup = row.sleep_wakeup;
+  if (typeof wakeup === 'string' && wakeup.trim() !== '') {
+    const t = Date.parse(wakeup);
+    if (Number.isFinite(t)) return t;
+  }
+  const dateStr = typeof row.date === 'string' ? row.date.slice(0, 10) : null;
+  if (!dateStr) return null;
+  const offset = timezoneOffsetMin ?? 0;
+  const t = Date.parse(`${dateStr}T00:00:00`) - offset * 60_000;
+  return Number.isFinite(t) ? t : null;
+}
+
+function latestRowWithRecovery(series: BiometricsRow[]): BiometricsRow | null {
+  let best: BiometricsRow | null = null;
+  let bestDate = '';
+  for (const row of series) {
+    if (finiteRecoveryScore(row) === null) continue;
+    const d = typeof row.date === 'string' ? row.date.slice(0, 10) : '';
+    if (!d || d < bestDate) continue;
+    bestDate = d;
+    best = row;
+  }
+  return best;
+}
+
+/**
+ * Readiness-style score from a biometrics row (readiness first, then recovery).
+ */
+export function readinessScoreFromRow(row: BiometricsRow | null | undefined): number | null {
+  if (!row) return null;
+  return firstPositiveFiniteNumber(row.readiness_score, row.recovery_score);
+}
+
+/**
+ * Resolves the biometrics row to treat as the athlete's *current* recovery state.
+ * Prefers today's row when it has a finite recovery_score; otherwise carries forward
+ * the most recent such row. Flags staleness so the UI doesn't present old data as live.
+ */
+export function currentRecoveryState(
+  series: Array<BiometricsRow> | undefined,
+  timezoneOffsetMin: number | null | undefined,
+  now: Date = new Date()
+): CurrentRecoveryState {
+  const empty: CurrentRecoveryState = {
+    row: null,
+    date: null,
+    hasTodayRow: false,
+    isStale: false,
+    ageHours: null
+  };
+
+  const rows = series ?? [];
+  if (rows.length === 0) return empty;
+
+  const offset = timezoneOffsetMin ?? 0;
+  const deviceLocalToday = format(now, 'yyyy-MM-dd');
+
+  const todayRow = rows.find(
+    (r) => typeof r.date === 'string' && r.date.slice(0, 10) === deviceLocalToday
+  );
+  if (todayRow && finiteRecoveryScore(todayRow) !== null) {
+    return {
+      row: todayRow,
+      date: deviceLocalToday,
+      hasTodayRow: true,
+      isStale: false,
+      ageHours: 0
+    };
+  }
+
+  const latest = latestRowWithRecovery(rows);
+  if (!latest) return empty;
+
+  const latestDate = typeof latest.date === 'string' ? latest.date.slice(0, 10) : null;
+  const wakeMs = rowWakeMs(latest, offset);
+  const ageHours =
+    wakeMs !== null ? Math.max(0, (now.getTime() - wakeMs) / 3_600_000) : null;
+  const isStale = ageHours !== null && ageHours > STALE_AFTER_HOURS;
+
+  return {
+    row: latest,
+    date: latestDate,
+    hasTodayRow: false,
+    isStale,
+    ageHours
+  };
+}
+
 export interface SleepData {
   durationMin: number;
   deepPct: number;

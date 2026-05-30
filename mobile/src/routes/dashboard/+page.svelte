@@ -2,7 +2,7 @@
   import { SvelteMap } from 'svelte/reactivity';
   import { stripLeadingTimeOfDayGreeting } from '$lib/utils/greeting';
 
-  const AI_SUMMARY_CACHE_KEY = 'astraphe:dashboard-ai-summary:v2';
+  const AI_SUMMARY_CACHE_KEY = 'astraphe:dashboard-ai-summary:v3';
 
   function _sanitizeAiSummary(content: string) {
     return stripLeadingTimeOfDayGreeting(content);
@@ -70,6 +70,7 @@
   import { boundedScoreCssColor } from '$lib/colorSystem';
   import { CHART_ATL_STROKE, CHART_CTL_STROKE, formCssColor, getZScoreColor } from '$lib/scoreColors';
   import { getTimeOfDayGreeting } from '$lib/utils/greeting';
+  import { currentRecoveryState, firstPositiveFiniteNumber, readinessScoreFromRow } from '$lib/utils/biometrics';
 
   const CTL_IDENTITY_HEX = CHART_CTL_STROKE;
   const ATL_IDENTITY_HEX = CHART_ATL_STROKE;
@@ -102,54 +103,55 @@
   const todayStr = $derived(format(new Date(), 'yyyy-MM-dd'));
   const isoDate = (v: unknown) => (typeof v === 'string' ? v.slice(0, 10) : '');
 
-  const todayBio = $derived(athleteStore.biometrics?.series?.find((s: any) => s.date === todayStr));
   const todayLoad = $derived(athleteStore.metrics?.trainingLoadData?.find((m: any) => isoDate(m?.date) === todayStr));
-  const latestBio = $derived(athleteStore.biometrics?.series?.[athleteStore.biometrics.series.length - 1]);
   const latestLoad = $derived(
     athleteStore.metrics?.trainingLoadData?.[athleteStore.metrics.trainingLoadData.length - 1]
   );
 
-  const firstPositiveFiniteNumber = (...candidates: unknown[]): number | null => {
-    for (const v of candidates) {
-      if (typeof v === 'number' && Number.isFinite(v) && v > 0) return v;
-      // Allow numeric strings, but keep the same "missing/0 => null" behavior.
-      if (typeof v === 'string' && v.trim() !== '') {
-        const n = Number(v);
-        if (Number.isFinite(n) && n > 0) return n;
+  const current = $derived(
+    currentRecoveryState(
+      athleteStore.biometrics?.series,
+      athleteStore.profile?.timezone_offset_min
+    )
+  );
+
+  const currentRow = $derived(current.row);
+
+  const todayReadiness = $derived(readinessScoreFromRow(currentRow));
+  const todayRecoveryScore = $derived(
+    firstPositiveFiniteNumber(currentRow?.recovery_score, currentRow?.readiness_score)
+  );
+  const latestHrv = $derived(
+    typeof currentRow?.hrv_rmssd === 'number' && Number.isFinite(currentRow.hrv_rmssd)
+      ? currentRow.hrv_rmssd
+      : null
+  );
+  const latestSleepMin = $derived(
+    typeof currentRow?.sleep_duration_min === 'number' && Number.isFinite(currentRow.sleep_duration_min)
+      ? currentRow.sleep_duration_min
+      : null
+  );
+  const latestSleepScore = $derived(
+    typeof currentRow?.sleep_score === 'number' && Number.isFinite(currentRow.sleep_score)
+      ? currentRow.sleep_score
+      : null
+  );
+  const latestHrvZ = $derived(
+    typeof currentRow?.hrv_z === 'number' && Number.isFinite(currentRow.hrv_z) ? Number(currentRow.hrv_z) : null
+  );
+
+  const carryOverLabel = $derived.by(() => {
+    if (!current.row || current.hasTodayRow) return null;
+    if (current.ageHours !== null && current.ageHours < 36) return 'Carried over from last night';
+    if (current.date) {
+      try {
+        return `Carried over from ${format(new Date(current.date + 'T12:00:00'), 'MMM d')}`;
+      } catch {
+        return null;
       }
     }
     return null;
-  };
-
-  const todayReadiness = $derived(firstPositiveFiniteNumber(todayBio?.readiness_score, todayBio?.recovery_score, latestBio?.readiness_score, latestBio?.recovery_score));
-  const todayRecoveryScore = $derived(firstPositiveFiniteNumber(todayBio?.recovery_score, todayBio?.readiness_score));
-  const todayHrv = $derived(todayBio?.hrv_rmssd ?? null);
-  const todaySleepMin = $derived(todayBio?.sleep_duration_min ?? null);
-  const todaySleepScore = $derived(todayBio?.sleep_score ?? null);
-
-  const latestHrv = $derived(todayHrv ?? latestBio?.hrv_rmssd ?? null);
-  const latestSleepMin = $derived(todaySleepMin ?? latestBio?.sleep_duration_min ?? null);
-  const latestSleepScore = $derived(todaySleepScore ?? latestBio?.sleep_score ?? null);
-
-  const todayHrvZ = $derived(
-    typeof todayBio?.hrv_z === 'number' && Number.isFinite(todayBio.hrv_z) ? Number(todayBio.hrv_z) : null
-  );
-  const todayRhrZ = $derived(
-    typeof todayBio?.rhr_z === 'number' && Number.isFinite(todayBio.rhr_z) ? Number(todayBio.rhr_z) : null
-  );
-  const latestHrvZ = $derived(
-    todayHrvZ ??
-      (typeof latestBio?.hrv_z === 'number' && Number.isFinite(latestBio.hrv_z) ? Number(latestBio.hrv_z) : null)
-  );
-  const latestRhrZ = $derived(
-    todayRhrZ ??
-      (typeof latestBio?.rhr_z === 'number' && Number.isFinite(latestBio.rhr_z) ? Number(latestBio.rhr_z) : null)
-  );
-  // The dashboard has a separate "Readiness Score" card above. This panel is explicitly "Recovery trends",
-  // so prefer the raw `recovery_score` series when available.
-  const latestRecovery = $derived(
-    firstPositiveFiniteNumber(todayRecoveryScore, latestBio?.recovery_score, latestBio?.readiness_score)
-  );
+  });
 
   const todayCtl = $derived(todayLoad?.ctl ?? latestLoad?.ctl ?? null);
   const todayAtl = $derived(todayLoad?.atl ?? latestLoad?.atl ?? null);
@@ -177,12 +179,12 @@
           _persistAiSummary(endDay, summary);
         }
         analysisText = summary;
-        return;
+      } else {
+        dashboardAiSummaryMemo.delete(endDay);
       }
+    } else if (cached === null) {
       dashboardAiSummaryMemo.delete(endDay);
     }
-
-    analysisText = null;
 
     const requestKey = `dashboard-ai-summary:${endDay}`;
     activeAnalysisKey = requestKey;
@@ -194,18 +196,20 @@
           ? _sanitizeAiSummary(res.analysis.content)
           : '';
         const next = content ? content : null;
-        // Only memoize successful content so transient 401s/network hiccups don't permanently lock us into null.
-        if (next) {
+        const analysis = res?.analysis;
+        const isProvisional =
+          analysis?.fallback === true || analysis?.stale === true;
+        if (next && !isProvisional) {
           dashboardAiSummaryMemo.set(endDay, next);
           _persistAiSummary(endDay, next);
         }
 
         if (activeAnalysisKey !== requestKey) return;
-        analysisText = next;
+        if (next) analysisText = next;
       } catch (e) {
         console.error(e);
         if (activeAnalysisKey !== requestKey) return;
-        // Keep previous text while loading/failing.
+        // Keep placeholder text while loading/failing.
       }
     })();
   });
@@ -365,13 +369,13 @@
             value={todayReadiness ?? 0}
             max={100}
             size={64}
-            color={todayReadiness === null ? 'var(--text2)' : boundedScoreCssColor(todayReadiness)}
+            color={todayReadiness === null || current.isStale ? 'var(--text2)' : boundedScoreCssColor(todayReadiness)}
             label={(todayReadiness ?? null) === null ? 'N/A' : String(todayReadiness)}
             sub="RDY"
           />
           <div class="flex-1">
             <div class="flex items-center gap-2 mb-1">
-              <span class="font-semibold text-[15px]">Readiness Score</span>
+              <span class="font-semibold text-[15px]" class:text-text2={current.isStale}>Readiness Score</span>
               {#if isCalibrating}
                 <CalibrationBadge />
               {/if}
@@ -385,17 +389,25 @@
                 <Tag color="var(--red)">RECOVERY</Tag>
               {/if}
             </div>
+            {#if carryOverLabel}
+              <p class="text-[10px] text-text2 font-mono mb-1">{carryOverLabel}</p>
+            {/if}
+            {#if current.isStale}
+              <p class="text-[10px] text-text2 mb-1">
+                Last synced {current.ageHours != null ? Math.round(current.ageHours) : '—'}h ago — sync your device
+              </p>
+            {/if}
             <p class="text-xs text-text1 leading-relaxed">
               HRV
               <span
-                class={todayHrv === null ? 'text-text2' : getZScoreColor(latestHrvZ)}
-                >{todayHrv === null ? 'Data not found' : `${Math.round(todayHrv)}ms`}</span>
+                class={latestHrv === null ? 'text-text2' : getZScoreColor(latestHrvZ)}
+                >{latestHrv === null ? 'Data not found' : `${Math.round(latestHrv)}ms`}</span>
               · Sleep
               <span
-                style="color: {todaySleepMin === null || latestSleepScore === null || latestSleepScore <= 0
+                style="color: {latestSleepMin === null || latestSleepScore === null || latestSleepScore <= 0
                   ? 'var(--text2)'
                   : boundedScoreCssColor(latestSleepScore)}"
-                >{todaySleepMin === null ? 'Data not found' : sleepHM(todaySleepMin)}</span>
+                >{latestSleepMin === null ? 'Data not found' : sleepHM(latestSleepMin)}</span>
             </p>
             <p class="text-[11px] text-text2 mt-1">Data synced from your connected services.</p>
           </div>
@@ -465,13 +477,13 @@
       <Card>
         <div class="flex justify-between items-start mb-2">
           <span class="text-[9px] text-text2 font-mono uppercase tracking-[0.08em]">Recovery trends</span>
-          {#if todayReadiness === null && latestRecovery !== null}
-            <span class="text-[8px] bg-glass px-1 rounded text-text2 border border-border uppercase">Latest</span>
+          {#if carryOverLabel}
+            <span class="text-[8px] bg-glass px-1 rounded text-text2 border border-border uppercase">Carried</span>
           {/if}
         </div>
         <div class="flex items-baseline gap-1.5">
-          <span class="text-[20px] font-bold" style="color: {latestRecovery === null ? 'var(--text2)' : recoveryColor(Number(latestRecovery))}">
-            {latestRecovery === null ? 'Data not found' : Math.round(Number(latestRecovery))}
+          <span class="text-[20px] font-bold" style="color: {todayRecoveryScore === null || current.isStale ? 'var(--text2)' : recoveryColor(Number(todayRecoveryScore))}">
+            {todayRecoveryScore === null ? 'Data not found' : Math.round(Number(todayRecoveryScore))}
             <span class="text-[11px] text-text2 font-normal">/100</span>
           </span>
         </div>
@@ -505,14 +517,14 @@
       <Card>
         <div class="flex justify-between items-start mb-2">
           <span class="text-[9px] text-text2 font-mono uppercase tracking-[0.08em]">Sleep</span>
-          {#if todaySleepMin === null && latestSleepMin !== null}
-            <span class="text-[8px] bg-glass px-1 rounded text-text2 border border-border uppercase">Latest</span>
+          {#if carryOverLabel}
+            <span class="text-[8px] bg-glass px-1 rounded text-text2 border border-border uppercase">Carried</span>
           {/if}
         </div>
         <div class="flex items-baseline gap-1.5">
           <span
             class="text-[20px] font-bold"
-            style="color: {latestSleepMin === null || latestSleepScore === null || latestSleepScore <= 0
+            style="color: {latestSleepMin === null || latestSleepScore === null || latestSleepScore <= 0 || current.isStale
               ? 'var(--text2)'
               : boundedScoreCssColor(latestSleepScore)}"
           >

@@ -19,6 +19,7 @@
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { api } from '$lib/api';
   import { normalizeUnits, type Units } from '$lib/utils/units';
+  import { currentRecoveryState, firstPositiveFiniteNumber } from '$lib/utils/biometrics';
   import { onMount } from 'svelte';
   import { addDays, format, subDays } from 'date-fns';
   import { page } from '$app/stores';
@@ -159,19 +160,64 @@
   });
 
   const d = $derived(days[dayIndex]);
-  const hasData = $derived(days.some(day => !day.missing) || athleteStore.readiness > 0);
-  
-  const score = $derived(d.score || (d?.date === todayStr ? athleteStore.readiness : 0));
-  const scoreColor = $derived(boundedScoreCssColor(score));
+  const current = $derived(
+    currentRecoveryState(
+      athleteStore.biometrics?.series,
+      athleteStore.profile?.timezone_offset_min
+    )
+  );
+
+  const useHeadlineCarryForward = $derived(
+    d?.date === todayStr &&
+      (d.missing || !Number.isFinite(Number(d?.data?.recovery_score)))
+  );
+
+  const headlineRow = $derived(
+    useHeadlineCarryForward && current.row ? current.row : (d?.data ?? null)
+  );
+
+  const showRecoveryHero = $derived(!d.missing || (useHeadlineCarryForward && current.row != null));
+
+  const carryOverLabel = $derived.by(() => {
+    if (!useHeadlineCarryForward || !current.row || current.hasTodayRow) return null;
+    if (current.ageHours !== null && current.ageHours < 36) return 'Carried over from last night';
+    if (current.date) {
+      try {
+        return `Carried over from ${format(new Date(current.date + 'T12:00:00'), 'MMM d')}`;
+      } catch {
+        return 'Carried over from previous night';
+      }
+    }
+    return 'Carried over from previous night';
+  });
+
+  const hasData = $derived(
+    days.some((day) => !day.missing) || current.row != null || athleteStore.readiness > 0
+  );
+
+  const score = $derived(
+    firstPositiveFiniteNumber(
+      headlineRow?.recovery_score,
+      headlineRow?.readiness_score,
+      athleteStore.readiness
+    ) ?? 0
+  );
+  const scoreColor = $derived(
+    current.isStale && d?.date === todayStr
+      ? 'var(--text2)'
+      : boundedScoreCssColor(score)
+  );
   const quality = $derived(score >= 67 ? 'Optimal' : score >= 34 ? 'Moderate' : 'Fatigued');
 
-  // HRV / RHR z-scores come straight off the biometrics row (computed on the
-  // backend in /v1/biometrics with a single-pass running EWMA span=7).
   const hrvZ = $derived(
-    typeof d?.data?.hrv_z === 'number' && Number.isFinite(d.data.hrv_z) ? Number(d.data.hrv_z) : null
+    typeof headlineRow?.hrv_z === 'number' && Number.isFinite(headlineRow.hrv_z)
+      ? Number(headlineRow.hrv_z)
+      : null
   );
   const rhrZ = $derived(
-    typeof d?.data?.rhr_z === 'number' && Number.isFinite(d.data.rhr_z) ? Number(d.data.rhr_z) : null
+    typeof headlineRow?.rhr_z === 'number' && Number.isFinite(headlineRow.rhr_z)
+      ? Number(headlineRow.rhr_z)
+      : null
   );
 
   const avg7d = $derived.by(() => {
@@ -185,26 +231,38 @@
   
   const biometricsSeries = $derived(athleteStore.biometrics?.series as BiometricsRecord[] | undefined);
   
-  const hrvToday = $derived(isFiniteNumber(d?.data?.hrv_rmssd) ? Math.round(d.data.hrv_rmssd) : null);
+  const hrvToday = $derived(
+    isFiniteNumber(headlineRow?.hrv_rmssd) ? Math.round(Number(headlineRow.hrv_rmssd)) : null
+  );
   const hrvBaseline = $derived.by(() => {
     const base = baselineAvg7d(biometricsSeries, d.date, 'hrv_rmssd');
     return isFiniteNumber(base) ? Math.round(base) : null;
   });
   const hrvDelta = $derived(signedDeltaVsBaseline(biometricsSeries, d.date, 'hrv_rmssd', hrvToday, 7));
 
-  const rhrToday = $derived(isFiniteNumber(d?.data?.resting_hr) ? Math.round(d.data.resting_hr) : null);
+  const rhrToday = $derived(
+    isFiniteNumber(headlineRow?.resting_hr) ? Math.round(Number(headlineRow.resting_hr)) : null
+  );
   const rhrBaseline = $derived.by(() => {
     const base = baselineAvg7d(biometricsSeries, d.date, 'resting_hr');
     return isFiniteNumber(base) ? Math.round(base) : null;
   });
   const rhrDelta = $derived(signedDeltaVsBaseline(biometricsSeries, d.date, 'resting_hr', rhrToday, 7));
 
-  const sleepScoreToday = $derived(isFiniteNumber(d?.data?.sleep_score) ? Math.round(d.data.sleep_score) : null);
+  const sleepScoreToday = $derived(
+    isFiniteNumber(headlineRow?.sleep_score) ? Math.round(Number(headlineRow.sleep_score)) : null
+  );
   const sleepDelta = $derived(signedDeltaVsBaseline(biometricsSeries, d.date, 'sleep_score', sleepScoreToday, 7));
   
-  const sleepDurationMin = $derived.by(() => (isFiniteNumber(d?.data?.sleep_duration_min) ? Math.round(d.data.sleep_duration_min) : null));
+  const sleepDurationMin = $derived.by(() =>
+    isFiniteNumber(headlineRow?.sleep_duration_min)
+      ? Math.round(Number(headlineRow.sleep_duration_min))
+      : null
+  );
   const sleepDurationHM = $derived.by(() => (sleepDurationMin === null ? null : formatHoursMinutesFromMinutes(sleepDurationMin)));
-  const sleepDeepPct = $derived.by(() => (isFiniteNumber(d?.data?.sleep_deep_pct) ? Math.round(d.data.sleep_deep_pct) : null));
+  const sleepDeepPct = $derived.by(() =>
+    isFiniteNumber(headlineRow?.sleep_deep_pct) ? Math.round(Number(headlineRow.sleep_deep_pct)) : null
+  );
   
   const priorLoad = $derived.by(() => {
     const series = athleteStore.metrics?.trainingLoadData as TrainingLoadRecord[] | undefined;
@@ -239,7 +297,9 @@
   
   // NOTE: `skin_temp` stores *skin/body temperature in °C*.
   // We treat it as an actual temperature measurement and show deviation vs baseline.
-  const bodyTempCToday = $derived(isFiniteNumber(d?.data?.skin_temp) ? Number(d.data.skin_temp) : null);
+  const bodyTempCToday = $derived(
+    isFiniteNumber(headlineRow?.skin_temp) ? Number(headlineRow.skin_temp) : null
+  );
   const bodyTempCBaseline = $derived.by(() => {
     const base = baselineAvg7d(biometricsSeries, d.date, 'skin_temp');
     if (!isFiniteNumber(base)) return null;
@@ -268,7 +328,9 @@
     return Math.round(val * 10) / 10;
   });
 
-  const spo2Pct = $derived(isFiniteNumber(d?.data?.spo2_pct) ? Math.round(d.data.spo2_pct) : null);
+  const spo2Pct = $derived(
+    isFiniteNumber(headlineRow?.spo2_pct) ? Math.round(Number(headlineRow.spo2_pct)) : null
+  );
   const spo2Baseline = $derived.by(() => {
     const base = baselineAvg7d(biometricsSeries, d.date, 'spo2_pct');
     return isFiniteNumber(base) ? Math.round(base) : null;
@@ -431,11 +493,11 @@
     </div>
 
 
-    {#if d.missing}
+    {#if !showRecoveryHero}
       <Card style="border-style: dashed; opacity: 0.8;">
         <div class="flex flex-col items-center justify-center py-6 text-center">
           <span class="text-[32px] mb-2">🤷‍♂️</span>
-          <p class="text-[14px] font-bold mb-1">No recovery data for {d.date}</p>
+          <p class="text-[14px] font-bold mb-1">No recovery data for {d.label}</p>
           <p class="text-[11px] text-text2 max-w-[200px]">
             We couldn't find any biometric records for this day. Make sure your device synced recently.
           </p>
@@ -455,9 +517,17 @@
           />
           <div class="flex-1">
             <div class="flex items-center gap-2 mb-1">
-              <span class="text-[18px] font-bold">{quality}</span>
+              <span class="text-[18px] font-bold" class:text-text2={current.isStale && d.date === todayStr}>{quality}</span>
               <Tag color={scoreColor}>{score >= 67 ? 'OPTIMAL' : score >= 34 ? 'MODERATE' : 'FATIGUED'}</Tag>
             </div>
+            {#if carryOverLabel}
+              <p class="text-[10px] text-text2 font-mono mb-1">{carryOverLabel}</p>
+            {/if}
+            {#if current.isStale && d.date === todayStr}
+              <p class="text-[10px] text-text2 mb-1">
+                Last synced {current.ageHours != null ? Math.round(current.ageHours) : '—'}h ago — sync your device
+              </p>
+            {/if}
             <p class="text-xs text-text1 leading-relaxed">
               {score >= 67 ? 'Your nervous system is well-rested and primed for quality effort.' : 
                score >= 34 ? 'Moderate physiological state. Listen to your body during training.' : 
@@ -477,7 +547,7 @@
           <div class="flex items-start justify-between gap-1">
             <MetricBadge
               label="HRV"
-              value={d.hrv}
+              value={hrvToday ?? 0}
               unit="ms"
               color={hrvZ === null ? 'var(--text2)' : zScoreCssColor(hrvZ)}
               sub="Avg"
@@ -489,7 +559,7 @@
           <div class="flex items-start justify-between gap-1">
             <MetricBadge
               label="RHR"
-              value={d.rhr}
+              value={rhrToday ?? 0}
               unit="bpm"
               color={rhrZ === null ? 'var(--text2)' : zScoreCssColor(rhrZ, true)}
               sub="Avg"
@@ -498,11 +568,11 @@
           </div>
         </Card>
         <Card style="padding: 8px 10px;">
-          <MetricBadge
-            label="Sleep"
-            value={d.sleepScore}
-            unit="%"
-            color={d.sleepScore ? boundedScoreCssColor(d.sleepScore) : 'var(--text2)'}
+            <MetricBadge
+              label="Sleep"
+              value={sleepScoreToday ?? 0}
+              unit="%"
+              color={sleepScoreToday ? boundedScoreCssColor(sleepScoreToday) : 'var(--text2)'}
             sub="Score"
           />
         </Card>
