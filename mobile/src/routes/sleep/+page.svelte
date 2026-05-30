@@ -24,7 +24,7 @@
   import { athleteStore } from "$lib/stores/athleteStore.svelte";
   import { api } from "$lib/api";
   import { addDays, format, parseISO, subDays } from "date-fns";
-  import { calculateSleepScore } from "$lib/utils/biometrics";
+  import { calculateSleepScore, currentRecoveryState } from "$lib/utils/biometrics";
   import { onMount } from "svelte";
   import { page } from "$app/stores";
   import AddSleepModal from "$lib/components/AddSleepModal.svelte";
@@ -113,6 +113,92 @@
 
   function isNightData(x: Night): x is NightData {
     return x.missing === false;
+  }
+
+  function buildNightDataFromBio(
+    b: Record<string, any>,
+    displayDateStr: string,
+    dateLabel: string,
+    shortLabel: string,
+    dayLabel: string
+  ): NightData | null {
+    if (!b?.sleep_score && !b?.sleep_duration_min) return null;
+
+    const h = Math.floor((b.sleep_duration_min || 0) / 60);
+    const m = Math.round((b.sleep_duration_min || 0) % 60);
+    const bedtime = b.sleep_bedtime ? new Date(b.sleep_bedtime) : null;
+    const wakeup = b.sleep_wakeup ? new Date(b.sleep_wakeup) : null;
+    const timeInBedMin =
+      b.sleep_in_bed_min ||
+      (bedtime && wakeup ? Math.round((wakeup.getTime() - bedtime.getTime()) / 60000) : 0);
+    const inBedH = Math.floor(timeInBedMin / 60);
+    const inBedM = timeInBedMin % 60;
+    const hour12 = (athleteStore.profile as any)?.time_format !== "24h";
+
+    const res: NightData = {
+      rawDate: displayDateStr,
+      date: dateLabel,
+      label: shortLabel,
+      day: dayLabel,
+      missing: false,
+      score: b.sleep_score || 0,
+      duration: b.sleep_duration_min ? `${h}h ${m}m` : "0h 0m",
+      durationRaw: b.sleep_duration_min || 0,
+      inBed: timeInBedMin > 0 ? `${inBedH}h ${inBedM}m` : "0h 0m",
+      inBedRaw: timeInBedMin,
+      quality:
+        (b.sleep_score || 0) >= 67
+          ? "Optimal"
+          : (b.sleep_score || 0) >= 34
+            ? "Moderate"
+            : "Poor",
+      bedtime: bedtime
+        ? bedtime.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", hour12 })
+        : "N/A",
+      wakeup: wakeup
+        ? wakeup.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", hour12 })
+        : "N/A",
+      deep: b.sleep_deep_pct || 0,
+      rem: b.sleep_rem_pct || 0,
+      light: b.sleep_light_pct || 0,
+      awake: b.sleep_awake_pct || 0,
+      awakeMins: 0,
+      hr: b.resting_hr || 0,
+      hrv: b.hrv_rmssd || 0,
+      hrvZ: typeof b.hrv_z === "number" && Number.isFinite(b.hrv_z) ? Number(b.hrv_z) : null,
+      rhrZ: typeof b.rhr_z === "number" && Number.isFinite(b.rhr_z) ? Number(b.rhr_z) : null,
+      debt: b.sleep_debt_min || 0,
+      need: b.sleep_need_min || 480,
+      periods: (b.periods || []).map((p: any) => {
+        const pStart = new Date(p.started_at);
+        const pEnd = new Date(p.ended_at);
+        const pInBedMin = p.in_bed_min || Math.round((pEnd.getTime() - pStart.getTime()) / 60000);
+        const pAwakeMins = Math.round((pInBedMin * (p.awake_pct || 0)) / 100);
+        const pSleepMins = Math.max(0, pInBedMin - pAwakeMins);
+        return {
+          ...p,
+          label: p.is_nap ? "Nap" : "Main Sleep",
+          timeRange: `${pStart.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", hour12 })} – ${pEnd.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", hour12 })}`,
+          duration: `${Math.floor(pSleepMins / 60)}h ${pSleepMins % 60}m`,
+          durationRaw: pSleepMins,
+          inBed: `${Math.floor(pInBedMin / 60)}h ${pInBedMin % 60}m`,
+          inBedRaw: pInBedMin,
+          awakeMins: pAwakeMins,
+          deep: p.deep_pct || 0,
+          rem: p.rem_pct || 0,
+          light: p.light_pct || 0,
+          awake: p.awake_pct || 0
+        };
+      })
+    };
+
+    const aggInBed = res.periods.reduce((sum: number, p: any) => sum + p.inBedRaw, 0);
+    if (aggInBed > res.inBedRaw) {
+      res.inBedRaw = aggInBed;
+      res.inBed = `${Math.floor(aggInBed / 60)}h ${aggInBed % 60}m`;
+    }
+    res.awakeMins = Math.round((res.inBedRaw * (res.awake || 0)) / 100);
+    return res;
   }
 
   const nights = $derived.by<Night[]>(() => {
@@ -240,7 +326,40 @@
   });
 
   const n = $derived<Night>(nights[nightIndex] || nights[0]);
-  const nightData = $derived.by<NightData | null>(() => (n && isNightData(n) ? n : null));
+  const current = $derived(
+    currentRecoveryState(
+      athleteStore.biometrics?.series,
+      athleteStore.profile?.timezone_offset_min
+    )
+  );
+
+  const nightData = $derived.by<NightData | null>(() => {
+    if (n && isNightData(n)) return n;
+    if (n?.rawDate === todayStr && current.row) {
+      return buildNightDataFromBio(
+        current.row,
+        todayStr,
+        "Today",
+        format(new Date(), "MMM d"),
+        n.day
+      );
+    }
+    return null;
+  });
+
+  const carryOverLabel = $derived.by(() => {
+    if (n?.rawDate !== todayStr || !current.row || current.hasTodayRow) return null;
+    if (isNightData(n)) return null;
+    if (current.ageHours !== null && current.ageHours < 36) return "Carried over from last night";
+    if (current.date) {
+      try {
+        return `Carried over from ${format(new Date(current.date + "T12:00:00"), "MMM d")}`;
+      } catch {
+        return "Carried over from previous night";
+      }
+    }
+    return "Carried over from previous night";
+  });
   const avg7d = $derived.by(() => {
     const vals = nights.map((x) => Number(x.score)).filter((v) => Number.isFinite(v) && v > 0);
     if (vals.length === 0) return null;
@@ -258,7 +377,11 @@
   };
   // Sleep score is a bounded 0-100 score so it follows the unified rule of
   // thirds (>=67 teal / 34-66 amber / <=33 red).
-  let scoreColor = $derived(boundedScoreCssColor(n.score));
+  let scoreColor = $derived(
+    current.isStale && n?.rawDate === todayStr
+      ? "var(--text2)"
+      : boundedScoreCssColor(nightData?.score ?? n.score)
+  );
   const getSleepColor = (score: number) => boundedScoreCssColor(score);
 
   // Allow deep-linking to a specific day, e.g. /sleep?day=2026-04-22
@@ -431,7 +554,7 @@
           />
           <div class="flex-1">
             <div class="flex items-center gap-2 mb-1">
-              <span class="text-[18px] font-bold">{nightData.quality}</span>
+              <span class="text-[18px] font-bold" class:text-text2={current.isStale && n.rawDate === todayStr}>{nightData.quality}</span>
               <Tag color={scoreColor}
                 >{nightData.score >= 67
                   ? "OPTIMAL"
@@ -440,6 +563,14 @@
                     : "POOR"}</Tag
               >
             </div>
+            {#if carryOverLabel}
+              <p class="text-[10px] text-text2 font-mono mb-1">{carryOverLabel}</p>
+            {/if}
+            {#if current.isStale && n.rawDate === todayStr}
+              <p class="text-[10px] text-text2 mb-1">
+                Last synced {current.ageHours != null ? Math.round(current.ageHours) : "—"}h ago — sync your device
+              </p>
+            {/if}
             <p class="text-xs text-text1">{nightData.bedtime} → {nightData.wakeup}</p>
             <div class="mt-1">
               <p class={`text-[18px] font-bold ${getBoundedScoreColor(nightData.score)}`}>

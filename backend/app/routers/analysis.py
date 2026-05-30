@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 import re
 from typing import Any, Dict, Optional
 
@@ -84,22 +84,140 @@ def _zscore_for(rows: list[dict], field: str, latest: Optional[float], span: int
     return float(z), float(mean), float(sd)
 
 
+_STALE_AFTER_HOURS = 36
+_BIOMETRICS_CONTEXT_SELECT = (
+    "date,hrv_rmssd,resting_hr,sleep_duration_min,sleep_score,sleep_deep_pct,sleep_rem_pct,sleep_light_pct,sleep_awake_pct,"
+    "sleep_bedtime,sleep_wakeup,spo2_pct,skin_temp,recovery_score,readiness_score,strain_score,sleep_need_min,sleep_debt_min"
+)
+
+
+def _finite_recovery_score(row: Optional[dict]) -> Optional[float]:
+    if not row:
+        return None
+    try:
+        v = row.get("recovery_score")
+        if v is None:
+            return None
+        fv = float(v)
+        return fv if np.isfinite(fv) else None
+    except Exception:
+        return None
+
+
+def _fetch_timezone_offset_min(db: Client, athlete_id: str) -> int:
+    res = (
+        db.table("athletes")
+        .select("timezone_offset_min")
+        .eq("id", athlete_id)
+        .maybe_single()
+        .execute()
+    )
+    if res and res.data:
+        try:
+            return int(res.data.get("timezone_offset_min") or 0)
+        except Exception:
+            pass
+    return 0
+
+
+def _row_wake_epoch_s(row: dict, timezone_offset_min: int) -> Optional[float]:
+    wakeup = row.get("sleep_wakeup")
+    if isinstance(wakeup, str) and wakeup.strip():
+        try:
+            dt = datetime.fromisoformat(wakeup.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.timestamp()
+        except Exception:
+            pass
+    date_str = str(row.get("date") or "")[:10]
+    if not date_str:
+        return None
+    try:
+        return datetime.fromisoformat(f"{date_str}T00:00:00").timestamp() - (timezone_offset_min * 60)
+    except Exception:
+        return None
+
+
+def _resolve_current_recovery_state(
+    db: Client,
+    athlete_id: str,
+    day: date,
+    today_row: Optional[dict],
+    timezone_offset_min: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Resolve effective recovery row for `day` (carry-forward when today's sleep not landed)."""
+    day_str = day.isoformat()
+    offset = timezone_offset_min if timezone_offset_min is not None else _fetch_timezone_offset_min(db, athlete_id)
+
+    has_today_row = _finite_recovery_score(today_row) is not None
+    effective: Optional[dict] = today_row if has_today_row else None
+    carried_forward = False
+
+    if effective is None:
+        prior_res = (
+            db.table("biometrics")
+            .select(_BIOMETRICS_CONTEXT_SELECT)
+            .eq("athlete_id", athlete_id)
+            .lte("date", day_str)
+            .order("date", desc=True)
+            .limit(14)
+            .execute()
+        )
+        for row in (prior_res.data if prior_res else None) or []:
+            if _finite_recovery_score(row) is not None:
+                effective = row
+                carried_forward = str(row.get("date") or "")[:10] != day_str
+                break
+
+    age_hours: Optional[float] = None
+    is_stale = False
+    if effective:
+        wake_s = _row_wake_epoch_s(effective, offset)
+        if wake_s is not None:
+            age_hours = max(0.0, (datetime.now(timezone.utc).timestamp() - wake_s) / 3600.0)
+            is_stale = age_hours > _STALE_AFTER_HOURS
+
+    source_date = str(effective.get("date") or "")[:10] if effective else None
+
+    return {
+        "context_day": day_str,
+        "has_today_row": has_today_row,
+        "carried_forward": carried_forward,
+        "is_stale": is_stale,
+        "source_date": source_date,
+        "age_hours": round(age_hours, 1) if age_hours is not None else None,
+        "effective_row": effective,
+    }
+
+
+def _biometrics_payload_for_context(today_row: Optional[dict], recovery_state: Dict[str, Any]) -> Dict[str, Any]:
+    """LLM-facing biometrics block: effective carry-forward when fresh; unavailable when stale/absent."""
+    effective = recovery_state.get("effective_row")
+    if recovery_state.get("is_stale") or not effective:
+        return {"available": False, "context_day": recovery_state.get("context_day")}
+    payload = dict(effective)
+    if recovery_state.get("carried_forward"):
+        payload["carried_forward"] = True
+        payload["context_day"] = recovery_state.get("context_day")
+    return payload
+
+
 def _load_biometrics_context(db: Client, athlete_id: str, day: date) -> Dict[str, Any]:
     day_str = day.isoformat()
     prev_day_str = (day - timedelta(days=1)).isoformat()
 
     b_res = (
         db.table("biometrics")
-        .select(
-            "date,hrv_rmssd,resting_hr,sleep_duration_min,sleep_score,sleep_deep_pct,sleep_rem_pct,sleep_light_pct,sleep_awake_pct,"
-            "sleep_bedtime,sleep_wakeup,spo2_pct,skin_temp,recovery_score,strain_score,sleep_need_min,sleep_debt_min"
-        )
+        .select(_BIOMETRICS_CONTEXT_SELECT)
         .eq("athlete_id", athlete_id)
         .eq("date", day_str)
         .maybe_single()
         .execute()
     )
     b = b_res.data if b_res else None
+    recovery_state = _resolve_current_recovery_state(db, athlete_id, day, b)
+    effective = recovery_state.get("effective_row") if not recovery_state.get("is_stale") else None
 
     # Prior 30 days baseline window (exclude selected day).
     base_start = (day - timedelta(days=30)).isoformat()
@@ -128,14 +246,22 @@ def _load_biometrics_context(db: Client, athlete_id: str, day: date) -> Dict[str
     # 7-day EWMA z-scores for HRV/RHR (baseline excludes today, since base_rows is
     # the prior 30-day window). These are also surfaced to the LLM context so
     # narrative analyses can mention z-score deviations explicitly.
-    today_hrv = (b or {}).get("hrv_rmssd") if b else None
-    today_rhr = (b or {}).get("resting_hr") if b else None
+    metric_row = effective or b
+    today_hrv = (metric_row or {}).get("hrv_rmssd") if metric_row else None
+    today_rhr = (metric_row or {}).get("resting_hr") if metric_row else None
     hrv_z, hrv_base_7d, hrv_sd_7d = _zscore_for(base_rows, "hrv_rmssd", float(today_hrv) if today_hrv is not None else None)
     rhr_z, rhr_base_7d, rhr_sd_7d = _zscore_for(base_rows, "resting_hr", float(today_rhr) if today_rhr is not None else None)
 
     return {
         "day": day_str,
-        "biometrics": b or {"available": False},
+        "biometrics": _biometrics_payload_for_context(b, recovery_state),
+        "current_recovery_state": {
+            "has_today_row": recovery_state.get("has_today_row"),
+            "carried_forward": recovery_state.get("carried_forward"),
+            "is_stale": recovery_state.get("is_stale"),
+            "source_date": recovery_state.get("source_date"),
+            "age_hours": recovery_state.get("age_hours"),
+        },
         "baselines_30d": {
             "hrv_rmssd": _baseline_30d(base_rows, "hrv_rmssd"),
             "resting_hr": _baseline_30d(base_rows, "resting_hr"),
@@ -151,7 +277,7 @@ def _load_biometrics_context(db: Client, athlete_id: str, day: date) -> Dict[str
             "rhr_sd_7d": rhr_sd_7d,
             "rhr_z": rhr_z,
         },
-        "sleep_debt_min": (b or {}).get("sleep_debt_min") if b else None,
+        "sleep_debt_min": (metric_row or {}).get("sleep_debt_min") if metric_row else None,
         "prior_day_load": prior_load or {"available": False},
     }
 
@@ -161,13 +287,14 @@ def _load_strain_context(db: Client, athlete_id: str, day: date) -> Dict[str, An
 
     bio_res = (
         db.table("biometrics")
-        .select("date,strain_score,recovery_score,sleep_score,hrv_rmssd,resting_hr")
+        .select("date,strain_score,recovery_score,readiness_score,sleep_score,hrv_rmssd,resting_hr,sleep_duration_min,sleep_wakeup")
         .eq("athlete_id", athlete_id)
         .eq("date", day_str)
         .maybe_single()
         .execute()
     )
-    bio = bio_res.data if bio_res else None
+    bio_today = bio_res.data if bio_res else None
+    recovery_state = _resolve_current_recovery_state(db, athlete_id, day, bio_today)
 
     pmc_res = (
         db.table("tss_history")
@@ -181,7 +308,14 @@ def _load_strain_context(db: Client, athlete_id: str, day: date) -> Dict[str, An
 
     return {
         "day": day_str,
-        "biometrics": bio or {"available": False},
+        "biometrics": _biometrics_payload_for_context(bio_today, recovery_state),
+        "current_recovery_state": {
+            "has_today_row": recovery_state.get("has_today_row"),
+            "carried_forward": recovery_state.get("carried_forward"),
+            "is_stale": recovery_state.get("is_stale"),
+            "source_date": recovery_state.get("source_date"),
+            "age_hours": recovery_state.get("age_hours"),
+        },
         "pmc": pmc or {"available": False},
     }
 
@@ -654,6 +788,13 @@ def _fallback_content(analysis_type: str, context: Dict[str, Any]) -> str:
         load_block = (ctx.get("training_load") or {}) if isinstance(ctx, dict) else {}
 
         b = (biom_block.get("biometrics") or {}) if isinstance(biom_block, dict) else {}
+        if isinstance(b, dict) and b.get("available") is False:
+            crs = (biom_block.get("current_recovery_state") or {}) if isinstance(biom_block, dict) else {}
+            if crs.get("is_stale"):
+                return (
+                    "Your dashboard summary reflects older recovery data. "
+                    "Sync your device for an updated read on sleep and recovery."
+                )
         bases = (biom_block.get("baselines_30d") or {}) if isinstance(biom_block, dict) else {}
         cur = (load_block.get("current") or {}) if isinstance(load_block, dict) else {}
 
