@@ -33,6 +33,42 @@ export function normalizeTypographyForWrap(text: string): string {
   return text.replace(/[\u201C\u201D]/g, '"').replace(/[\u2018\u2019]/g, "'");
 }
 
+const LIST_ITEM_RE = /^\s*[*+-]\s+/;
+/** Standalone bold line used as a section title, e.g. **Catch & Rotation (4x50m)** */
+const STANDALONE_BOLD_HEADING_RE = /^\s*\*\*.+\*\*\s*$/;
+
+function isListItemLine(line: string): boolean {
+  return LIST_ITEM_RE.test(line);
+}
+
+function isStandaloneBoldHeading(line: string): boolean {
+  return STANDALONE_BOLD_HEADING_RE.test(line.trim());
+}
+
+/**
+ * Inserts blank lines so CommonMark closes lists before the next block.
+ * Fixes models that omit \n\n between the last bullet and a **Section** heading.
+ */
+export function normalizeMarkdownBlockStructure(markdown: string): string {
+  const lines = (markdown ?? '').replace(/\r\n/g, '\n').split('\n');
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (isStandaloneBoldHeading(line)) {
+      let j = out.length - 1;
+      while (j >= 0 && out[j].trim() === '') j--;
+      if (j >= 0 && isListItemLine(out[j])) {
+        const hasBlankAfterList = out.slice(j + 1).some((l) => l.trim() === '');
+        if (!hasBlankAfterList) {
+          out.push('');
+        }
+      }
+    }
+    out.push(line);
+  }
+  return out.join('\n');
+}
+
 /**
  * marked sometimes pulls a trailing paragraph into the last tbody row when
  * the AI response has no blank line between the table and the footnote text.
@@ -271,7 +307,9 @@ const PURIFY_MATH: Parameters<typeof DOMPurify.sanitize>[1] = {
  * Coach reply markdown → sanitized HTML (GFM + line breaks + KaTeX + safe links).
  */
 export function renderCoachMarkdownToSafeHtml(text: string): string {
-  const src = normalizeTightInlineDollarMath(normalizeTypographyForWrap(text ?? ''));
+  const wrapped = normalizeTypographyForWrap(text ?? '');
+  const structured = normalizeMarkdownBlockStructure(wrapped);
+  const src = normalizeTightInlineDollarMath(structured);
   const html = coachMd.parse(src, { async: false }) as string;
   const lifted = liftTablePostscripts(html);
   return normalizeTypographyForWrap(DOMPurify.sanitize(lifted, {

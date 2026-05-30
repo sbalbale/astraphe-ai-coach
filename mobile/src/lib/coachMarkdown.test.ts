@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { extractFirstGfmPipeTable } from './coachMarkdown';
+import {
+  extractFirstGfmPipeTable,
+  normalizeMarkdownBlockStructure,
+  renderCoachMarkdownToSafeHtml
+} from './coachMarkdown';
 
 describe('extractFirstGfmPipeTable', () => {
   it('returns null table when no markdown table', () => {
@@ -43,5 +47,62 @@ describe('extractFirstGfmPipeTable', () => {
     const { tableMarkdown, remainder } = extractFirstGfmPipeTable(src);
     expect(tableMarkdown).not.toBeNull();
     expect(remainder).toBe('');
+  });
+});
+
+describe('normalizeMarkdownBlockStructure', () => {
+  it('inserts blank line before section heading after list items', () => {
+    const src = [
+      '* **The Drill:** rotate shoulder.',
+      '* **Why it matters:** proper rotation.',
+      '**High Elbow Catch (4x50m)**',
+      'This is EVF.'
+    ].join('\n');
+    const out = normalizeMarkdownBlockStructure(src);
+    expect(out).toBe(
+      [
+        '* **The Drill:** rotate shoulder.',
+        '* **Why it matters:** proper rotation.',
+        '',
+        '**High Elbow Catch (4x50m)**',
+        'This is EVF.'
+      ].join('\n')
+    );
+  });
+
+  it('does not change markdown that already has a blank line after the list', () => {
+    const src = ['* item one', '', '**Next Section**'].join('\n');
+    expect(normalizeMarkdownBlockStructure(src)).toBe(src);
+  });
+
+  it('does not insert blank line when heading is not preceded by a list item', () => {
+    const src = ['Intro paragraph.', '**Section Two**'].join('\n');
+    expect(normalizeMarkdownBlockStructure(src)).toBe(src);
+  });
+});
+
+describe('renderCoachMarkdownToSafeHtml', () => {
+  const swimDrillSample = [
+    'Here is the breakdown:',
+    '**Catch & Rotation (4x50m)**',
+    'The focus here is alignment.',
+    '* **The Drill:** rotate shoulder.',
+    '* **Why it matters:** proper rotation.',
+    '**High Elbow Catch (4x50m)**',
+    'This is often called the Early Vertical Forearm.'
+  ].join('\n');
+
+  it('closes list before second section heading (not inside last li)', () => {
+    const html = renderCoachMarkdownToSafeHtml(swimDrillSample);
+    expect(html).toContain('</ul>');
+    expect(html).toMatch(/<\/ul>[\s\S]*<p><strong>High Elbow Catch/);
+    expect(html).not.toMatch(/<li>[\s\S]*<strong>High Elbow Catch[\s\S]*<\/li>/);
+  });
+
+  it('renders bullet lists as ul/li', () => {
+    const html = renderCoachMarkdownToSafeHtml('* **The Drill:** one\n* **Why:** two');
+    expect(html).toContain('<ul>');
+    expect(html).toContain('<li>');
+    expect(html).toContain('<strong>The Drill:</strong>');
   });
 });
