@@ -130,20 +130,6 @@ def _merge_strava_source_ids(existing_source_ids: dict[str, Any], strava_activit
     existing_source_ids["strava"] = [sid]
 
 
-def _strava_quality_score(activity: dict | None) -> int:
-    """Higher = richer Strava detail. Used to pick primary when duplicate activities merge."""
-    if not activity or not isinstance(activity, dict):
-        return 0
-    score = 0
-    if activity.get("start_latlng"):
-        score += 3
-    if activity.get("average_watts") or activity.get("weighted_average_watts"):
-        score += 2
-    if activity.get("has_heartrate") or activity.get("average_heartrate"):
-        score += 1
-    return score
-
-
 def _strip_none_update_values(d: dict[str, Any]) -> dict[str, Any]:
     """
     PostgREST PATCH semantics: omit keys whose value is None so we do not wipe existing DB fields.
@@ -269,9 +255,9 @@ def _find_or_create_canonical_workout_sync(
       2. Fuzzy: same athlete + sport + started_at within ±10min + duration within 20%
 
     On merge: updates source_ids, elevates primary_source by SOURCE_PRIORITY order.
-    Strava duplicates accumulate in ``source_ids["strava"]`` (list of ids). When
-    ``strava_activity_payload`` is set (Strava ingest), a richer duplicate can replace
-    ``strava_activity_id`` and reset ``strava_streams_fetched`` for a re-fetch.
+    Strava duplicates accumulate in ``source_ids["strava"]`` (list of ids). Primary
+    Strava detail selection happens in ``app.services.strava`` after streams/laps
+    are fetched, so this resolver only links candidate ids to the canonical row.
 
     On create: inserts a minimal row; caller should UPDATE full workout fields afterward.
     """
@@ -379,30 +365,6 @@ def _find_or_create_canonical_workout_sync(
         }
         if strava_activity_id is not None and not matched.get("strava_activity_id"):
             merge_update["strava_activity_id"] = strava_activity_id
-        elif (
-            strava_activity_id is not None
-            and source == "strava"
-            and strava_activity_payload is not None
-            and matched.get("strava_activity_id") is not None
-            and int(matched["strava_activity_id"]) != int(strava_activity_id)
-        ):
-            existing_payload = matched.get("raw_strava_payload")
-            if not isinstance(existing_payload, dict):
-                existing_payload = None
-            new_score = _strava_quality_score(strava_activity_payload)
-            old_score = _strava_quality_score(existing_payload)
-            if new_score > old_score:
-                merge_update["strava_activity_id"] = strava_activity_id
-                merge_update["strava_streams_fetched"] = False
-                print(
-                    f"[strava.dedup] Promoting activity {strava_activity_id} over "
-                    f"{matched['strava_activity_id']} (score {new_score} > {old_score})"
-                )
-            else:
-                print(
-                    f"[strava.dedup] Keeping activity {matched['strava_activity_id']} as primary "
-                    f"over duplicate {strava_activity_id} (scores old={old_score} new={new_score})"
-                )
 
         merge_payload = _strip_none_update_values(merge_update)
         if merge_payload:

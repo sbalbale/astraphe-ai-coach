@@ -564,6 +564,107 @@ def _pick_best_laps(api_laps: list[Any] | None, embedded_laps: list[Any] | None)
     return api
 
 
+def _stream_data_len(streams: dict[str, Any] | None, key: str) -> int:
+    if not isinstance(streams, dict):
+        return 0
+    holder = streams.get(key)
+    if not isinstance(holder, dict):
+        return 0
+    data = holder.get("data")
+    return len(data) if isinstance(data, list) else 0
+
+
+def _has_quality_value(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value > 0
+    if isinstance(value, (list, dict, str)):
+        return bool(value)
+    return True
+
+
+def _lap_quality_score(laps: list[Any] | None) -> int:
+    score = 0
+    for lap in laps or []:
+        if not isinstance(lap, dict):
+            continue
+        score += 5_000
+        for key in (
+            "distance",
+            "elapsed_time",
+            "moving_time",
+            "average_heartrate",
+            "max_heartrate",
+            "average_watts",
+            "average_cadence",
+            "average_speed",
+            "total_elevation_gain",
+            "start_index",
+            "end_index",
+        ):
+            if _has_quality_value(lap.get(key)):
+                score += 250
+    return score
+
+
+def _strava_detail_quality_score(
+    activity: dict[str, Any] | None,
+    streams: dict[str, Any] | None,
+    laps: list[Any] | None,
+) -> int:
+    """
+    Higher means the activity has richer analyzable detail.
+
+    Stream presence dominates summary fields because streams/laps drive charts,
+    rowing intervals, zones, and downstream TSS/strain calculations.
+    """
+    score = 0
+    stream_weights = {
+        "heartrate": 100_000,
+        "watts": 90_000,
+        "latlng": 80_000,
+        "cadence": 35_000,
+        "distance": 30_000,
+        "velocity_smooth": 30_000,
+        "altitude": 15_000,
+        "time": 10_000,
+        "moving": 5_000,
+        "grade_smooth": 5_000,
+        "temp": 2_500,
+    }
+    for key, weight in stream_weights.items():
+        n = _stream_data_len(streams, key)
+        if n > 0:
+            score += weight + min(n, 30_000)
+
+    score += _lap_quality_score(laps)
+
+    if isinstance(activity, dict):
+        for key in (
+            "average_heartrate",
+            "max_heartrate",
+            "has_heartrate",
+            "average_watts",
+            "weighted_average_watts",
+            "device_watts",
+            "distance",
+            "total_elevation_gain",
+            "average_speed",
+            "max_speed",
+            "start_latlng",
+            "end_latlng",
+            "map",
+            "splits_metric",
+            "splits_standard",
+        ):
+            if _has_quality_value(activity.get(key)):
+                score += 500
+    return score
+
+
 def _persist_activity_laps(
     db: Any, workout_id: str, athlete_id: str, laps: list[Any]
 ) -> None:
@@ -719,20 +820,34 @@ async def resolve_canonical_workout_for_strava_activity(
     )
 
 
-def _strava_activity_is_primary(workout: dict, activity_id: int) -> bool:
-    """True when this Strava activity should receive streams/detail writes on the row."""
+def _strava_id_string(value: Any) -> str | None:
     try:
-        primary = int(workout["strava_activity_id"])
-        if primary == int(activity_id):
-            return True
-    except (TypeError, ValueError, KeyError):
-        pass
+        return str(int(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _strava_activity_is_primary(workout: dict, activity_id: int) -> bool:
+    """True when this Strava activity is the canonical Strava id on the workout."""
+    primary = _strava_id_string(workout.get("strava_activity_id"))
+    return primary is not None and primary == _strava_id_string(activity_id)
+
+
+def _strava_activity_is_linked(workout: dict, activity_id: int) -> bool:
+    """True when the activity is either primary or tracked as a Strava alias."""
+    if _strava_activity_is_primary(workout, activity_id):
+        return True
     raw = (workout.get("source_ids") or {}).get("strava")
-    sid = str(int(activity_id))
+    sid = _strava_id_string(activity_id)
+    if sid is None:
+        return False
     if isinstance(raw, list):
-        return sid in {str(int(x)) for x in raw if x is not None}
+        linked = {_strava_id_string(x) for x in raw}
+        return sid in {x for x in linked if x is not None}
     if isinstance(raw, str):
-        return raw == sid
+        return _strava_id_string(raw) == sid
+    if raw is not None:
+        return _strava_id_string(raw) == sid
     return False
 
 
@@ -810,16 +925,18 @@ async def ingest_strava_activity(
     except (TypeError, ValueError):
         primary_int = None
     is_primary_strava = _strava_activity_is_primary(workout, activity_id)
+    is_linked_strava = _strava_activity_is_linked(workout, activity_id)
+    is_duplicate_strava = is_linked_strava and not is_primary_strava
     needs_enrichment = force_refresh or not workout.get("strava_streams_fetched")
 
-    if not is_primary_strava:
+    if not is_linked_strava:
         print(
-            f"[strava.ingest] activity_id={activity_id} not primary on workout {workout_id}; "
+            f"[strava.ingest] activity_id={activity_id} not linked to workout {workout_id}; "
             f"primary strava_activity_id={primary_int}"
         )
         return workout
 
-    if not needs_enrichment and not was_created:
+    if is_primary_strava and not needs_enrichment and not was_created:
         if workout.get("tss") is not None:
             print(
                 f"[strava.ingest] activity_id={activity_id} already enriched on workout {workout_id}; skip"
@@ -831,14 +948,16 @@ async def ingest_strava_activity(
 
     # Fetch from Strava when no activity_streams row exists (flag alone is not reliable:
     # reprocess/merge paths may set strava_streams_fetched without persisting streams).
-    streams = _load_stored_streams_dict(db, workout_id)
-    if force_refresh or not streams:
+    stored_streams = _load_stored_streams_dict(db, workout_id)
+    if is_primary_strava and not force_refresh and stored_streams:
+        streams = stored_streams
+    else:
         streams = await get_activity_streams(activity_id, access_token, delay=delay)
 
-    if force_refresh:
+    cached_laps = _load_cached_laps_for_workout(db, workout_id)
+    if is_duplicate_strava or force_refresh:
         laps = await get_activity_laps(activity_id, access_token, delay=delay)
     elif not workout.get("strava_streams_fetched"):
-        cached_laps = _load_cached_laps_for_workout(db, workout_id)
         if cached_laps is not None:
             laps: list[Any] = cached_laps
         else:
@@ -855,6 +974,31 @@ async def ingest_strava_activity(
         merged_laps = _pick_best_laps(laps, embedded_list)
     else:
         merged_laps = laps if laps else embedded_list
+
+    if is_duplicate_strava:
+        existing_activity = _parse_raw_strava_payload(workout.get("raw_strava_payload"))
+        existing_embedded = (
+            existing_activity.get("laps")
+            if isinstance(existing_activity, dict) and isinstance(existing_activity.get("laps"), list)
+            else []
+        )
+        existing_laps = _pick_best_laps(cached_laps, existing_embedded)
+        existing_score = _strava_detail_quality_score(
+            existing_activity,
+            stored_streams,
+            existing_laps,
+        )
+        candidate_score = _strava_detail_quality_score(activity, streams, merged_laps)
+        if candidate_score <= existing_score:
+            print(
+                f"[strava.dedup] Keeping primary activity {primary_int} on workout {workout_id}; "
+                f"duplicate {activity_id} score {candidate_score} <= {existing_score}"
+            )
+            return workout
+        print(
+            f"[strava.dedup] Promoting duplicate activity {activity_id} over {primary_int} "
+            f"on workout {workout_id}; score {candidate_score} > {existing_score}"
+        )
 
     intervals = None
     intervals_source = None
@@ -894,6 +1038,7 @@ async def ingest_strava_activity(
     update = {k: v for k, v in update.items() if v is not None}
 
     db.table("workouts").update(update).eq("id", workout_id).execute()
+    workout = {**workout, **update}
 
     _upsert_activity_streams(db, workout_id, athlete_id, streams)
 
@@ -1011,16 +1156,6 @@ async def backfill_historical_data(
                 .execute()
             )
             if skip_primary is not None and skip_primary.data is not None:
-                continue
-            skip_linked = (
-                db.table("workouts")
-                .select("id")
-                .eq("athlete_id", athlete_id)
-                .contains("source_ids", {"strava": [str(aid)]})
-                .maybe_single()
-                .execute()
-            )
-            if skip_linked is not None and skip_linked.data is not None:
                 continue
 
             rl_attempts = 0
