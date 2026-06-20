@@ -325,6 +325,27 @@ export const api = {
     return null;
   },
 
+  async connectIntervalsIcu(payload: {
+    intervals_athlete_id: string;
+    api_key: string;
+    days?: number;
+  }) {
+    try {
+      const headers = await getAuthHeaders({ 'Content-Type': 'application/json' });
+      const res = await fetch(`${API_URL}/v1/sync/intervals-icu/connect`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload)
+      });
+      if (res.ok) return await res.json();
+      const text = await res.text().catch(() => '');
+      console.warn(`[API] Intervals.icu connect failed status=${res.status} body=${text}`);
+    } catch (e) {
+      console.warn('Failed to connect Intervals.icu.', e);
+    }
+    return null;
+  },
+
   async getSyncStatus() {
     try {
       const headers = await getAuthHeaders();
