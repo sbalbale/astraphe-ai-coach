@@ -8,7 +8,7 @@ import {
   type ActivityZones,
 } from '../services/activityService';
 
-const CACHE_KEY = 'astraphe:workout-detail:v1';
+const CACHE_KEY = 'astraphe:workout-detail:v2';
 const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 const MAX_ENTRIES = 20;
 

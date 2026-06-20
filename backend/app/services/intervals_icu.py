@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
+import logging
 
 import httpx
 from fastapi import HTTPException, status
@@ -9,7 +10,10 @@ from fastapi import HTTPException, status
 from app.config import settings
 from app.models.biometrics import DailyBiometrics
 from app.models.workout import WorkoutPayload
+from app.services.algorithms import compute_strain_score
 from app.services.ai_coach import invalidate_context_cache
+from app.services import stream_storage
+from app.services.hr_zones import compute_zone_distribution, get_athlete_zones
 from app.services.processing import (
     process_and_save_biometrics,
     process_and_save_workout,
@@ -20,6 +24,8 @@ from app.services.processing import (
 PROVIDER = "intervals_icu"
 AUTH_MODE_BASIC = "basic"
 AUTH_MODE_API_KEY_HEADER = "api_key_header"
+
+logger = logging.getLogger(__name__)
 
 
 def _api_base() -> str:
@@ -178,7 +184,7 @@ def _source_id(entry: dict[str, Any]) -> str | None:
 
 def _map_wellness_to_daily_biometrics(entry: dict[str, Any]) -> DailyBiometrics:
     bio_date = _parse_date(
-        _first(entry, "date", "day", "start_date", "startDate", "start_time", "startTime")
+        _first(entry, "date", "id", "day", "start_date", "startDate", "start_time", "startTime")
     )
     if bio_date is None:
         bio_date = datetime.now(timezone.utc).date()
@@ -289,12 +295,12 @@ async def fetch_biometrics(
     return [_map_wellness_to_daily_biometrics(entry) for entry in _as_list(payload, "wellness")]
 
 
-async def fetch_workouts(
+async def fetch_activity_summaries(
     intervals_athlete_id: str,
     api_key: str,
     start_date: date,
     end_date: date,
-) -> list[WorkoutPayload]:
+) -> list[dict[str, Any]]:
     params = {"oldest": start_date.isoformat(), "newest": end_date.isoformat()}
     payload = await _get_json(
         f"/v1/athlete/{intervals_athlete_id}/activities",
@@ -302,12 +308,207 @@ async def fetch_workouts(
         params=params,
         label="activities fetch",
     )
+    return _as_list(payload, "activities")
+
+
+def _coerce_stream_series(value: Any) -> list[Any] | None:
+    if isinstance(value, list):
+        return value
+    if isinstance(value, dict):
+        data = value.get("data")
+        if isinstance(data, list):
+            return data
+    return None
+
+
+def _coerce_latlng_series(value: dict[str, Any]) -> list[list[float]] | None:
+    lat = value.get("data")
+    lng = value.get("data2")
+    if not isinstance(lat, list) or not isinstance(lng, list):
+        return None
+    n = min(len(lat), len(lng))
+    points: list[list[float]] = []
+    for i in range(n):
+        try:
+            lat_f = float(lat[i])
+            lng_f = float(lng[i])
+        except (TypeError, ValueError):
+            continue
+        if -90.0 <= lat_f <= 90.0 and -180.0 <= lng_f <= 180.0:
+            points.append([lat_f, lng_f])
+    return points or None
+
+
+def _normalize_streams_payload(payload: Any) -> dict[str, list[Any]]:
+    if isinstance(payload, list):
+        out: dict[str, list[Any]] = {}
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            key = item.get("type") or item.get("name")
+            if key == "latlng":
+                series = _coerce_latlng_series(item) or _coerce_stream_series(item)
+            else:
+                series = _coerce_stream_series(item)
+            if key and series is not None:
+                out[str(key)] = series
+        return out
+
+    source = payload
+    if isinstance(payload, dict):
+        for key in ("streams", "time_series", "timeSeries"):
+            nested = payload.get(key)
+            if isinstance(nested, (dict, list)):
+                return _normalize_streams_payload(nested)
+    if not isinstance(source, dict):
+        return {}
+
+    out: dict[str, list[Any]] = {}
+    for key, value in source.items():
+        series = _coerce_stream_series(value)
+        if series is not None:
+            out[str(key)] = series
+    return out
+
+
+async def fetch_activity_streams(activity_id: str, api_key: str) -> dict[str, list[Any]]:
+    if not activity_id:
+        return {}
+    try:
+        payload = await _get_json(
+            f"/v1/activity/{activity_id}/streams.json",
+            api_key,
+            label="activity streams fetch",
+        )
+    except HTTPException as exc:
+        if exc.status_code in (status.HTTP_404_NOT_FOUND, status.HTTP_422_UNPROCESSABLE_ENTITY):
+            logger.info(
+                "Intervals.icu activity streams unavailable activity_id=%s status=%s detail=%s",
+                activity_id,
+                exc.status_code,
+                exc.detail,
+            )
+            return {}
+        raise
+    return _normalize_streams_payload(payload)
+
+
+def _upsert_activity_streams(
+    db: Any,
+    workout_id: str,
+    athlete_id: str,
+    time_series: dict[str, Any],
+) -> bool:
+    if not time_series:
+        return False
+    storage_path, byte_size = stream_storage.upload_time_series_gzip(
+        athlete_id, workout_id, time_series
+    )
+    payload = {
+        "workout_id": workout_id,
+        "athlete_id": athlete_id,
+        "time_series": None,
+        "storage_path": storage_path,
+        "byte_size": byte_size,
+        "content_encoding": stream_storage.CONTENT_ENCODING,
+        "resolution_seconds": 1,
+    }
+    existing = (
+        db.table("activity_streams")
+        .select("id")
+        .eq("workout_id", workout_id)
+        .maybe_single()
+        .execute()
+    )
+    if existing and existing.data:
+        db.table("activity_streams").update(payload).eq("workout_id", workout_id).execute()
+    else:
+        db.table("activity_streams").insert(payload).execute()
+    return True
+
+
+def _hr_zone_columns_from_streams(db: Any, athlete_id: str, streams: dict[str, Any]) -> dict[str, Any]:
+    hr_stream = streams.get("heartrate")
+    if not isinstance(hr_stream, list) or not hr_stream:
+        return {}
+    athlete_res = (
+        db.table("athletes")
+        .select("lthr,threshold_hr,max_hr,resting_hr,threshold_hr_source,hr_zone_method")
+        .eq("id", athlete_id)
+        .maybe_single()
+        .execute()
+    )
+    athlete = athlete_res.data if athlete_res and athlete_res.data else {}
+    zone_dist = compute_zone_distribution(hr_stream, get_athlete_zones(athlete))
+    out: dict[str, Any] = {}
+    zone_minutes: dict[int, float] = {}
+    duration_min = len(hr_stream) / 60.0
+    for idx in range(1, 6):
+        pct = zone_dist.get(f"Z{idx}")
+        if pct is None:
+            continue
+        pct_i = int(round(float(pct)))
+        out[f"hr_zone_{idx}_pct"] = max(0, min(100, pct_i))
+        zone_minutes[idx] = (float(pct) / 100.0) * duration_min
+    if zone_minutes:
+        out["strain_score"] = compute_strain_score(zone_minutes)
+    return out
+
+
+def _update_workout_hr_zones_from_streams(
+    db: Any,
+    workout_id: str,
+    athlete_id: str,
+    streams: dict[str, Any],
+) -> bool:
+    update = _hr_zone_columns_from_streams(db, athlete_id, streams)
+    if not update:
+        return False
+    db.table("workouts").update(update).eq("id", workout_id).execute()
+    return True
+
+
+async def fetch_workouts(
+    intervals_athlete_id: str,
+    api_key: str,
+    start_date: date,
+    end_date: date,
+) -> list[WorkoutPayload]:
+    activities = await fetch_activity_summaries(intervals_athlete_id, api_key, start_date, end_date)
     workouts: list[WorkoutPayload] = []
-    for activity in _as_list(payload, "activities"):
+    for activity in activities:
         mapped = _map_activity_to_workout_payload(activity)
         if mapped is not None:
             workouts.append(mapped)
     return workouts
+
+
+async def _save_activity_summary_and_streams(
+    activity: dict[str, Any],
+    athlete_id: str,
+    api_key: str,
+    db: Any,
+) -> tuple[bool, bool]:
+    workout = _map_activity_to_workout_payload(activity)
+    if workout is None:
+        return False, False
+    workout_id = await process_and_save_workout(
+        workout,
+        athlete_id,
+        db,
+        skip_tss_recalc=True,
+        skip_daily_strain_refresh=True,
+    )
+    activity_id = _source_id(activity)
+    streams = await fetch_activity_streams(activity_id, api_key) if activity_id else {}
+    streams_saved = _upsert_activity_streams(db, workout_id, athlete_id, streams)
+    if streams_saved:
+        _update_workout_hr_zones_from_streams(db, workout_id, athlete_id, streams)
+    elif activity_id:
+        logger.info("Intervals.icu activity streams unavailable activity_id=%s", activity_id)
+    return True, streams_saved
+
+
 
 
 async def backfill_historical_data(
@@ -321,17 +522,20 @@ async def backfill_historical_data(
     end_date = datetime.now(timezone.utc).date()
     start_date = end_date - timedelta(days=days - 1)
 
-    workouts = await fetch_workouts(intervals_athlete_id, api_key, start_date, end_date)
+    activities = await fetch_activity_summaries(intervals_athlete_id, api_key, start_date, end_date)
     workout_count = 0
-    for workout in workouts:
-        await process_and_save_workout(
-            workout,
+    stream_count = 0
+    for activity in activities:
+        saved_workout, saved_streams = await _save_activity_summary_and_streams(
+            activity,
             athlete_id,
+            api_key,
             db,
-            skip_tss_recalc=True,
-            skip_daily_strain_refresh=True,
         )
-        workout_count += 1
+        if saved_workout:
+            workout_count += 1
+        if saved_streams:
+            stream_count += 1
 
     await recompute_workout_tss_for_athlete(athlete_id, db)
     recalculate_tss_history(athlete_id, db)
@@ -343,8 +547,17 @@ async def backfill_historical_data(
         biometric_count += 1
 
     invalidate_context_cache(athlete_id)
-    print(
-        f"[intervals_icu.backfill] athlete={athlete_id} workouts={workout_count} "
-        f"biometrics={biometric_count} days={days}"
+    logger.info(
+        "Intervals.icu backfill complete athlete=%s workouts=%s streams=%s biometrics=%s days=%s",
+        athlete_id,
+        workout_count,
+        stream_count,
+        biometric_count,
+        days,
     )
-    return {"workouts": workout_count, "biometrics": biometric_count, "days": days}
+    return {
+        "workouts": workout_count,
+        "streams": stream_count,
+        "biometrics": biometric_count,
+        "days": days,
+    }

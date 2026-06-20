@@ -279,11 +279,11 @@ Backfills Strava activities. Query parameter: `days` (default 90).
 
 ### `POST /v1/sync/intervals-icu/connect`
 
-Stores an Intervals.icu athlete ID and API key server-side, verifies access, and queues a workouts/biometrics backfill. Body fields: `intervals_athlete_id`, `api_key`, optional `days` (default 90).
+Stores an Intervals.icu athlete ID and API key server-side, verifies access, and queues a workouts/wellness/stream backfill. Body fields: `intervals_athlete_id`, `api_key`, optional `days` (default 90).
 
 ### `POST /v1/sync/intervals-icu/backfill`
 
-Backfills Intervals.icu workouts and wellness data. Query parameter: `days` (default 90).
+Backfills Intervals.icu workout summaries, available activity streams, and wellness data. Query parameter: `days` (default 90). Response includes `workouts`, `streams`, `biometrics`, and `days` counts.
 
 ## Training Plan
 

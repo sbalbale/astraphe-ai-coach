@@ -100,8 +100,8 @@ Important fields:
 - `tss`
 - `if_value`
 - `strain_score`
-- `fit_file_url` — optional URL/path to a **raw Garmin `.fit` artifact** (future direct Garmin ingest). Not the canonical stream store; canonical streams live in Supabase Storage bucket `activity-streams` as gzip JSON (`activity_streams.storage_path`). Parsed FIT data uses the same `time_series` schema as Strava/WHOOP.
-- Strava-related detail/source columns from later migrations
+- `fit_file_url` — optional URL/path to a **raw Garmin `.fit` artifact** (future direct Garmin ingest). Not the canonical stream store; canonical streams live in Supabase Storage bucket `activity-streams` as gzip JSON (`activity_streams.storage_path`). Parsed FIT/Intervals.icu/Strava data uses the same `time_series` schema.
+- Integration detail/source columns from later migrations, including Strava IDs and source merge metadata.
 
 Allowed sources include `garmin`, `whoop`, `healthkit`, `manual`, `strava`, and `intervals_icu`.
 
@@ -138,6 +138,8 @@ Important fields:
 - `strain_score`
 
 `skin_temp` stores absolute Celsius.
+Intervals.icu wellness rows may use `id` as the local wellness date; ingestion maps that to `biometrics.date` and keeps the same value as `external_id`.
+
 
 ### `sleep_periods`
 
@@ -209,14 +211,17 @@ Important fields:
 
 ### `activity_streams`
 
-Stores heavy per-second activity streams separately from `workouts`.
+Stores heavy per-second activity streams separately from `workouts`. Strava and Intervals.icu stream bundles are normalized into a flat `time_series` JSON object and stored as gzip JSON in Supabase Storage.
 
 Important fields:
 
 - `workout_id`
 - `athlete_id`
-- `stream_data` / stream JSON payload fields from migration
-- metadata such as resolution/source
+- `time_series` — legacy inline JSONB, usually `NULL` after gzip storage migration
+- `storage_path` — `{athlete_id}/{workout_id}.json.gz` object in bucket `activity-streams`
+- `byte_size`
+- `content_encoding`
+- `resolution_seconds`
 
 ### `activity_laps`
 
