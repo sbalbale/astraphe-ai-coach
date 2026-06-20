@@ -103,7 +103,7 @@ Important fields:
 - `fit_file_url` — optional URL/path to a **raw Garmin `.fit` artifact** (future direct Garmin ingest). Not the canonical stream store; canonical streams live in Supabase Storage bucket `activity-streams` as gzip JSON (`activity_streams.storage_path`). Parsed FIT data uses the same `time_series` schema as Strava/WHOOP.
 - Strava-related detail/source columns from later migrations
 
-Allowed sources include `garmin`, `whoop`, `healthkit`, `manual`, and `strava`.
+Allowed sources include `garmin`, `whoop`, `healthkit`, `manual`, `strava`, and `intervals_icu`.
 
 Allowed sports are:
 
@@ -195,7 +195,7 @@ Important fields:
 
 Stores third-party tokens by athlete/provider.
 
-Providers currently include WHOOP, Garmin-related flows, and Strava. Token access is server-side; clients never receive OAuth tokens.
+Providers currently include WHOOP, Garmin-related flows, Strava, and Intervals.icu. Token access is server-side; clients never receive OAuth/API tokens.
 
 Important fields:
 

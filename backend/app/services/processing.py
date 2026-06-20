@@ -84,7 +84,7 @@ SPORT_CANONICAL = {
 
 _SPORT_CANONICAL_LOOKUP: dict[str, str] = {k.lower(): v for k, v in SPORT_CANONICAL.items()}
 
-SOURCE_PRIORITY = ["strava", "garmin", "healthkit", "whoop", "manual"]
+SOURCE_PRIORITY = ["strava", "intervals_icu", "garmin", "healthkit", "whoop", "manual"]
 
 _DB_SPORTS = frozenset({"run", "bike", "swim", "strength", "row", "mobility", "other"})
 
@@ -836,9 +836,29 @@ def process_and_save_biometrics(
 
     # Time Asleep MUST equal Time in Bed minus Awake Time
     total_sleep_min = int(round(total_in_bed_min - total_awake_min))
+    if not all_periods and payload.sleep_duration_min is not None:
+        total_sleep_min = int(max(0, payload.sleep_duration_min))
+        total_in_bed_min = int(max(0, payload.sleep_in_bed_min or total_sleep_min))
+        awake_pct = float(payload.sleep_awake_pct or 0.0)
+        total_awake_min = max(0.0, total_in_bed_min - total_sleep_min)
+        if total_awake_min == 0.0 and awake_pct > 0.0:
+            total_awake_min = (awake_pct / 100.0) * total_in_bed_min
+            total_sleep_min = int(round(max(0.0, total_in_bed_min - total_awake_min)))
+        agg_deep = payload.sleep_deep_pct
+        agg_rem = payload.sleep_rem_pct
+        agg_light = payload.sleep_light_pct
+        agg_awake = payload.sleep_awake_pct
 
-    rem_sleep_min = float(weighted_rem) / 100.0 if total_in_bed_min > 0 else 0.0
-    deep_sleep_min = float(weighted_deep) / 100.0 if total_in_bed_min > 0 else 0.0
+    rem_sleep_min = (
+        (float(agg_rem) / 100.0) * total_in_bed_min
+        if agg_rem is not None and total_in_bed_min > 0
+        else 0.0
+    )
+    deep_sleep_min = (
+        (float(agg_deep) / 100.0) * total_in_bed_min
+        if agg_deep is not None and total_in_bed_min > 0
+        else 0.0
+    )
 
     # 3 + 4. Fetch prev day's biometrics, 42d history, and athlete profile in parallel.
     # These three reads are fully independent, so we fan them out across a small
