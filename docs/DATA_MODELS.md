@@ -136,9 +136,10 @@ Important fields:
 - `recovery_score`
 - `readiness_score`
 - `strain_score`
+- `metric_sources` — JSONB per-field provenance used for quality-ranked biometrics merges
 
 `skin_temp` stores absolute Celsius.
-Intervals.icu wellness rows may use `id` as the local wellness date; ingestion maps that to `biometrics.date` and keeps the same value as `external_id`.
+Intervals.icu wellness rows may use `id` as the local wellness date; ingestion maps that to `biometrics.date` and keeps the same value as `external_id`. If Intervals.icu supplies sleep duration without sleep-stage percentages, ingestion stores the duration, leaves stage percentages `NULL`, and computes Astraphe's backup sleep score from known duration versus baseline nightly need instead of using the provider `sleepScore`.
 
 
 ### `sleep_periods`
@@ -212,6 +213,7 @@ Important fields:
 ### `activity_streams`
 
 Stores heavy per-second activity streams separately from `workouts`. Strava and Intervals.icu stream bundles are normalized into a flat `time_series` JSON object and stored as gzip JSON in Supabase Storage.
+Intervals.icu HR streams also refresh workout `avg_hr`, `max_hr`, `hr_zone_*_pct`, and `strain_score` using the athlete's current zone anchors. Activity summaries can refresh `athletes.max_hr`, `athletes.resting_hr`, and estimated `athletes.threshold_hr` when Intervals.icu provides those values.
 
 Important fields:
 

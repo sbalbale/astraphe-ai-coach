@@ -283,7 +283,7 @@ Stores an Intervals.icu athlete ID and API key server-side, verifies access, and
 
 ### `POST /v1/sync/intervals-icu/backfill`
 
-Backfills Intervals.icu workout summaries, available activity streams, and wellness data. Query parameter: `days` (default 90). Response includes `workouts`, `streams`, `biometrics`, and `days` counts.
+Backfills Intervals.icu workout summaries, available activity streams, HR anchors/zones, and wellness data. Query parameter: `days` (default 90). Response includes `workouts`, `streams`, `biometrics`, and `days` counts.
 
 ## Training Plan
 

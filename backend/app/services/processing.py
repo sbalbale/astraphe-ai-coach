@@ -153,6 +153,130 @@ def _strip_none_update_values(d: dict[str, Any]) -> dict[str, Any]:
     """
     return {k: v for k, v in d.items() if v is not None}
 
+_QUALITY_FIELD_SOURCES: dict[str, tuple[str, ...]] = {
+    "title": ("strava", "intervals_icu", "garmin", "healthkit", "whoop", "manual"),
+    "started_at": ("strava", "intervals_icu", "garmin", "healthkit", "whoop", "manual"),
+    "ended_at": ("strava", "intervals_icu", "garmin", "healthkit", "whoop", "manual"),
+    "duration_seconds": ("strava", "intervals_icu", "garmin", "healthkit", "whoop", "manual"),
+    "distance_m": ("strava", "intervals_icu", "garmin", "healthkit", "whoop", "manual"),
+    "avg_power_w": ("strava", "intervals_icu", "garmin", "healthkit", "whoop", "manual"),
+    "norm_power_w": ("strava", "intervals_icu", "garmin", "healthkit", "whoop", "manual"),
+    "avg_pace_sec_km": ("strava", "intervals_icu", "garmin", "healthkit", "whoop", "manual"),
+    "tss": ("strava", "intervals_icu", "garmin", "whoop", "healthkit", "manual"),
+    "avg_hr": ("intervals_icu", "strava", "garmin", "whoop", "healthkit", "manual"),
+    "max_hr": ("intervals_icu", "strava", "garmin", "whoop", "healthkit", "manual"),
+    "hr_zone_1_pct": ("intervals_icu", "strava", "garmin", "whoop", "healthkit", "manual"),
+    "hr_zone_2_pct": ("intervals_icu", "strava", "garmin", "whoop", "healthkit", "manual"),
+    "hr_zone_3_pct": ("intervals_icu", "strava", "garmin", "whoop", "healthkit", "manual"),
+    "hr_zone_4_pct": ("intervals_icu", "strava", "garmin", "whoop", "healthkit", "manual"),
+    "hr_zone_5_pct": ("intervals_icu", "strava", "garmin", "whoop", "healthkit", "manual"),
+    "strain_score": ("intervals_icu", "strava", "garmin", "whoop", "healthkit", "manual"),
+}
+
+
+def _source_quality_rank(field: str, source: str | None) -> int:
+    order = _QUALITY_FIELD_SOURCES.get(field, tuple(SOURCE_PRIORITY))
+    try:
+        return order.index(source or "manual")
+    except ValueError:
+        return len(order)
+
+
+def _has_existing_metric_value(value: Any) -> bool:
+    if value is None:
+        return False
+    if value == "":
+        return False
+    return True
+
+
+def _quality_filter_workout_update(
+    existing_row: dict[str, Any],
+    incoming_source: str,
+    update_data: dict[str, Any],
+) -> dict[str, Any]:
+    current_source = existing_row.get("primary_source") or existing_row.get("source") or "manual"
+    filtered: dict[str, Any] = {}
+    for field, value in update_data.items():
+        if value is None:
+            continue
+        if field not in _QUALITY_FIELD_SOURCES:
+            filtered[field] = value
+            continue
+        if not _has_existing_metric_value(existing_row.get(field)):
+            filtered[field] = value
+            continue
+        if _source_quality_rank(field, incoming_source) <= _source_quality_rank(field, current_source):
+            filtered[field] = value
+    return filtered
+
+_BIOMETRIC_FIELD_SOURCES: dict[str, tuple[str, ...]] = {
+    "hrv_rmssd": ("whoop", "garmin", "healthkit", "intervals_icu", "manual"),
+    "resting_hr": ("whoop", "garmin", "healthkit", "intervals_icu", "manual"),
+    "skin_temp": ("whoop", "garmin", "healthkit", "intervals_icu", "manual"),
+    "spo2_pct": ("whoop", "garmin", "healthkit", "intervals_icu", "manual"),
+    "sleep_duration_min": ("whoop", "garmin", "healthkit", "intervals_icu", "manual"),
+    "sleep_in_bed_min": ("whoop", "garmin", "healthkit", "intervals_icu", "manual"),
+    "sleep_deep_pct": ("whoop", "garmin", "healthkit", "intervals_icu", "manual"),
+    "sleep_rem_pct": ("whoop", "garmin", "healthkit", "intervals_icu", "manual"),
+    "sleep_light_pct": ("whoop", "garmin", "healthkit", "intervals_icu", "manual"),
+    "sleep_awake_pct": ("whoop", "garmin", "healthkit", "intervals_icu", "manual"),
+    "sleep_bedtime": ("whoop", "garmin", "healthkit", "intervals_icu", "manual"),
+    "sleep_wakeup": ("whoop", "garmin", "healthkit", "intervals_icu", "manual"),
+    "weight_kg": ("manual", "whoop", "garmin", "healthkit", "intervals_icu"),
+    "height_cm": ("manual", "whoop", "garmin", "healthkit", "intervals_icu"),
+}
+
+
+def _biometric_source_quality_rank(field: str, source: str | None) -> int:
+    order = _BIOMETRIC_FIELD_SOURCES.get(field, ("manual",))
+    try:
+        return order.index(source or "manual")
+    except ValueError:
+        return len(order)
+
+
+def _choose_biometric_metric(
+    existing: dict[str, Any],
+    metric_sources: dict[str, Any],
+    field: str,
+    incoming_value: Any,
+    incoming_source: str,
+) -> tuple[Any, str | None]:
+    existing_value = existing.get(field)
+    existing_source = metric_sources.get(field) or existing.get("hrv_source")
+    if not _has_existing_metric_value(existing_value):
+        return incoming_value, incoming_source if _has_existing_metric_value(incoming_value) else None
+    if not _has_existing_metric_value(incoming_value):
+        return existing_value, str(existing_source) if existing_source else None
+    if _biometric_source_quality_rank(field, incoming_source) <= _biometric_source_quality_rank(
+        field, str(existing_source) if existing_source else None
+    ):
+        return incoming_value, incoming_source
+    return existing_value, str(existing_source) if existing_source else None
+
+
+def _set_metric_source(metric_sources: dict[str, Any], field: str, source: str | None, value: Any) -> None:
+    if _has_existing_metric_value(value) and source:
+        metric_sources[field] = source
+    else:
+        metric_sources.pop(field, None)
+
+def _upsert_biometrics_sync(db: Any, payload: dict[str, Any]) -> None:
+    try:
+        db.table("biometrics").upsert(payload, on_conflict="athlete_id,date").execute()
+        return
+    except Exception as exc:
+        msg = str(exc)
+        if "metric_sources" not in msg and "schema cache" not in msg:
+            raise
+    fallback = dict(payload)
+    fallback.pop("metric_sources", None)
+    db.table("biometrics").upsert(fallback, on_conflict="athlete_id,date").execute()
+
+
+
+
 
 def _parse_workout_dt(val: Any) -> datetime | None:
     if val is None:
@@ -201,6 +325,24 @@ def _compute_daily_strain_from_workout_rows(rows: list[dict]) -> int:
             pct = w.get(f"hr_zone_{z}_pct") or 0
             day_zone_minutes[z] += (float(pct) / 100.0) * (dur_sec / 60.0)
     return compute_strain_score(day_zone_minutes)
+
+def _compute_sleep_score_without_architecture(actual_sleep_min: float, sleep_need_min: float, awake_min: float = 0.0) -> int:
+    """Backup sleep score when a provider gives duration but no REM/deep/light stages."""
+    if sleep_need_min <= 0 or actual_sleep_min <= 0:
+        return 0
+
+    need = float(sleep_need_min)
+    slept = float(actual_sleep_min)
+    ratio = slept / need
+    if ratio <= 0.50:
+        base = 45.0 * (ratio / 0.50)
+    elif ratio <= 0.75:
+        base = 45.0 + (25.0 * ((ratio - 0.50) / 0.25))
+    else:
+        base = 70.0 + (30.0 * min(1.0, (ratio - 0.75) / 0.25))
+
+    return int(round(np.clip(base - (float(awake_min) * 0.3), 0, 100)))
+
 
 
 def _refresh_daily_strain_for_day_sync(db: Any, athlete_id: str, day: date) -> int:
@@ -734,6 +876,7 @@ async def process_and_save_workout(
         "hr_zone_5_pct": hr_zones.get(5),
     }
 
+    update_data = _quality_filter_workout_update(row, source, update_data)
     await asyncio.to_thread(_workouts_update_by_id_sync, db, workout_id, update_data)
     # In batch contexts (Strava/WHOOP backfill) the caller recalculates TSS once at the end.
     if not skip_tss_recalc:
@@ -974,13 +1117,25 @@ def process_and_save_biometrics(
         current_debt_min=carried_debt,
     )
     
-    sleep_score = compute_sleep_score(
-        actual_sleep_min=total_sleep_min,
-        sleep_need_min=sleep_need,
-        rem_min=rem_sleep_min,
-        deep_min=deep_sleep_min,
-        awake_min=total_awake_min,
-    )
+    has_sleep_architecture = agg_rem is not None or agg_deep is not None
+    if not has_sleep_architecture:
+        # Backup score for providers like Intervals.icu that expose duration but no stage
+        # architecture. Do not copy the provider score; use a duration curve anchored to the
+        # baseline nightly need rather than accumulated sleep debt, so the backup approximates
+        # the observed wearable score while sleep debt is tracked separately.
+        sleep_score = _compute_sleep_score_without_architecture(
+            total_sleep_min,
+            DEFAULT_BASELINE_SLEEP_MIN,
+            total_awake_min,
+        )
+    else:
+        sleep_score = compute_sleep_score(
+            actual_sleep_min=total_sleep_min,
+            sleep_need_min=sleep_need,
+            rem_min=rem_sleep_min,
+            deep_min=deep_sleep_min,
+            awake_min=total_awake_min,
+        )
 
     next_night_debt = float(np.clip(float(sleep_need) - float(total_sleep_min), 0.0, MAX_SLEEP_DEBT_MIN))
 
@@ -1005,11 +1160,107 @@ def process_and_save_biometrics(
     day_rows = (day_workouts_res.data if day_workouts_res else None) or []
     astraphe_strain_score = _compute_daily_strain_from_workout_rows(day_rows)
 
-    final_hrv = payload.hrv_rmssd if payload.hrv_rmssd is not None else existing.get("hrv_rmssd")
-    final_rhr = payload.resting_hr if payload.resting_hr is not None else existing.get("resting_hr")
-    final_temp = payload.skin_temp if payload.skin_temp is not None else existing.get("skin_temp")
-    final_spo2 = payload.spo2_pct if payload.spo2_pct is not None else existing.get("spo2_pct")
-    final_source = payload.source if payload.hrv_rmssd is not None else existing.get("hrv_source", payload.source)
+    metric_sources = dict(existing.get("metric_sources") or {})
+    incoming_source = payload.source or "manual"
+
+    final_hrv, hrv_source = _choose_biometric_metric(
+        existing, metric_sources, "hrv_rmssd", payload.hrv_rmssd, incoming_source
+    )
+    final_rhr, rhr_source = _choose_biometric_metric(
+        existing, metric_sources, "resting_hr", payload.resting_hr, incoming_source
+    )
+    final_temp, temp_source = _choose_biometric_metric(
+        existing, metric_sources, "skin_temp", payload.skin_temp, incoming_source
+    )
+    final_spo2, spo2_source = _choose_biometric_metric(
+        existing, metric_sources, "spo2_pct", payload.spo2_pct, incoming_source
+    )
+    final_weight, weight_source = _choose_biometric_metric(
+        existing, metric_sources, "weight_kg", payload.weight_kg, incoming_source
+    )
+    final_height, height_source = _choose_biometric_metric(
+        existing, metric_sources, "height_cm", payload.height_cm, incoming_source
+    )
+    final_sleep_duration, sleep_duration_source = _choose_biometric_metric(
+        existing, metric_sources, "sleep_duration_min", total_sleep_min, incoming_source
+    )
+    final_sleep_in_bed, sleep_in_bed_source = _choose_biometric_metric(
+        existing, metric_sources, "sleep_in_bed_min", total_in_bed_min, incoming_source
+    )
+    final_deep, deep_source = _choose_biometric_metric(
+        existing, metric_sources, "sleep_deep_pct", agg_deep, incoming_source
+    )
+    final_rem, rem_source = _choose_biometric_metric(
+        existing, metric_sources, "sleep_rem_pct", agg_rem, incoming_source
+    )
+    final_light, light_source = _choose_biometric_metric(
+        existing, metric_sources, "sleep_light_pct", agg_light, incoming_source
+    )
+    final_awake, awake_source = _choose_biometric_metric(
+        existing, metric_sources, "sleep_awake_pct", agg_awake, incoming_source
+    )
+    incoming_bedtime = main_sleep.get("started_at") if main_sleep else None
+    incoming_wakeup = main_sleep.get("ended_at") if main_sleep else None
+    final_bedtime, bedtime_source = _choose_biometric_metric(
+        existing, metric_sources, "sleep_bedtime", incoming_bedtime, incoming_source
+    )
+    final_wakeup, wakeup_source = _choose_biometric_metric(
+        existing, metric_sources, "sleep_wakeup", incoming_wakeup, incoming_source
+    )
+
+    final_in_bed_for_score = int(final_sleep_in_bed or final_sleep_duration or 0)
+    final_sleep_for_score = int(final_sleep_duration or 0)
+    if final_awake is not None and final_in_bed_for_score > 0:
+        final_awake_min = (float(final_awake) / 100.0) * final_in_bed_for_score
+    else:
+        final_awake_min = max(0.0, float(final_in_bed_for_score - final_sleep_for_score))
+    final_rem_min = (
+        (float(final_rem) / 100.0) * final_in_bed_for_score
+        if final_rem is not None and final_in_bed_for_score > 0
+        else 0.0
+    )
+    final_deep_min = (
+        (float(final_deep) / 100.0) * final_in_bed_for_score
+        if final_deep is not None and final_in_bed_for_score > 0
+        else 0.0
+    )
+    if final_rem is not None or final_deep is not None:
+        sleep_score = compute_sleep_score(
+            actual_sleep_min=final_sleep_for_score,
+            sleep_need_min=sleep_need,
+            rem_min=final_rem_min,
+            deep_min=final_deep_min,
+            awake_min=final_awake_min,
+        )
+    else:
+        sleep_score = _compute_sleep_score_without_architecture(
+            final_sleep_for_score,
+            DEFAULT_BASELINE_SLEEP_MIN,
+            final_awake_min,
+        )
+
+    for field, src, value in (
+        ("hrv_rmssd", hrv_source, final_hrv),
+        ("resting_hr", rhr_source, final_rhr),
+        ("skin_temp", temp_source, final_temp),
+        ("spo2_pct", spo2_source, final_spo2),
+        ("weight_kg", weight_source, final_weight),
+        ("height_cm", height_source, final_height),
+        ("sleep_duration_min", sleep_duration_source, final_sleep_duration),
+        ("sleep_in_bed_min", sleep_in_bed_source, final_sleep_in_bed),
+        ("sleep_deep_pct", deep_source, final_deep),
+        ("sleep_rem_pct", rem_source, final_rem),
+        ("sleep_light_pct", light_source, final_light),
+        ("sleep_awake_pct", awake_source, final_awake),
+        ("sleep_bedtime", bedtime_source, final_bedtime),
+        ("sleep_wakeup", wakeup_source, final_wakeup),
+    ):
+        _set_metric_source(metric_sources, field, src, value)
+    metric_sources["sleep_score"] = "astraphe" if (final_rem is not None or final_deep is not None) else "astraphe_backup"
+    metric_sources["recovery_score"] = "astraphe"
+    metric_sources["readiness_score"] = "astraphe"
+    metric_sources["strain_score"] = "astraphe"
+    final_source = hrv_source or existing.get("hrv_source", incoming_source)
 
     # 8. Process Recovery (Autonomic Repair)
     # Only recompute when HRV data is present — defaulting to 0.0 produces z_hrv≈-65
@@ -1035,15 +1286,15 @@ def process_and_save_biometrics(
     readiness_score = compute_readiness_score(current_ctl - prior_day_atl)
     
     # 10. Save aggregated record to biometrics
-    db.table("biometrics").upsert({
+    bio_upsert_payload = {
         "athlete_id": athlete_id,
         "date": payload.date.isoformat(),
         "hrv_rmssd": final_hrv,
         "resting_hr": int(round(final_rhr)) if final_rhr is not None else None,
-        "weight_kg": payload.weight_kg if payload.weight_kg is not None else existing.get("weight_kg"),
-        "height_cm": payload.height_cm if payload.height_cm is not None else existing.get("height_cm"),
-        "sleep_duration_min": total_sleep_min,
-        "sleep_in_bed_min": total_in_bed_min,
+        "weight_kg": final_weight,
+        "height_cm": final_height,
+        "sleep_duration_min": final_sleep_duration,
+        "sleep_in_bed_min": final_sleep_in_bed,
         "sleep_score": sleep_score, # Astraphe Score
         "recovery_score": recovery_score, # Astraphe Score
         "sleep_need_min": int(round(sleep_need)),
@@ -1051,15 +1302,17 @@ def process_and_save_biometrics(
         "readiness_score": readiness_score,
         "strain_score": astraphe_strain_score,
         "hrv_source": final_source,
-        "sleep_deep_pct": agg_deep,
-        "sleep_rem_pct": agg_rem,
-        "sleep_light_pct": agg_light,
-        "sleep_awake_pct": agg_awake,
-        "sleep_bedtime": main_sleep.get("started_at") if main_sleep else None,
-        "sleep_wakeup": main_sleep.get("ended_at") if main_sleep else None,
+        "metric_sources": metric_sources,
+        "sleep_deep_pct": final_deep,
+        "sleep_rem_pct": final_rem,
+        "sleep_light_pct": final_light,
+        "sleep_awake_pct": final_awake,
+        "sleep_bedtime": final_bedtime,
+        "sleep_wakeup": final_wakeup,
         "skin_temp": final_temp,
         "spo2_pct": final_spo2
-        }, on_conflict="athlete_id,date").execute()
+        }
+    _upsert_biometrics_sync(db, bio_upsert_payload)
 
 
 def _workout_row_to_payload(row: dict) -> WorkoutPayload:
