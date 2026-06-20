@@ -598,7 +598,7 @@ async def process_and_save_workout(
     db: Any,
     skip_tss_recalc: bool = False,
     skip_daily_strain_refresh: bool = False,
-) -> None:
+) -> str:
     tss = 0.0
     wt_raw = (payload.workout_type or "").strip()
     low = wt_raw.lower()
@@ -743,6 +743,7 @@ async def process_and_save_workout(
         asyncio.ensure_future(
             asyncio.to_thread(_refresh_daily_strain_for_day_sync, db, athlete_id, workout_day)
         )
+    return str(workout_id)
 
 
 def process_and_save_biometrics(
