@@ -163,6 +163,16 @@ def _minutes(entry: dict[str, Any], *keys: str) -> int | None:
         value = value / 60.0
     return int(round(value))
 
+def _percentage(entry: dict[str, Any], percent_keys: tuple[str, ...], minute_keys: tuple[str, ...], denominator_min: int | None) -> float | None:
+    direct = _float(entry, *percent_keys)
+    if direct is not None:
+        return direct
+    minutes = _minutes(entry, *minute_keys)
+    if minutes is None or denominator_min is None or denominator_min <= 0:
+        return None
+    return round((float(minutes) / float(denominator_min)) * 100.0, 1)
+
+
 
 def _seconds(entry: dict[str, Any], *keys: str) -> int | None:
     value = _float(entry, *keys)
@@ -189,6 +199,25 @@ def _map_wellness_to_daily_biometrics(entry: dict[str, Any]) -> DailyBiometrics:
     if bio_date is None:
         bio_date = datetime.now(timezone.utc).date()
 
+    sleep_duration_min = _minutes(
+        entry,
+        "sleep_duration_min",
+        "sleepDurationMin",
+        "sleep_duration_minutes",
+        "sleepSecs",
+        "sleep_seconds",
+        "sleep",
+    )
+    sleep_in_bed_min = _minutes(
+        entry,
+        "sleep_in_bed_min",
+        "sleepInBedMin",
+        "sleep_in_bed_minutes",
+        "time_in_bed_secs",
+        "timeInBedSecs",
+    )
+    sleep_in_bed_or_asleep_min = sleep_in_bed_min or sleep_duration_min
+
     return DailyBiometrics(
         date=bio_date,
         source=PROVIDER,
@@ -197,28 +226,33 @@ def _map_wellness_to_daily_biometrics(entry: dict[str, Any]) -> DailyBiometrics:
         resting_hr=_int(entry, "resting_hr", "restingHR", "resting_heart_rate"),
         weight_kg=_float(entry, "weight_kg", "weightKg", "weight"),
         height_cm=_float(entry, "height_cm", "heightCm", "height"),
-        sleep_duration_min=_minutes(
-            entry,
-            "sleep_duration_min",
-            "sleepDurationMin",
-            "sleep_duration_minutes",
-            "sleepSecs",
-            "sleep_seconds",
-            "sleep",
-        ),
-        sleep_in_bed_min=_minutes(
-            entry,
-            "sleep_in_bed_min",
-            "sleepInBedMin",
-            "sleep_in_bed_minutes",
-            "time_in_bed_secs",
-            "timeInBedSecs",
-        ),
+        sleep_duration_min=sleep_duration_min,
+        sleep_in_bed_min=sleep_in_bed_min,
         sleep_score=_int(entry, "sleep_score", "sleepScore"),
-        sleep_deep_pct=_float(entry, "sleep_deep_pct", "sleepDeepPct", "deep_sleep_pct"),
-        sleep_rem_pct=_float(entry, "sleep_rem_pct", "sleepRemPct", "rem_sleep_pct"),
-        sleep_light_pct=_float(entry, "sleep_light_pct", "sleepLightPct", "light_sleep_pct"),
-        sleep_awake_pct=_float(entry, "sleep_awake_pct", "sleepAwakePct", "awake_pct"),
+        sleep_deep_pct=_percentage(
+            entry,
+            ("sleep_deep_pct", "sleepDeepPct", "deep_sleep_pct", "deepSleepPct"),
+            ("deepSleepSecs", "sleepDeepSecs", "deep_sleep_secs", "deep_sleep_seconds", "slowWaveSleepSecs"),
+            sleep_duration_min,
+        ),
+        sleep_rem_pct=_percentage(
+            entry,
+            ("sleep_rem_pct", "sleepRemPct", "rem_sleep_pct", "remSleepPct"),
+            ("remSleepSecs", "sleepRemSecs", "rem_sleep_secs", "rem_sleep_seconds"),
+            sleep_duration_min,
+        ),
+        sleep_light_pct=_percentage(
+            entry,
+            ("sleep_light_pct", "sleepLightPct", "light_sleep_pct", "lightSleepPct"),
+            ("lightSleepSecs", "sleepLightSecs", "light_sleep_secs", "light_sleep_seconds"),
+            sleep_duration_min,
+        ),
+        sleep_awake_pct=_percentage(
+            entry,
+            ("sleep_awake_pct", "sleepAwakePct", "awake_pct", "awakePct"),
+            ("awakeSecs", "sleepAwakeSecs", "awake_sleep_secs", "awake_seconds"),
+            sleep_in_bed_or_asleep_min,
+        ),
         sleep_bedtime=_parse_datetime(_first(entry, "sleep_bedtime", "sleepBedtime", "bedtime")),
         sleep_wakeup=_parse_datetime(_first(entry, "sleep_wakeup", "sleepWakeup", "wakeup")),
         skin_temp=_float(entry, "skin_temp", "skinTemp", "temperature", "temp"),
@@ -427,9 +461,57 @@ def _upsert_activity_streams(
     return True
 
 
-def _hr_zone_columns_from_streams(db: Any, athlete_id: str, streams: dict[str, Any]) -> dict[str, Any]:
+def _hr_samples_from_streams(streams: dict[str, Any]) -> list[int]:
     hr_stream = streams.get("heartrate")
-    if not isinstance(hr_stream, list) or not hr_stream:
+    if not isinstance(hr_stream, list):
+        return []
+    samples: list[int] = []
+    for value in hr_stream:
+        if value is None or isinstance(value, bool):
+            continue
+        try:
+            bpm = int(round(float(value)))
+        except (TypeError, ValueError):
+            continue
+        if 20 <= bpm <= 260:
+            samples.append(bpm)
+    return samples
+
+
+def _hr_summary_columns_from_streams(streams: dict[str, Any]) -> dict[str, int]:
+    samples = _hr_samples_from_streams(streams)
+    if not samples:
+        return {}
+    return {
+        "avg_hr": int(round(sum(samples) / len(samples))),
+        "max_hr": max(samples),
+    }
+
+
+def _update_athlete_hr_anchors_from_activity(
+    db: Any,
+    athlete_id: str,
+    activity: dict[str, Any],
+) -> dict[str, int | str]:
+    update: dict[str, int | str] = {}
+    max_hr = _int(activity, "athlete_max_hr", "icu_athlete_max_hr")
+    resting_hr = _int(activity, "icu_resting_hr", "resting_hr", "restingHR")
+    threshold_hr = _int(activity, "lthr", "threshold_hr", "thresholdHr")
+    if max_hr is not None and 80 <= max_hr <= 260:
+        update["max_hr"] = max_hr
+    if resting_hr is not None and 25 <= resting_hr <= 120:
+        update["resting_hr"] = resting_hr
+    if threshold_hr is not None and 80 <= threshold_hr <= 230:
+        update["threshold_hr"] = threshold_hr
+        update["threshold_hr_source"] = "estimated"
+    if update:
+        db.table("athletes").update(update).eq("id", athlete_id).execute()
+    return update
+
+
+def _hr_zone_columns_from_streams(db: Any, athlete_id: str, streams: dict[str, Any]) -> dict[str, Any]:
+    hr_samples = _hr_samples_from_streams(streams)
+    if not hr_samples:
         return {}
     athlete_res = (
         db.table("athletes")
@@ -439,10 +521,10 @@ def _hr_zone_columns_from_streams(db: Any, athlete_id: str, streams: dict[str, A
         .execute()
     )
     athlete = athlete_res.data if athlete_res and athlete_res.data else {}
-    zone_dist = compute_zone_distribution(hr_stream, get_athlete_zones(athlete))
-    out: dict[str, Any] = {}
+    zone_dist = compute_zone_distribution(hr_samples, get_athlete_zones(athlete))
+    out: dict[str, Any] = _hr_summary_columns_from_streams(streams)
     zone_minutes: dict[int, float] = {}
-    duration_min = len(hr_stream) / 60.0
+    duration_min = len(hr_samples) / 60.0
     for idx in range(1, 6):
         pct = zone_dist.get(f"Z{idx}")
         if pct is None:
@@ -492,6 +574,7 @@ async def _save_activity_summary_and_streams(
     workout = _map_activity_to_workout_payload(activity)
     if workout is None:
         return False, False
+    _update_athlete_hr_anchors_from_activity(db, athlete_id, activity)
     workout_id = await process_and_save_workout(
         workout,
         athlete_id,
