@@ -21,11 +21,23 @@ jobs:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_KEY: ${{ secrets.VITE_SUPABASE_KEY }}
           VITE_VAPID_PUBLIC_KEY: ${{ secrets.VITE_VAPID_PUBLIC_KEY }}
-      - uses: FirebaseExtended/action-hosting-deploy@v0
-        with:
-          repoToken: ${{ secrets.GITHUB_TOKEN }}
-          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_ASTRAPHEAI }}
-          channelId: live
-          projectId: astrapheai
-          entryPoint: mobile
-          
+      - name: Write Firebase service account
+        run: printf '%s' "$FIREBASE_SERVICE_ACCOUNT_JSON" > "$RUNNER_TEMP/firebase-service-account.json"
+        env:
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_ASTRAPHEAI }}
+      - name: Deploy to Firebase Hosting
+        working-directory: mobile
+        shell: bash
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-service-account.json
+        run: |
+          set -o pipefail
+          pnpm exec firebase deploy --only hosting --project astrapheai --debug 2>&1 | tee "$RUNNER_TEMP/firebase-deploy.log"
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            if grep -q "is the current active version" "$RUNNER_TEMP/firebase-deploy.log"; then
+              echo "Firebase Hosting release is already active; treating idempotent retry as success."
+              exit 0
+            fi
+            exit "$status"
+          fi
