@@ -151,10 +151,15 @@
     normalizeUnits((athleteStore.profile as { measurement_units?: string })?.measurement_units)
   );
 
+  function hasActivityDetailSource(w: any): boolean {
+    return Boolean(w?.id);
+  }
+
+
   /** True when streams/laps/intervals loaded enough for the detail charts to render. */
   const detailChartsReady = $derived.by(() => {
     const w = selectedWorkout;
-    if (!w?.strava_activity_id || detailLoading || detailRepulling) {
+    if (!hasActivityDetailSource(w) || detailLoading || detailRepulling) {
       return false;
     }
     if (detailError) return false;
@@ -541,7 +546,7 @@
     detailLoading = false;
     detailHydrating = false;
 
-    if (!w?.id || !w.strava_activity_id) {
+    if (!hasActivityDetailSource(w)) {
       detailStreams = null;
       detailLaps = [];
       detailIntervals = null;
@@ -974,7 +979,7 @@
             <DataSources workout={selectedWorkout} />
           </div>
 
-          {#if selectedWorkout.strava_activity_id}
+          {#if hasActivityDetailSource(selectedWorkout)}
             {#if showRepullDataButton}
               <div class="mt-3">
                 <button
@@ -999,14 +1004,14 @@
               <p class="text-[11px] text-red mt-3 font-mono">{detailError}</p>
 
             {:else}
-              {#if selectedWorkout.strava_streams_fetched === false && !detailHydrating && !detailStreams}
+              {#if selectedWorkout.strava_activity_id && selectedWorkout.strava_streams_fetched === false && !detailHydrating && !detailStreams}
                 <p class="text-[11px] text-text2 font-mono mt-3 leading-relaxed">
                   Strava is linked, but stream data has not been imported for this workout yet. Reconnect
                   Strava or run the Strava backfill script to load charts and GPS.
                 </p>
-              {:else if !detailStreams && selectedWorkout.strava_streams_fetched && !detailHydrating}
+              {:else if !detailStreams && !detailHydrating}
                 <p class="text-[11px] text-text2 font-mono mt-3">
-                  No stream data stored for this workout (Strava may have returned no streams for this activity).
+                  No stream data stored for this workout.
                 </p>
               {/if}
 
@@ -1023,8 +1028,8 @@
 
               {#if detailMissingPaceStream}
                 <p class="text-[11px] text-text2 font-mono mt-3 leading-relaxed">
-                  Pace stream unavailable from Strava for this activity (heart rate is still shown). Try
-                  Repull data if streams were imported incorrectly.
+                  Pace stream unavailable for this activity (heart rate is still shown). Try
+                  refreshing imported data if streams were imported incorrectly.
                 </p>
               {/if}
 
@@ -1032,7 +1037,7 @@
                 <div class="mt-4 space-y-2">
                   <div class="rounded-2xl bg-glass animate-pulse" style="height: 150px;"></div>
                   <p class="text-[11px] text-text2 font-mono animate-pulse">
-                    Loading stream data from Strava…
+                    Loading stream data…
                   </p>
                 </div>
               {:else if detailStreams}

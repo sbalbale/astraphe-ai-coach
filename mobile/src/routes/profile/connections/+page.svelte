@@ -4,6 +4,7 @@
   import { Capacitor } from '@capacitor/core';
   import Icon from '@iconify/svelte';
   import Card from '$lib/components/Card.svelte';
+  import Modal from '$lib/components/Modal.svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
@@ -14,12 +15,18 @@
   const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
   let syncing = $state('');
+  let showIntervalsModal = $state(false);
+  let intervalsAthleteId = $state('');
+  let intervalsApiKey = $state('');
+  let intervalsError = $state('');
+  const intervalsFormReady = $derived(intervalsAthleteId.trim().length > 0 && intervalsApiKey.trim().length > 0);
 
   const integrations = $derived({
     apple: athleteStore.syncStatus?.integrations?.healthkit || { connected: false },
     garmin: athleteStore.syncStatus?.integrations?.garmin || { connected: false },
     whoop: athleteStore.syncStatus?.integrations?.whoop || { connected: false },
-    strava: athleteStore.syncStatus?.integrations?.strava || { connected: false }
+    strava: athleteStore.syncStatus?.integrations?.strava || { connected: false },
+    intervals_icu: athleteStore.syncStatus?.integrations?.intervals_icu || { connected: false }
   });
 
   function goBack() {
@@ -91,6 +98,34 @@
     }
   }
 
+  function closeIntervalsModal() {
+    if (syncing === 'intervals_icu') return;
+    showIntervalsModal = false;
+    intervalsError = '';
+    intervalsApiKey = '';
+  }
+
+  async function submitIntervalsIcu(event: SubmitEvent) {
+    event.preventDefault();
+    if (!intervalsFormReady || syncing) return;
+    syncing = 'intervals_icu';
+    intervalsError = '';
+    const result = await api.connectIntervalsIcu({
+      intervals_athlete_id: intervalsAthleteId.trim(),
+      api_key: intervalsApiKey.trim(),
+      days: 90
+    });
+    if (result?.status === 'success') {
+      const syncData = await api.getSyncStatus();
+      if (syncData) athleteStore.syncStatus = syncData;
+      showIntervalsModal = false;
+      intervalsApiKey = '';
+    } else {
+      intervalsError = 'Connection failed';
+    }
+    syncing = '';
+  }
+
   async function toggleIntegration(id: string) {
     if (syncing) return;
     syncing = id;
@@ -117,6 +152,12 @@
         await athleteStore.unlinkIntegration('strava');
       } else {
         await openOAuthAuthorize('strava');
+      }
+    } else if (id === 'intervals_icu') {
+      if (integrations.intervals_icu.connected) {
+        await athleteStore.unlinkIntegration('intervals_icu');
+      } else {
+        showIntervalsModal = true;
       }
     } else if (id === 'garmin') {
       if (integrations.garmin.connected) {
@@ -209,6 +250,38 @@
           </span>
         </div>
 
+        <!-- Intervals.icu -->
+        <div class="flex items-center justify-between gap-2">
+          <div class="flex items-center gap-3 min-w-0">
+            <div
+              class="w-9 h-9 rounded-xl flex items-center justify-center border shrink-0"
+              style="background: rgba(221, 4, 71, 0.12); border-color: rgba(221, 4, 71, 0.28)"
+            >
+              <img src="/intervals-icu-logo.svg" alt="" class="w-[23px] h-[23px]" aria-hidden="true" />
+            </div>
+            <div class="min-w-0">
+              <p class="text-[13px] font-medium">Intervals.icu</p>
+              <p class="text-[10px] text-text2">Wearables & training log</p>
+              {#if integrations.intervals_icu.connected}
+                <span
+                  class="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono uppercase tracking-wide bg-teal-dim text-teal border border-teal/30"
+                >
+                  <img src="/intervals-icu-logo.svg" alt="" class="w-3 h-3" aria-hidden="true" />
+                  Connected
+                </span>
+              {/if}
+            </div>
+          </div>
+          <button
+            class="px-3 py-1 rounded-full text-[11px] font-medium cursor-pointer transition-all duration-200 shrink-0 border {integrations.intervals_icu.connected
+              ? 'bg-red-dim text-red border-red/30'
+              : 'border-[rgba(221,4,71,0.32)] bg-[rgba(221,4,71,0.14)] text-[#DD0447]'}"
+            onclick={() => toggleIntegration('intervals_icu')}
+          >
+            {syncing === 'intervals_icu' ? '...' : integrations.intervals_icu.connected ? 'Unlink' : 'Connect'}
+          </button>
+        </div>
+
         <!-- WHOOP -->
         <div class="flex items-center justify-between gap-2">
           <div class="flex items-center gap-3 min-w-0">
@@ -276,3 +349,48 @@
     </Card>
   </div>
 </div>
+
+<Modal show={showIntervalsModal} title="Intervals.icu" onClose={closeIntervalsModal}>
+  <form class="flex flex-col gap-4" onsubmit={submitIntervalsIcu}>
+    <label class="flex flex-col gap-1.5">
+      <span class="text-[11px] font-mono uppercase tracking-wide text-text2">Athlete ID</span>
+      <input
+        class="w-full bg-bg2 border border-border rounded-xl px-3 py-2 text-[14px] outline-none focus:border-teal"
+        bind:value={intervalsAthleteId}
+        placeholder="i12345"
+        autocomplete="off"
+      />
+    </label>
+
+    <label class="flex flex-col gap-1.5">
+      <span class="text-[11px] font-mono uppercase tracking-wide text-text2">API key</span>
+      <input
+        class="w-full bg-bg2 border border-border rounded-xl px-3 py-2 text-[14px] outline-none focus:border-teal"
+        bind:value={intervalsApiKey}
+        type="password"
+        autocomplete="off"
+      />
+    </label>
+
+    {#if intervalsError}
+      <p class="text-[12px] text-red">{intervalsError}</p>
+    {/if}
+
+    <div class="flex gap-2 justify-end pt-1">
+      <button
+        type="button"
+        class="px-4 py-2 rounded-xl border border-border bg-glass text-[13px] text-text1"
+        onclick={closeIntervalsModal}
+      >
+        Cancel
+      </button>
+      <button
+        type="submit"
+        disabled={!intervalsFormReady || syncing === 'intervals_icu'}
+        class="px-4 py-2 rounded-xl border border-teal/30 bg-teal-dim text-[13px] font-medium text-teal disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        {syncing === 'intervals_icu' ? 'Connecting...' : 'Connect'}
+      </button>
+    </div>
+  </form>
+</Modal>

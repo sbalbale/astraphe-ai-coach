@@ -9,10 +9,12 @@ from html import escape
 from urllib.parse import urlparse
 from fastapi import APIRouter, Request, Response, HTTPException, Depends, BackgroundTasks, Query
 from fastapi.responses import RedirectResponse, HTMLResponse
+from pydantic import BaseModel, Field
 from starlette.requests import ClientDisconnect
 from app.dependencies import get_current_athlete, get_user_db, get_admin_db
 from app.services import whoop
 from app.services import strava as strava_service
+from app.services import intervals_icu as intervals_icu_service
 from app.services.strava import backfill_historical_data as strava_backfill
 from app.services.whoop_backfill import backfill_biometrics_only, backfill_historical_data
 from app.config import settings
@@ -71,6 +73,55 @@ def _oauth_state(athlete_id: str, web_return: str | None) -> str:
     if web_return and _safe_web_return(web_return):
         state = f"{state}|{web_return}"
     return state
+
+
+class IntervalsIcuConnectPayload(BaseModel):
+    intervals_athlete_id: str = Field(..., min_length=1, max_length=80)
+    api_key: str = Field(..., min_length=1, max_length=512)
+    days: int = Field(default=90, ge=1, le=365)
+
+
+def _clean_intervals_athlete_id(raw: str) -> str:
+    athlete_id = (raw or "").strip()
+    if not athlete_id:
+        raise HTTPException(status_code=400, detail="Intervals.icu athlete ID is required")
+    return athlete_id
+
+
+def _clean_intervals_api_key(raw: str) -> str:
+    api_key = (raw or "").strip()
+    if not api_key:
+        raise HTTPException(status_code=400, detail="Intervals.icu API key is required")
+    return api_key
+
+
+def _schedule_intervals_backfill(
+    background_tasks: BackgroundTasks | None,
+    athlete_id: str,
+    intervals_athlete_id: str,
+    api_key: str,
+    db,
+    days: int,
+) -> None:
+    if background_tasks is not None:
+        background_tasks.add_task(
+            intervals_icu_service.backfill_historical_data,
+            athlete_id,
+            intervals_athlete_id,
+            api_key,
+            db,
+            days,
+        )
+    else:
+        asyncio.create_task(
+            intervals_icu_service.backfill_historical_data(
+                athlete_id,
+                intervals_athlete_id,
+                api_key,
+                db,
+                days,
+            )
+        )
 
 
 def build_whoop_oauth_authorize_url(athlete_id: str, web_return: str | None = None) -> str:
@@ -1329,6 +1380,47 @@ async def strava_oauth_callback(
         return {"status": "error", "message": "Strava connection failed. Please try again."}
 
 
+@router.post("/intervals-icu/connect")
+async def intervals_icu_connect(
+    payload: IntervalsIcuConnectPayload,
+    background_tasks: BackgroundTasks,
+    athlete_id: str = Depends(get_current_athlete),
+    admin_db=Depends(get_admin_db),
+):
+    """Store Intervals.icu API credentials and queue an initial backfill."""
+    intervals_athlete_id = _clean_intervals_athlete_id(payload.intervals_athlete_id)
+    api_key = _clean_intervals_api_key(payload.api_key)
+
+    await intervals_icu_service.verify_credentials(intervals_athlete_id, api_key)
+
+    admin_db.table("oauth_tokens").upsert(
+        {
+            "athlete_id": athlete_id,
+            "provider": intervals_icu_service.PROVIDER,
+            "access_token": api_key,
+            "refresh_token": None,
+            "external_user_id": intervals_athlete_id,
+        },
+        on_conflict="athlete_id,provider",
+    ).execute()
+
+    _schedule_intervals_backfill(
+        background_tasks,
+        athlete_id,
+        intervals_athlete_id,
+        api_key,
+        admin_db,
+        payload.days,
+    )
+    return {
+        "status": "success",
+        "provider": intervals_icu_service.PROVIDER,
+        "connected": True,
+        "scheduled": True,
+        "days": payload.days,
+    }
+
+
 @router.get("/status")
 async def get_sync_status(athlete_id: str = Depends(get_current_athlete), db=Depends(get_user_db)):
     """Returns connection status for all integrations."""
@@ -1342,6 +1434,7 @@ async def get_sync_status(athlete_id: str = Depends(get_current_athlete), db=Dep
             "garmin": {"connected": "garmin" in providers, "last_sync": "2026-04-26T10:14:00Z"},
             "whoop": {"connected": "whoop" in providers, "last_sync": None},
             "strava": {"connected": "strava" in providers, "last_sync": None},
+            "intervals_icu": {"connected": "intervals_icu" in providers, "last_sync": None},
             # HealthKit does not use OAuth tokens. Until the mobile client sends a verifiable
             # handshake/sync marker, report it as disconnected.
             "healthkit": {"connected": False, "last_sync": None}
@@ -1523,6 +1616,40 @@ async def strava_backfill_now(
         raise HTTPException(status_code=400, detail=f"Invalid Strava athlete ID: {strava_athlete_id}")
 
     asyncio.create_task(strava_backfill(athlete_id, owner_strava_id, access_token, admin_db, d))
+    return {"status": "success", "scheduled": True, "days": d}
+
+
+@router.post("/intervals-icu/backfill")
+async def intervals_icu_backfill_now(
+    days: int = 90,
+    athlete_id: str = Depends(get_current_athlete),
+    admin_db=Depends(get_admin_db),
+):
+    """Manually trigger an Intervals.icu biometrics and workouts backfill."""
+    d = max(1, min(int(days), 365))
+    tok = (
+        admin_db.table("oauth_tokens")
+        .select("access_token, external_user_id")
+        .eq("athlete_id", athlete_id)
+        .eq("provider", intervals_icu_service.PROVIDER)
+        .maybe_single()
+        .execute()
+    )
+    row = tok.data if tok else None
+    api_key = (row or {}).get("access_token")
+    intervals_athlete_id = (row or {}).get("external_user_id")
+    if not api_key or not intervals_athlete_id:
+        raise HTTPException(status_code=400, detail="Intervals.icu not connected")
+
+    asyncio.create_task(
+        intervals_icu_service.backfill_historical_data(
+            athlete_id,
+            str(intervals_athlete_id),
+            str(api_key),
+            admin_db,
+            d,
+        )
+    )
     return {"status": "success", "scheduled": True, "days": d}
 
 

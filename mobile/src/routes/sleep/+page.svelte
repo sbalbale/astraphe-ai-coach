@@ -45,6 +45,11 @@
     return `${h}h ${r}m`;
   }
 
+  function metricPresent(value: unknown): boolean {
+    return typeof value === "number" && Number.isFinite(value);
+  }
+
+
   // Rolling 7-day window (cannot go into the future).
   // Source of truth for the picker is a YYYY-MM-DD string.
   let endPickerValue = $state("");
@@ -99,6 +104,7 @@
     rem: number;
     light: number;
     awake: number;
+    stagesAvailable: boolean;
     awakeMins: number;
     hr: number;
     hrv: number;
@@ -135,6 +141,12 @@
     const inBedM = timeInBedMin % 60;
     const hour12 = (athleteStore.profile as any)?.time_format !== "24h";
 
+    const stagesAvailable =
+      metricPresent(b.sleep_deep_pct) ||
+      metricPresent(b.sleep_rem_pct) ||
+      metricPresent(b.sleep_light_pct) ||
+      metricPresent(b.sleep_awake_pct);
+
     const res: NightData = {
       rawDate: displayDateStr,
       date: dateLabel,
@@ -162,6 +174,7 @@
       rem: b.sleep_rem_pct || 0,
       light: b.sleep_light_pct || 0,
       awake: b.sleep_awake_pct || 0,
+      stagesAvailable,
       awakeMins: 0,
       hr: b.resting_hr || 0,
       hrv: b.hrv_rmssd || 0,
@@ -238,6 +251,12 @@
       const inBedH = Math.floor(timeInBedMin / 60);
       const inBedM = timeInBedMin % 60;
 
+      const stagesAvailable =
+        metricPresent(b.sleep_deep_pct) ||
+        metricPresent(b.sleep_rem_pct) ||
+        metricPresent(b.sleep_light_pct) ||
+        metricPresent(b.sleep_awake_pct);
+
       const res: NightData = {
         date: dateLabel,
         label: shortLabel,
@@ -272,6 +291,7 @@
         rem: b.sleep_rem_pct || 0,
         light: b.sleep_light_pct || 0,
         awake: b.sleep_awake_pct || 0,
+        stagesAvailable,
         awakeMins: 0,
         hr: b.resting_hr || 0,
         hrv: b.hrv_rmssd || 0,
@@ -671,49 +691,66 @@
 
       <!-- Stage breakdown -->
       <Card>
-        <p class="text-[13px] font-semibold mb-3">Sleep Stages</p>
-        <!-- Stacked bar -->
-        <div class="flex h-5 rounded-md overflow-hidden gap-0.5 mb-3.5">
-          {#each [["deep", nightData.deep], ["rem", nightData.rem], ["light", nightData.light], ["awake", nightData.awake]] as [k, v] (k)}
-            <div
-              style="flex: {v}; background: {stageColors[k as string]}"
-            ></div>
-          {/each}
+        <div class="flex items-center justify-between mb-3">
+          <p class="text-[13px] font-semibold">Sleep Stages</p>
+          {#if !nightData.stagesAvailable}
+            <span class="rounded-full border border-amber/30 bg-amber-dim px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider text-amber">
+              Missing
+            </span>
+          {/if}
         </div>
-        <div class="flex flex-col gap-2">
-          {#each [{ key: "deep", label: "Deep Sleep", pct: nightData.deep, mins: Math.round((nightData.inBedRaw * nightData.deep) / 100), ideal: "15–25%", desc: "Physical restoration, immune function, memory consolidation" }, { key: "rem", label: "REM Sleep", pct: nightData.rem, mins: Math.round((nightData.inBedRaw * nightData.rem) / 100), ideal: "20–25%", desc: "Cognitive restoration, emotional processing, learning" }, { key: "light", label: "Light Sleep", pct: nightData.light, mins: Math.round((nightData.inBedRaw * nightData.light) / 100), ideal: "45–55%", desc: "Transition stage, memory consolidation support" }, { key: "awake", label: "Awake", pct: nightData.awake, mins: nightData.awakeMins, ideal: "< 10%", desc: "Brief wakings during night; normal up to 10%" }] as s (s.key)}
-            <div
-              class="flex gap-2.5 py-2 {s.key !== 'awake'
-                ? 'border-b border-border'
-                : ''}"
-            >
+
+        {#if nightData.stagesAvailable}
+          <!-- Stacked bar -->
+          <div class="flex h-5 rounded-md overflow-hidden gap-0.5 mb-3.5">
+            {#each [["deep", nightData.deep], ["rem", nightData.rem], ["light", nightData.light], ["awake", nightData.awake]] as [k, v] (k)}
               <div
-                class="w-2.5 h-2.5 rounded-sm mt-0.5 shrink-0"
-                style="background: {stageColors[s.key]}"
+                style="flex: {v}; background: {stageColors[k as string]}"
               ></div>
-              <div class="flex-1">
-                <div class="flex justify-between mb-0.5">
-                  <span class="text-[12px] font-semibold">{s.label}</span>
-                  <div class="flex gap-2.5 items-center">
-                    <span class="text-[10px] text-text2 font-mono"
-                      >goal {s.ideal}</span
-                    >
-                    <span
-                      class="text-[12px] font-bold font-mono"
-                      style="color: {stageColors[s.key]}"
-                    >
-                      {s.pct}%
-                      <span class="text-[9px] font-normal text-text2"
-                        >{formatHoursMinutesFromMinutes(s.mins)}</span
+            {/each}
+          </div>
+          <div class="flex flex-col gap-2">
+            {#each [{ key: "deep", label: "Deep Sleep", pct: nightData.deep, mins: Math.round((nightData.inBedRaw * nightData.deep) / 100), ideal: "15–25%", desc: "Physical restoration, immune function, memory consolidation" }, { key: "rem", label: "REM Sleep", pct: nightData.rem, mins: Math.round((nightData.inBedRaw * nightData.rem) / 100), ideal: "20–25%", desc: "Cognitive restoration, emotional processing, learning" }, { key: "light", label: "Light Sleep", pct: nightData.light, mins: Math.round((nightData.inBedRaw * nightData.light) / 100), ideal: "45–55%", desc: "Transition stage, memory consolidation support" }, { key: "awake", label: "Awake", pct: nightData.awake, mins: nightData.awakeMins, ideal: "< 10%", desc: "Brief wakings during night; normal up to 10%" }] as s (s.key)}
+              <div
+                class="flex gap-2.5 py-2 {s.key !== 'awake'
+                  ? 'border-b border-border'
+                  : ''}"
+              >
+                <div
+                  class="w-2.5 h-2.5 rounded-sm mt-0.5 shrink-0"
+                  style="background: {stageColors[s.key]}"
+                ></div>
+                <div class="flex-1">
+                  <div class="flex justify-between mb-0.5">
+                    <span class="text-[12px] font-semibold">{s.label}</span>
+                    <div class="flex gap-2.5 items-center">
+                      <span class="text-[10px] text-text2 font-mono"
+                        >goal {s.ideal}</span
                       >
-                    </span>
+                      <span
+                        class="text-[12px] font-bold font-mono"
+                        style="color: {stageColors[s.key]}"
+                      >
+                        {s.pct}%
+                        <span class="text-[9px] font-normal text-text2"
+                          >{formatHoursMinutesFromMinutes(s.mins)}</span
+                        >
+                      </span>
+                    </div>
                   </div>
+                  <p class="text-[10px] text-text2 leading-tight">{s.desc}</p>
                 </div>
-                <p class="text-[10px] text-text2 leading-tight">{s.desc}</p>
               </div>
-            </div>
-          {/each}
-        </div>
+            {/each}
+          </div>
+        {:else}
+          <div class="rounded-xl border border-amber/30 bg-amber-dim p-3">
+            <p class="text-[11px] font-mono uppercase tracking-wider text-amber">Stage data unavailable</p>
+            <p class="mt-1 text-xs leading-relaxed text-text1">
+              This source provided sleep duration and score inputs, but no REM/deep/light/awake breakdown. Astraphe is not treating missing stages as 0%.
+            </p>
+          </div>
+        {/if}
       </Card>
       
       <!-- Individual Sleep Sessions (Naps) -->
@@ -756,11 +793,13 @@
         {:else}
           <p class="text-xs text-text1 leading-relaxed">
             {analysisText ??
-              (nightData.deep < 15
-                ? "Your deep sleep is below your baseline. Focus on reducing screen time and cooling your room tonight."
-                : nightData.rem < 20
-                  ? "REM sleep is slightly low. This might affect cognitive performance today."
-                  : "Your sleep architecture looks balanced. Recovery is on track.")}
+              (!nightData.stagesAvailable
+                ? "Sleep stage data is unavailable for this night, so analysis is based on duration, sleep debt, HRV, and resting HR instead of REM/deep/light breakdowns."
+                : nightData.deep < 15
+                  ? "Your deep sleep is below your baseline. Focus on reducing screen time and cooling your room tonight."
+                  : nightData.rem < 20
+                    ? "REM sleep is slightly low. This might affect cognitive performance today."
+                    : "Your sleep architecture looks balanced. Recovery is on track.")}
           </p>
         {/if}
       </Card>

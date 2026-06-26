@@ -251,11 +251,11 @@ Completes Strava OAuth, stores tokens and athlete mapping, and kicks off recent 
 
 ### `GET /v1/sync/status`
 
-Returns connection state for Garmin, WHOOP, Strava, and HealthKit.
+Returns connection state for Garmin, WHOOP, Strava, Intervals.icu, and HealthKit.
 
 ### `DELETE /v1/sync/{provider}`
 
-Unlinks `garmin`, `whoop`, or `strava`.
+Unlinks `garmin`, `whoop`, `strava`, or `intervals_icu`.
 
 ### `POST /v1/sync/refresh-strain`
 
@@ -276,6 +276,14 @@ Backfills WHOOP workouts/recovery data. Query parameter: `days` (default 90).
 ### `POST /v1/sync/strava/backfill`
 
 Backfills Strava activities. Query parameter: `days` (default 90).
+
+### `POST /v1/sync/intervals-icu/connect`
+
+Stores an Intervals.icu athlete ID and API key server-side, verifies access, and queues a workouts/wellness/stream backfill. Body fields: `intervals_athlete_id`, `api_key`, optional `days` (default 90).
+
+### `POST /v1/sync/intervals-icu/backfill`
+
+Backfills Intervals.icu workout summaries, available activity streams, HR anchors/zones, and wellness data. Query parameter: `days` (default 90). Response includes `workouts`, `streams`, `biometrics`, and `days` counts.
 
 ## Training Plan
 
