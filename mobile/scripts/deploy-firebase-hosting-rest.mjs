@@ -1,21 +1,19 @@
-import { createHash } from "node:crypto";
+import { createHash, createSign } from "node:crypto";
 import { existsSync } from "node:fs";
 import { appendFile, readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { gzipSync } from "node:zlib";
 
 const API_BASE = "https://firebasehosting.googleapis.com/v1beta1";
+const TOKEN_URL = "https://oauth2.googleapis.com/token";
+const FIREBASE_HOSTING_SCOPE = "https://www.googleapis.com/auth/firebase.hosting";
 const MAX_ATTEMPTS = 4;
 
-const token = process.env.FIREBASE_ACCESS_TOKEN;
+let accessToken = process.env.FIREBASE_ACCESS_TOKEN;
 const project = process.env.FIREBASE_PROJECT;
 const site = process.env.FIREBASE_SITE ?? project;
 const channelId = process.env.FIREBASE_CHANNEL_ID ?? "live";
 const channelTtl = process.env.FIREBASE_CHANNEL_TTL ?? "604800s";
-
-if (!token) {
-  throw new Error("FIREBASE_ACCESS_TOKEN is required.");
-}
 
 if (!project) {
   throw new Error("FIREBASE_PROJECT is required.");
@@ -41,6 +39,24 @@ class RequestError extends Error {
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function base64UrlEncode(value) {
+  const buffer = Buffer.isBuffer(value) ? value : Buffer.from(value);
+
+  return buffer
+    .toString("base64")
+    .replaceAll("+", "-")
+    .replaceAll("/", "_")
+    .replaceAll("=", "");
+}
+
+function requireAccessToken() {
+  if (!accessToken) {
+    throw new Error("Firebase access token has not been initialized.");
+  }
+
+  return accessToken;
 }
 
 function isRetriableStatus(status) {
@@ -83,7 +99,7 @@ async function requestJson(url, options = {}) {
         ...fetchOptions,
         body: body === undefined ? undefined : JSON.stringify(body),
         headers: {
-          Authorization: `Bearer ${token}`,
+          Authorization: `Bearer ${requireAccessToken()}`,
           ...(body === undefined ? {} : { "Content-Type": "application/json" }),
           ...headers
         }
@@ -140,7 +156,7 @@ async function requestMultipart(url, createBody) {
         method: "POST",
         body: createBody(),
         headers: {
-          Authorization: `Bearer ${token}`
+          Authorization: `Bearer ${requireAccessToken()}`
         }
       });
 
@@ -174,6 +190,92 @@ async function requestMultipart(url, createBody) {
   }
 
   throw lastError;
+}
+
+async function requestAccessToken(assertion) {
+  const body = new URLSearchParams({
+    grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+    assertion
+  });
+  let lastError;
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+    try {
+      const response = await fetch(TOKEN_URL, {
+        method: "POST",
+        body,
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded"
+        }
+      });
+      const responseBody = await parseResponse(response);
+
+      if (response.ok && responseBody.access_token) {
+        return responseBody.access_token;
+      }
+
+      lastError = new RequestError(
+        `HTTP ${response.status} from ${TOKEN_URL}: ${errorMessageFromBody(responseBody)}`,
+        isRetriableStatus(response.status)
+      );
+
+      if (!lastError.retriable || attempt === MAX_ATTEMPTS) {
+        throw lastError;
+      }
+    } catch (error) {
+      lastError = error;
+
+      if (error instanceof RequestError && !error.retriable) {
+        throw error;
+      }
+
+      if (attempt === MAX_ATTEMPTS) {
+        throw lastError;
+      }
+    }
+
+    await delay(1000 * attempt);
+  }
+
+  throw lastError;
+}
+
+async function resolveAccessToken() {
+  if (accessToken) {
+    return accessToken;
+  }
+
+  if (!process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+    throw new Error("FIREBASE_SERVICE_ACCOUNT_JSON or FIREBASE_ACCESS_TOKEN is required.");
+  }
+
+  const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
+
+  if (!serviceAccount.client_email || !serviceAccount.private_key) {
+    throw new Error("FIREBASE_SERVICE_ACCOUNT_JSON must include client_email and private_key.");
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  const header = base64UrlEncode(
+    JSON.stringify({
+      alg: "RS256",
+      typ: "JWT"
+    })
+  );
+  const payload = base64UrlEncode(
+    JSON.stringify({
+      iss: serviceAccount.client_email,
+      scope: FIREBASE_HOSTING_SCOPE,
+      aud: TOKEN_URL,
+      iat: now,
+      exp: now + 3600
+    })
+  );
+  const unsignedJwt = `${header}.${payload}`;
+  const signature = createSign("RSA-SHA256").update(unsignedJwt).sign(serviceAccount.private_key);
+  const assertion = `${unsignedJwt}.${base64UrlEncode(signature)}`;
+
+  return requestAccessToken(assertion);
 }
 
 async function readHostingConfig() {
@@ -323,6 +425,8 @@ async function ensurePreviewChannel(parent) {
 }
 
 async function main() {
+  accessToken = await resolveAccessToken();
+
   const hostingConfig = await readHostingConfig();
   const publicDir = path.resolve(cwd, hostingConfig.public ?? "public");
 
