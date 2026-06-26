@@ -7,7 +7,7 @@ import {
   firstPositiveFiniteNumber
 } from '../utils/biometrics';
 
-const CACHE_KEY = 'astraphe:athlete-cache:v1';
+const CACHE_KEY = 'astraphe:athlete-cache:v2';
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 type CachePayload = {

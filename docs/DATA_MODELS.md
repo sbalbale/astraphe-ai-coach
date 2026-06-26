@@ -100,10 +100,10 @@ Important fields:
 - `tss`
 - `if_value`
 - `strain_score`
-- `fit_file_url` — optional URL/path to a **raw Garmin `.fit` artifact** (future direct Garmin ingest). Not the canonical stream store; canonical streams live in Supabase Storage bucket `activity-streams` as gzip JSON (`activity_streams.storage_path`). Parsed FIT data uses the same `time_series` schema as Strava/WHOOP.
-- Strava-related detail/source columns from later migrations
+- `fit_file_url` — optional URL/path to a **raw Garmin `.fit` artifact** (future direct Garmin ingest). Not the canonical stream store; canonical streams live in Supabase Storage bucket `activity-streams` as gzip JSON (`activity_streams.storage_path`). Parsed FIT/Intervals.icu/Strava data uses the same `time_series` schema.
+- Integration detail/source columns from later migrations, including Strava IDs and source merge metadata.
 
-Allowed sources include `garmin`, `whoop`, `healthkit`, `manual`, and `strava`.
+Allowed sources include `garmin`, `whoop`, `healthkit`, `manual`, `strava`, and `intervals_icu`.
 
 Allowed sports are:
 
@@ -136,8 +136,11 @@ Important fields:
 - `recovery_score`
 - `readiness_score`
 - `strain_score`
+- `metric_sources` — JSONB per-field provenance used for quality-ranked biometrics merges
 
 `skin_temp` stores absolute Celsius.
+Intervals.icu wellness rows may use `id` as the local wellness date; ingestion maps that to `biometrics.date` and keeps the same value as `external_id`. If Intervals.icu supplies sleep duration without sleep-stage percentages, ingestion stores the duration, leaves stage percentages `NULL`, and computes Astraphe's backup sleep score from known duration versus baseline nightly need instead of using the provider `sleepScore`.
+
 
 ### `sleep_periods`
 
@@ -195,7 +198,7 @@ Important fields:
 
 Stores third-party tokens by athlete/provider.
 
-Providers currently include WHOOP, Garmin-related flows, and Strava. Token access is server-side; clients never receive OAuth tokens.
+Providers currently include WHOOP, Garmin-related flows, Strava, and Intervals.icu. Token access is server-side; clients never receive OAuth/API tokens.
 
 Important fields:
 
@@ -209,14 +212,18 @@ Important fields:
 
 ### `activity_streams`
 
-Stores heavy per-second activity streams separately from `workouts`.
+Stores heavy per-second activity streams separately from `workouts`. Strava and Intervals.icu stream bundles are normalized into a flat `time_series` JSON object and stored as gzip JSON in Supabase Storage.
+Intervals.icu HR streams also refresh workout `avg_hr`, `max_hr`, `hr_zone_*_pct`, and `strain_score` using the athlete's current zone anchors. Activity summaries can refresh `athletes.max_hr`, `athletes.resting_hr`, and estimated `athletes.threshold_hr` when Intervals.icu provides those values.
 
 Important fields:
 
 - `workout_id`
 - `athlete_id`
-- `stream_data` / stream JSON payload fields from migration
-- metadata such as resolution/source
+- `time_series` — legacy inline JSONB, usually `NULL` after gzip storage migration
+- `storage_path` — `{athlete_id}/{workout_id}.json.gz` object in bucket `activity-streams`
+- `byte_size`
+- `content_encoding`
+- `resolution_seconds`
 
 ### `activity_laps`
 

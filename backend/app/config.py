@@ -64,6 +64,12 @@ class Settings(BaseSettings):
     STRAVA_STARTUP_BACKFILL_ENABLED: bool = True
     STRAVA_STARTUP_BACKFILL_HOURS: int = 24
 
+    # --- Intervals.icu API ---
+    # Keep the base URL in backend/.env. No Python default is provided so local
+    # and deployed environments choose their own target explicitly.
+    INTERVALS_ICU_API_BASE: Optional[str] = None
+    INTERVALS_ICU_AUTH_MODE: str = "basic"
+
     # --- WHOOP startup backfill (self-heal missed webhooks after deploy/restart) ---
     WHOOP_STARTUP_BACKFILL_ENABLED: bool = True
     WHOOP_STARTUP_BACKFILL_HOURS: int = 24

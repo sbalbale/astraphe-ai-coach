@@ -107,7 +107,7 @@ CREATE TABLE public.biometrics (
   sleep_in_bed_min smallint,
   CONSTRAINT biometrics_pkey PRIMARY KEY (id),
   CONSTRAINT biometrics_athlete_date_unique UNIQUE (athlete_id, date),
-  CONSTRAINT biometrics_hrv_source_check CHECK (hrv_source = ANY (ARRAY['whoop'::text, 'garmin'::text, 'healthkit'::text])),
+  CONSTRAINT biometrics_hrv_source_check CHECK (hrv_source = ANY (ARRAY['whoop'::text, 'garmin'::text, 'healthkit'::text, 'intervals_icu'::text])),
   CONSTRAINT biometrics_athlete_id_fkey FOREIGN KEY (athlete_id) REFERENCES athletes(id) ON DELETE CASCADE
 );
 
@@ -222,7 +222,7 @@ CREATE TABLE public.workouts (
   CONSTRAINT workouts_pkey PRIMARY KEY (id),
   CONSTRAINT workouts_external_id_unique UNIQUE (source, external_id),
   CONSTRAINT workouts_strava_activity_id_key UNIQUE (strava_activity_id),
-  CONSTRAINT workouts_source_check CHECK (source = ANY (ARRAY['garmin'::text, 'whoop'::text, 'healthkit'::text, 'manual'::text, 'strava'::text])),
+  CONSTRAINT workouts_source_check CHECK (source = ANY (ARRAY['garmin'::text, 'whoop'::text, 'healthkit'::text, 'manual'::text, 'strava'::text, 'intervals_icu'::text])),
   CONSTRAINT workouts_sport_check CHECK (sport = ANY (ARRAY['run'::text, 'bike'::text, 'swim'::text, 'strength'::text, 'row'::text, 'mobility'::text, 'other'::text])),
   CONSTRAINT workouts_athlete_id_fkey FOREIGN KEY (athlete_id) REFERENCES athletes(id) ON DELETE CASCADE
 );

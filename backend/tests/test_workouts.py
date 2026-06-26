@@ -8,6 +8,7 @@ from app.dependencies import get_current_athlete, get_user_db
 from app.main import app
 from app.models.workout import WorkoutPayload, WorkoutUpdatePayload
 from app.routers import workouts as workouts_router
+from app.services.processing import _quality_filter_workout_update
 
 
 def test_workout_list_columns_include_source_ids():
@@ -33,6 +34,51 @@ def test_workout_update_payload_tracks_average_watts_as_editable_field():
     assert payload.average_power == 230
     assert "average_power" in payload.model_fields_set
 
+
+def test_quality_merge_keeps_strava_fields_over_intervals_summary():
+    existing = {
+        "source": "strava",
+        "primary_source": "strava",
+        "title": "Strava ride",
+        "distance_m": 40000,
+        "avg_power_w": 210,
+        "avg_hr": 150,
+    }
+
+    filtered = _quality_filter_workout_update(
+        existing,
+        "intervals_icu",
+        {
+            "title": "Intervals ride",
+            "distance_m": 39900,
+            "avg_power_w": 205,
+            "avg_hr": 151,
+            "max_hr": 178,
+        },
+    )
+
+    assert filtered == {"avg_hr": 151, "max_hr": 178}
+
+
+def test_quality_merge_allows_higher_quality_hr_over_strava():
+    existing = {
+        "source": "strava",
+        "primary_source": "strava",
+        "avg_hr": 150,
+        "hr_zone_1_pct": 20,
+    }
+
+    filtered = _quality_filter_workout_update(
+        existing,
+        "intervals_icu",
+        {
+            "avg_hr": 152,
+            "hr_zone_1_pct": 10,
+            "distance_m": 41000,
+        },
+    )
+
+    assert filtered == {"avg_hr": 152, "hr_zone_1_pct": 10, "distance_m": 41000}
 
 class _WorkoutTableQuery:
     def __init__(self, db: "_WorkoutDb"):
