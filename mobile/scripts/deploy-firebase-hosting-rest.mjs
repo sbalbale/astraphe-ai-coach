@@ -147,7 +147,7 @@ async function requestJson(url, options = {}) {
   throw lastError;
 }
 
-async function requestMultipart(url, createBody) {
+async function requestUpload(url, createBody) {
   let lastError;
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
@@ -156,7 +156,8 @@ async function requestMultipart(url, createBody) {
         method: "POST",
         body: createBody(),
         headers: {
-          Authorization: `Bearer ${requireAccessToken()}`
+          Authorization: `Bearer ${requireAccessToken()}`,
+          "Content-Type": "application/octet-stream"
         }
       });
 
@@ -387,9 +388,7 @@ function requireUploadBody(hash, compressedByHash) {
     throw new Error(`Missing compressed file content for hash ${hash}.`);
   }
 
-  const formData = new FormData();
-  formData.append("file", new Blob([compressed]), hash);
-  return formData;
+  return compressed;
 }
 
 async function writeGithubOutput(outputs) {
@@ -467,7 +466,7 @@ async function main() {
   console.log(`Uploading ${uploadRequiredHashes.length} required file hash(es).`);
 
   for (const hash of uploadRequiredHashes) {
-    await requestMultipart(`${populate.uploadUrl}/${hash}`, () =>
+    await requestUpload(`${populate.uploadUrl}/${hash}`, () =>
       requireUploadBody(hash, compressedByHash)
     );
   }
