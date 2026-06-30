@@ -1,4 +1,4 @@
-from app.services.text_format import markdown_to_plain_text, notification_preview
+from app.services.text_format import markdown_to_plain_text, normalize_markdown_notes, notification_preview
 
 HRV_REPLY = (
     "Given how much your HRV has dipped—**2.12 SD below your baseline**—"
@@ -54,3 +54,21 @@ def test_notification_preview_short_text_unchanged():
     preview = notification_preview(short)
     assert preview == "Rest today. No ride."
     assert "…" not in preview
+
+
+def test_normalize_markdown_notes_none_and_empty():
+    assert normalize_markdown_notes(None) == ""
+    assert normalize_markdown_notes("") == ""
+
+
+def test_normalize_markdown_notes_unescapes_newlines():
+    src = "| A | B |\\n| --- | --- |\\n| 1 | 2 |"
+    out = normalize_markdown_notes(src)
+    assert "\\n" not in out
+    assert "\n| --- | --- |" in out
+
+
+def test_normalize_markdown_notes_rejects_non_string_types():
+    assert normalize_markdown_notes({"phase": "warmup"}) == ""  # type: ignore[arg-type]
+    assert normalize_markdown_notes(["row"]) == ""  # type: ignore[arg-type]
+    assert normalize_markdown_notes(42) == ""  # type: ignore[arg-type]
