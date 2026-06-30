@@ -482,6 +482,7 @@ export const api = {
     image_urls?: string[] | null;
     onConversationId?: (conversationId: string) => void;
     onStarted?: () => void;
+    onStatus?: (status: string, detail?: Record<string, unknown>) => void;
     onChunk: (text: string) => void;
     onSources?: (sources: unknown[]) => void;
   }): Promise<{ conversation_id: string }> {
@@ -546,6 +547,10 @@ export const api = {
             conversationId = data.conversation_id;
             notifyStarted();
             params.onConversationId?.(conversationId);
+          }
+          if (typeof data.status === 'string' && data.status) {
+            notifyStarted();
+            params.onStatus?.(data.status, data);
           }
           if (typeof data.text === 'string' && data.text) {
             notifyStarted();
