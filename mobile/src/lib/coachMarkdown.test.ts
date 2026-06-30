@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   extractFirstGfmPipeTable,
   normalizeMarkdownBlockStructure,
+  normalizeMarkdownSource,
   renderCoachMarkdownToSafeHtml
 } from './coachMarkdown';
 
@@ -47,6 +48,23 @@ describe('extractFirstGfmPipeTable', () => {
     const { tableMarkdown, remainder } = extractFirstGfmPipeTable(src);
     expect(tableMarkdown).not.toBeNull();
     expect(remainder).toBe('');
+  });
+
+  it('extracts table when newlines are escaped as literal \\n', () => {
+    const src =
+      '| Phase | Duration | Target | Notes |\\n| :--- | :--- | :--- | :--- |\\n' +
+      '| Warmup | 20m | Z1-Z2 | Gradual ramp |\\n' +
+      '| Main Set | 3x15m | 220-235W | Sweet Spot |';
+    const { tableMarkdown, remainder } = extractFirstGfmPipeTable(src);
+    expect(tableMarkdown).toContain('| Phase | Duration | Target | Notes |');
+    expect(tableMarkdown).toContain('| Warmup | 20m | Z1-Z2 | Gradual ramp |');
+    expect(remainder).toBe('');
+  });
+});
+
+describe('normalizeMarkdownSource', () => {
+  it('converts literal \\n to newlines', () => {
+    expect(normalizeMarkdownSource('line1\\nline2')).toBe('line1\nline2');
   });
 });
 

@@ -298,6 +298,32 @@ def test_schedule_workout_markdown_notes_stores_description():
     assert row["description"] == md
 
 
+def test_schedule_workout_normalizes_escaped_newlines_in_markdown_notes():
+    db = MockCoachDB()
+    planned = (date.today() + timedelta(days=5)).isoformat()
+    escaped = (
+        "| Phase | Duration | Intensity | Target |\\n"
+        "| :--- | :--- | :--- | :--- |\\n"
+        "| Warmup | 10 min | Z1-Z2 | Easy spin |"
+    )
+    out = coach_tools.handle_schedule_workout(
+        {
+            "duration_minutes": 60,
+            "focus_zone": "Endurance",
+            "date": planned,
+            "sport": "bike",
+            "markdown_notes": escaped,
+        },
+        athlete_id="ath-1",
+        db=db,  # type: ignore[arg-type]
+    )
+    assert "error" not in out
+    row = db.inserts[0][1]
+    assert "\\n" not in row["description"]
+    assert "| Phase | Duration | Intensity | Target |" in row["description"]
+    assert "\n| Warmup | 10 min | Z1-Z2 | Easy spin |" in row["description"]
+
+
 def test_schedule_workout_without_markdown_notes_keeps_json_description():
     db = MockCoachDB()
     planned = (date.today() + timedelta(days=6)).isoformat()

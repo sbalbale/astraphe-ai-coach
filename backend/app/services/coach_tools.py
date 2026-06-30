@@ -13,6 +13,7 @@ from supabase import Client
 
 from app.services.algorithms import compute_atl, compute_ctl
 from app.services import coach_workout_data as workout_data
+from app.services.text_format import normalize_markdown_notes
 from app.services.time_utils import athlete_local_date
 
 # Zone-derived intensity factors for TSS estimation (IF^2 * duration_h * 100)
@@ -524,7 +525,7 @@ def handle_schedule_workout(
 
     # Keep legacy `description` as a compact JSON string for backwards compatibility.
     description = json.dumps(workout_json, ensure_ascii=False)
-    markdown_notes = str(args.get("markdown_notes", "")).strip()
+    markdown_notes = normalize_markdown_notes(str(args.get("markdown_notes", "")))
 
     try:
         ins = (
@@ -1024,8 +1025,10 @@ _schedule_decl = types.FunctionDeclaration(
             "markdown_notes": types.Schema(
                 type=types.Type.STRING,
                 description=(
-                    "A concise Markdown-formatted summary of the intervals, including target watts, "
-                    "heart rate, or pace (e.g., a table or bulleted list)."
+                    "Required GFM pipe table for the Training Plan Prescription UI. "
+                    "Columns: Phase | Duration | Intensity | Target. "
+                    "Use real line breaks between rows (not escaped \\n). "
+                    "Table only—no prose. Must match structure blocks."
                 ),
             ),
         },

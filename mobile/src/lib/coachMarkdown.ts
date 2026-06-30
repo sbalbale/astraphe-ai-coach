@@ -165,11 +165,18 @@ function isLikelyPipeDataRow(line: string): boolean {
 }
 
 /**
+ * Unescape literal `\\n` / `\\r` sequences (common when tool JSON double-encodes newlines).
+ */
+export function normalizeMarkdownSource(src: string): string {
+  return (src ?? '').replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n').replace(/\\r/g, '\r');
+}
+
+/**
  * First GFM pipe table | block | delimiter | rows… in markdown; remainder is text outside the table.
  * Used so UI can split “prescription table” vs “coach notes”.
  */
 export function extractFirstGfmPipeTable(src: string): { tableMarkdown: string | null; remainder: string } {
-  const text = src ?? '';
+  const text = normalizeMarkdownSource(src ?? '');
   const normalized = text.replace(/\r\n/g, '\n');
   const lines = normalized.split('\n');
   let i = 0;
