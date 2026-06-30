@@ -18,6 +18,7 @@
     image_urls?: string[];
     created_at?: string;
     streaming?: boolean;
+    statusText?: string;
   };
 
   let greetingMessage = $state<string>('');
@@ -35,6 +36,24 @@
   let chatContainer: HTMLElement;
   let fileInput: HTMLInputElement | null = null;
   let chatInputEl = $state<HTMLTextAreaElement | null>(null);
+
+
+  function coachStatusLabel(status: string, detail?: Record<string, unknown>): string {
+    if (status === 'started' || status === 'context_ready') return 'Reviewing your data…';
+    if (status === 'thinking') return 'Thinking…';
+    if (status === 'tool') {
+      const tool = typeof detail?.tool === 'string' ? detail.tool : '';
+      if (tool === 'schedule_workout') return 'Scheduling workouts…';
+      if (tool === 'get_athlete_zones') return 'Looking up your zones…';
+      if (tool === 'internal_scratchpad') return 'Planning…';
+      if (tool === 'simulate_training_impact') return 'Simulating training impact…';
+      if (tool === 'calculate_nutrition') return 'Calculating nutrition targets…';
+      if (tool === 'list_workouts' || tool === 'get_workout_summary') return 'Analyzing your workouts…';
+      if (tool === 'clear_training_plans') return 'Clearing calendar…';
+      if (tool) return 'Working on it…';
+    }
+    return 'Thinking…';
+  }
 
   const CHAT_INPUT_MAX_PX = 200;
 
@@ -333,12 +352,21 @@
           conversationId = id;
         },
         onStarted: unlockInput,
+        onStatus: (status, detail) => {
+          unlockInput();
+          const msgIndex = messages.findIndex((m) => m.id === aiMsgId);
+          if (msgIndex !== -1 && !messages[msgIndex].text.trim()) {
+            messages[msgIndex].statusText = coachStatusLabel(status, detail);
+          }
+          scrollToBottom();
+        },
         onChunk: (chunk) => {
           unlockInput();
           accumulated += chunk;
           const msgIndex = messages.findIndex((m) => m.id === aiMsgId);
           if (msgIndex !== -1) {
             messages[msgIndex].text = accumulated;
+            messages[msgIndex].statusText = undefined;
           }
           scrollToBottom();
         }
@@ -353,7 +381,10 @@
       console.error('[Chat] Failed to send coach message:', e);
       const msgIndex = messages.findIndex(m => m.id === aiMsgId);
       if (msgIndex !== -1) {
-        messages[msgIndex].text = "Sorry, I had trouble connecting to the coaching engine.";
+        const errMsg = e instanceof Error ? e.message : '';
+        messages[msgIndex].text = errMsg.toLowerCase().includes('timeout') || errMsg.toLowerCase().includes('aborted')
+          ? "That took longer than expected. Your coach may still be working — try refreshing this conversation in a moment."
+          : "Sorry, I had trouble connecting to the coaching engine.";
       }
     } finally {
       const msgIndex = messages.findIndex(m => m.id === aiMsgId);
@@ -484,7 +515,7 @@
                     <div class="w-1.5 h-1.5 bg-blue rounded-full animate-bounce [animation-delay:150ms]"></div>
                     <div class="w-1.5 h-1.5 bg-blue rounded-full animate-bounce [animation-delay:300ms]"></div>
                   </div>
-                  <span class="text-[12px]">Thinking…</span>
+                  <span class="text-[12px]">{msg.statusText || "Thinking…"}</span>
                 </div>
               {:else}
                 <div class="chat-md">{@html renderCoachMarkdownToSafeHtml(msg.text)}</div>

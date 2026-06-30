@@ -16,7 +16,7 @@ import asyncio
 import json
 import re
 import time
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 from supabase import Client
@@ -1206,6 +1206,19 @@ def _strip_internal_reasoning(text: str) -> str:
     return t
 
 
+
+def _coach_progress(
+    progress_callback: Callable[[dict[str, Any]], None] | None,
+    status: str,
+    **extra: Any,
+) -> None:
+    if progress_callback is None:
+        return
+    try:
+        progress_callback({"status": status, **extra})
+    except Exception:
+        pass
+
 def get_coach_response_agentic(
     athlete_id: str,
     message: str,
@@ -1215,6 +1228,7 @@ def get_coach_response_agentic(
     model_name: str | None = None,
     timezone_offset_min: int | None = None,
     max_tool_hops: int = 15,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> tuple[str, list[dict[str, str]]]:
     """
     Non-streaming coach reply with manual Gemini function calling (tool loop).
@@ -1246,6 +1260,7 @@ def get_coach_response_agentic(
             round((time.perf_counter() - coach_t0) * 1000, 1),
             should_skip_rag_for_message(message),
         )
+        _coach_progress(progress_callback, "context_ready")
     else:
         context_block = (
             f"[SYSTEM CONTEXT - DO NOT SHOW TO USER]\nAthlete ID: {athlete_id}\n"
@@ -1348,6 +1363,7 @@ def get_coach_response_agentic(
     max_hops = _agentic_max_tool_hops(message)
     for _hop in range(max_hops):
         hop_t0 = time.perf_counter()
+        _coach_progress(progress_callback, "thinking", hop=_hop)
         _hop_error: Exception | None = None
         for _model_idx, effective_model in enumerate(candidates):
             _hop_error = None
@@ -1436,6 +1452,7 @@ def get_coach_response_agentic(
                 if fc is None or not fc.name:
                     continue
                 name = fc.name
+                _coach_progress(progress_callback, "tool", tool=name)
                 args = coach_tools.parse_function_args(fc)
                 args = _normalize_relative_tool_dates(name, args, message=message, calendar=calendar)
                 handler = coach_tools.TOOL_HANDLERS.get(name)
@@ -1704,6 +1721,7 @@ def get_coach_response(
     conversation_id: str | None = None,
     model_name: str | None = None,
     timezone_offset_min: int | None = None,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> tuple[str, list[dict[str, str]]]:
     return get_coach_response_agentic(
         athlete_id=athlete_id,
@@ -1713,6 +1731,7 @@ def get_coach_response(
         conversation_id=conversation_id,
         model_name=model_name,
         timezone_offset_min=timezone_offset_min,
+        progress_callback=progress_callback,
     )
 
 async def get_coach_response_stream(
