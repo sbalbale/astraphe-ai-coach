@@ -525,7 +525,7 @@ def handle_schedule_workout(
 
     # Keep legacy `description` as a compact JSON string for backwards compatibility.
     description = json.dumps(workout_json, ensure_ascii=False)
-    markdown_notes = normalize_markdown_notes(str(args.get("markdown_notes", "")))
+    markdown_notes = normalize_markdown_notes(args.get("markdown_notes"))
 
     try:
         ins = (

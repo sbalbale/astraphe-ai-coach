@@ -80,7 +80,8 @@
       return parts.length ? parts.join(' • ') : undefined;
     };
 
-    const byId = Array.from(new Map(trainingStore.workouts.map((w) => [w.id, w])).values());
+    const workouts = trainingStore.workouts ?? [];
+    const byId = Array.from(new Map(workouts.map((w) => [w.id, w])).values());
 
     return byId
       .map((w) => ({
