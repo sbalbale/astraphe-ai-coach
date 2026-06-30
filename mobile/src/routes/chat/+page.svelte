@@ -46,6 +46,10 @@
       if (tool === 'schedule_workout') return 'Scheduling workouts…';
       if (tool === 'get_athlete_zones') return 'Looking up your zones…';
       if (tool === 'internal_scratchpad') return 'Planning…';
+      if (tool === 'simulate_training_impact') return 'Simulating training impact…';
+      if (tool === 'calculate_nutrition') return 'Calculating nutrition targets…';
+      if (tool === 'list_workouts' || tool === 'get_workout_summary') return 'Analyzing your workouts…';
+      if (tool === 'clear_training_plans') return 'Clearing calendar…';
       if (tool) return 'Working on it…';
     }
     return 'Thinking…';

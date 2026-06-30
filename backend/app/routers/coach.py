@@ -438,7 +438,9 @@ async def chat_with_coach(
         _insert_message(db, athlete_id, conversation_id, role="ai", content=coach_reply, image_urls=None)
 
         # Extract and persist long-term memories from this exchange (background, non-blocking).
-        recent_history = _load_conversation_history(db, athlete_id, conversation_id, limit=10)
+        recent_history = await asyncio.to_thread(
+                    _load_conversation_history, db, athlete_id, conversation_id, 10
+                )
         background_tasks.add_task(
             _run_memory_extraction,
             athlete_id,
@@ -561,11 +563,19 @@ async def stream_chat_with_coach(
     async def event_generator():
         conversation_id = payload.conversation_id
         if not conversation_id:
-            conversation_id = _create_conversation(db, athlete_id, title=None)
+            conversation_id = await asyncio.to_thread(_create_conversation, db, athlete_id, None)
 
         yield f"data: {json.dumps({'conversation_id': conversation_id, 'status': 'started'})}\n\n"
 
-        _insert_message(db, athlete_id, conversation_id, role="user", content=payload.message, image_urls=payload.image_urls)
+        await asyncio.to_thread(
+            _insert_message,
+            db,
+            athlete_id,
+            conversation_id,
+            "user",
+            payload.message,
+            payload.image_urls,
+        )
 
         effective_message = payload.message
         if payload.document_contents:
@@ -599,7 +609,15 @@ async def stream_chat_with_coach(
             if not ai_full:
                 raise RuntimeError("Model returned an empty response.")
 
-            _insert_message(db, athlete_id, conversation_id, role="ai", content=ai_full, image_urls=None)
+            await asyncio.to_thread(
+                _insert_message,
+                db,
+                athlete_id,
+                conversation_id,
+                "ai",
+                ai_full,
+                None,
+            )
 
             try:
                 disconnected = await request.is_disconnected()
