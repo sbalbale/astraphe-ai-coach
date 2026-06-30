@@ -101,8 +101,16 @@ jobs:
           scp supabase/templates/recovery.html docker@ssh.astrapheai.com:~/astraphe/supabase/templates/recovery.html
 
       - name: Deploy to Proxmox
+        env:
+          GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
         run: |
-          ssh docker@ssh.astrapheai.com << 'ENDSSH'
+          if [ -z "$GHCR_PULL_TOKEN" ]; then
+            echo "::error::GHCR_PULL_TOKEN secret is not set"
+            exit 1
+          fi
+          ssh docker@ssh.astrapheai.com env GHCR_PULL_TOKEN="${GHCR_PULL_TOKEN}" bash -s <<'ENDSSH'
+            set -euo pipefail
+            echo "${GHCR_PULL_TOKEN}" | docker login ghcr.io -u sbalbale --password-stdin
             cd ~/astraphe
             docker compose pull astraphe-api
             docker compose up -d astraphe-api
