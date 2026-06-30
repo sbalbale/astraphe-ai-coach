@@ -345,6 +345,26 @@ def test_schedule_workout_none_markdown_notes_falls_back_to_json_description():
     assert parsed["sport"] == "bike"
 
 
+def test_schedule_workout_non_string_markdown_notes_falls_back_to_json_description():
+    db = MockCoachDB()
+    planned = (date.today() + timedelta(days=6)).isoformat()
+    out = coach_tools.handle_schedule_workout(
+        {
+            "duration_minutes": 45,
+            "focus_zone": "VO2Max",
+            "date": planned,
+            "sport": "Bike",
+            "markdown_notes": {"phase": "warmup", "duration": "10 min"},
+        },
+        athlete_id="ath-1",
+        db=db,  # type: ignore[arg-type]
+    )
+    assert "error" not in out
+    row = db.inserts[0][1]
+    parsed = json.loads(row["description"])
+    assert parsed["sport"] == "bike"
+
+
 def test_schedule_workout_without_markdown_notes_keeps_json_description():
     db = MockCoachDB()
     planned = (date.today() + timedelta(days=6)).isoformat()

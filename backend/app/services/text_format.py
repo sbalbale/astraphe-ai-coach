@@ -5,7 +5,7 @@ import re
 
 def normalize_markdown_notes(text: str | None) -> str:
     """Convert literal ``\\n`` sequences to real newlines for GFM pipe tables."""
-    if not text:
+    if not isinstance(text, str) or not text:
         return ""
     return text.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\r", "\r").strip()
 
