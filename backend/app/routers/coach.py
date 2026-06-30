@@ -438,7 +438,9 @@ async def chat_with_coach(
         _insert_message(db, athlete_id, conversation_id, role="ai", content=coach_reply, image_urls=None)
 
         # Extract and persist long-term memories from this exchange (background, non-blocking).
-        recent_history = _load_conversation_history(db, athlete_id, conversation_id, limit=10)
+        recent_history = await asyncio.to_thread(
+                    _load_conversation_history, db, athlete_id, conversation_id, 10
+                )
         background_tasks.add_task(
             _run_memory_extraction,
             athlete_id,
@@ -481,6 +483,71 @@ async def chat_with_coach(
         print("--------------------------")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+_SSE_HEADERS = {
+    "Cache-Control": "no-cache",
+    "Connection": "keep-alive",
+    "X-Accel-Buffering": "no",
+}
+
+_COACH_STREAM_KEEPALIVE_SEC = 15.0
+
+
+async def _stream_coach_agentic(
+    *,
+    athlete_id: str,
+    effective_message: str,
+    recent_tss: float,
+    db,
+    conversation_id: str,
+    model_name: str | None,
+    timezone_offset_min: int | None,
+):
+    """Run agentic coach in a worker thread; yield progress dicts and final result."""
+    loop = asyncio.get_running_loop()
+    queue: asyncio.Queue = asyncio.Queue()
+
+    def progress(event: dict) -> None:
+        loop.call_soon_threadsafe(queue.put_nowait, ("progress", event))
+
+    def run() -> None:
+        try:
+            result = get_coach_response(
+                athlete_id,
+                effective_message,
+                recent_tss,
+                db,
+                conversation_id,
+                model_name,
+                timezone_offset_min,
+                progress_callback=progress,
+            )
+            loop.call_soon_threadsafe(queue.put_nowait, ("done", result))
+        except Exception as exc:
+            loop.call_soon_threadsafe(queue.put_nowait, ("error", exc))
+
+    worker = asyncio.create_task(asyncio.to_thread(run))
+    try:
+        while True:
+            try:
+                kind, payload = await asyncio.wait_for(
+                    queue.get(), timeout=_COACH_STREAM_KEEPALIVE_SEC
+                )
+            except asyncio.TimeoutError:
+                yield {"_keepalive": True}
+                continue
+            if kind == "progress":
+                yield payload
+            elif kind == "done":
+                yield {"_result": payload}
+                return
+            elif kind == "error":
+                raise payload
+    finally:
+        if not worker.done():
+            await worker
+
+
 @router.post("/stream")
 async def stream_chat_with_coach(
     payload: ChatMessage,
@@ -492,13 +559,23 @@ async def stream_chat_with_coach(
     db = Depends(get_user_db),
 ):
     _require_premium(config)
+
     async def event_generator():
         conversation_id = payload.conversation_id
         if not conversation_id:
-            conversation_id = _create_conversation(db, athlete_id, title=None)
-            yield f"data: {json.dumps({'conversation_id': conversation_id})}\n\n"
+            conversation_id = await asyncio.to_thread(_create_conversation, db, athlete_id, None)
 
-        _insert_message(db, athlete_id, conversation_id, role="user", content=payload.message, image_urls=payload.image_urls)
+        yield f"data: {json.dumps({'conversation_id': conversation_id, 'status': 'started'})}\n\n"
+
+        await asyncio.to_thread(
+            _insert_message,
+            db,
+            athlete_id,
+            conversation_id,
+            "user",
+            payload.message,
+            payload.image_urls,
+        )
 
         effective_message = payload.message
         if payload.document_contents:
@@ -511,34 +588,48 @@ async def stream_chat_with_coach(
         ai_full = ""
         ai_sources: list = []
         try:
-            ai_full, ai_sources = await asyncio.to_thread(
-                get_coach_response,
-                athlete_id,
-                effective_message,
-                payload.recent_tss,
-                db,
-                conversation_id,
-                config.gemini_model,
-                payload.timezone_offset_min,
-            )
+            async for event in _stream_coach_agentic(
+                athlete_id=athlete_id,
+                effective_message=effective_message,
+                recent_tss=payload.recent_tss,
+                db=db,
+                conversation_id=conversation_id,
+                model_name=config.gemini_model,
+                timezone_offset_min=payload.timezone_offset_min,
+            ):
+                if event.get("_keepalive"):
+                    yield ": ping\n\n"
+                    continue
+                if "_result" in event:
+                    ai_full, ai_sources = event["_result"]
+                    break
+                yield f"data: {json.dumps(event)}\n\n"
+
             ai_full = (ai_full or "").strip()
             if not ai_full:
                 raise RuntimeError("Model returned an empty response.")
 
-            chunk_size = 600
-            for i in range(0, len(ai_full), chunk_size):
-                chunk = ai_full[i : i + chunk_size]
-                yield f"data: {json.dumps({'text': chunk})}\n\n"
-            yield f"data: {json.dumps({'sources': ai_sources or []})}\n\n"
-        except Exception as e:
-            yield f"data: {json.dumps({'error': str(e)})}\n\n"
-        else:
-            _insert_message(db, athlete_id, conversation_id, role="ai", content=ai_full, image_urls=None)
+            await asyncio.to_thread(
+                _insert_message,
+                db,
+                athlete_id,
+                conversation_id,
+                "ai",
+                ai_full,
+                None,
+            )
+
             try:
                 disconnected = await request.is_disconnected()
             except Exception:
                 disconnected = False
+
             if not disconnected:
+                chunk_size = 600
+                for i in range(0, len(ai_full), chunk_size):
+                    chunk = ai_full[i : i + chunk_size]
+                    yield f"data: {json.dumps({'text': chunk})}\n\n"
+                yield f"data: {json.dumps({'sources': ai_sources or []})}\n\n"
                 recent_history = _load_conversation_history(db, athlete_id, conversation_id, limit=10)
                 mem_task = asyncio.create_task(
                     _run_memory_extraction(
@@ -559,6 +650,12 @@ async def stream_chat_with_coach(
                 _stream_bg_tasks.update({mem_task, title_task})
                 mem_task.add_done_callback(_stream_bg_tasks.discard)
                 title_task.add_done_callback(_stream_bg_tasks.discard)
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
         yield "data: [DONE]\n\n"
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers=_SSE_HEADERS,
+    )
