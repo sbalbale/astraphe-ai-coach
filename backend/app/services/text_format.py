@@ -2,6 +2,13 @@
 
 import re
 
+
+def normalize_markdown_notes(text: str) -> str:
+    """Convert literal ``\\n`` sequences to real newlines for GFM pipe tables."""
+    if not text:
+        return text
+    return text.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\r", "\r").strip()
+
 _FENCED_CODE = re.compile(r"```[\s\S]*?```", re.MULTILINE)
 _INLINE_CODE = re.compile(r"`([^`]+)`")
 _IMAGE = re.compile(r"!\[([^\]]*)\]\([^)]+\)")

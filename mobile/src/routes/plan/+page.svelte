@@ -2,7 +2,6 @@
   import type { Action } from 'svelte/action';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import { confirm } from '$lib/confirm';
-  import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { authStore } from '$lib/stores/authStore.svelte';
   import { trainingStore } from '$lib/stores/trainingStore.svelte';
   import {
@@ -41,7 +40,6 @@
     id: string;
     isoDate: string; // yyyy-MM-dd (local)
     date: Date;
-    dayKey?: string;
   };
 
   const dow = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -74,46 +72,7 @@
     parseIsoLocal(trainingStore.selectedDate || format(new Date(), 'yyyy-MM-dd'))
   );
 
-  const planObj = $derived.by(() => athleteStore.plan?.plan as Record<string, RawPlanItem> | undefined);
-
-  const legacyPlannedWorkouts = $derived.by<PlannedWorkout[]>(() => {
-    const p = planObj;
-    if (!p) return [];
-
-    const y = viewMonth.getFullYear();
-    const m = viewMonth.getMonth();
-
-    const out: PlannedWorkout[] = [];
-    for (const k of Object.keys(p)) {
-      const item = p[k] ?? {};
-      const dayNum = Number(k);
-      if (!Number.isFinite(dayNum)) continue;
-
-      const d = new Date(y, m, dayNum);
-      if (Number.isNaN(d.getTime())) continue;
-
-      const isoDate = format(d, 'yyyy-MM-dd');
-      out.push({
-        id: `${isoDate}:${k}`,
-        isoDate,
-        date: d,
-        dayKey: k,
-        ...item
-      });
-    }
-
-    out.sort((a, b) => a.date.getTime() - b.date.getTime());
-    return out;
-  });
-
-  /** Collapse legacy `/v1/plan` rows vs `/v1/training-plans` rows that describe the same session. */
-  function planDisplayDedupeKey(w: PlannedWorkout): string {
-    const title = (w.title ?? w.type ?? '').trim().toLowerCase();
-    const type = (w.type ?? '').trim().toLowerCase();
-    return `${w.isoDate}\u0000${title}\u0000${type}`;
-  }
-
-  const aiPlannedWorkouts = $derived.by<PlannedWorkout[]>(() => {
+  const plannedWorkouts = $derived.by<PlannedWorkout[]>(() => {
     const intervalTarget = (i: Workout['structure'][number]): string | undefined => {
       const parts: string[] = [];
       if (typeof i.target_hr_zone === 'number') parts.push(`HR Z${i.target_hr_zone}`);
@@ -123,35 +82,24 @@
 
     const byId = Array.from(new Map(trainingStore.workouts.map((w) => [w.id, w])).values());
 
-    return byId.map((w) => ({
-      id: `ai:${w.id}`,
-      isoDate: w.date,
-      date: parseIsoLocal(w.date),
-      title: w.title,
-      type: w.sport,
-      duration: w.duration_minutes != null ? `${w.duration_minutes} min` : undefined,
-      tss: w.projected_tss,
-      context: w.description,
-      structure: (w.structure ?? []).map((i) => ({
-        title: i.name,
-        duration: i.duration_minutes != null ? `${i.duration_minutes} min` : undefined,
-        target: intervalTarget(i),
-        note: i.description
+    return byId
+      .map((w) => ({
+        id: `ai:${w.id}`,
+        isoDate: w.date,
+        date: parseIsoLocal(w.date),
+        title: w.title,
+        type: w.sport,
+        duration: w.duration_minutes != null ? `${w.duration_minutes} min` : undefined,
+        tss: w.projected_tss,
+        context: w.description,
+        structure: (w.structure ?? []).map((i) => ({
+          title: i.name,
+          duration: i.duration_minutes != null ? `${i.duration_minutes} min` : undefined,
+          target: intervalTarget(i),
+          note: i.description
+        }))
       }))
-    }));
-  });
-
-  const plannedWorkouts = $derived.by<PlannedWorkout[]>(() => {
-    const map = new Map<string, PlannedWorkout>();
-    for (const w of legacyPlannedWorkouts) {
-      map.set(planDisplayDedupeKey(w), w);
-    }
-    for (const w of aiPlannedWorkouts) {
-      map.set(planDisplayDedupeKey(w), w);
-    }
-    const merged = Array.from(map.values());
-    merged.sort((a, b) => a.date.getTime() - b.date.getTime());
-    return merged;
+      .sort((a, b) => a.date.getTime() - b.date.getTime());
   });
 
   const workoutsByIso = $derived.by(() => {
@@ -243,6 +191,10 @@
     if (d.getFullYear() !== viewMonth.getFullYear() || d.getMonth() !== viewMonth.getMonth()) {
       viewMonth = startOfMonth(d);
     }
+  }
+
+  function jumpToToday() {
+    selectDate(new Date());
   }
 
   function openWorkout(w: PlannedWorkout) {
@@ -386,6 +338,14 @@
               <div class="text-[16px] font-semibold">{format(viewMonth, 'MMMM yyyy')}</div>
             </div>
             <div class="flex items-center gap-2">
+              <button
+                type="button"
+                class="h-9 px-2.5 rounded-xl bg-glass2 border border-border/50 hover:bg-glass transition-colors text-[12px] font-mono text-text1 whitespace-nowrap"
+                aria-label="Jump to today"
+                onclick={jumpToToday}
+              >
+                Today
+              </button>
               <button
                 type="button"
                 class="w-9 h-9 rounded-xl bg-glass2 border border-border/50 hover:bg-glass transition-colors"
