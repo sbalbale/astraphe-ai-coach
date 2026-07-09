@@ -189,11 +189,16 @@ jobs:
             set -euo pipefail
             export KUBECONFIG=/root/.kube/ci-deployer-config
 
+            # The supabase CLI ships as a `supabase` shim binary that forwards
+            # to a co-located `supabase-go` binary — both must land in the
+            # same directory, not just `supabase` copied out on its own.
             if ! command -v supabase >/dev/null 2>&1; then
               echo "Installing supabase CLI"
+              mkdir -p "${HOME}/.local/share/supabase"
               curl -fsSL https://github.com/supabase/cli/releases/latest/download/supabase_linux_amd64.tar.gz \
-                | tar -xz -C /usr/local/bin supabase
+                | tar -xz -C "${HOME}/.local/share/supabase"
             fi
+            export PATH="${HOME}/.local/share/supabase:${PATH}"
 
             cd /root/ci-migrate
 
