@@ -84,35 +84,39 @@ jobs:
             "$CF_ACCESS_CLIENT_ID" "$CF_ACCESS_CLIENT_SECRET" > /tmp/cf-proxy.sh
           chmod +x /tmp/cf-proxy.sh
 
+          # ssh.astrapheai.com's Cloudflare Tunnel routes to the k3s cluster's
+          # keepalived VIP (10.1.1.60:22), not a fixed host — it lands on
+          # whichever of the 3 k3s nodes currently holds the VIP, so the
+          # deploy key must be authorized as root on all 3.
           cat >> ~/.ssh/config << 'EOF'
           Host ssh.astrapheai.com
             HostName ssh.astrapheai.com
-            User docker
+            User root
             IdentityFile ~/.ssh/id_ed25519_deploy
             ProxyCommand /tmp/cf-proxy.sh %h
             StrictHostKeyChecking no
             BatchMode yes
           EOF
 
-      - name: Deploy email templates
-        run: |
-          ssh docker@ssh.astrapheai.com 'mkdir -p ~/astraphe/supabase/templates'
-          scp supabase/templates/confirm.html docker@ssh.astrapheai.com:~/astraphe/supabase/templates/confirm.html
-          scp supabase/templates/recovery.html docker@ssh.astrapheai.com:~/astraphe/supabase/templates/recovery.html
+      # NOTE: custom email templates (supabase/templates/*.html) are not
+      # deployed anywhere right now. The k3s `auth` (GoTrue) pod has no
+      # mailer-template env vars or volume mounts configured, so it's been
+      # sending its generic default emails since the migration regardless.
+      # Wiring the real templates back in needs a ConfigMap + Deployment
+      # change on the auth pod, not a file drop from CI — tracked separately.
 
       - name: Deploy to k3s
-        # astraphe-api runs in the k3s cluster (namespace `astraphe`), not on
-        # this Docker host anymore (migrated 2026-07-03). ssh.astrapheai.com
-        # only reaches this LAN host, so we hop from here to the cluster's
-        # API server (10.1.1.60:6443, the HA VIP) using a kubeconfig for a
-        # narrowly-scoped ServiceAccount (`ci-deployer`, namespace `astraphe`)
-        # that was provisioned ahead of time and lives at ~/astraphe/kubeconfig
-        # on this host — it can only patch the astraphe-api Deployment's
-        # image and read rollout status, nothing else.
+        # astraphe-api runs in the k3s cluster (namespace `astraphe`).
+        # ssh.astrapheai.com lands on whichever k3s node currently holds the
+        # VIP; kubectl there runs against a kubeconfig for a narrowly-scoped
+        # ServiceAccount (`ci-deployer`, namespace `astraphe`) provisioned
+        # ahead of time at /root/.kube/ci-deployer-config on all 3 nodes —
+        # it can only patch the astraphe-api Deployment's image and read
+        # rollout status, nothing else.
         run: |
-          ssh docker@ssh.astrapheai.com env IMAGE_TAG="${{ needs.build.outputs.image_tag }}" bash -s <<'ENDSSH'
+          ssh root@ssh.astrapheai.com env IMAGE_TAG="${{ needs.build.outputs.image_tag }}" bash -s <<'ENDSSH'
             set -euo pipefail
-            export KUBECONFIG="${HOME}/astraphe/kubeconfig"
+            export KUBECONFIG=/root/.kube/ci-deployer-config
             kubectl set image deployment/astraphe-api -n astraphe \
               astraphe-api="ghcr.io/sbalbale/astraphe-api:${IMAGE_TAG}"
             kubectl rollout status deployment/astraphe-api -n astraphe --timeout=180s
@@ -148,35 +152,50 @@ jobs:
             "$CF_ACCESS_CLIENT_ID" "$CF_ACCESS_CLIENT_SECRET" > /tmp/cf-proxy.sh
           chmod +x /tmp/cf-proxy.sh
 
+          # ssh.astrapheai.com's Cloudflare Tunnel routes to the k3s cluster's
+          # keepalived VIP (10.1.1.60:22), not a fixed host — it lands on
+          # whichever of the 3 k3s nodes currently holds the VIP, so the
+          # deploy key must be authorized as root on all 3.
           cat >> ~/.ssh/config << 'EOF'
           Host ssh.astrapheai.com
             HostName ssh.astrapheai.com
-            User docker
+            User root
             IdentityFile ~/.ssh/id_ed25519_deploy
             ProxyCommand /tmp/cf-proxy.sh %h
             StrictHostKeyChecking no
             BatchMode yes
           EOF
 
+      - name: Sync migrations to a k3s node
+        # The k3s nodes are fresh VMs with no persistent deploy checkout or
+        # tooling (unlike the old ct100 host) — copy just what's needed for
+        # this run instead of relying on a stateful git clone there.
+        run: |
+          ssh root@ssh.astrapheai.com 'rm -rf /root/ci-migrate && mkdir -p /root/ci-migrate'
+          scp -r supabase/migrations root@ssh.astrapheai.com:/root/ci-migrate/migrations
+          scp supabase/config.toml root@ssh.astrapheai.com:/root/ci-migrate/config.toml
+
       - name: Run new migrations
         # Postgres runs as supabase-db-0 in the k3s cluster (namespace
-        # `supabase`, migrated 2026-07-03) — not reachable directly from this
-        # LAN host, so we port-forward to it through the k3s API server using
-        # the same ci-deployer kubeconfig as the deploy step (scoped to only
-        # portforward into that one pod) and run `supabase db push` against
-        # the forwarded local port, same as before the migration.
+        # `supabase`) — reached via a kubectl port-forward through the same
+        # ci-deployer kubeconfig as the deploy step (scoped to only
+        # portforward into that one pod), then `supabase db push` against
+        # the forwarded local port.
         env:
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
         run: |
           # Password is expanded here; the remote script is single-quoted via ssh bash -s.
-          ssh docker@ssh.astrapheai.com env SUPABASE_DB_PASSWORD="${SUPABASE_DB_PASSWORD}" bash -s <<'REMOTE'
+          ssh root@ssh.astrapheai.com env SUPABASE_DB_PASSWORD="${SUPABASE_DB_PASSWORD}" bash -s <<'REMOTE'
             set -euo pipefail
-            export PATH="${HOME}/.local/share/supabase:${PATH}"
-            export KUBECONFIG="${HOME}/astraphe/kubeconfig"
-            REPO="${HOME}/astraphe/repo"
+            export KUBECONFIG=/root/.kube/ci-deployer-config
 
-            cd "${REPO}"
-            git pull origin main
+            if ! command -v supabase >/dev/null 2>&1; then
+              echo "Installing supabase CLI"
+              curl -fsSL https://github.com/supabase/cli/releases/latest/download/supabase_linux_amd64.tar.gz \
+                | tar -xz -C /usr/local/bin supabase
+            fi
+
+            cd /root/ci-migrate
 
             kubectl port-forward -n supabase pod/supabase-db-0 15432:5432 >/tmp/pf.log 2>&1 &
             PF_PID=$!
