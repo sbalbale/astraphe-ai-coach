@@ -207,8 +207,14 @@ def test_backfill_refreshes_expired_access_token():
         def eq(self, *_a, **_k):
             return self
 
+        def lt(self, *_a, **_k):
+            return self
+
         def execute(self):
-            return SimpleNamespace(data=None)
+            # Both the claim UPDATE and the final token UPDATE "succeed"
+            # (a matched row is returned), simulating no other replica
+            # holding the refresh lock — see claim_and_refresh_whoop_token.
+            return SimpleNamespace(data=[self.updated])
 
     async def _run():
         db = FakeDb()

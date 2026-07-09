@@ -13,7 +13,7 @@ from app.models.workout import WorkoutPayload
 from app.services.ai_coach import invalidate_context_cache
 from app.services.processing import process_and_save_biometrics, process_and_save_workout, recalculate_tss_history
 from app.dependencies import get_admin_db
-from app.services.token_refresh import token_expires_at
+from app.services.token_refresh import claim_and_refresh_whoop_token
 
 
 def _parse_dt(value: str) -> datetime:
@@ -66,20 +66,36 @@ async def _ensure_valid_whoop_access_token(
             detail="WHOOP access token expired; reconnect WHOOP in profile settings",
         )
 
-    token_data = await whoop.refresh_oauth_token(refresh_token)
+    # Shares the same DB-level claim as token_refresh.py's proactive sweep,
+    # so a concurrent replica hitting this same reactive path (e.g. both
+    # replicas' startup backfills at once) never calls WHOOP's refresh
+    # endpoint for the same refresh_token concurrently — see
+    # token_refresh.claim_and_refresh_whoop_token for why that matters.
+    token_data = await claim_and_refresh_whoop_token(db, athlete_id, refresh_token)
+    if token_data is None:
+        # Another replica is refreshing this token right now — poll briefly
+        # for it to land rather than racing our own refresh call.
+        for _ in range(5):
+            await asyncio.sleep(1.0)
+            access_token, refresh_token = _load_whoop_tokens(db, athlete_id)
+            if access_token:
+                try:
+                    await whoop.fetch_profile(access_token)
+                    return access_token
+                except HTTPException as e:
+                    if e.status_code != status.HTTP_401_UNAUTHORIZED:
+                        raise
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="WHOOP access token expired; reconnect WHOOP in profile settings",
+        )
+
     new_access = token_data.get("access_token")
-    new_refresh = token_data.get("refresh_token") or refresh_token
     if not new_access:
         raise HTTPException(
             status_code=502,
             detail="WHOOP token refresh returned no access_token",
         )
-
-    new_expires = token_expires_at(token_data)
-    bf_update: dict = {"access_token": new_access, "refresh_token": new_refresh}
-    if new_expires:
-        bf_update["expires_at"] = new_expires
-    db.table("oauth_tokens").update(bf_update).eq("athlete_id", athlete_id).eq("provider", "whoop").execute()
     print(f"[whoop.backfill] refreshed access token athlete_id={athlete_id}")
     return new_access
 
