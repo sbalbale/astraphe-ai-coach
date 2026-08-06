@@ -1219,6 +1219,59 @@ def _coach_progress(
     except Exception:
         pass
 
+# Tool names whose handlers actually write data (see coach_tools.TOOL_HANDLERS).
+# Used only to word the post-tool-call failure fallback honestly — claiming
+# "I updated your status" is fine if one of these just ran, but false (and
+# misleading) if the hop only ran read-only lookups.
+def _tool_names_from_last_function_response(contents: list) -> list[str]:
+    """
+    Scan `contents` backwards for the most recent turn carrying
+    function_response parts, and return the tool name(s) those responses
+    are for.
+
+    Needed for two cases `contents[-1]` alone misses (Copilot review on
+    PR #17):
+    - A calendar reminder turn (see _calendar_tool_result_reminder) can be
+      appended right after a function_response turn, so contents[-1] is
+      plain text with no function_response by the time the *next* hop's
+      call fails — the actual tool result is one turn further back.
+    - The deterministic clear_training_plans backstop below injects a
+      function_response directly, without ever going through the model's
+      own function_call path, so last_tool_names (only populated from
+      model-issued calls) never sees it.
+
+    Every hop transition only happens because the previous hop called at
+    least one tool (the loop returns immediately on plain text), so the
+    most recent function_response turn is always the one relevant to
+    *this* failure — there's no risk of picking up a stale tool call from
+    several hops back.
+    """
+    for content in reversed(contents):
+        parts = getattr(content, "parts", None) or []
+        names = [
+            getattr(p.function_response, "name", None)
+            for p in parts
+            if getattr(p, "function_response", None) is not None
+        ]
+        names = [n for n in names if n]
+        if names:
+            return names
+    return []
+
+
+_MUTATING_TOOL_NAMES = frozenset({
+    "schedule_workout",
+    "log_workout",
+    "update_workout",
+    "log_biometrics",
+    "update_planned_workout",
+    "delete_planned_workout",
+    "clear_training_plans",
+    "save_memory",
+    "update_memory",
+})
+
+
 def get_coach_response_agentic(
     athlete_id: str,
     message: str,
@@ -1360,6 +1413,7 @@ def get_coach_response_agentic(
 
     last_response = None
     planned_dates_from_tools: list[str] = []
+    last_tool_names: list[str] = []
     max_hops = _agentic_max_tool_hops(message)
     for _hop in range(max_hops):
         hop_t0 = time.perf_counter()
@@ -1382,7 +1436,14 @@ def get_coach_response_agentic(
                     # Catch broad transient errors and connection-level failures
                     is_transient = any(
                         k in err_str
-                        for k in ("500", "503", "INTERNAL", "overloaded", "Server disconnected", "RemoteProtocolError", "EOF")
+                        for k in (
+                            "500", "503", "INTERNAL", "overloaded", "Server disconnected",
+                            "RemoteProtocolError", "EOF",
+                            # Rate-limit/timeout signatures — previously excluded, so a 429
+                            # or a slow tool-heavy hop skipped straight to the single-attempt
+                            # failure path below instead of getting a backoff-and-retry.
+                            "429", "RESOURCE_EXHAUSTED", "DEADLINE_EXCEEDED", "timeout", "Timeout",
+                        )
                     )
                     if _attempt < 2 and is_transient:
                         wait = 1.5 * (_attempt + 1)
@@ -1413,14 +1474,29 @@ def get_coach_response_agentic(
 
         if _hop_error is not None:
             print(f"CRITICAL: generate_content failed after retry (hop {_hop}): {_hop_error}")
-            tail = contents[-1] if contents else None
-            parts_iter = getattr(tail, "parts", None)
-            parts_list = list(parts_iter) if parts_iter else []
-            if parts_list and any(
-                getattr(p, "function_response", None) for p in parts_list
-            ):
+            # last_tool_names only sees model-issued function calls; the
+            # backward scan also catches the deterministic pre-loop
+            # backstops (e.g. clear_training_plans below) and skips past a
+            # calendar-reminder turn appended after the real tool result —
+            # see _tool_names_from_last_function_response's docstring.
+            tool_names = _tool_names_from_last_function_response(contents) or last_tool_names
+            if tool_names:
+                # The call that was meant to turn tool results into a final
+                # answer failed — this used to unconditionally claim "I have
+                # successfully processed your data and updated your status",
+                # which is actively false for a read-only question (nothing
+                # was updated) and gives no signal that anything went wrong.
+                # Only claim a change happened if a mutating tool actually
+                # ran in the hop right before this failure.
+                if any(name in _MUTATING_TOOL_NAMES for name in tool_names):
+                    return (
+                        "I went ahead and made that change, but hit an error putting together "
+                        "the full explanation. Let me know if you'd like me to try again.",
+                        [],
+                    )
                 return (
-                    "I have successfully processed your data and updated your status. Please let me know if you need anything else!",
+                    "Sorry, I ran into an error putting that response together. "
+                    "Could you try asking again?",
                     [],
                 )
             raise _hop_error
@@ -1445,6 +1521,7 @@ def get_coach_response_agentic(
                 fc_parts.append(types.Part(function_call=fc))
             if not fc_parts:
                 break
+            last_tool_names = [fc.name for fc in fcs if fc is not None and fc.name]
             contents.append(types.Content(role="model", parts=fc_parts))
 
             fr_parts: list[types.Part] = []
