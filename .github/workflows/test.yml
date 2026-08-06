@@ -46,7 +46,10 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # No pinned version: track the runner's current default (matches
+          # firebase-hosting-pull-request.yml's convention). Pinning to 20
+          # broke this job outright once pnpm/action-setup's "latest" moved
+          # to a pnpm release requiring Node >=22.13 (node:sqlite import).
           cache: pnpm
           cache-dependency-path: mobile/pnpm-lock.yaml
 
