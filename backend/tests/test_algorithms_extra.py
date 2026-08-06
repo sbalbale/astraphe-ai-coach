@@ -298,3 +298,23 @@ def test_calculate_threshold_hr_est_computes_estimate():
 
 def test_estimate_max_hr_tanaka_formula():
     assert algorithms.estimate_max_hr(30) == round(208 - (0.7 * 30))
+
+
+def test_compute_hrss_from_zones_zero_when_zone_result_truly_none():
+    # Passing the top guard (max_hr > resting_hr and threshold_hr > resting_hr) while
+    # all three are <= 0 makes compute_hr_zones receive None for every anchor.
+    v = algorithms.compute_hrss_from_zones(
+        {1: 10.0}, max_hr=-5, resting_hr=-20, threshold_hr=-10, threshold_hr_source=None, hr_zone_method=None
+    )
+    assert v == 0.0
+
+
+def test_compute_hrss_from_zones_strength_multiplier():
+    zone_minutes = {1: 20.0, 2: 20.0}
+    base = algorithms.compute_hrss_from_zones(
+        zone_minutes, max_hr=190, resting_hr=50, threshold_hr=165, sport="run", threshold_hr_source="manual"
+    )
+    strength = algorithms.compute_hrss_from_zones(
+        zone_minutes, max_hr=190, resting_hr=50, threshold_hr=165, sport="strength", threshold_hr_source="manual"
+    )
+    assert strength > base

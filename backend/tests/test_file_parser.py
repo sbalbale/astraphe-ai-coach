@@ -101,3 +101,33 @@ def test_parse_document_dispatches_pdf(monkeypatch):
     monkeypatch.setattr(file_parser, "parse_pdf", lambda b: "pdf-text")
 
     assert file_parser.parse_document(b"x", "report.pdf") == "pdf-text"
+
+
+def test_parse_pdf_extracts_text_when_page_has_content():
+    from unittest.mock import MagicMock, patch
+
+    fake_page = MagicMock()
+    fake_page.extract_text.return_value = "Hello from a real PDF page"
+    fake_reader = MagicMock()
+    fake_reader.pages = [fake_page]
+
+    with patch("pypdf.PdfReader", return_value=fake_reader):
+        result = file_parser.parse_pdf(b"fake-pdf-bytes")
+
+    assert "Hello from a real PDF page" in result
+    assert "[Page 1]" in result
+
+
+def test_parse_xlsx_truncates_after_max_rows(monkeypatch):
+    import openpyxl
+
+    monkeypatch.setattr(file_parser, "_MAX_ROWS", 3)
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    for i in range(10):
+        ws.append([f"row{i}"])
+    buf = __import__("io").BytesIO()
+    wb.save(buf)
+
+    result = file_parser.parse_xlsx(buf.getvalue())
+    assert "truncated after 3 rows" in result
