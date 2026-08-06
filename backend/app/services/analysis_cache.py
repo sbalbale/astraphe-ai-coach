@@ -6,13 +6,14 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
 
-from google import genai
 from supabase import Client
 
 from app.config import settings
+from app.services import gemini_quota
+from app.services.llm_provider import get_llm_client
 
 
-_client = genai.Client(api_key=settings.GEMINI_API_KEY)
+_client = get_llm_client()
 
 
 AnalysisRow = Dict[str, Any]
@@ -174,9 +175,25 @@ def generate_gemini_analysis(prompt: str, model_name: str) -> Tuple[str, str]:
     last_err: Exception | None = None
     for effective_model in candidates:
         try:
+            # Every insights endpoint (recovery/sleep/strain/training-load/
+            # dashboard-summary/workout analysis) funnels through this one
+            # function, so this is the single choke point that has to stay
+            # under the model's free-tier RPM — a dashboard load alone can
+            # trigger several of these back to back.
+            gemini_quota.wait_for_slot(effective_model, max_wait_sec=15.0)
             resp = _client.models.generate_content(model=effective_model, contents=prompt)
             text = getattr(resp, "text", "") or ""
             return clamp_to_two_sentences(text), effective_model
+        except gemini_quota.GeminiQuotaExceededError as e:
+            last_err = e
+            # requested == fallback in the common case (no per-call override),
+            # so "try the next candidate" would just re-hit the same
+            # just-exhausted quota — not worth burning the extra wait_for_slot
+            # call when they're identical.
+            if effective_model != candidates[-1] and effective_model != fallback:
+                print(f"[analysis] {e}; trying fallback")
+                continue
+            raise
         except Exception as e:
             last_err = e
             err_text = str(e)

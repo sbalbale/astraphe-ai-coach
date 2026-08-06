@@ -15,8 +15,14 @@ from google.genai import types
 from supabase import Client
 
 from app.config import settings
+from app.services import gemini_quota
+from app.services.llm_provider import get_llm_client
 
+# Embeddings have no OpenAI-compatible equivalent wired up (LLM_PROVIDER
+# only swaps chat/insights/memory-extraction text generation) — always use
+# the real Gemini client for embed_content(), regardless of LLM_PROVIDER.
 _client = genai.Client(api_key=settings.GEMINI_API_KEY)
+_llm_client = get_llm_client()
 
 _MEMORY_EXTRACT_PROMPT = """\
 You are extracting long-term coaching facts from a conversation excerpt.
@@ -268,7 +274,13 @@ def extract_and_save_memories(
     prompt = _MEMORY_EXTRACT_PROMPT.format(transcript=transcript)
     effective_model = model_name or settings.GEMINI_ANALYSIS_MODEL
     try:
-        response = _client.models.generate_content(
+        # This runs as a best-effort background task after every chat turn,
+        # competing with insights generation for the same analysis-model RPM
+        # budget — a short max_wait here (rather than the ~15-20s used for
+        # user-facing calls) means a busy budget just skips this pass's
+        # memory extraction instead of holding up the background task queue.
+        gemini_quota.wait_for_slot(effective_model, max_wait_sec=5.0)
+        response = _llm_client.models.generate_content(
             model=effective_model,
             contents=prompt,
             config=types.GenerateContentConfig(max_output_tokens=512, temperature=0.1),

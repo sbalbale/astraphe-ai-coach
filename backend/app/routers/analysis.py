@@ -1060,7 +1060,8 @@ async def recovery_analysis(
 ):
     d = _parse_day(day)
     ctx = _load_biometrics_context(db, athlete_id, d)
-    return {"status": "success", "analysis": _get_or_compute(db, athlete_id, tier, "recovery", d.isoformat(), ctx, model_name=model_name)}
+    analysis = await asyncio.to_thread(_get_or_compute, db, athlete_id, tier, "recovery", d.isoformat(), ctx, model_name=model_name)
+    return {"status": "success", "analysis": analysis}
 
 
 @router.get("/sleep")
@@ -1073,7 +1074,8 @@ async def sleep_analysis(
 ):
     d = _parse_day(day)
     ctx = _load_biometrics_context(db, athlete_id, d)
-    return {"status": "success", "analysis": _get_or_compute(db, athlete_id, tier, "sleep", d.isoformat(), ctx, model_name=model_name)}
+    analysis = await asyncio.to_thread(_get_or_compute, db, athlete_id, tier, "sleep", d.isoformat(), ctx, model_name=model_name)
+    return {"status": "success", "analysis": analysis}
 
 
 @router.get("/strain")
@@ -1086,7 +1088,8 @@ async def strain_analysis(
 ):
     d = _parse_day(day)
     ctx = _load_strain_context(db, athlete_id, d)
-    return {"status": "success", "analysis": _get_or_compute(db, athlete_id, tier, "strain", d.isoformat(), ctx, model_name=model_name)}
+    analysis = await asyncio.to_thread(_get_or_compute, db, athlete_id, tier, "strain", d.isoformat(), ctx, model_name=model_name)
+    return {"status": "success", "analysis": analysis}
 
 
 @router.get("/training-load")
@@ -1099,7 +1102,8 @@ async def training_load_analysis(
 ):
     d = _parse_day(end_day)
     ctx = _load_training_load_context(db, athlete_id, d)
-    return {"status": "success", "analysis": _get_or_compute(db, athlete_id, tier, "training_load", d.isoformat(), ctx, model_name=model_name)}
+    analysis = await asyncio.to_thread(_get_or_compute, db, athlete_id, tier, "training_load", d.isoformat(), ctx, model_name=model_name)
+    return {"status": "success", "analysis": analysis}
 
 
 def _compute_and_store(
@@ -1230,10 +1234,8 @@ async def workout_analysis(
     _put("elevation_gain_meters", row.get("elevation_gain_meters") or row.get("elevation_gain"))
     _put("notes", row.get("notes"))
 
-    return {
-        "status": "success",
-        "analysis": _get_or_compute(db, athlete_id, tier, "workout", workout_id, ctx, model_name=model_name),
-    }
+    analysis = await asyncio.to_thread(_get_or_compute, db, athlete_id, tier, "workout", workout_id, ctx, model_name=model_name)
+    return {"status": "success", "analysis": analysis}
 
 
 @router.get("/time-in-zones")
@@ -1250,8 +1252,6 @@ async def time_in_zones_analysis(
     start_d = _parse_day(window_start) if window_start else (end_d - timedelta(days=7))
     scope_key = f"{start_d.isoformat()}:{end_d.isoformat()}:{sport}"
     ctx = _load_zones_context(db, athlete_id, start_d.isoformat(), end_d.isoformat(), sport)
-    return {
-        "status": "success",
-        "analysis": _get_or_compute(db, athlete_id, tier, "time_in_zones", scope_key, ctx, model_name=model_name),
-    }
+    analysis = await asyncio.to_thread(_get_or_compute, db, athlete_id, tier, "time_in_zones", scope_key, ctx, model_name=model_name)
+    return {"status": "success", "analysis": analysis}
 
