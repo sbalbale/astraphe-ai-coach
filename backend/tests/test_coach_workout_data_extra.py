@@ -811,3 +811,97 @@ def test_compare_workouts_requires_both_ids():
     db = _Db()
     result = cwd.compare_workouts(db, "athlete-1", {"workout_id_a": "w1"})
     assert "required" in result["error"]
+
+
+# ---------------------------------------------------------------------------
+# Remaining scattered branch gaps
+# ---------------------------------------------------------------------------
+
+
+def test_duration_secs_swallows_bad_int_cast():
+    assert cwd._duration_secs({"duration_seconds": "not-a-number"}) is None
+
+
+def test_duration_secs_normalizes_naive_started_at_when_ended_at_aware():
+    row = {"started_at": "2026-05-20T10:00:00", "ended_at": "2026-05-20T11:00:00Z"}
+    assert cwd._duration_secs(row) == 3600
+
+
+def test_downsample_passthrough_when_shorter_than_target():
+    assert cwd._downsample([1.0, 2.0, 3.0], 45) == [1.0, 2.0, 3.0]
+
+
+def test_slice_stream_window_skips_metric_with_all_none_values():
+    row = {"time_series": {"heartrate": [None, None, None], "watts": [100.0] * 10}, "resolution_seconds": 1}
+    db = MagicMock()
+    with patch.object(cwd, "fetch_stream_row_columns", return_value=row):
+        result = cwd.slice_stream_window(
+            db, "athlete-1", "w1", start_offset_min=0, end_offset_min=1, metrics=["hr", "power"]
+        )
+    assert "hr" not in result["metrics"]
+    assert "power" in result["metrics"]
+
+
+def test_build_log_workout_payload_accepts_explicit_norm_power():
+    db = _athlete_db()
+    payload = cwd.build_log_workout_payload(
+        db, "athlete-1", {"sport": "bike", "duration_minutes": 60, "avg_power_w": 200, "norm_power_w": 215}
+    )
+    assert payload.normalized_power == 215
+
+
+def test_build_log_workout_payload_uses_provided_title():
+    db = _athlete_db()
+    payload = cwd.build_log_workout_payload(
+        db, "athlete-1", {"sport": "run", "duration_minutes": 30, "title": "Custom title"}
+    )
+    assert payload.title == "Custom title"
+
+
+def test_save_logged_workout_normalizes_naive_start_time():
+    db = MagicMock()
+    payload = MagicMock(
+        start_time=datetime(2026, 5, 20, 10, 0),  # naive
+        workout_type="run",
+        duration_seconds=1800,
+        source="manual",
+    )
+    with patch.object(
+        cwd, "find_or_create_canonical_workout", AsyncMock(return_value=({"id": "w1"}, True))
+    ) as mock_find, patch.object(cwd, "process_and_save_workout", AsyncMock()):
+        import asyncio
+
+        asyncio.run(cwd.save_logged_workout(db, "athlete-1", payload))
+
+    started_at_arg = mock_find.call_args[0][4]
+    assert started_at_arg.tzinfo is not None
+
+
+def test_update_workout_sync_normalizes_naive_existing_started_at():
+    db = _Db(
+        {
+            "workouts": SimpleNamespace(data={"id": "w1", "started_at": "2026-05-20T10:00:00"}),
+        }
+    )
+    with patch.object(cwd, "recalculate_tss_history"), patch.object(cwd, "_refresh_daily_strain_for_day_sync"):
+        result = cwd.update_workout_sync(db, "athlete-1", {"workout_id": "w1", "on_date": "2026-05-25"})
+    assert result["status"] == "updated"
+
+
+def test_resolve_plan_row_returns_none_when_sport_filter_matches_nothing():
+    db = _Db(
+        {
+            "athletes": SimpleNamespace(data={"timezone_offset_min": 0}),
+            "training_plans": SimpleNamespace(data=[{"id": "p1", "sport": "run"}]),
+        }
+    )
+    row = cwd.resolve_plan_row(db, "athlete-1", {"on_date": "2026-05-20", "sport": "swim"})
+    assert row is None
+
+
+def test_update_planned_workout_sync_updates_title_and_focus_zone():
+    db = _Db({"training_plans": SimpleNamespace(data={"id": "p1"})})
+    result = cwd.update_planned_workout_sync(
+        db, "athlete-1", {"plan_id": "p1", "title": "New title", "focus_zone": "Threshold"}
+    )
+    assert result["status"] == "updated"
