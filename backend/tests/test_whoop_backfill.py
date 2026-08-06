@@ -105,7 +105,12 @@ def test_ensure_valid_access_token_refreshes_and_persists():
         )
 
     assert result == "new-tok"
-    db.table.return_value.update.assert_called_once()
+    # claim_and_refresh_whoop_token() does two updates: an atomic claim on
+    # refresh_lock_expires_at, then the persist of the refreshed tokens.
+    assert db.table.return_value.update.call_count == 2
+    persisted = db.table.return_value.update.call_args_list[-1].args[0]
+    assert persisted["access_token"] == "new-tok"
+    assert persisted["refresh_token"] == "new-refresh"
 
 
 def test_ensure_valid_access_token_raises_502_when_refresh_has_no_access_token():

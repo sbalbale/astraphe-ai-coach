@@ -29,7 +29,15 @@ def test_token_expires_at_returns_none_for_missing_or_invalid():
 class _RefreshQuery:
     def __init__(self, rows):
         self._rows = rows
-        self.updated: dict | None = None
+        # Every update() call against this fake (claim-lock, persist, and
+        # lock-release-on-error) shares this single query object, so track
+        # every payload rather than just the last -- `updated` (last one) is
+        # kept for tests that only care about the final persisted state.
+        self.updates: list[dict] = []
+
+    @property
+    def updated(self) -> dict | None:
+        return self.updates[-1] if self.updates else None
 
     def select(self, *_a, **_k):
         return self
@@ -47,8 +55,11 @@ class _RefreshQuery:
     def lte(self, *_a, **_k):
         return self
 
+    def lt(self, *_a, **_k):
+        return self
+
     def update(self, payload):
-        self.updated = payload
+        self.updates.append(payload)
         return self
 
     def execute(self):
@@ -101,7 +112,11 @@ def test_refresh_expiring_whoop_tokens_updates_row_on_success():
     assert "expires_at" in db.query.updated
 
 
-def test_refresh_expiring_whoop_tokens_skips_row_without_new_access():
+def test_refresh_expiring_whoop_tokens_omits_access_token_when_refresh_has_none():
+    # claim_and_refresh_whoop_token() always persists (at minimum releasing the
+    # refresh_lock_expires_at claim) once it holds the lock -- it never skips
+    # the update outright, it just conditionally omits access_token from the
+    # payload when the provider didn't return a new one.
     rows = [
         {
             "id": "row-1",
@@ -117,7 +132,8 @@ def test_refresh_expiring_whoop_tokens_skips_row_without_new_access():
     ):
         _run_async(token_refresh._refresh_expiring_whoop_tokens())
 
-    assert db.query.updated is None
+    assert "access_token" not in db.query.updated
+    assert db.query.updated["refresh_token"] == "old-refresh"  # falls back to the existing token
 
 
 def test_refresh_expiring_whoop_tokens_swallows_per_row_errors():
@@ -130,7 +146,11 @@ def test_refresh_expiring_whoop_tokens_swallows_per_row_errors():
     ):
         _run_async(token_refresh._refresh_expiring_whoop_tokens())  # should not raise
 
-    assert db.query.updated is None
+    # The failed refresh releases the claim lock (one update call) rather than
+    # leaving it held for the full lock duration; it doesn't touch the tokens.
+    assert db.query.updated is not None
+    assert "access_token" not in db.query.updated
+    assert "refresh_token" not in db.query.updated
 
 
 def test_refresh_expiring_whoop_tokens_handles_query_failure():

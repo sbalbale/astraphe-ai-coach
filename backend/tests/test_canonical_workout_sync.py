@@ -143,7 +143,10 @@ def test_exact_match_preserves_whoop_source_id_from_original_row():
     )
     assert created is False
     assert row["source_ids"]["whoop"] == "whoop-ext-1"
-    assert row["primary_source"] == "strava"  # strava outranks whoop
+    # SOURCE_PRIORITY (post-Garmin-integration) = [garmin, whoop, intervals_icu,
+    # strava, healthkit, manual] -- whoop now outranks strava, so the existing
+    # whoop-primary row is left as-is rather than being demoted to strava.
+    assert row["primary_source"] == "whoop"
 
 
 def test_fuzzy_match_within_duration_tolerance_merges():

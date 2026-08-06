@@ -239,7 +239,7 @@ def test_retrieve_relevant_memories_returns_empty_on_exception(capsys):
 
 
 def test_extract_and_save_memories_noop_for_empty_transcript():
-    with patch.object(memory._client.models, "generate_content") as mock_generate:
+    with patch.object(memory._llm_client.models, "generate_content") as mock_generate:
         memory.extract_and_save_memories("athlete-1", [], MagicMock())
 
     mock_generate.assert_not_called()
@@ -253,7 +253,7 @@ def test_extract_and_save_memories_saves_extracted_facts():
     fake_response = SimpleNamespace(text='["Race goal: Boston Marathon sub 3:00 on April 20th"]')
     saved = []
 
-    with patch.object(memory._client.models, "generate_content", return_value=fake_response), patch.object(
+    with patch.object(memory._llm_client.models, "generate_content", return_value=fake_response), patch.object(
         memory, "save_coach_memory", lambda athlete_id, fact, db: saved.append(fact)
     ):
         memory.extract_and_save_memories("athlete-1", conversation, MagicMock())
@@ -265,7 +265,7 @@ def test_extract_and_save_memories_skips_when_no_json_array_found():
     fake_response = SimpleNamespace(text="no facts here")
     conversation = [{"role": "user", "content": "hello there, how's it going today"}]
 
-    with patch.object(memory._client.models, "generate_content", return_value=fake_response), patch.object(
+    with patch.object(memory._llm_client.models, "generate_content", return_value=fake_response), patch.object(
         memory, "save_coach_memory"
     ) as mock_save:
         memory.extract_and_save_memories("athlete-1", conversation, MagicMock())
@@ -277,7 +277,7 @@ def test_extract_and_save_memories_skips_non_list_json():
     fake_response = SimpleNamespace(text='{"not": "a list"}')
     conversation = [{"role": "user", "content": "hello there, how's it going today"}]
 
-    with patch.object(memory._client.models, "generate_content", return_value=fake_response), patch.object(
+    with patch.object(memory._llm_client.models, "generate_content", return_value=fake_response), patch.object(
         memory, "save_coach_memory"
     ) as mock_save:
         memory.extract_and_save_memories("athlete-1", conversation, MagicMock())
@@ -287,7 +287,7 @@ def test_extract_and_save_memories_skips_non_list_json():
 
 def test_extract_and_save_memories_swallows_generation_errors(capsys):
     conversation = [{"role": "user", "content": "hello there, how's it going today"}]
-    with patch.object(memory._client.models, "generate_content", side_effect=RuntimeError("gemini down")):
+    with patch.object(memory._llm_client.models, "generate_content", side_effect=RuntimeError("gemini down")):
         memory.extract_and_save_memories("athlete-1", conversation, MagicMock())  # should not raise
 
     assert "extraction failed" in capsys.readouterr().out
@@ -298,7 +298,7 @@ def test_extract_and_save_memories_filters_facts_by_length():
     fake_response = SimpleNamespace(text='["too short", "A properly sized memorable fact about training goals here"]')
     saved = []
 
-    with patch.object(memory._client.models, "generate_content", return_value=fake_response), patch.object(
+    with patch.object(memory._llm_client.models, "generate_content", return_value=fake_response), patch.object(
         memory, "save_coach_memory", lambda athlete_id, fact, db: saved.append(fact)
     ):
         memory.extract_and_save_memories("athlete-1", conversation, MagicMock())
