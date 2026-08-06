@@ -58,3 +58,10 @@ def test_verify_webhook_signature_falls_back_to_client_secret(monkeypatch):
     monkeypatch.setattr(whoop.settings, "WHOOP_CLIENT_SECRET", secret)
 
     assert whoop.verify_webhook_signature(body, sig, ts) is True
+
+
+def test_verify_webhook_signature_rejects_when_no_secret_configured_at_all(monkeypatch):
+    monkeypatch.setattr(whoop.settings, "WHOOP_WEBHOOK_SECRET", None)
+    monkeypatch.setattr(whoop.settings, "WHOOP_CLIENT_SECRET", None)
+
+    assert whoop.verify_webhook_signature(b"{}", "some-sig", "1716200000000") is False

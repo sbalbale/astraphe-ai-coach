@@ -107,6 +107,9 @@ htmlcov/
 .mypy_cache/
 .ruff_cache/
 
+# Mobile (vitest) coverage output
+mobile/coverage/
+
 # ------------------------------------------
 # 5. Database: Supabase (Local CLI)
 # ------------------------------------------
