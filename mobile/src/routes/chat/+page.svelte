@@ -6,7 +6,7 @@
   import { authStore } from '$lib/stores/authStore.svelte';
   import { confirm } from '$lib/confirm';
   import { format } from 'date-fns';
-  import { tick } from 'svelte';
+  import { tick, onDestroy } from 'svelte';
   import { isStandaloneDisplayMode } from '$lib/utils/pwa';
   import { normalizeLeadingTimeOfDayGreeting } from '$lib/utils/greeting';
 
@@ -89,9 +89,97 @@
         image_urls: Array.isArray(m.image_urls) ? m.image_urls : [],
         created_at: m.created_at
       }));
+      // A conversation loaded (or reloaded, e.g. re-opening the app) whose
+      // last turn is still the athlete's own message means an async reply
+      // (see send()) is still being generated server-side — resume waiting
+      // for it instead of leaving the screen looking like nothing happened.
+      if (messages[messages.length - 1].role === 'user') {
+        const aiMsgId = `local-ai-${Date.now()}`;
+        messages.push({ id: aiMsgId, role: 'ai', text: '', streaming: true });
+        loading = true; // keep send/attach disabled until the resumed poll resolves
+        pollForCoachReply(cid, aiMsgId, rows.length);
+      }
     }
     await scrollToBottom();
   }
+
+  // At most one outstanding poll loop at a time — switching conversations or
+  // leaving the page should stop waiting on a reply that's no longer shown.
+  let activePollToken = 0;
+
+  /**
+   * Poll for the reply to whatever the last message in this conversation
+   * was, submitted via submitCoachMessageAsync(). knownMessageCount is the
+   * message count *before* that reply can possibly have landed, so a longer
+   * row count is our signal it arrived (the row list is append-only and
+   * ordered by created_at, so a new last row is always the new reply).
+   *
+   * Callers must set `loading = true` before calling this — send() and
+   * loadConversationMessages()'s resume-on-reopen path both do — so the
+   * input stays disabled (see the template's `disabled={loading}`) for the
+   * whole wait, not just the initial submit call. Sending a second message
+   * before the first reply lands would bump activePollToken and orphan the
+   * first placeholder mid-flight (see PR #18 review). This function is the
+   * only thing that resets `loading` back to false once it's set true for a
+   * pending reply — every terminal path below (resolved / poll error /
+   * timeout) clears it, gated the same way as the UI update right above it
+   * so a stale/superseded poll never touches the wrong conversation's state.
+   */
+  function pollForCoachReply(cid: string, aiMsgId: string, knownMessageCount: number) {
+    const token = ++activePollToken;
+    const POLL_INTERVAL_MS = 2500;
+    const MAX_ATTEMPTS = 72; // ~3 minutes
+    let attempt = 0;
+
+    const tickPoll = async () => {
+      if (token !== activePollToken) return; // superseded by a newer poll/navigation
+      attempt += 1;
+      try {
+        const res = await api.getCoachMessages(cid);
+        const rows = res?.messages || [];
+        if (rows.length > knownMessageCount) {
+          const last = rows[rows.length - 1];
+          if (token === activePollToken && conversationId === cid) {
+            const msgIndex = messages.findIndex((m) => m.id === aiMsgId);
+            if (msgIndex !== -1) {
+              messages[msgIndex] = {
+                id: String(last.id),
+                role: 'ai',
+                text: String(last.content ?? ''),
+                image_urls: Array.isArray(last.image_urls) ? last.image_urls : [],
+                created_at: last.created_at,
+                streaming: false
+              };
+            }
+            loading = false;
+            scrollToBottom();
+          }
+          return; // done
+        }
+      } catch (e) {
+        console.warn('[Chat] Poll for coach reply failed:', e);
+        // Transient network hiccup — keep polling rather than giving up.
+      }
+      if (token !== activePollToken || attempt >= MAX_ATTEMPTS) {
+        if (attempt >= MAX_ATTEMPTS && token === activePollToken && conversationId === cid) {
+          const msgIndex = messages.findIndex((m) => m.id === aiMsgId);
+          if (msgIndex !== -1 && !messages[msgIndex].text.trim()) {
+            messages[msgIndex].streaming = false;
+            messages[msgIndex].text =
+              "That's taking longer than usual. Your coach may still be working on it — check back in a bit, or pull to refresh this chat.";
+          }
+          loading = false;
+        }
+        return;
+      }
+      setTimeout(tickPoll, POLL_INTERVAL_MS);
+    };
+    setTimeout(tickPoll, POLL_INTERVAL_MS);
+  }
+
+  onDestroy(() => {
+    activePollToken++; // invalidate any in-flight poll loop
+  });
 
   function currentConversationTitle() {
     const c = conversations.find((x) => x.id === conversationId);
@@ -145,6 +233,7 @@
   }
 
   async function newChat() {
+    activePollToken++; // stop waiting on a reply for the conversation we're leaving
     loading = false;
     input = '';
     pendingImageUrls = [];
@@ -155,6 +244,8 @@
   }
 
   async function selectConversation(cid: string) {
+    activePollToken++; // stop waiting on a reply for the conversation we're leaving
+    loading = false; // that poll invalidation means nothing will clear it otherwise
     conversationId = cid;
     convoMenuOpen = false;
     await loadConversationMessages(cid);
@@ -319,7 +410,14 @@
   async function send() {
     const text = input.trim();
     if (!text && pendingImageUrls.length === 0) return;
-    
+    // Serialize sends: a reply still in flight (loading stays true from the
+    // moment it's submitted until pollForCoachReply resolves it — see that
+    // function's docstring) must finish before the next one starts, or a
+    // second submit's poll would supersede and orphan the first's
+    // placeholder. The send/attach buttons are already disabled via this
+    // same flag; this guards direct calls to send() too (e.g. Enter key).
+    if (loading) return;
+
     input = '';
     await tick();
     resizeChatInput();
@@ -334,64 +432,38 @@
 
     const aiMsgId = `local-ai-${Date.now()}`;
     messages.push({ id: aiMsgId, role: 'ai', text: '', streaming: true });
-    
+
     try {
-      let accumulated = '';
-      let inputUnlocked = false;
-      const unlockInput = () => {
-        if (inputUnlocked) return;
-        inputUnlocked = true;
-        loading = false;
-      };
-      const data = await api.streamCoachMessage({
+      // Fire-and-forget: the backend inserts the user message, generates the
+      // reply in a background task, and returns immediately. No connection
+      // is held open for however long the (possibly multi-hop) Gemini call
+      // takes — pollForCoachReply picks up the result, and a push
+      // notification covers the case where the athlete has already left.
+      const data = await api.submitCoachMessageAsync({
         message: text || '(image)',
         recent_tss: athleteStore.recent_tss,
         conversation_id: cid,
-        image_urls,
-        onConversationId: (id) => {
-          conversationId = id;
-        },
-        onStarted: unlockInput,
-        onStatus: (status, detail) => {
-          unlockInput();
-          const msgIndex = messages.findIndex((m) => m.id === aiMsgId);
-          if (msgIndex !== -1 && !messages[msgIndex].text.trim()) {
-            messages[msgIndex].statusText = coachStatusLabel(status, detail);
-          }
-          scrollToBottom();
-        },
-        onChunk: (chunk) => {
-          unlockInput();
-          accumulated += chunk;
-          const msgIndex = messages.findIndex((m) => m.id === aiMsgId);
-          if (msgIndex !== -1) {
-            messages[msgIndex].text = accumulated;
-            messages[msgIndex].statusText = undefined;
-          }
-          scrollToBottom();
-        }
+        image_urls
       });
       if (data.conversation_id) conversationId = data.conversation_id;
-      const msgIndex = messages.findIndex((m) => m.id === aiMsgId);
-      if (msgIndex !== -1 && !messages[msgIndex].text) {
-        messages[msgIndex].text = accumulated;
-      }
-      scrollToBottom();
+      // loading stays true — pollForCoachReply() (below) is responsible for
+      // clearing it once the reply actually resolves, not this submit call.
+      // Baseline off the server's own row count right after the submit call
+      // returns (which already includes the just-inserted user message) —
+      // the local `messages` array isn't a reliable proxy for it (it may
+      // hold a synthetic, never-persisted greeting row for a new chat).
+      const baselineRes = await api.getCoachMessages(data.conversation_id);
+      const baselineCount = (baselineRes?.messages || []).length;
+      pollForCoachReply(data.conversation_id, aiMsgId, baselineCount);
     } catch (e) {
       console.error('[Chat] Failed to send coach message:', e);
-      const msgIndex = messages.findIndex(m => m.id === aiMsgId);
-      if (msgIndex !== -1) {
-        const errMsg = e instanceof Error ? e.message : '';
-        messages[msgIndex].text = errMsg.toLowerCase().includes('timeout') || errMsg.toLowerCase().includes('aborted')
-          ? "That took longer than expected. Your coach may still be working — try refreshing this conversation in a moment."
-          : "Sorry, I had trouble connecting to the coaching engine.";
-      }
-    } finally {
-      const msgIndex = messages.findIndex(m => m.id === aiMsgId);
+      const msgIndex = messages.findIndex((m) => m.id === aiMsgId);
       if (msgIndex !== -1) {
         messages[msgIndex].streaming = false;
+        messages[msgIndex].text = 'Sorry, I had trouble connecting to the coaching engine.';
       }
       loading = false;
+    } finally {
       // Refresh conversation titles (auto-named on backend after first message)
       try {
         const res = await api.getCoachConversations();

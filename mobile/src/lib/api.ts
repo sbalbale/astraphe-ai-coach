@@ -517,6 +517,48 @@ export const api = {
     return data.publicUrl;
   },
 
+  /**
+   * Fire-and-forget send: the backend inserts the user's message, kicks off
+   * the (possibly slow, multi-hop) coach reply in a background task, and
+   * returns immediately rather than holding the connection open. The reply
+   * shows up via getCoachMessages() polling (see pollForCoachReply in
+   * routes/chat/+page.svelte) and/or a push notification — no need to keep
+   * this tab/screen open while it works.
+   */
+  async submitCoachMessageAsync(params: {
+    message: string;
+    recent_tss: number;
+    conversation_id?: string | null;
+    image_urls?: string[] | null;
+    document_contents?: string[] | null;
+  }): Promise<{ status: string; conversation_id: string }> {
+    const headers = await getAuthHeaders({ 'Content-Type': 'application/json' });
+    const response = await fetch(`${API_URL}/v1/coach/message/async`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        message: params.message,
+        recent_tss: params.recent_tss,
+        conversation_id: params.conversation_id ?? null,
+        image_urls: params.image_urls ?? null,
+        document_contents: params.document_contents ?? null,
+        timezone_offset_min: getUserTimezoneOffsetMin()
+      })
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      let detail = text?.trim() || `HTTP ${response.status}`;
+      try {
+        const body = JSON.parse(text) as { detail?: unknown };
+        if (typeof body.detail === 'string') detail = body.detail;
+      } catch {
+        /* ignore */
+      }
+      throw new Error(detail);
+    }
+    return await response.json();
+  },
+
   async streamCoachMessage(params: {
     message: string;
     recent_tss: number;
