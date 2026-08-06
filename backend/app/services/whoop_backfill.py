@@ -13,6 +13,7 @@ from app.models.workout import WorkoutPayload
 from app.services.ai_coach import invalidate_context_cache
 from app.services.processing import process_and_save_biometrics, process_and_save_workout, recalculate_tss_history
 from app.dependencies import get_admin_db
+from app.services.token_crypto import decrypt_oauth_row
 from app.services.token_refresh import claim_and_refresh_whoop_token
 
 
@@ -38,7 +39,7 @@ def _load_whoop_tokens(db: Any, athlete_id: str) -> tuple[str | None, str | None
         .maybe_single()
         .execute()
     )
-    row = res.data if res else None
+    row = decrypt_oauth_row(res.data if res else None)
     if not row:
         return None, None
     return row.get("access_token"), row.get("refresh_token")
@@ -483,7 +484,7 @@ async def backfill_recent(hours: int = 24) -> None:
             .eq("provider", "whoop")
             .execute()
         )
-        rows = res.data or []
+        rows = [decrypt_oauth_row(r) for r in (res.data or [])]
     except Exception as e:
         print(f"[whoop.startup_backfill] failed to list WHOOP tokens: {e}")
         return

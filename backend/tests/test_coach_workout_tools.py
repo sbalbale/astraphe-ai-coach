@@ -289,7 +289,21 @@ def test_log_workout_success():
     with patch("app.services.coach_workout_data.asyncio.run") as run_mock, patch(
         "app.services.coach_workout_data.save_logged_workout", side_effect=_fake_save
     ):
-        run_mock.side_effect = lambda coro: asyncio.get_event_loop().run_until_complete(coro)
+        # asyncio.get_event_loop() (deprecated) raises "There is no current
+        # event loop" once any other test has run a real asyncio.run() to
+        # completion in this thread (asyncio.run() resets the thread's loop
+        # to None on exit) — order-dependent depending on what ran earlier
+        # in the suite. Use a private loop instead, robust to ambient state.
+        def _run_coro(coro):
+            loop = asyncio.new_event_loop()
+            try:
+                asyncio.set_event_loop(loop)
+                return loop.run_until_complete(coro)
+            finally:
+                asyncio.set_event_loop(None)
+                loop.close()
+
+        run_mock.side_effect = _run_coro
         out = coach_tools.handle_log_workout(
             {"sport": "row", "duration_minutes": 60, "avg_power_w": 190, "on_date": "2026-05-29"},
             athlete_id="ath-1",

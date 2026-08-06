@@ -44,19 +44,24 @@ npx supabase start
 npx supabase status
 ```
 
-Copy the printed API URL and keys into the backend and mobile env files.
+Copy the printed API URL and keys into the backend and mobile env files. Recent
+Supabase CLI versions print keys labeled **Publishable** / **Secret** instead
+of the older **anon** / **service_role** naming — they're the same two keys
+under new names; use Publishable for `SUPABASE_KEY` / `VITE_SUPABASE_KEY` and
+Secret for `SUPABASE_SERVICE_ROLE_KEY`.
 
-Apply migrations after changes:
-
-```bash
-npx supabase db push
-```
-
-Reset with seed data:
+Apply new migration files to your **local** stack:
 
 ```bash
 npx supabase db reset
 ```
+
+This drops and recreates the local database, re-running every migration in
+`supabase/migrations/` plus the seed. It's the command you want for ordinary
+local development — **`supabase db push` targets a linked remote project**
+(`supabase link`) and will fail with `Cannot find project ref. Have you run
+supabase link?` if you haven't set one up, which most local-only setups won't
+have.
 
 `supabase/config.toml` currently has:
 

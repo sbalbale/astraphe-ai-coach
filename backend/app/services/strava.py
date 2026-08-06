@@ -13,6 +13,7 @@ from app.config import settings
 from app.services.hr_zones import compute_zone_distribution, get_athlete_zones
 from app.models.workout import WorkoutPayload
 from app.services.ai_coach import invalidate_context_cache
+from app.services.token_crypto import decrypt_oauth_row, encrypt_oauth_fields
 from app.services.processing import (
     _sport_for_db,
     find_or_create_canonical_workout,
@@ -276,7 +277,7 @@ async def get_valid_token(athlete_id: str, db: Any, delay: bool = False) -> str 
         .maybe_single()
         .execute()
     )
-    row = res.data
+    row = decrypt_oauth_row(res.data)
     if not row:
         return None
 
@@ -311,9 +312,9 @@ async def get_valid_token(athlete_id: str, db: Any, delay: bool = False) -> str 
         update_payload["expires_at"] = expires_iso
 
     if new_access:
-        db.table("oauth_tokens").update(update_payload).eq("athlete_id", athlete_id).eq(
-            "provider", "strava"
-        ).execute()
+        db.table("oauth_tokens").update(encrypt_oauth_fields(update_payload)).eq(
+            "athlete_id", athlete_id
+        ).eq("provider", "strava").execute()
 
     return new_access if isinstance(new_access, str) else None
 

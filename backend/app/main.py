@@ -5,12 +5,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
-from app.routers import workouts, activity_detail, coach, athlete, biometrics, sync, plan, debug, analysis, training_plans, admin, notifications
+from app.routers import workouts, activity_detail, coach, athlete, biometrics, sync, garmin_sync, plan, debug, analysis, training_plans, admin, notifications
 from app.config import settings
 from app.core.rate_limiter import RateLimiter
 from app.core.redis import close_redis, describe_redis_url, ping_redis
 from app.core.supabase_health import ping_supabase
 from app.services.token_refresh import token_refresh_loop
+from app.services.garmin import poll_loop as garmin_poll_loop
 
 logger = logging.getLogger(__name__)
 _ip_rate_limiter = RateLimiter()
@@ -47,6 +48,14 @@ async def start_whoop_startup_backfill():
     from app.services.whoop_backfill import backfill_recent
 
     asyncio.create_task(backfill_recent(hours=settings.WHOOP_STARTUP_BACKFILL_HOURS))
+
+
+@app.on_event("startup")
+async def start_garmin_poll_loop():
+    # Garmin has no webhook (see docs/GARMIN_INTEGRATION.md), so this loop is
+    # the only sync path — it also self-heals on restart since its first
+    # tick runs immediately, before the first sleep.
+    asyncio.create_task(garmin_poll_loop())
 
 
 @app.on_event("shutdown")
@@ -194,6 +203,7 @@ app.include_router(activity_detail.router)
 app.include_router(biometrics.router)
 app.include_router(coach.router)
 app.include_router(sync.router)
+app.include_router(garmin_sync.router)
 app.include_router(plan.router)
 app.include_router(training_plans.router)
 if settings.APP_ENV != "production":

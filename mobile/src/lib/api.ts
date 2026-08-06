@@ -346,6 +346,48 @@ export const api = {
     return null;
   },
 
+  async connectGarmin(payload: { username: string; password: string; days?: number }) {
+    try {
+      const headers = await getAuthHeaders({ 'Content-Type': 'application/json' });
+      const res = await fetch(`${API_URL}/v1/sync/garmin/connect`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload)
+      });
+      const body = await res.json().catch(() => ({}));
+      if (res.ok) return body;
+      console.warn(`[API] Garmin connect failed status=${res.status}`, body);
+      return {
+        status: 'error',
+        detail: typeof body?.detail === 'string' ? body.detail : `Connection failed (${res.status})`
+      };
+    } catch (e) {
+      console.warn('Failed to connect Garmin.', e);
+      return { status: 'error', detail: 'Connection failed' };
+    }
+  },
+
+  async connectGarminMfa(payload: { state_token: string; mfa_code: string; days?: number }) {
+    try {
+      const headers = await getAuthHeaders({ 'Content-Type': 'application/json' });
+      const res = await fetch(`${API_URL}/v1/sync/garmin/connect/mfa`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload)
+      });
+      const body = await res.json().catch(() => ({}));
+      if (res.ok) return body;
+      console.warn(`[API] Garmin MFA failed status=${res.status}`, body);
+      return {
+        status: 'error',
+        detail: typeof body?.detail === 'string' ? body.detail : `MFA verification failed (${res.status})`
+      };
+    } catch (e) {
+      console.warn('Failed to verify Garmin MFA.', e);
+      return { status: 'error', detail: 'MFA verification failed' };
+    }
+  },
+
   async getSyncStatus() {
     try {
       const headers = await getAuthHeaders();

@@ -64,6 +64,9 @@ Activity detail:
 Strava contributes to these tables:
 
 - `oauth_tokens`: provider `strava`, access/refresh token, expiry, scopes, and provider metadata.
+  `access_token`/`refresh_token` are encrypted at rest with `OAUTH_TOKEN_ENCRYPTION_KEY`
+  (Fernet; see `backend/app/services/token_crypto.py`) when that key is configured —
+  legacy plaintext rows still read correctly.
 - `workouts`: canonical activity summary with `source='strava'`.
 - `activity_streams`: per-second stream arrays and metadata.
 - `activity_laps`: lap/split detail rows.
@@ -119,13 +122,30 @@ Redis may cache high-read stream/zone responses when configured.
 
 ## Deduplication
 
-The current integration normalizes Strava activities into canonical `workouts` rows and protects against duplicate external IDs. Cross-source deduplication is still an area to treat carefully because the same workout can arrive from Strava, Garmin, WHOOP, HealthKit, or manual entry.
+The same workout session can arrive from Strava, Garmin, WHOOP, intervals.icu,
+HealthKit, or manual entry. `processing.py`'s canonical merge engine
+(`_find_or_create_canonical_workout_sync`) handles this for every source, not
+just Strava:
 
-General source priorities:
+- Exact fast paths: `strava_activity_id` and `garmin_activity_id` (both unique
+  columns on `workouts`) match a session to its existing canonical row instantly.
+- Otherwise, fuzzy matching scores candidate workouts within a ±10 minute
+  window by interval overlap, sport compatibility, and duration ratio, and
+  merges into the best match.
+- On merge, `source_ids` (JSONB) accumulates every provider's id for that
+  session, and `primary_source` is elevated by `SOURCE_PRIORITY` order —
+  higher-priority sources' data wins per field, via the `_QUALITY_FIELD_SOURCES`
+  table, rather than one source unconditionally overwriting another.
 
-- Recovery, sleep, and daily strain: WHOOP.
-- Power, GPS, cadence, laps, and per-second workout streams: Strava/Garmin.
-- Manual and HealthKit entries: fallback or user-entered summaries.
+General source priority, both for workout fields and biometrics
+(`SOURCE_PRIORITY` in `processing.py`), highest to lowest:
+
+```
+garmin > whoop > intervals_icu > strava > healthkit > manual
+```
+
+(Manual entry is trusted over everything for `weight_kg`/`height_cm`
+specifically — a user-entered value is more reliable than any device estimate.)
 
 ## Sport Mapping
 

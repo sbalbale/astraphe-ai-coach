@@ -52,6 +52,25 @@ def disable_startup_backfills(monkeypatch):
     monkeypatch.setattr(settings, "WHOOP_STARTUP_BACKFILL_ENABLED", False)
 
 
+@pytest.fixture(autouse=True)
+def reset_oauth_token_encryption_key(monkeypatch):
+    """
+    Force OAUTH_TOKEN_ENCRYPTION_KEY off for every test by default, regardless
+    of what a developer has set in their local backend/.env. Without this, any
+    test asserting on a plaintext access_token/refresh_token value (e.g. WHOOP
+    refresh tests) spuriously fails as soon as encryption is configured
+    locally, since app.services.token_crypto reads the same global `settings`
+    the tests import. Tests that specifically exercise encryption set the key
+    themselves via monkeypatch (see test_garmin.py, test_token_crypto.py).
+    """
+    monkeypatch.setattr(settings, "OAUTH_TOKEN_ENCRYPTION_KEY", None)
+    from app.services import token_crypto
+
+    token_crypto._fernet.cache_clear()
+    yield
+    token_crypto._fernet.cache_clear()
+
+
 @pytest.fixture
 def client():
     """Provides a test client with bypassed authentication."""
