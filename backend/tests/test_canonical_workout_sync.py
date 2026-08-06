@@ -244,3 +244,50 @@ def test_new_strava_activity_id_added_to_existing_matched_row_without_one():
     )
     assert created is False
     assert row["strava_activity_id"] == 333
+
+
+def test_exact_match_does_not_downgrade_primary_source():
+    existing = {
+        "id": "w1",
+        "athlete_id": "athlete-1",
+        "strava_activity_id": 111,
+        "sport": "run",
+        "source": "whoop",
+        "primary_source": "whoop",
+        "source_ids": {},
+    }
+    db = _CanonicalDb(rows=[existing])
+    row, created = processing._find_or_create_canonical_workout_sync(
+        db, "athlete-1", "manual", "run", _now(), 1800, strava_activity_id=111
+    )
+    assert created is False
+    assert row["primary_source"] == "whoop"  # manual is lower priority; no downgrade
+
+
+def test_fuzzy_match_does_not_downgrade_primary_source():
+    existing = {
+        "id": "w1",
+        "athlete_id": "athlete-1",
+        "sport": "run",
+        "source": "strava",
+        "primary_source": "strava",
+        "duration_seconds": 1800,
+        "source_ids": {},
+    }
+    db = _CanonicalDb(rows=[existing])
+    row, created = processing._find_or_create_canonical_workout_sync(
+        db, "athlete-1", "manual", "run", _now(), 1800
+    )
+    assert created is False
+    assert row["primary_source"] == "strava"  # manual doesn't outrank strava
+
+
+def test_insert_new_row_without_external_id_or_strava_id():
+    db = _CanonicalDb(rows=[])
+    row, created = processing._find_or_create_canonical_workout_sync(
+        db, "athlete-1", "manual", "run", _now(), 1800
+    )
+    assert created is True
+    assert "external_id" not in row
+    assert "strava_activity_id" not in row
+    assert row["source_ids"] == {}

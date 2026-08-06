@@ -394,3 +394,70 @@ def test_backfill_historical_data_impl_uses_provided_stored_tokens():
 
     # The stored token from oauth_tokens should be used, not the passed-in one.
     assert mock_fetch_profile.await_args_list[0].args[0] == "stored-tok"
+
+
+def test_backfill_historical_data_impl_falls_back_when_timezone_fetch_fails():
+    """Athlete-timezone lookup failure should default offset to 0 rather than raise."""
+
+    class _FailingTzQuery(_ImplQuery):
+        def execute(self):
+            if self.table_name == "athletes" and self._single:
+                raise RuntimeError("db down")
+            return super().execute()
+
+    class _FailingTzDb(_ImplDb):
+        def table(self, name):
+            return _FailingTzQuery(self, name)
+
+    db = _FailingTzDb()
+    now = datetime.now(timezone.utc)
+
+    with patch.object(whoop_backfill.whoop, "fetch_profile", AsyncMock(return_value={})), patch.object(
+        whoop_backfill.whoop, "fetch_body_measurement", AsyncMock(return_value={})
+    ), patch.object(whoop_backfill.whoop, "fetch_collection", AsyncMock(return_value=[])), patch.object(
+        whoop_backfill, "recalculate_tss_history", MagicMock()
+    ), patch.object(whoop_backfill, "invalidate_context_cache", MagicMock()):
+        # Should not raise despite the timezone lookup failing.
+        _run_async(
+            whoop_backfill._backfill_historical_data_impl(
+                "athlete-1", "tok", db, days=30, include_workouts=False
+            )
+        )
+
+
+def test_backfill_historical_data_impl_normalizes_additional_sport_names():
+    now = datetime.now(timezone.utc)
+    sleep_start = _iso(now)
+
+    workouts = [
+        {"start": sleep_start, "end": sleep_start, "id": "w-run", "sport_name": "Treadmill Run", "score": {}},
+        {"start": sleep_start, "end": sleep_start, "id": "w-row", "sport_name": "Rower", "score": {}},
+        {"start": sleep_start, "end": sleep_start, "id": "w-mobility", "sport_name": "Stretching", "score": {}},
+    ]
+
+    async def _fake_fetch_collection(_token, kind, *_a, **_k):
+        if kind == "activity/workout":
+            return workouts
+        return []
+
+    db = _ImplDb()
+
+    with patch.object(whoop_backfill.whoop, "fetch_profile", AsyncMock(return_value={})), patch.object(
+        whoop_backfill.whoop, "fetch_body_measurement", AsyncMock(return_value={})
+    ), patch.object(
+        whoop_backfill.whoop, "fetch_collection", AsyncMock(side_effect=_fake_fetch_collection)
+    ), patch.object(
+        whoop_backfill.whoop, "hr_zone_pct_from_whoop_zone_millis", return_value=(20, 20, 20, 20, 20)
+    ), patch.object(
+        whoop_backfill, "process_and_save_workout", AsyncMock()
+    ) as mock_save_workout, patch.object(
+        whoop_backfill, "recalculate_tss_history", MagicMock()
+    ), patch.object(whoop_backfill, "invalidate_context_cache", MagicMock()):
+        _run_async(
+            whoop_backfill._backfill_historical_data_impl(
+                "athlete-1", "tok", db, days=30, include_workouts=True
+            )
+        )
+
+    saved_sports = {call.args[0].workout_type for call in mock_save_workout.await_args_list}
+    assert saved_sports == {"run", "row", "mobility"}
