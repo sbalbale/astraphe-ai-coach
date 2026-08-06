@@ -26,7 +26,25 @@ class Settings(BaseSettings):
     SUPABASE_KEY: str = "test-anon-key"
     SUPABASE_SERVICE_ROLE_KEY: Optional[str] = None
 
+    # --- LLM Provider ---
+    # "gemini" (Google AI Studio) or "openai" (any OpenAI-compatible chat
+    # completions endpoint — local llama.cpp/llama-swap, vLLM, LM Studio,
+    # etc.). Only affects chat + insights + memory extraction (the model
+    # names below); embeddings (GEMINI_EMBEDDING_MODEL) always use Gemini —
+    # there's no provider-agnostic embeddings path here yet.
+    LLM_PROVIDER: str = "gemini"
+    # Base URL of an OpenAI-compatible /v1 API (e.g. "http://localhost:8080/v1"
+    # or a llama-swap instance). Required when LLM_PROVIDER=openai.
+    OPENAI_API_BASE_URL: Optional[str] = None
+    # Most local OpenAI-compatible servers don't check this at all; set it if
+    # yours does (e.g. behind a reverse proxy requiring a bearer token).
+    OPENAI_API_KEY: Optional[str] = None
+
     # --- Gemini AI ---
+    # Also used for LLM_PROVIDER=openai: these hold whatever model id
+    # strings your OpenAI-compatible server expects (its /v1/models list),
+    # not necessarily anything Gemini-branded despite the setting names —
+    # kept as-is to avoid renaming every call site that reads them.
     GEMINI_API_KEY: str = "test-gemini-key"
     GEMINI_MODEL: str = "gemma-4-26b-a4b-it"
     # Fallback chat model when the primary model is overloaded (e.g. 503 UNAVAILABLE).
