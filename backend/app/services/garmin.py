@@ -388,7 +388,7 @@ def build_workout_payload(activity: dict[str, Any]) -> WorkoutPayload | None:
         elevation_gain_m=float(elevation) if elevation is not None else None,
         calories=float(calories) if calories is not None else None,
         avg_power_w=_round_int(activity.get("avgPower")),
-        norm_power_w=_round_int(activity.get("normalizedPower")),
+        norm_power_w=_round_int(activity.get("normPower")),
         avg_hr=_round_int(activity.get("averageHR")),
         max_hr=_round_int(activity.get("maxHR")),
         avg_pace_sec_km=_avg_pace_sec_km_from_speed(activity.get("averageSpeed")),
@@ -510,11 +510,16 @@ def download_and_parse_fit(
                     lat = frame.get_value("position_lat", fallback=None)
                     lng = frame.get_value("position_long", fallback=None)
                     if lat is not None and lng is not None:
+                        # Unlike the other streams, latlng is NOT padded with
+                        # None to stay 1:1 with `time` — it holds only valid
+                        # points, matching Strava's stream contract (which
+                        # every consumer, e.g. GpsTrace.svelte, assumes: it
+                        # destructures every entry as [lat, lng] with no null
+                        # check). A None here before GPS lock would crash
+                        # that destructuring on the frontend.
                         latlng.append(
                             [lat * _SEMICIRCLE_TO_DEG, lng * _SEMICIRCLE_TO_DEG]
                         )
-                    else:
-                        latlng.append(None)
 
                 elif frame.name == "lap":
                     start_index = last_lap_end_index + 1

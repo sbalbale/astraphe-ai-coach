@@ -39,7 +39,7 @@ def test_build_workout_payload_from_activity_summary():
         "elevationGain": 412.5,
         "calories": 850.0,
         "avgPower": 210.6,
-        "normalizedPower": 225.2,
+        "normPower": 225.2,  # real Garmin Connect field name (not "normalizedPower")
         "averageHR": 148.7,
         "maxHR": 172.1,
         "averageSpeed": 11.175,  # m/s → ~89 s/km
@@ -164,8 +164,8 @@ def test_download_and_parse_fit_shapes_strava_streams_and_laps():
                 "enhanced_speed": 10.5,
                 "enhanced_altitude": 101.0,
                 "distance": 10.5,
-                "position_lat": None,
-                "position_long": None,
+                "position_lat": int(40.001 / garmin_service._SEMICIRCLE_TO_DEG),
+                "position_long": int(-74.001 / garmin_service._SEMICIRCLE_TO_DEG),
             },
         ),
         _FakeFitFrame(
@@ -211,9 +211,9 @@ def test_download_and_parse_fit_shapes_strava_streams_and_laps():
     assert streams["velocity_smooth"] == [10.0, 10.5]
     assert streams["altitude"] == [100.0, 101.0]
     assert streams["distance"] == [0.0, 10.5]
+    assert len(streams["latlng"]) == 2
     assert streams["latlng"][0][0] == pytest.approx(40.0, abs=0.01)
     assert streams["latlng"][0][1] == pytest.approx(-74.0, abs=0.01)
-    assert streams["latlng"][1] is None
 
     assert len(laps) == 1
     assert laps[0]["lap_index"] == 0
@@ -222,6 +222,102 @@ def test_download_and_parse_fit_shapes_strava_streams_and_laps():
     assert laps[0]["elapsed_time"] == 1
     assert laps[0]["average_heartrate"] == 142
     assert laps[0]["average_watts"] == 205
+
+
+def test_download_and_parse_fit_omits_null_latlng_entries():
+    """
+    Records before GPS lock have no position_lat/long. Strava's stream
+    contract (assumed by every frontend consumer, e.g. GpsTrace.svelte,
+    which destructures every latlng entry as [lat, lng] with no null
+    check) only ever contains valid points — never None placeholders.
+    Regression test for a real bug: a None-padded latlng crashed the map.
+    """
+    t0 = datetime(2026, 6, 18, 10, 0, 0, tzinfo=timezone.utc)
+    frames = [
+        _FakeFitFrame(
+            "record",
+            {
+                "timestamp": t0,
+                "heart_rate": 130,
+                "position_lat": None,
+                "position_long": None,
+            },
+        ),
+        _FakeFitFrame(
+            "record",
+            {
+                "timestamp": t0 + timedelta(seconds=1),
+                "heart_rate": 132,
+                "position_lat": None,
+                "position_long": None,
+            },
+        ),
+        _FakeFitFrame(
+            "record",
+            {
+                "timestamp": t0 + timedelta(seconds=2),
+                "heart_rate": 135,
+                "position_lat": int(40.0 / garmin_service._SEMICIRCLE_TO_DEG),
+                "position_long": int(-74.0 / garmin_service._SEMICIRCLE_TO_DEG),
+            },
+        ),
+    ]
+
+    zip_buf = io.BytesIO()
+    with zipfile.ZipFile(zip_buf, "w") as zf:
+        zf.writestr("activity.fit", b"fake-fit")
+
+    client = MagicMock()
+    client.download_activity.return_value = zip_buf.getvalue()
+
+    class _FakeFitReader:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return frames
+
+        def __exit__(self, *_exc):
+            return False
+
+    with patch.object(garmin_service.fitdecode, "FitReader", _FakeFitReader):
+        streams, _laps = garmin_service.download_and_parse_fit(client, "123")
+
+    # 3 heartrate samples (one per record, still 1:1 with time)...
+    assert streams["heartrate"] == [130, 132, 135]
+    # ...but only 1 latlng point: no None entries, and not padded to length 3.
+    assert streams["latlng"] == [[pytest.approx(40.0, abs=0.01), pytest.approx(-74.0, abs=0.01)]]
+    assert None not in streams["latlng"]
+
+
+def test_download_and_parse_fit_omits_latlng_key_when_no_gps_at_all():
+    t0 = datetime(2026, 6, 18, 10, 0, 0, tzinfo=timezone.utc)
+    frames = [
+        _FakeFitFrame(
+            "record",
+            {"timestamp": t0, "heart_rate": 130, "position_lat": None, "position_long": None},
+        ),
+    ]
+    zip_buf = io.BytesIO()
+    with zipfile.ZipFile(zip_buf, "w") as zf:
+        zf.writestr("activity.fit", b"fake-fit")
+    client = MagicMock()
+    client.download_activity.return_value = zip_buf.getvalue()
+
+    class _FakeFitReader:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return frames
+
+        def __exit__(self, *_exc):
+            return False
+
+    with patch.object(garmin_service.fitdecode, "FitReader", _FakeFitReader):
+        streams, _laps = garmin_service.download_and_parse_fit(client, "123")
+
+    assert "latlng" not in streams
 
 
 def test_download_and_parse_fit_returns_empty_when_download_fails():
