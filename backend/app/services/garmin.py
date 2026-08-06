@@ -54,6 +54,17 @@ PROVIDER = "garmin"
 # risk a 429 lockout (see module docstring).
 GARMIN_REQUEST_GAP_S = 1.0
 
+# garminconnect never retries 429s itself (by design — see its
+# _is_retryable(): "Never retries 401, 429 or 4xx — those are deterministic
+# and caller-actionable"), and it raises GarminConnectTooManyRequestsError
+# for a 429 on *any* API call, not just login. Once we see one, back off
+# instead of continuing to poll at the same 1s pace — the cooldown below is
+# how long the poll loop skips this athlete afterward (see
+# _poll_one_athlete). Kept well under Garmin's documented worst-case SSO
+# login lockout (48h+) since this only guards general API calls, which are a
+# lighter-weight limit than the login endpoint.
+GARMIN_RATE_LIMIT_COOLDOWN_SEC = 30 * 60
+
 
 # --------------------------------------------------------------------------
 # Exceptions
@@ -234,6 +245,18 @@ def _claim_sync_lock(db: Any, athlete_id: str) -> bool:
 def _release_sync_lock(db: Any, athlete_id: str) -> None:
     now = datetime.now(timezone.utc).isoformat()
     db.table("oauth_tokens").update({"refresh_lock_expires_at": now}).eq(
+        "athlete_id", athlete_id
+    ).eq("provider", PROVIDER).execute()
+
+
+def _cooldown_sync_lock(db: Any, athlete_id: str, seconds: int) -> None:
+    """
+    Hold the sync lock past its normal duration after a 429, so the poll
+    loop's next tick (an hour later by default) skips this athlete instead
+    of immediately retrying and risking another rate-limit hit.
+    """
+    until = (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat()
+    db.table("oauth_tokens").update({"refresh_lock_expires_at": until}).eq(
         "athlete_id", athlete_id
     ).eq("provider", PROVIDER).execute()
 
@@ -455,12 +478,16 @@ def download_and_parse_fit(
     code needs to know the data came from Garmin.
 
     Returns ``({}, [])`` if the activity has no downloadable FIT data (e.g.
-    a manually-entered activity).
+    a manually-entered activity). Raises ``GarminRateLimitedError`` on a 429
+    rather than swallowing it — callers must stop, not keep requesting the
+    next activity at the same pace (see GARMIN_RATE_LIMIT_COOLDOWN_SEC).
     """
     try:
         raw = client.download_activity(
             str(activity_id), dl_fmt=Garmin.ActivityDownloadFormat.ORIGINAL
         )
+    except GarminConnectTooManyRequestsError as exc:
+        raise GarminRateLimitedError(str(exc)) from exc
     except Exception as exc:
         logger.info("garmin.download_activity unavailable activity_id=%s: %s", activity_id, exc)
         return {}, []
@@ -700,16 +727,35 @@ async def sync_activities_for_athlete(
     if client is None:
         return {"workouts": 0, "streams": 0, "connected": 0}
 
-    activities = await asyncio.to_thread(
-        client.get_activities_by_date, start_date.isoformat(), end_date.isoformat()
-    )
+    try:
+        activities = await asyncio.to_thread(
+            client.get_activities_by_date, start_date.isoformat(), end_date.isoformat()
+        )
+    except GarminConnectTooManyRequestsError as exc:
+        await asyncio.to_thread(persist_session, db, athlete_id, client)
+        raise GarminRateLimitedError(str(exc)) from exc
 
     workout_count = 0
     stream_count = 0
+    rate_limited = False
     for activity in activities:
-        saved_workout, saved_streams = await _save_one_activity(
-            client, activity, athlete_id, db
-        )
+        try:
+            saved_workout, saved_streams = await _save_one_activity(
+                client, activity, athlete_id, db
+            )
+        except GarminRateLimitedError:
+            # Stop immediately rather than keep requesting the next activity
+            # at the same pace — that's what actually risks compounding a
+            # light API throttle into a much longer lockout. Whatever we
+            # already saved this pass stays; the poll loop's cooldown
+            # (GARMIN_RATE_LIMIT_COOLDOWN_SEC) picks this athlete back up
+            # later instead of retrying on the very next tick.
+            logger.warning(
+                "garmin activity sync rate-limited athlete=%s after %s/%s activities; stopping this pass",
+                athlete_id, workout_count, len(activities),
+            )
+            rate_limited = True
+            break
         if saved_workout:
             workout_count += 1
         if saved_streams:
@@ -720,10 +766,20 @@ async def sync_activities_for_athlete(
 
     await asyncio.to_thread(persist_session, db, athlete_id, client)
 
+    # Recompute for whatever we did save, whether or not we finished the pass.
     if workout_count:
         await recompute_workout_tss_for_athlete(athlete_id, db)
         recalculate_tss_history(athlete_id, db)
         invalidate_context_cache(athlete_id)
+
+    if rate_limited:
+        # Re-raise after persisting/recomputing whatever progress we made, so
+        # the caller (backfill_historical_data / _poll_one_athlete) backs off
+        # instead of moving straight on to biometrics against the same
+        # rate-limited account.
+        raise GarminRateLimitedError(
+            f"rate-limited after {workout_count}/{len(activities)} activities"
+        )
 
     logger.info(
         "Garmin activity sync complete athlete=%s workouts=%s streams=%s window=%s..%s",
@@ -800,19 +856,30 @@ def _parse_epoch_ms(value: Any) -> datetime | None:
 async def fetch_and_store_biometrics_for_day(
     athlete_id: str, db: Any, client: Garmin, day: date
 ) -> bool:
-    """Fetch sleep/HRV/resting-HR for one day and store via the canonical pipeline."""
+    """
+    Fetch sleep/HRV/resting-HR for one day and store via the canonical
+    pipeline. Raises ``GarminRateLimitedError`` on a 429 from any of the
+    three calls, without trying the remaining ones for this day — see
+    GARMIN_RATE_LIMIT_COOLDOWN_SEC.
+    """
     cdate = day.isoformat()
     sleep = hrv = heart_rates = None
     try:
         sleep = await asyncio.to_thread(client.get_sleep_data, cdate)
+    except GarminConnectTooManyRequestsError as exc:
+        raise GarminRateLimitedError(str(exc)) from exc
     except Exception as exc:
         logger.info("garmin.get_sleep_data failed athlete=%s date=%s: %s", athlete_id, cdate, exc)
     try:
         hrv = await asyncio.to_thread(client.get_hrv_data, cdate)
+    except GarminConnectTooManyRequestsError as exc:
+        raise GarminRateLimitedError(str(exc)) from exc
     except Exception as exc:
         logger.info("garmin.get_hrv_data failed athlete=%s date=%s: %s", athlete_id, cdate, exc)
     try:
         heart_rates = await asyncio.to_thread(client.get_heart_rates, cdate)
+    except GarminConnectTooManyRequestsError as exc:
+        raise GarminRateLimitedError(str(exc)) from exc
     except Exception as exc:
         logger.info("garmin.get_heart_rates failed athlete=%s date=%s: %s", athlete_id, cdate, exc)
 
@@ -830,13 +897,24 @@ async def sync_biometrics_for_athlete(
     if client is None:
         return 0
     count = 0
+    rate_limited = False
     day = start_date
     while day <= end_date:
-        if await fetch_and_store_biometrics_for_day(athlete_id, db, client, day):
-            count += 1
+        try:
+            if await fetch_and_store_biometrics_for_day(athlete_id, db, client, day):
+                count += 1
+        except GarminRateLimitedError:
+            logger.warning(
+                "garmin biometrics sync rate-limited athlete=%s at day=%s; stopping this pass",
+                athlete_id, day,
+            )
+            rate_limited = True
+            break
         day += timedelta(days=1)
         await asyncio.sleep(GARMIN_REQUEST_GAP_S)
     await asyncio.to_thread(persist_session, db, athlete_id, client)
+    if rate_limited:
+        raise GarminRateLimitedError(f"rate-limited after {count} day(s) of biometrics")
     return count
 
 
@@ -845,12 +923,36 @@ async def sync_biometrics_for_athlete(
 # --------------------------------------------------------------------------
 
 async def backfill_historical_data(athlete_id: str, db: Any, days: int = 90) -> dict[str, int]:
+    """
+    Callers (the connect flow's scheduled backfill, the manual "sync now"
+    route) always invoke this fire-and-forget — a GarminRateLimitedError
+    left to propagate would just surface as an opaque "Task exception was
+    never retrieved" warning from asyncio, so it's caught and logged clearly
+    here instead. Whatever partial progress was made (and persisted) before
+    the rate limit stands; the athlete's next manual "sync now" or the
+    poll loop (once its cooldown elapses) picks up the rest.
+    """
     days = max(1, min(int(days), 365))
     end_date = datetime.now(timezone.utc).date()
     start_date = end_date - timedelta(days=days - 1)
 
-    workouts = await sync_activities_for_athlete(athlete_id, db, start_date, end_date)
-    biometrics_count = await sync_biometrics_for_athlete(athlete_id, db, start_date, end_date)
+    workouts = {"workouts": 0, "streams": 0}
+    biometrics_count = 0
+    try:
+        workouts = await sync_activities_for_athlete(athlete_id, db, start_date, end_date)
+        biometrics_count = await sync_biometrics_for_athlete(athlete_id, db, start_date, end_date)
+    except GarminRateLimitedError as exc:
+        logger.warning(
+            "Garmin backfill rate-limited athlete=%s days=%s: %s — partial progress kept",
+            athlete_id, days, exc,
+        )
+        return {
+            "workouts": workouts.get("workouts", 0),
+            "streams": workouts.get("streams", 0),
+            "biometrics": biometrics_count,
+            "days": days,
+            "rate_limited": True,
+        }
 
     logger.info(
         "Garmin backfill complete athlete=%s workouts=%s streams=%s biometrics=%s days=%s",
@@ -882,17 +984,29 @@ async def _poll_one_athlete(athlete_id: str, db: Any) -> None:
     if not _claim_sync_lock(db, athlete_id):
         logger.debug("garmin poll: athlete_id=%s locked by another replica; skipping", athlete_id)
         return
+    rate_limited = False
     try:
         end_date = datetime.now(timezone.utc).date()
         start_date = end_date - timedelta(days=POLL_WINDOW_DAYS - 1)
         await sync_activities_for_athlete(athlete_id, db, start_date, end_date)
         await sync_biometrics_for_athlete(athlete_id, db, start_date, end_date)
     except GarminRateLimitedError:
-        logger.warning("garmin poll: rate-limited athlete_id=%s; will retry next tick", athlete_id)
+        rate_limited = True
+        logger.warning(
+            "garmin poll: rate-limited athlete_id=%s; skipping for %ds",
+            athlete_id, GARMIN_RATE_LIMIT_COOLDOWN_SEC,
+        )
     except Exception as exc:
         logger.warning("garmin poll: sync failed athlete_id=%s: %s", athlete_id, exc)
     finally:
-        _release_sync_lock(db, athlete_id)
+        if rate_limited:
+            # Held past the normal lock duration so the *next* poll tick
+            # (an hour later, by default) still sees this athlete as
+            # "locked" and skips it, rather than immediately retrying into
+            # the same rate limit.
+            _cooldown_sync_lock(db, athlete_id, GARMIN_RATE_LIMIT_COOLDOWN_SEC)
+        else:
+            _release_sync_lock(db, athlete_id)
 
 
 async def poll_tick(db: Any) -> int:

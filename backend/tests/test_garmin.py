@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import io
 import zipfile
 from datetime import date, datetime, timedelta, timezone
@@ -7,8 +8,17 @@ from unittest.mock import MagicMock, patch
 
 import fitdecode
 import pytest
+from garminconnect.exceptions import GarminConnectTooManyRequestsError
 
 from app.services import garmin as garmin_service
+
+
+def _run_async(coro):
+    # No pytest-asyncio in this project; matches tests/test_intervals_icu.py's helper.
+    try:
+        return asyncio.run(coro)
+    finally:
+        asyncio.set_event_loop(asyncio.new_event_loop())
 
 
 def test_map_garmin_connect_sport_common_keys():
@@ -326,6 +336,68 @@ def test_download_and_parse_fit_returns_empty_when_download_fails():
     streams, laps = garmin_service.download_and_parse_fit(client, "999")
     assert streams == {}
     assert laps == []
+
+
+def test_download_and_parse_fit_propagates_rate_limit():
+    """
+    A 429 is not "no FIT data for this activity" — it must stop the caller,
+    not be swallowed like every other download failure (garminconnect never
+    retries 429s itself; see the module docstring on GARMIN_RATE_LIMIT_COOLDOWN_SEC).
+    """
+    client = MagicMock()
+    client.download_activity.side_effect = GarminConnectTooManyRequestsError("429")
+    with pytest.raises(garmin_service.GarminRateLimitedError):
+        garmin_service.download_and_parse_fit(client, "999")
+
+
+def test_fetch_and_store_biometrics_for_day_propagates_rate_limit_without_trying_rest():
+    client = MagicMock()
+    client.get_sleep_data.side_effect = GarminConnectTooManyRequestsError("429")
+    client.get_hrv_data.return_value = {}
+    client.get_heart_rates.return_value = {}
+
+    async def run():
+        with pytest.raises(garmin_service.GarminRateLimitedError):
+            await garmin_service.fetch_and_store_biometrics_for_day(
+                "athlete-1", MagicMock(), client, date(2026, 6, 18)
+            )
+
+    _run_async(run())
+
+    # Sleep 429'd first — hrv/heart_rates for this day must not be attempted.
+    client.get_hrv_data.assert_not_called()
+    client.get_heart_rates.assert_not_called()
+
+
+def test_poll_one_athlete_applies_cooldown_on_rate_limit(monkeypatch):
+    """
+    On a 429, the poll loop must hold the athlete's sync lock past its normal
+    duration (GARMIN_RATE_LIMIT_COOLDOWN_SEC) instead of releasing it
+    immediately — otherwise the very next poll tick retries into the same
+    rate limit.
+    """
+    monkeypatch.setattr(garmin_service, "_claim_sync_lock", lambda db, athlete_id: True)
+
+    async def _raise_rate_limited(*_a, **_k):
+        raise garmin_service.GarminRateLimitedError("429")
+
+    monkeypatch.setattr(garmin_service, "sync_activities_for_athlete", _raise_rate_limited)
+
+    cooldown_calls = []
+    release_calls = []
+    monkeypatch.setattr(
+        garmin_service,
+        "_cooldown_sync_lock",
+        lambda db, athlete_id, seconds: cooldown_calls.append((athlete_id, seconds)),
+    )
+    monkeypatch.setattr(
+        garmin_service, "_release_sync_lock", lambda db, athlete_id: release_calls.append(athlete_id)
+    )
+
+    _run_async(garmin_service._poll_one_athlete("athlete-1", MagicMock()))
+
+    assert cooldown_calls == [("athlete-1", garmin_service.GARMIN_RATE_LIMIT_COOLDOWN_SEC)]
+    assert release_calls == []
 
 
 def test_token_crypto_roundtrip(monkeypatch):
