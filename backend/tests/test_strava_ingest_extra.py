@@ -239,3 +239,62 @@ def test_ingest_strava_activity_rowing_extracts_intervals():
 
     assert "intervals" in db.workout_updates[0]
     mock_schedule.assert_not_called()  # streams were present, no hydration needed
+
+
+def test_ingest_strava_activity_reuses_stored_streams_for_primary_without_force_refresh():
+    athlete = {"id": "athlete-1", "strava_athlete_id": 999, "max_hr": 190}
+    workout = {
+        "id": "w1",
+        "strava_activity_id": 111,
+        "strava_streams_fetched": True,
+        "source_ids": {"strava": ["111"]},
+        "tss": None,  # missing TSS -> recompute path, but streams should be reused not refetched
+    }
+    db = _IngestDb(athlete=athlete, workout=workout)
+    activity = _activity(111)
+    stored = {"heartrate": {"data": [140, 150]}}
+
+    with patch.object(strava_service, "get_valid_token", AsyncMock(return_value="tok")), patch.object(
+        strava_service, "get_activity", AsyncMock(return_value=activity)
+    ), patch.object(
+        strava_service, "find_or_create_canonical_workout", AsyncMock(return_value=(workout, False))
+    ), patch.object(
+        strava_service, "_load_stored_streams_dict", return_value=stored
+    ), patch.object(
+        strava_service, "get_activity_streams", AsyncMock()
+    ) as mock_fetch_streams, patch.object(
+        strava_service, "_load_cached_laps_for_workout", return_value=[]
+    ), patch.object(strava_service, "get_activity_laps", AsyncMock(return_value=[])), patch.object(
+        strava_service, "_upsert_activity_streams"
+    ), patch.object(strava_service, "_persist_activity_laps"), patch.object(
+        strava_service, "process_and_save_workout", AsyncMock()
+    ):
+        _run_async(
+            strava_service.ingest_strava_activity(
+                owner_strava_id=999, activity_id=111, db=db, athlete_id="athlete-1"
+            )
+        )
+
+    mock_fetch_streams.assert_not_called()  # reused the stored streams instead of refetching
+
+
+def test_ingest_strava_activity_handles_non_numeric_primary_activity_id():
+    athlete = {"id": "athlete-1", "strava_athlete_id": 999, "max_hr": 190}
+    workout = {"id": "w1", "strava_activity_id": "not-an-int", "source_ids": {}}
+    db = _IngestDb(athlete=athlete, workout=workout)
+    activity = _activity(111)
+
+    with patch.object(strava_service, "get_valid_token", AsyncMock(return_value="tok")), patch.object(
+        strava_service, "get_activity", AsyncMock(return_value=activity)
+    ), patch.object(
+        strava_service, "find_or_create_canonical_workout", AsyncMock(return_value=(workout, False))
+    ):
+        # Not linked (activity_id 111 doesn't match "not-an-int") -> early return, but
+        # primary_int parsing should not raise despite the bad stored value.
+        result = _run_async(
+            strava_service.ingest_strava_activity(
+                owner_strava_id=999, activity_id=111, db=db, athlete_id="athlete-1"
+            )
+        )
+
+    assert result == workout
