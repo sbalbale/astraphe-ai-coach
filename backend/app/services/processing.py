@@ -1344,7 +1344,13 @@ async def recompute_workout_tss_for_athlete(athlete_id: str, db) -> int:
     res = db.table("workouts").select("*").eq("athlete_id", athlete_id).order("started_at").execute()
     updated = 0
     for row in res.data or []:
-        if row.get("tss") is not None:
+        # process_and_save_workout() always writes a numeric "tss" (defaulting
+        # to 0.0, never NULL — see its `tss = 0.0` default above), so every
+        # workout row has a non-None tss by construction. An `is not None`
+        # check here would therefore skip every row unconditionally and this
+        # function would never recompute anything; treat a falsy (0/0.0)
+        # value as "missing" instead, which is what callers actually mean.
+        if row.get("tss"):
             continue
         await process_and_save_workout(_workout_row_to_payload(row), athlete_id, db, skip_tss_recalc=True)
         updated += 1
