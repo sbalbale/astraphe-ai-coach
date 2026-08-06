@@ -71,6 +71,44 @@ def reset_oauth_token_encryption_key(monkeypatch):
     token_crypto._fernet.cache_clear()
 
 
+@pytest.fixture(autouse=True)
+def reset_ip_rate_limiter():
+    """
+    app.main._ip_rate_limiter is a process-global in-memory RateLimiter shared by
+    every TestClient(app) instance across the whole test session. Without a reset,
+    hundreds of router tests hitting real endpoints eventually trip its sliding
+    window and later tests start seeing spurious 429s. Clear its state before and
+    after each test so tests stay independent of run order/volume.
+    """
+    from app.main import _ip_rate_limiter
+
+    _ip_rate_limiter._memory.clear()
+    yield
+    _ip_rate_limiter._memory.clear()
+
+
+@pytest.fixture(autouse=True)
+def reset_gemini_quota():
+    """
+    app.services.gemini_quota._call_times is the same kind of process-global,
+    in-memory state as _ip_rate_limiter above: a per-model deque of real
+    wall-clock call timestamps, shared across every test in the session.
+    gemini_quota.wait_for_slot() is on the hot path of ai_coach.py, memory.py,
+    and analysis_cache.py — any test that reaches it unmocked (directly or via
+    a real, un-patched call chain) records a timestamp there. Left unreset,
+    a large enough test run risks tripping a model's tracked RPM budget and
+    making a later, unrelated test either sleep in real time (wait_for_slot
+    polls in up-to-1s increments) or raise GeminiQuotaExceededError outright —
+    exactly the kind of run-order/volume-dependent flakiness
+    reset_ip_rate_limiter exists to prevent for the IP limiter.
+    """
+    from app.services import gemini_quota
+
+    gemini_quota._call_times.clear()
+    yield
+    gemini_quota._call_times.clear()
+
+
 @pytest.fixture
 def client():
     """Provides a test client with bypassed authentication."""

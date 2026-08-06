@@ -1,0 +1,22 @@
+[run]
+source = backend/app
+relative_files = True
+branch = True
+omit =
+    backend/app/__init__.py
+    backend/app/*/__init__.py
+    backend/app/main.py
+
+[report]
+exclude_lines =
+    pragma: no cover
+    if TYPE_CHECKING:
+    def __repr__
+    raise NotImplementedError
+    \.\.\.$
+    if __name__ == .__main__.:
+show_missing = True
+fail_under = 80
+
+[html]
+directory = backend/htmlcov
