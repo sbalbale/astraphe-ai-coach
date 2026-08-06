@@ -294,6 +294,10 @@ def test_log_workout_success():
         # completion in this thread (asyncio.run() resets the thread's loop
         # to None on exit) — order-dependent depending on what ran earlier
         # in the suite. Use a private loop instead, robust to ambient state.
+        # (Also avoids recursing into the mock: patching
+        # "...coach_workout_data.asyncio.run" patches the real, shared asyncio
+        # module's `run` attribute, so the side_effect must not call
+        # asyncio.run(...) itself.)
         def _run_coro(coro):
             loop = asyncio.new_event_loop()
             try:

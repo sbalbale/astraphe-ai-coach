@@ -353,9 +353,19 @@ class _BackfillListResponse:
 
 
 class _BackfillAsyncClient:
-    def __init__(self, *_a, pages=None, **_k):
+    """Fakes httpx.AsyncClient for backfill_historical_data.
+
+    The production code does ``async with httpx.AsyncClient(...) as client`` *inside*
+    its polling loop, so a fresh instance is constructed on every page fetch. A plain
+    per-instance call counter would therefore reset to 0 every iteration and keep
+    re-serving ``pages[0]`` forever. ``counter`` is an external mutable ``[int]`` box
+    shared across instances (via the lambda factory closure) so pagination position
+    actually advances.
+    """
+
+    def __init__(self, *_a, pages=None, counter=None, **_k):
         self._pages = pages or []
-        self._call = 0
+        self._counter = counter if counter is not None else [0]
 
     async def __aenter__(self):
         return self
@@ -364,8 +374,9 @@ class _BackfillAsyncClient:
         return False
 
     async def get(self, *_a, **_k):
-        resp = self._pages[min(self._call, len(self._pages) - 1)]
-        self._call += 1
+        idx = min(self._counter[0], len(self._pages) - 1)
+        resp = self._pages[idx]
+        self._counter[0] += 1
         return resp
 
 
@@ -531,3 +542,95 @@ def test_backfill_historical_data_activity_exception_is_swallowed():
         total = _run_async(strava_service.backfill_historical_data("athlete-1", 999, "tok", db, days=30))
 
     assert total == 0
+
+
+def test_hydrate_streams_background_swallows_errors(capsys):
+    with patch.object(
+        strava_service, "hydrate_workout_streams", AsyncMock(side_effect=RuntimeError("boom"))
+    ):
+        _run_async(strava_service._hydrate_streams_background(MagicMock(), "athlete-1", "w1"))
+
+    assert "strava.hydrate_bg" in capsys.readouterr().out
+
+
+def test_backfill_historical_data_skips_activity_with_no_id():
+    activity = {"start_date": "2026-05-20T10:00:00Z"}  # no "id" key
+    page1 = _BackfillListResponse(json_data=[activity])
+    db = MagicMock()
+
+    with patch.object(
+        strava_service.httpx, "AsyncClient", lambda *a, **k: _BackfillAsyncClient(*a, pages=[page1], **k)
+    ), patch.object(strava_service, "ingest_strava_activity", AsyncMock()) as mock_ingest, patch.object(
+        strava_service, "_finalize_strava_sync", AsyncMock()
+    ), patch.object(strava_service.asyncio, "sleep", AsyncMock()):
+        total = _run_async(strava_service.backfill_historical_data("athlete-1", 999, "tok", db, days=30))
+
+    assert total == 0
+    mock_ingest.assert_not_called()
+
+
+def test_backfill_historical_data_paginates_to_next_page():
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+    recent = (now - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    # A full page (== per_page=50) triggers fetching the next page, which is empty -> stop.
+    page1_activities = [{"id": i, "start_date": recent} for i in range(50)]
+    page1 = _BackfillListResponse(json_data=page1_activities)
+    page2 = _BackfillListResponse(json_data=[])
+    db = MagicMock()
+    db.table.return_value.select.return_value.eq.return_value.eq.return_value.eq.return_value.maybe_single.return_value.execute.return_value = SimpleNamespace(
+        data=None
+    )
+    counter = [0]
+
+    with patch.object(
+        strava_service.httpx,
+        "AsyncClient",
+        lambda *a, **k: _BackfillAsyncClient(*a, pages=[page1, page2], counter=counter, **k),
+    ), patch.object(strava_service, "ingest_strava_activity", AsyncMock()) as mock_ingest, patch.object(
+        strava_service, "_finalize_strava_sync", AsyncMock()
+    ), patch.object(strava_service.asyncio, "sleep", AsyncMock()):
+        total = _run_async(strava_service.backfill_historical_data("athlete-1", 999, "tok", db, days=30))
+
+    assert total == 50
+    assert mock_ingest.await_count == 50
+
+
+def test_backfill_historical_data_gives_up_after_repeated_activity_rate_limits(capsys):
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+    activity = {"id": 1, "start_date": (now - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")}
+    page1 = _BackfillListResponse(json_data=[activity])
+    db = MagicMock()
+    db.table.return_value.select.return_value.eq.return_value.eq.return_value.eq.return_value.maybe_single.return_value.execute.return_value = SimpleNamespace(
+        data=None
+    )
+
+    with patch.object(
+        strava_service.httpx, "AsyncClient", lambda *a, **k: _BackfillAsyncClient(*a, pages=[page1], **k)
+    ), patch.object(
+        strava_service,
+        "ingest_strava_activity",
+        AsyncMock(side_effect=strava_service.StravaRateLimitError(retry_after=1)),
+    ), patch.object(strava_service, "_finalize_strava_sync", AsyncMock()), patch.object(
+        strava_service.asyncio, "sleep", AsyncMock()
+    ):
+        total = _run_async(strava_service.backfill_historical_data("athlete-1", 999, "tok", db, days=30))
+
+    assert total == 0
+    assert "Gave up activity 1 after" in capsys.readouterr().out
+
+
+def test_backfill_recent_skips_athlete_without_valid_token():
+    db = MagicMock()
+    db.table.return_value.select.return_value.eq.return_value.execute.return_value = SimpleNamespace(
+        data=[{"athlete_id": "a1", "external_user_id": "999"}]
+    )
+    with patch("app.dependencies.get_admin_db", return_value=db), patch.object(
+        strava_service, "get_valid_token", AsyncMock(return_value=None)
+    ), patch.object(strava_service, "backfill_historical_data", AsyncMock()) as mock_backfill:
+        _run_async(strava_service.backfill_recent(hours=12))
+
+    mock_backfill.assert_not_called()
