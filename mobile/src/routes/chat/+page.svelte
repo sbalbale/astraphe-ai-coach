@@ -96,6 +96,7 @@
       if (messages[messages.length - 1].role === 'user') {
         const aiMsgId = `local-ai-${Date.now()}`;
         messages.push({ id: aiMsgId, role: 'ai', text: '', streaming: true });
+        loading = true; // keep send/attach disabled until the resumed poll resolves
         pollForCoachReply(cid, aiMsgId, rows.length);
       }
     }
@@ -112,6 +113,17 @@
    * message count *before* that reply can possibly have landed, so a longer
    * row count is our signal it arrived (the row list is append-only and
    * ordered by created_at, so a new last row is always the new reply).
+   *
+   * Callers must set `loading = true` before calling this — send() and
+   * loadConversationMessages()'s resume-on-reopen path both do — so the
+   * input stays disabled (see the template's `disabled={loading}`) for the
+   * whole wait, not just the initial submit call. Sending a second message
+   * before the first reply lands would bump activePollToken and orphan the
+   * first placeholder mid-flight (see PR #18 review). This function is the
+   * only thing that resets `loading` back to false once it's set true for a
+   * pending reply — every terminal path below (resolved / poll error /
+   * timeout) clears it, gated the same way as the UI update right above it
+   * so a stale/superseded poll never touches the wrong conversation's state.
    */
   function pollForCoachReply(cid: string, aiMsgId: string, knownMessageCount: number) {
     const token = ++activePollToken;
@@ -139,6 +151,7 @@
                 streaming: false
               };
             }
+            loading = false;
             scrollToBottom();
           }
           return; // done
@@ -155,6 +168,7 @@
             messages[msgIndex].text =
               "That's taking longer than usual. Your coach may still be working on it — check back in a bit, or pull to refresh this chat.";
           }
+          loading = false;
         }
         return;
       }
@@ -231,6 +245,7 @@
 
   async function selectConversation(cid: string) {
     activePollToken++; // stop waiting on a reply for the conversation we're leaving
+    loading = false; // that poll invalidation means nothing will clear it otherwise
     conversationId = cid;
     convoMenuOpen = false;
     await loadConversationMessages(cid);
@@ -395,6 +410,13 @@
   async function send() {
     const text = input.trim();
     if (!text && pendingImageUrls.length === 0) return;
+    // Serialize sends: a reply still in flight (loading stays true from the
+    // moment it's submitted until pollForCoachReply resolves it — see that
+    // function's docstring) must finish before the next one starts, or a
+    // second submit's poll would supersede and orphan the first's
+    // placeholder. The send/attach buttons are already disabled via this
+    // same flag; this guards direct calls to send() too (e.g. Enter key).
+    if (loading) return;
 
     input = '';
     await tick();
@@ -424,7 +446,8 @@
         image_urls
       });
       if (data.conversation_id) conversationId = data.conversation_id;
-      loading = false;
+      // loading stays true — pollForCoachReply() (below) is responsible for
+      // clearing it once the reply actually resolves, not this submit call.
       // Baseline off the server's own row count right after the submit call
       // returns (which already includes the just-inserted user message) —
       // the local `messages` array isn't a reliable proxy for it (it may
