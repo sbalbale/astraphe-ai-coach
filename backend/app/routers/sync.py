@@ -29,6 +29,7 @@ from app.services.processing import (
     refresh_all_daily_strain_sync,
 )
 from app.services.ai_coach import invalidate_context_cache
+from app.services.token_crypto import decrypt_oauth_row, encrypt_oauth_fields
 from fastapi import status
 from typing import Optional, Tuple
 
@@ -583,7 +584,7 @@ async def _whoop_sync_whoop_body_measurements(
                 update: dict = {"access_token": new_access, "refresh_token": new_refresh}
                 if new_expires:
                     update["expires_at"] = new_expires
-                db.table("oauth_tokens").update(update).eq("provider", "whoop").eq("external_user_id", str(external_user_id)).execute()
+                db.table("oauth_tokens").update(encrypt_oauth_fields(update)).eq("provider", "whoop").eq("external_user_id", str(external_user_id)).execute()
             return new_access
 
         try:
@@ -691,7 +692,7 @@ async def _whoop_retry_recovery_vitals(
                 .single()
                 .execute()
             )
-            cur_data = cur.data or {}
+            cur_data = decrypt_oauth_row(cur.data) or {}
         except Exception:
             cur_data = {}
         cur_access = cur_data.get("access_token")
@@ -707,7 +708,7 @@ async def _whoop_retry_recovery_vitals(
             update: dict = {"access_token": new_access, "refresh_token": new_refresh}
             if new_expires:
                 update["expires_at"] = new_expires
-            db.table("oauth_tokens").update(update).eq("provider", "whoop").eq("external_user_id", str(external_user_id)).execute()
+            db.table("oauth_tokens").update(encrypt_oauth_fields(update)).eq("provider", "whoop").eq("external_user_id", str(external_user_id)).execute()
             token = new_access
         return new_access
 
@@ -805,7 +806,7 @@ async def whoop_webhook(request: Request, background_tasks: BackgroundTasks, db=
         print(f"[whoop.webhook] unknown user_id={user_id} — dropping")
         return Response(status_code=200)
         
-    token_row = token_record.data[0]
+    token_row = decrypt_oauth_row(token_record.data[0])
     access_token = token_row.get("access_token")
     refresh_token = token_row.get("refresh_token")
     athlete_id = token_row.get("athlete_id")
@@ -828,7 +829,7 @@ async def whoop_webhook(request: Request, background_tasks: BackgroundTasks, db=
                 .single()
                 .execute()
             )
-            cur_data = cur.data or {}
+            cur_data = decrypt_oauth_row(cur.data) or {}
         except Exception:
             cur_data = {}
         if cur_data.get("access_token") and cur_data["access_token"] != access_token:
@@ -842,7 +843,7 @@ async def whoop_webhook(request: Request, background_tasks: BackgroundTasks, db=
             update: dict = {"access_token": new_access, "refresh_token": new_refresh}
             if new_expires:
                 update["expires_at"] = new_expires
-            db.table("oauth_tokens").update(update).eq("provider", "whoop").eq("external_user_id", str(user_id)).execute()
+            db.table("oauth_tokens").update(encrypt_oauth_fields(update)).eq("provider", "whoop").eq("external_user_id", str(user_id)).execute()
         return new_access
 
     try:
@@ -1250,7 +1251,7 @@ async def whoop_oauth_callback(
         }
         if initial_expires:
             _upsert["expires_at"] = initial_expires
-        db.table("oauth_tokens").upsert(_upsert).execute()
+        db.table("oauth_tokens").upsert(encrypt_oauth_fields(_upsert)).execute()
         print(f"[whoop.oauth.callback] Token persistence SUCCESS")
 
         # Everything else in background.
@@ -1340,7 +1341,7 @@ async def strava_oauth_callback(
             token_row["expires_at"] = expires_iso
 
         db.table("oauth_tokens").upsert(
-            token_row,
+            encrypt_oauth_fields(token_row),
             on_conflict="athlete_id,provider",
         ).execute()
 
@@ -1394,13 +1395,15 @@ async def intervals_icu_connect(
     await intervals_icu_service.verify_credentials(intervals_athlete_id, api_key)
 
     admin_db.table("oauth_tokens").upsert(
-        {
-            "athlete_id": athlete_id,
-            "provider": intervals_icu_service.PROVIDER,
-            "access_token": api_key,
-            "refresh_token": None,
-            "external_user_id": intervals_athlete_id,
-        },
+        encrypt_oauth_fields(
+            {
+                "athlete_id": athlete_id,
+                "provider": intervals_icu_service.PROVIDER,
+                "access_token": api_key,
+                "refresh_token": None,
+                "external_user_id": intervals_athlete_id,
+            }
+        ),
         on_conflict="athlete_id,provider",
     ).execute()
 
@@ -1431,7 +1434,7 @@ async def get_sync_status(athlete_id: str = Depends(get_current_athlete), db=Dep
     
     return {
         "integrations": {
-            "garmin": {"connected": "garmin" in providers, "last_sync": "2026-04-26T10:14:00Z"},
+            "garmin": {"connected": "garmin" in providers, "last_sync": None},
             "whoop": {"connected": "whoop" in providers, "last_sync": None},
             "strava": {"connected": "strava" in providers, "last_sync": None},
             "intervals_icu": {"connected": "intervals_icu" in providers, "last_sync": None},
@@ -1542,7 +1545,7 @@ async def whoop_backfill_biometrics_now(
         .maybe_single()
         .execute()
     )
-    row = tok.data if tok else None
+    row = decrypt_oauth_row(tok.data if tok else None)
     access_token = (row or {}).get("access_token")
     if not access_token:
         raise HTTPException(status_code=400, detail="WHOOP not connected")
@@ -1571,7 +1574,7 @@ async def whoop_backfill_now(
         .maybe_single()
         .execute()
     )
-    row = tok.data if tok else None
+    row = decrypt_oauth_row(tok.data if tok else None)
     access_token = (row or {}).get("access_token")
     if not access_token:
         raise HTTPException(status_code=400, detail="WHOOP not connected")
@@ -1635,7 +1638,7 @@ async def intervals_icu_backfill_now(
         .maybe_single()
         .execute()
     )
-    row = tok.data if tok else None
+    row = decrypt_oauth_row(tok.data if tok else None)
     api_key = (row or {}).get("access_token")
     intervals_athlete_id = (row or {}).get("external_user_id")
     if not api_key or not intervals_athlete_id:

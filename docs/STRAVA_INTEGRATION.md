@@ -64,6 +64,9 @@ Activity detail:
 Strava contributes to these tables:
 
 - `oauth_tokens`: provider `strava`, access/refresh token, expiry, scopes, and provider metadata.
+  `access_token`/`refresh_token` are encrypted at rest with `OAUTH_TOKEN_ENCRYPTION_KEY`
+  (Fernet; see `backend/app/services/token_crypto.py`) when that key is configured —
+  legacy plaintext rows still read correctly.
 - `workouts`: canonical activity summary with `source='strava'`.
 - `activity_streams`: per-second stream arrays and metadata.
 - `activity_laps`: lap/split detail rows.
