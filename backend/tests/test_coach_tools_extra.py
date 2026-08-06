@@ -689,3 +689,73 @@ def test_parse_function_args_mapping_like_object():
 def test_parse_function_args_unconvertible_object_returns_empty():
     fc = SimpleNamespace(args=object())
     assert coach_tools.parse_function_args(fc) == {}
+
+
+# ---------------------------------------------------------------------------
+# Remaining scattered branch gaps
+# ---------------------------------------------------------------------------
+
+
+def test_handle_simulate_training_impact_skips_missing_and_unparseable_history_dates():
+    # by_day-building loop inside handle_simulate_training_impact should skip rows
+    # with a missing or unparseable date rather than raising.
+    db = MagicMock()
+    rows = [
+        {"date": None, "daily_tss": 10},
+        {"date": "not-a-date", "daily_tss": 20},
+        {"date": "2026-05-19", "daily_tss": 30},
+    ]
+    with patch.object(coach_tools, "athlete_local_date", return_value=date(2026, 5, 20)), patch.object(
+        coach_tools, "_fetch_tss_history_rows", return_value=rows
+    ):
+        result = coach_tools.handle_simulate_training_impact(
+            {"target_tss": 50, "target_date": "2026-05-20"}, athlete_id="athlete-1", db=db
+        )
+    assert "projected_ctl" in result  # completed without raising on the bad rows
+
+
+def test_sanitize_workout_structure_ignores_invalid_sub_interval_target_fields():
+    raw = [
+        {
+            "name": "main",
+            "duration_minutes": 20,
+            "sub_intervals": [{"name": "work", "target_hr_zone": "not-a-number"}],
+        }
+    ]
+    result = coach_tools._sanitize_workout_structure(raw)
+    assert "target_hr_zone" not in result[0]["sub_intervals"][0]
+
+
+def test_sanitize_workout_structure_ignores_invalid_top_level_target_fields():
+    raw = [{"name": "main", "duration_minutes": 20, "target_power_percent_ftp": "not-a-number"}]
+    result = coach_tools._sanitize_workout_structure(raw)
+    assert "target_power_percent_ftp" not in result[0]
+
+
+@pytest.mark.parametrize(
+    "sport_input,expected",
+    [("swimming", "swim"), ("erg", "row"), ("weights", "strength")],
+)
+def test_handle_schedule_workout_normalizes_additional_sport_aliases(sport_input, expected):
+    db = MagicMock()
+    db.table.return_value.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = SimpleNamespace(
+        data={}
+    )
+    db.table.return_value.insert.return_value.execute.return_value = SimpleNamespace(data=[{"id": "p1"}])
+    result = coach_tools.handle_schedule_workout(
+        {"duration_minutes": 30, "date": "2026-05-20", "sport": sport_input}, athlete_id="athlete-1", db=db
+    )
+    assert result["workout"]["sport"] == expected
+
+
+def test_handle_update_memory_returns_original_error_when_no_fields_survive_drop():
+    db = MagicMock()
+    db.table.return_value.update.return_value.eq.return_value.eq.return_value.execute.side_effect = RuntimeError(
+        "column coach_memories.event_date does not exist"
+    )
+    # Only event_date is provided, which gets dropped entirely by the schema-drift retry,
+    # leaving nothing to retry with.
+    result = coach_tools.handle_update_memory(
+        {"memory_id": "m1", "event_date": "2026-06-01"}, athlete_id="athlete-1", db=db
+    )
+    assert "does not exist" in result["error"]

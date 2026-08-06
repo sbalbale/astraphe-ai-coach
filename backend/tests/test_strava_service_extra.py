@@ -562,3 +562,27 @@ def test_resolve_canonical_workout_for_strava_activity_delegates():
         )
     assert result == ({"id": "w1"}, True)
     mock_find.assert_called_once()
+
+
+def test_sleep_if_delay_sleeps_when_true():
+    with patch("asyncio.sleep", AsyncMock()) as mock_sleep:
+        _run_async(strava._sleep_if_delay(True))
+    mock_sleep.assert_awaited_once_with(strava.STRAVA_BACKFILL_REQUEST_GAP_S)
+
+
+def test_sleep_if_delay_noop_when_false():
+    with patch("asyncio.sleep", AsyncMock()) as mock_sleep:
+        _run_async(strava._sleep_if_delay(False))
+    mock_sleep.assert_not_awaited()
+
+
+def test_finalize_strava_sync_recomputes_and_invalidates():
+    db = MagicMock()
+    with patch.object(strava, "recompute_workout_tss_for_athlete", AsyncMock()) as mock_recompute, patch.object(
+        strava, "recalculate_tss_history", MagicMock()
+    ) as mock_recalc, patch.object(strava, "invalidate_context_cache", MagicMock()) as mock_invalidate:
+        _run_async(strava._finalize_strava_sync("athlete-1", db))
+
+    mock_recompute.assert_awaited_once_with("athlete-1", db)
+    mock_recalc.assert_called_once_with("athlete-1", db)
+    mock_invalidate.assert_called_once_with("athlete-1")
