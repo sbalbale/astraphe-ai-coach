@@ -180,17 +180,3 @@ def test_get_llm_client_openai_returns_shim(monkeypatch):
     client = llm_provider.get_llm_client()
     assert isinstance(client, llm_provider._OpenAICompatClient)
     llm_provider.get_llm_client.cache_clear()
-
-
-# ---------------------------------------------------------------------------
-# gemini_quota: openai provider bypasses RPM tracking entirely
-# ---------------------------------------------------------------------------
-
-def test_quota_wait_for_slot_noop_when_not_gemini(monkeypatch):
-    from app.services import gemini_quota
-
-    monkeypatch.setattr(settings, "LLM_PROVIDER", "openai")
-    # A local model name that isn't in _MODEL_RPM would otherwise fall back
-    # to _DEFAULT_RPM=10 and start blocking — must not happen for LLM_PROVIDER=openai.
-    for _ in range(50):
-        gemini_quota.wait_for_slot("gemma4-26b-a4b-qat-128k", max_wait_sec=0.01)

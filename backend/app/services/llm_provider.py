@@ -90,7 +90,15 @@ def _wrap_chat_completion(resp: Any) -> _FakeResponse:
         try:
             args = json.loads(raw_args) if isinstance(raw_args, str) else dict(raw_args)
         except (json.JSONDecodeError, TypeError):
-            logger.warning("[llm_provider] failed to parse tool_call arguments as JSON: %r", raw_args)
+            # Don't log raw_args — tool-call arguments are model-generated
+            # from the athlete's own message/conversation content (workout
+            # notes, race goals, etc.) and can carry PII; log only what's
+            # needed to diagnose a malformed-arguments issue.
+            logger.warning(
+                "[llm_provider] failed to parse tool_call arguments as JSON for %r (%d chars)",
+                getattr(tc.function, "name", "?"),
+                len(raw_args) if isinstance(raw_args, str) else -1,
+            )
             args = {}
         parts.append(_FakePart(function_call=_FakeFunctionCall(tc.function.name, args)))
 
@@ -234,11 +242,26 @@ class _OpenAICompatModels:
         return _wrap_chat_completion(resp)
 
 
+# Local OpenAI-compatible servers (llama-swap in particular) can take a while
+# on a cold request — swapping/loading a model that was "stopped" into VRAM
+# before it can even start inferring — so this needs to be generous, not the
+# SDK's tight default. Bounded rather than unbounded so a genuinely hung
+# upstream can't tie up a worker thread indefinitely.
+_REQUEST_TIMEOUT_SEC = 120.0
+
+
 class _OpenAICompatClient:
     def __init__(self, base_url: str, api_key: str | None):
         import openai  # local import: only needed when this provider is actually selected
 
-        self._raw = openai.OpenAI(base_url=base_url, api_key=api_key or "not-needed")
+        self._raw = openai.OpenAI(
+            base_url=base_url,
+            api_key=api_key or "not-needed",
+            timeout=_REQUEST_TIMEOUT_SEC,
+            # ai_coach.py's own per-hop retry loop already retries on
+            # failure — don't let the SDK silently retry underneath it too.
+            max_retries=0,
+        )
         self.models = _OpenAICompatModels(self._raw)
 
 
