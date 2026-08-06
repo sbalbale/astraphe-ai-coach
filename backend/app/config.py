@@ -26,8 +26,36 @@ class Settings(BaseSettings):
     SUPABASE_KEY: str = "test-anon-key"
     SUPABASE_SERVICE_ROLE_KEY: Optional[str] = None
 
+    # --- LLM Provider ---
+    # "gemini" (Google AI Studio) or "openai" (any OpenAI-compatible chat
+    # completions endpoint — local llama.cpp/llama-swap, vLLM, LM Studio,
+    # etc.). Only affects chat + insights + memory extraction (the model
+    # names below); embeddings (GEMINI_EMBEDDING_MODEL) always use Gemini —
+    # there's no provider-agnostic embeddings path here yet.
+    LLM_PROVIDER: str = "gemini"
+    # Base URL of an OpenAI-compatible /v1 API (e.g. "http://localhost:8080/v1"
+    # or a llama-swap instance). Required when LLM_PROVIDER=openai.
+    OPENAI_API_BASE_URL: Optional[str] = None
+    # Most local OpenAI-compatible servers don't check this at all; set it if
+    # yours does (e.g. behind a reverse proxy requiring a bearer token).
+    OPENAI_API_KEY: Optional[str] = None
+
     # --- Gemini AI ---
+    # Also used for LLM_PROVIDER=openai: these hold whatever model id
+    # strings your OpenAI-compatible server expects (its /v1/models list),
+    # not necessarily anything Gemini-branded despite the setting names —
+    # kept as-is to avoid renaming every call site that reads them.
     GEMINI_API_KEY: str = "test-gemini-key"
+    # gemini_quota.py's proactive RPM guardrail assumes Google AI Studio's
+    # free-tier limits (30 RPM for the Gemma models this app uses, etc.) and
+    # preemptively throttles calls to stay under them. Set this to false if
+    # GEMINI_API_KEY is a paid/billed key with real quota — the guardrail
+    # will no-op, same as it already does for LLM_PROVIDER=openai. Reactive
+    # handling of an actual 429/RESOURCE_EXHAUSTED from Google (retry with
+    # backoff, fall back to GEMINI_FALLBACK_MODEL) always stays on
+    # regardless of this setting — that's a legitimate response to a real
+    # rate-limit error either way, not a guess at one that hasn't happened.
+    GEMINI_FREE_TIER: bool = True
     GEMINI_MODEL: str = "gemma-4-26b-a4b-it"
     # Fallback chat model when the primary model is overloaded (e.g. 503 UNAVAILABLE).
     GEMINI_FALLBACK_MODEL: str = "gemma-4-26b-a4b-it"
