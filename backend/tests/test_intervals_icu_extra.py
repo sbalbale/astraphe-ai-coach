@@ -457,3 +457,61 @@ def test_parse_datetime_from_date_object():
 def test_minutes_converts_oversized_sleep_value_from_seconds():
     # A "sleep" key with a value > 24*60 is assumed to actually be seconds, not minutes.
     assert intervals_icu._minutes({"sleep": 30000}, "sleep") == 500
+
+
+def test_fetch_activity_streams_reraises_non_unavailable_http_errors(monkeypatch):
+    monkeypatch.setattr(settings, "INTERVALS_ICU_API_BASE", "https://intervals.icu/api/v1")
+    resp = _FakeGetResponse(status_code=500, text="server error")
+    with _patch_client(resp):
+        with pytest.raises(HTTPException) as exc_info:
+            _run_async(intervals_icu.fetch_activity_streams("act-1", "key"))
+    assert exc_info.value.status_code == 500
+
+
+def test_save_activity_summary_and_streams_returns_false_for_unmappable_activity():
+    result = _run_async(
+        intervals_icu._save_activity_summary_and_streams({}, "athlete-1", "key", MagicMock())
+    )
+    assert result == (False, False)
+
+
+def test_save_activity_summary_and_streams_success_with_streams():
+    activity = {"start_date": "2026-05-20T10:00:00Z", "type": "Run", "id": "a1"}
+    db = MagicMock()
+
+    with patch.object(
+        intervals_icu, "_update_athlete_hr_anchors_from_activity", MagicMock()
+    ) as mock_anchors, patch.object(
+        intervals_icu, "process_and_save_workout", AsyncMock(return_value="w1")
+    ), patch.object(
+        intervals_icu, "fetch_activity_streams", AsyncMock(return_value={"heartrate": [1, 2]})
+    ), patch.object(
+        intervals_icu, "_upsert_activity_streams", return_value=True
+    ), patch.object(
+        intervals_icu, "_update_workout_hr_zones_from_streams", MagicMock()
+    ) as mock_hr_zones:
+        saved_workout, saved_streams = _run_async(
+            intervals_icu._save_activity_summary_and_streams(activity, "athlete-1", "key", db)
+        )
+
+    assert saved_workout is True
+    assert saved_streams is True
+    mock_anchors.assert_called_once()
+    mock_hr_zones.assert_called_once()
+
+
+def test_save_activity_summary_and_streams_logs_when_streams_unavailable():
+    activity = {"start_date": "2026-05-20T10:00:00Z", "type": "Run", "id": "a1"}
+    db = MagicMock()
+
+    with patch.object(intervals_icu, "_update_athlete_hr_anchors_from_activity", MagicMock()), patch.object(
+        intervals_icu, "process_and_save_workout", AsyncMock(return_value="w1")
+    ), patch.object(
+        intervals_icu, "fetch_activity_streams", AsyncMock(return_value={})
+    ), patch.object(intervals_icu, "_upsert_activity_streams", return_value=False):
+        saved_workout, saved_streams = _run_async(
+            intervals_icu._save_activity_summary_and_streams(activity, "athlete-1", "key", db)
+        )
+
+    assert saved_workout is True
+    assert saved_streams is False
