@@ -187,3 +187,40 @@ def test_generate_gemini_analysis_reraises_non_404_errors():
     ):
         with pytest.raises(RuntimeError, match="500 boom"):
             analysis_cache.generate_gemini_analysis("prompt", "gemini-pro")
+
+
+def test_generate_gemini_analysis_raises_last_error_when_all_candidates_404(monkeypatch):
+    monkeypatch.setattr(analysis_cache.settings, "GEMINI_ANALYSIS_MODEL", "fallback-model")
+    with patch.object(
+        analysis_cache._client.models, "generate_content", side_effect=RuntimeError("404 NOT_FOUND")
+    ):
+        with pytest.raises(RuntimeError, match="404 NOT_FOUND"):
+            analysis_cache.generate_gemini_analysis("prompt", "bad-model")
+
+
+def test_generate_gemini_analysis_no_duplicate_candidate_when_requested_equals_fallback(monkeypatch):
+    monkeypatch.setattr(analysis_cache.settings, "GEMINI_ANALYSIS_MODEL", "gemini-pro")
+    calls = []
+
+    def _fake_generate(model, contents):
+        calls.append(model)
+        return SimpleNamespace(text="ok")
+
+    with patch.object(analysis_cache._client.models, "generate_content", side_effect=_fake_generate):
+        analysis_cache.generate_gemini_analysis("prompt", "gemini-pro")
+
+    assert calls == ["gemini-pro"]  # fallback not appended since it equals the requested model
+
+
+def test_snap_floats_for_fingerprint_passthrough_for_unrecognized_type():
+    class _Custom:
+        pass
+
+    obj = _Custom()
+    assert analysis_cache._snap_floats_for_fingerprint(obj) is obj
+
+
+def test_clamp_to_two_sentences_strips_lone_bullet_marker_with_no_trailing_text():
+    # A bullet marker alone (no separating space survives the outer .strip())
+    # is left as-is by the per-line regex, which requires trailing whitespace.
+    assert analysis_cache.clamp_to_two_sentences("-") == "-"

@@ -291,3 +291,44 @@ def test_extract_and_save_memories_swallows_generation_errors(capsys):
         memory.extract_and_save_memories("athlete-1", conversation, MagicMock())  # should not raise
 
     assert "extraction failed" in capsys.readouterr().out
+
+
+def test_extract_and_save_memories_filters_facts_by_length():
+    conversation = [{"role": "user", "content": "I'm training for a marathon in the fall, aiming for sub 4 hours"}]
+    fake_response = SimpleNamespace(text='["too short", "A properly sized memorable fact about training goals here"]')
+    saved = []
+
+    with patch.object(memory._client.models, "generate_content", return_value=fake_response), patch.object(
+        memory, "save_coach_memory", lambda athlete_id, fact, db: saved.append(fact)
+    ):
+        memory.extract_and_save_memories("athlete-1", conversation, MagicMock())
+
+    assert saved == ["A properly sized memorable fact about training goals here"]
+
+
+def test_extract_embedding_final_fallback_uses_dict_style_access():
+    class _DictLikeResp:
+        embedding = None
+        embeddings = None
+
+        def __getitem__(self, key):
+            if key == "embedding":
+                return [0.9]
+            raise KeyError(key)
+
+    with patch.object(memory._client.models, "embed_content", return_value=_DictLikeResp()):
+        assert memory._extract_embedding("text") == [0.9]
+
+
+def test_save_coach_memory_continues_when_duplicate_check_raises():
+    query = _MemQuery()
+    query.execute = MagicMock(side_effect=RuntimeError("query failed"))
+    db = _MemDb(query)
+    with patch.object(memory, "_extract_embedding", return_value=[0.1]):
+        memory.save_coach_memory("athlete-1", "New fact", db)
+    assert len(query.inserted_payloads) == 1
+
+
+def test_should_skip_rag_for_message_false_for_long_question_without_keywords():
+    # Long enough, more than 4 words, contains "?" -> should NOT skip.
+    assert memory.should_skip_rag_for_message("What do you think about my overall progress lately?") is False
