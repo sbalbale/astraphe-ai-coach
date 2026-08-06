@@ -93,6 +93,14 @@ def wait_for_slot(model: str, max_wait_sec: float = 20.0) -> None:
     # such constraint, so don't throttle it against a Gemini-derived default.
     if (settings.LLM_PROVIDER or "gemini").strip().lower() != "gemini":
         return
+    # Likewise, a paid/billed Gemini key has real quota — this guardrail is
+    # a *guess* at limits that may not even apply. Reactive handling of an
+    # actual 429/RESOURCE_EXHAUSTED (retry, fall back to
+    # GEMINI_FALLBACK_MODEL — see ai_coach.py's is_transient handling)
+    # stays on regardless; that's responding to a real error, not
+    # preemptively assuming one.
+    if not settings.GEMINI_FREE_TIER:
+        return
     limit = _rpm_limit(model)
     deadline = time.monotonic() + max_wait_sec
     while True:

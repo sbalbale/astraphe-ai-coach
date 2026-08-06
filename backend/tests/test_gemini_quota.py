@@ -113,3 +113,25 @@ def test_noop_when_llm_provider_is_not_gemini(monkeypatch):
     for _ in range(50):
         gemini_quota.wait_for_slot("gemma4-26b-a4b-qat-128k", max_wait_sec=0.01)
     assert not gemini_quota._call_times
+
+
+def test_noop_when_gemini_free_tier_is_false(monkeypatch):
+    """A paid/billed Gemini key has real quota — the free-tier-derived RPM
+    guardrail shouldn't apply to it, same as the LLM_PROVIDER=openai case."""
+    monkeypatch.setattr(settings, "GEMINI_FREE_TIER", False)
+    model = "gemma-4-26b-a4b-it"  # a real entry in _MODEL_RPM with a low limit
+    for _ in range(50):
+        gemini_quota.wait_for_slot(model, max_wait_sec=0.01)
+    assert not gemini_quota._call_times
+
+
+def test_enforced_when_gemini_free_tier_is_true(monkeypatch):
+    """Sanity check that the default (GEMINI_FREE_TIER=true) still enforces
+    — guards against the new gate accidentally disabling everything."""
+    monkeypatch.setattr(settings, "GEMINI_FREE_TIER", True)
+    model = "gemma-4-26b-a4b-it"
+    limit = gemini_quota._rpm_limit(model)
+    for _ in range(limit):
+        gemini_quota.wait_for_slot(model, max_wait_sec=5.0)
+    with pytest.raises(gemini_quota.GeminiQuotaExceededError):
+        gemini_quota.wait_for_slot(model, max_wait_sec=0.0)
