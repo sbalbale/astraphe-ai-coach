@@ -461,3 +461,90 @@ def test_backfill_historical_data_impl_normalizes_additional_sport_names():
 
     saved_sports = {call.args[0].workout_type for call in mock_save_workout.await_args_list}
     assert saved_sports == {"run", "row", "mobility"}
+
+
+def test_backfill_historical_data_impl_skip_and_exception_branches():
+    now = datetime.now(timezone.utc)
+    sleep_start = _iso(now)
+
+    sleeps = [
+        # Zero total sleep duration -> skipped.
+        {
+            "start": sleep_start,
+            "end": sleep_start,
+            "score_state": "SCORED",
+            "id": "sleep-zero",
+            "nap": True,  # also exercises the "nap -> don't record cycle_wake_dates" branch
+            "cycle_id": "cyc-nap",
+            "score": {"stage_summary": {}},
+        },
+        # Valid sleep that triggers an upsert exception (caught + logged).
+        {
+            "start": sleep_start,
+            "end": sleep_start,
+            "score_state": "SCORED",
+            "id": "sleep-error",
+            "nap": False,
+            "cycle_id": "cyc-error",
+            "score": {
+                "stage_summary": {
+                    "total_light_sleep_time_milli": 3_600_000,
+                    "total_slow_wave_sleep_time_milli": 1_800_000,
+                    "total_rem_sleep_time_milli": 1_800_000,
+                },
+                "sleep_performance_percentage": 80,
+            },
+        },
+    ]
+    recoveries = [
+        # Unknown cycle_id and no created_at -> skipped.
+        {"cycle_id": "unknown-cycle", "score": {"recovery_score": 1}},
+        # Unknown cycle_id but has created_at -> falls back to created_at date, then errors on save.
+        {
+            "cycle_id": "another-unknown",
+            "created_at": sleep_start,
+            "score": {"recovery_score": 2},
+        },
+    ]
+    workouts = [
+        {
+            "start": sleep_start,
+            "end": sleep_start,
+            "id": "w-error",
+            "sport_name": "run",
+            "score": {},
+        }
+    ]
+
+    async def _fake_fetch_collection(_token, kind, *_a, **_k):
+        if kind == "activity/sleep":
+            return sleeps
+        if kind == "recovery":
+            return recoveries
+        if kind == "activity/workout":
+            return workouts
+        return []
+
+    db = _ImplDb()
+
+    with patch.object(whoop_backfill.whoop, "fetch_profile", AsyncMock(return_value={})), patch.object(
+        whoop_backfill.whoop, "fetch_body_measurement", AsyncMock(return_value={})
+    ), patch.object(
+        whoop_backfill.whoop, "fetch_collection", AsyncMock(side_effect=_fake_fetch_collection)
+    ), patch.object(
+        whoop_backfill.whoop, "recovery_is_scored", return_value=True
+    ), patch.object(
+        whoop_backfill.whoop, "hr_zone_pct_from_whoop_zone_millis", return_value=(20, 20, 20, 20, 20)
+    ), patch.object(
+        whoop_backfill, "process_and_save_biometrics", side_effect=RuntimeError("db down")
+    ), patch.object(
+        whoop_backfill, "process_and_save_workout", AsyncMock(side_effect=RuntimeError("db down"))
+    ), patch.object(
+        whoop_backfill, "recalculate_tss_history", MagicMock()
+    ), patch.object(whoop_backfill, "invalidate_context_cache", MagicMock()):
+        # Should complete without raising despite every save attempt failing.
+        _run_async(
+            whoop_backfill._backfill_historical_data_impl(
+                "athlete-1", "tok", db, days=30, include_workouts=True
+            )
+        )

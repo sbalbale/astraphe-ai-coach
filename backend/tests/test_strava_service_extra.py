@@ -354,6 +354,14 @@ def test_get_activity_success():
     assert result == {"id": 123}
 
 
+def test_get_activity_raises_502_on_non_json_success():
+    resp = _FakeResponse(status_code=200, json_error=True, text="<html>")
+    with _patch_client(get=resp):
+        with pytest.raises(HTTPException) as exc_info:
+            _run_async(strava.get_activity(123, "tok"))
+    assert exc_info.value.status_code == 502
+
+
 def test_get_activity_raises_rate_limit_error_on_429():
     resp = _FakeResponse(status_code=429, headers={"Retry-After": "60"})
     with _patch_client(get=resp):
@@ -402,6 +410,12 @@ def test_get_activity_streams_normalizes_dict_response():
 
 def test_get_activity_streams_returns_empty_on_non_json():
     resp = _FakeResponse(status_code=200, json_error=True)
+    with _patch_client(get=resp):
+        assert _run_async(strava.get_activity_streams(123, "tok")) == {}
+
+
+def test_get_activity_streams_returns_empty_for_unexpected_json_shape():
+    resp = _FakeResponse(status_code=200, json_data="not-a-dict-or-list")
     with _patch_client(get=resp):
         assert _run_async(strava.get_activity_streams(123, "tok")) == {}
 
