@@ -71,6 +71,22 @@ def reset_oauth_token_encryption_key(monkeypatch):
     token_crypto._fernet.cache_clear()
 
 
+@pytest.fixture(autouse=True)
+def reset_ip_rate_limiter():
+    """
+    app.main._ip_rate_limiter is a process-global in-memory RateLimiter shared by
+    every TestClient(app) instance across the whole test session. Without a reset,
+    hundreds of router tests hitting real endpoints eventually trip its sliding
+    window and later tests start seeing spurious 429s. Clear its state before and
+    after each test so tests stay independent of run order/volume.
+    """
+    from app.main import _ip_rate_limiter
+
+    _ip_rate_limiter._memory.clear()
+    yield
+    _ip_rate_limiter._memory.clear()
+
+
 @pytest.fixture
 def client():
     """Provides a test client with bypassed authentication."""
