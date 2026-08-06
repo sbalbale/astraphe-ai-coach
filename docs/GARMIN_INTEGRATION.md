@@ -7,22 +7,24 @@ Garmin Connect is implemented as a first-class integration using the community
 library (credential / MFA login via Garmin's mobile SSO). Official Garmin
 Developer Program OAuth is partner-approval-only and not currently available for
 self-serve signup; dormant OAuth1.0a config stubs remain in the codebase for a
-future official path.
+possible future official path.
 
 Implemented pieces:
 
 - Credential connect with MFA resume (`POST /garmin/connect`, `/connect/mfa`).
-- Session persistence in `oauth_tokens` (garth token blob only — never the password).
+- Encrypted session persistence in `oauth_tokens` — never the password.
 - Historical backfill of activities and daily biometrics.
 - FIT download + `fitdecode` parsing into Strava-shaped streams/laps.
-- Hourly background poll loop for recent activities + today's biometrics.
+- Hourly background poll loop for recent activities + biometrics, with a
+  cooldown on 429s (see Rate-Limit Mitigations).
 - Mobile Connect/Unlink modal on Profile → Connected Apps.
 - Sport mapping from Garmin Connect `activityType.typeKey` values.
-- Canonical merge via existing `processing.py` (no schema migration required).
+- Canonical merge via the existing `processing.py` engine, which already
+  treated `garmin` as a first-class source before this integration existed.
 
 ## Configuration
 
-Backend settings:
+Backend settings (`backend/app/config.py`):
 
 ```env
 # Active community-login integration
@@ -59,31 +61,41 @@ Connect / MFA / backfill ([`backend/app/routers/garmin_sync.py`](../backend/app/
 - `POST /v1/sync/garmin/connect/mfa` — body `{ state_token, mfa_code, days? }`.
 - `POST /v1/sync/garmin/backfill?days=90` — manual re-sync for the authenticated athlete.
 
-Shared sync routes ([`backend/app/routers/sync.py`](../backend/app/routers/sync.py)):
+Shared sync routes ([`backend/app/routers/sync.py`](../backend/app/routers/sync.py)),
+already provider-generic and needed no Garmin-specific changes:
 
 - `GET /v1/sync/status` — includes `integrations.garmin.connected`.
 - `DELETE /v1/sync/garmin` — unlink and drop the stored session.
 
 Legacy (unused) official webhook:
 
-- `POST /v1/sync/garmin/webhook` — left in place for a future official API path.
+- `POST /v1/sync/garmin/webhook` — parses the official Health API push-notification
+  shape. Nothing can trigger it today (no OAuth1.0a authorize/callback route
+  exists), left in place for a possible future official-API path.
 
 ## Data Model
 
 Garmin contributes to:
 
-- `oauth_tokens`: `provider='garmin'`, `access_token` = Fernet-encrypted garth/DI
-  session blob when `OAUTH_TOKEN_ENCRYPTION_KEY` is set (plaintext legacy rows
-  still decrypt), `external_user_id` = Garmin display name. Every other
-  provider's `access_token`/`refresh_token` is encrypted the same way — see
+- `oauth_tokens`: `provider='garmin'`, `access_token` = the serialized client
+  session (`garminconnect`'s own internal token store — see Auth Flow — not
+  `garth`, despite that being a common auth dependency for similar libraries;
+  this version of `python-garminconnect` doesn't use it), Fernet-encrypted when
+  `OAUTH_TOKEN_ENCRYPTION_KEY` is set (plaintext legacy rows still decrypt),
+  `external_user_id` = Garmin display name. Every other provider's
+  `access_token`/`refresh_token` is encrypted the same way — see
   `app/services/token_crypto.py`.
 - `workouts`: canonical activity summary with `source='garmin'`, plus
-  `garmin_activity_id` (unique fast-path), `elevation_gain_m`, and `calories`.
+  `garmin_activity_id` (unique fast-path dedup column, mirrors
+  `strava_activity_id`), `elevation_gain_m`, and `calories`.
 - `activity_streams` / `activity_laps`: FIT-derived streams and laps (same keys as Strava).
-- `biometrics`: daily sleep / HRV / resting HR with `source='garmin'`.
+- `biometrics`: sleep / HRV / resting HR merged per-field via `metric_sources`
+  (a JSONB map of field → winning source) — there's no single row-level
+  `source` column. A day where Garmin's HRV value wins shows `hrv_source='garmin'`.
 
 `workouts.source` and `biometrics.hrv_source` have included `'garmin'` since the
-initial schema. `garmin_activity_id` and `calories` were added in
+initial schema — no migration was needed for those. `garmin_activity_id` and
+`calories` were new columns added in
 `20260805150000_garmin_activity_id_and_calories.sql`.
 
 ## Auth Flow
@@ -93,20 +105,26 @@ Garmin has no self-serve OAuth for this product. Connection is credential-based:
 ```text
 Mobile profile/connections → Connect Garmin
   -> POST /v1/sync/garmin/connect { username, password, days }
-  -> backend calls garminconnect login (never stores password)
+  -> backend calls garminconnect login (never stores the password)
   -> if MFA: hold the pending client in-process, return { mfa_required, state_token }
        -> POST /v1/sync/garmin/connect/mfa { state_token, mfa_code, days }
-  -> persist encrypted session blob in oauth_tokens
+  -> persist the encrypted session in oauth_tokens
   -> schedule background backfill
 ```
 
-MFA pending state (the live login client) is held in an in-process dict keyed by
-`state_token` (5 min TTL) — it cannot be handed off through Redis or any other
-store, because `garminconnect`'s MFA continuation only works against the same
-in-memory client object, and that object holds a `curl_cffi` HTTP session that
-is not picklable. This means the connect and MFA requests for one login **must**
-land on the same backend process; see the multi-replica note under
-Configuration.
+`garminconnect` (this version) does not depend on `garth`; login produces its
+own small JSON token store (`client.client.dumps()` / `.loads()`) that this
+integration encrypts before writing to `oauth_tokens.access_token`.
+
+MFA pending state (the live login client object) is held in an in-process dict
+keyed by `state_token` (5 min TTL) — it cannot be handed off through Redis or any
+other external store, because `garminconnect`'s MFA continuation only works
+against the *same* in-memory client object, and that object holds a `curl_cffi`
+HTTP session that is not picklable (verified empirically: attempting to pickle
+it raises `TypeError: cannot pickle '_thread._local' object` once login has
+progressed past the first strategy). This means the connect and MFA requests
+for one login **must** land on the same backend process; see the multi-replica
+note under Configuration.
 
 Invalidate a compromised session by changing the Garmin password or signing out
 of all devices in Garmin Connect account settings, then Unlink + reconnect in-app.
@@ -115,7 +133,7 @@ of all devices in Garmin Connect account settings, then Unlink + reconnect in-ap
 
 ```text
 Connect / backfill / poll tick
-  -> restore persisted garth session (no username/password on routine sync)
+  -> restore persisted session (no username/password on routine sync)
   -> fetch activities by date window
   -> map summary → WorkoutPayload(source="garmin")
   -> process_and_save_workout (canonical merge/dedup)
@@ -126,17 +144,21 @@ Connect / backfill / poll tick
 
 Polling:
 
-- Started at FastAPI startup (`garmin_poll_loop`).
-- Cadence: `GARMIN_SYNC_POLL_HOURS` (default 1).
-- Window: recent ~2 days of activities + today's biometrics.
-- Multi-replica safe via `oauth_tokens.refresh_lock_expires_at` claim per athlete.
+- Started at FastAPI startup (`garmin.poll_loop`, wired in `main.py`).
+- Cadence: `GARMIN_SYNC_POLL_HOURS` (default 1h) — hourly, so sleep/recovery
+  data is fresh soon after waking rather than stale for hours.
+- Window: recent 2 days (`POLL_WINDOW_DAYS`) of activities + biometrics —
+  small on purpose, so a missed tick's Garmin-quota spend stays cheap.
+- Multi-replica safe: each tick claims `oauth_tokens.refresh_lock_expires_at`
+  per athlete (mirrors WHOOP's proactive-refresh claim pattern) before
+  syncing, so only one replica works a given athlete at a time.
 
 ## Deduplication
 
 Same workout can arrive from Strava, Garmin, WHOOP, intervals.icu, HealthKit, or
 manual entry. Cross-source merge uses the existing interval-overlap + field-quality
 logic in `processing.py`. Garmin is a first-class source in `SOURCE_PRIORITY` and
-per-field quality tables.
+the per-field quality tables.
 
 Exact fast paths:
 
@@ -146,14 +168,22 @@ Exact fast paths:
 Then fuzzy ±10 minute / duration-tolerance merge. Fuzzy hits also backfill the
 Garmin/Strava id columns when missing.
 
-General priorities:
+General priority, both for workout fields and biometrics (`SOURCE_PRIORITY` in
+`processing.py`), highest to lowest:
 
-- Recovery / sleep / daily strain: WHOOP preferred when present.
-- Power / GPS / cadence / streams / elevation: Strava and Garmin are strong sources.
+```
+garmin > whoop > intervals_icu > strava > healthkit > manual
+```
+
+(Manual entry is trusted over everything for `weight_kg`/`height_cm` specifically —
+those are the one exception, since a user-entered value is more reliable than
+any device estimate.)
 
 ## Sport Mapping
 
-Garmin Connect `activityType.typeKey` (lowercase snake_case) → ASTRAPHE sports:
+Garmin Connect `activityType.typeKey` (lowercase snake_case) → ASTRAPHE sports
+(`backend/app/services/garmin.py::_SPORT_MAP`; extend that dict for keys not
+yet covered — unknown keys fall back to `other`, they don't error):
 
 | ASTRAPHE sport | Examples |
 |---|---|
@@ -167,15 +197,26 @@ Garmin Connect `activityType.typeKey` (lowercase snake_case) → ASTRAPHE sports
 
 ## Rate-Limit Mitigations
 
-Garmin's SSO aggressively rate-limits repeated logins (account-level 429 lockouts
-of 48+ hours are common after failed/rapid attempts). Mitigations:
+Garmin's SSO endpoint aggressively rate-limits repeated *logins* (account-level
+429 lockouts of 48+ hours are documented after failed/rapid login attempts).
+General API calls (once already logged in) are a separate, lighter-weight
+limit, but `garminconnect` never retries a 429 on either — by design, it treats
+401/429/4xx as "deterministic and caller-actionable" and fails fast rather than
+retrying. Mitigations:
 
-- Persist and reuse the garth session on every poll/backfill; never re-login with
-  username/password on a routine tick.
-- Keep poll windows small (recent days only).
-- Stagger/jitter athletes; wrap each athlete in try/except so one failure does
-  not stop the loop.
-- During testing, avoid rapid reconnect loops against a personal account.
+- Persist and reuse the session on every poll/backfill; never re-login with
+  username/password on a routine sync.
+- Pace requests during backfill/poll (`GARMIN_REQUEST_GAP_S`, 1s between calls).
+- Keep the poll window small (recent days only, not a full re-backfill).
+- On any 429 (`GarminRateLimitedError`), stop the current sync pass
+  immediately instead of continuing to the next activity/day at the same
+  pace — whatever was already saved is kept, but no further Garmin calls are
+  made for that pass.
+- The poll loop then holds that athlete's sync lock for
+  `GARMIN_RATE_LIMIT_COOLDOWN_SEC` (30 minutes) instead of releasing it
+  normally, so the *next* poll tick (an hour later, by default) skips that
+  athlete rather than immediately retrying into the same limit.
+- During manual testing, avoid rapid reconnect loops against a personal account.
 
 ## Remaining Work
 

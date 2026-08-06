@@ -84,7 +84,7 @@ SPORT_CANONICAL = {
 
 _SPORT_CANONICAL_LOOKUP: dict[str, str] = {k.lower(): v for k, v in SPORT_CANONICAL.items()}
 
-SOURCE_PRIORITY = ["strava", "intervals_icu", "garmin", "healthkit", "whoop", "manual"]
+SOURCE_PRIORITY = ["garmin", "whoop", "intervals_icu", "strava", "healthkit", "manual"]
 
 _DB_SPORTS = frozenset({"run", "bike", "swim", "strength", "row", "mobility", "other"})
 
@@ -140,25 +140,28 @@ def _strip_none_update_values(d: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in d.items() if v is not None}
 
 _QUALITY_FIELD_SOURCES: dict[str, tuple[str, ...]] = {
-    "title": ("strava", "intervals_icu", "garmin", "healthkit", "whoop", "manual"),
-    "started_at": ("strava", "intervals_icu", "garmin", "healthkit", "whoop", "manual"),
-    "ended_at": ("strava", "intervals_icu", "garmin", "healthkit", "whoop", "manual"),
-    "duration_seconds": ("strava", "intervals_icu", "garmin", "healthkit", "whoop", "manual"),
-    "distance_m": ("strava", "intervals_icu", "garmin", "healthkit", "whoop", "manual"),
-    "elevation_gain_m": ("strava", "intervals_icu", "garmin", "healthkit", "whoop", "manual"),
-    "calories": ("strava", "intervals_icu", "garmin", "healthkit", "whoop", "manual"),
-    "avg_power_w": ("strava", "intervals_icu", "garmin", "healthkit", "whoop", "manual"),
-    "norm_power_w": ("strava", "intervals_icu", "garmin", "healthkit", "whoop", "manual"),
-    "avg_pace_sec_km": ("strava", "intervals_icu", "garmin", "healthkit", "whoop", "manual"),
-    "tss": ("strava", "intervals_icu", "garmin", "whoop", "healthkit", "manual"),
-    "avg_hr": ("intervals_icu", "strava", "garmin", "whoop", "healthkit", "manual"),
-    "max_hr": ("intervals_icu", "strava", "garmin", "whoop", "healthkit", "manual"),
-    "hr_zone_1_pct": ("intervals_icu", "strava", "garmin", "whoop", "healthkit", "manual"),
-    "hr_zone_2_pct": ("intervals_icu", "strava", "garmin", "whoop", "healthkit", "manual"),
-    "hr_zone_3_pct": ("intervals_icu", "strava", "garmin", "whoop", "healthkit", "manual"),
-    "hr_zone_4_pct": ("intervals_icu", "strava", "garmin", "whoop", "healthkit", "manual"),
-    "hr_zone_5_pct": ("intervals_icu", "strava", "garmin", "whoop", "healthkit", "manual"),
-    "strain_score": ("intervals_icu", "strava", "garmin", "whoop", "healthkit", "manual"),
+    field: tuple(SOURCE_PRIORITY)
+    for field in (
+        "title",
+        "started_at",
+        "ended_at",
+        "duration_seconds",
+        "distance_m",
+        "elevation_gain_m",
+        "calories",
+        "avg_power_w",
+        "norm_power_w",
+        "avg_pace_sec_km",
+        "tss",
+        "avg_hr",
+        "max_hr",
+        "hr_zone_1_pct",
+        "hr_zone_2_pct",
+        "hr_zone_3_pct",
+        "hr_zone_4_pct",
+        "hr_zone_5_pct",
+        "strain_score",
+    )
 }
 
 
@@ -199,20 +202,20 @@ def _quality_filter_workout_update(
     return filtered
 
 _BIOMETRIC_FIELD_SOURCES: dict[str, tuple[str, ...]] = {
-    "hrv_rmssd": ("whoop", "garmin", "healthkit", "intervals_icu", "manual"),
-    "resting_hr": ("whoop", "garmin", "healthkit", "intervals_icu", "manual"),
-    "skin_temp": ("whoop", "garmin", "healthkit", "intervals_icu", "manual"),
-    "spo2_pct": ("whoop", "garmin", "healthkit", "intervals_icu", "manual"),
-    "sleep_duration_min": ("whoop", "garmin", "healthkit", "intervals_icu", "manual"),
-    "sleep_in_bed_min": ("whoop", "garmin", "healthkit", "intervals_icu", "manual"),
-    "sleep_deep_pct": ("whoop", "garmin", "healthkit", "intervals_icu", "manual"),
-    "sleep_rem_pct": ("whoop", "garmin", "healthkit", "intervals_icu", "manual"),
-    "sleep_light_pct": ("whoop", "garmin", "healthkit", "intervals_icu", "manual"),
-    "sleep_awake_pct": ("whoop", "garmin", "healthkit", "intervals_icu", "manual"),
-    "sleep_bedtime": ("whoop", "garmin", "healthkit", "intervals_icu", "manual"),
-    "sleep_wakeup": ("whoop", "garmin", "healthkit", "intervals_icu", "manual"),
-    "weight_kg": ("manual", "whoop", "garmin", "healthkit", "intervals_icu"),
-    "height_cm": ("manual", "whoop", "garmin", "healthkit", "intervals_icu"),
+    "hrv_rmssd": ("garmin", "whoop", "intervals_icu", "healthkit", "manual"),
+    "resting_hr": ("garmin", "whoop", "intervals_icu", "healthkit", "manual"),
+    "skin_temp": ("garmin", "whoop", "intervals_icu", "healthkit", "manual"),
+    "spo2_pct": ("garmin", "whoop", "intervals_icu", "healthkit", "manual"),
+    "sleep_duration_min": ("garmin", "whoop", "intervals_icu", "healthkit", "manual"),
+    "sleep_in_bed_min": ("garmin", "whoop", "intervals_icu", "healthkit", "manual"),
+    "sleep_deep_pct": ("garmin", "whoop", "intervals_icu", "healthkit", "manual"),
+    "sleep_rem_pct": ("garmin", "whoop", "intervals_icu", "healthkit", "manual"),
+    "sleep_light_pct": ("garmin", "whoop", "intervals_icu", "healthkit", "manual"),
+    "sleep_awake_pct": ("garmin", "whoop", "intervals_icu", "healthkit", "manual"),
+    "sleep_bedtime": ("garmin", "whoop", "intervals_icu", "healthkit", "manual"),
+    "sleep_wakeup": ("garmin", "whoop", "intervals_icu", "healthkit", "manual"),
+    "weight_kg": ("manual", "garmin", "whoop", "healthkit", "intervals_icu"),
+    "height_cm": ("manual", "garmin", "whoop", "healthkit", "intervals_icu"),
 }
 
 
