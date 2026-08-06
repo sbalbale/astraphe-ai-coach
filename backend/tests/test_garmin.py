@@ -563,3 +563,175 @@ def test_mfa_store_expires_after_ttl(monkeypatch):
     future = garmin_service.time.monotonic() + garmin_service._MFA_TTL_SECONDS + 1
     monkeypatch.setattr(garmin_service.time, "monotonic", lambda: future)
     assert garmin_service._pop_pending_mfa(token) is None
+
+
+# --------------------------------------------------------------------------
+# _update_workout_hr_zones_from_streams: recording-gap duration + TSS backfill
+# --------------------------------------------------------------------------
+
+class _FakeZonesDB:
+    """
+    Fake covering `_update_workout_hr_zones_from_streams`'s three call shapes:
+    `.table("athletes").select(...).eq(...).maybe_single().execute()`,
+    `.table("workouts").select("tss").eq("id", ...).maybe_single().execute()`,
+    and `.table("workouts").update(...).eq("id", ...).execute()`.
+    """
+
+    def __init__(self, athlete_row: dict, existing_tss):
+        self._athlete_row = athlete_row
+        self._existing_tss = existing_tss
+        self._table = None
+        self._select_cols = None
+        self.update_payload: dict | None = None
+
+    def table(self, name):
+        self._table = name
+        return self
+
+    def select(self, cols=None):
+        self._select_cols = cols
+        return self
+
+    def eq(self, *_a, **_k):
+        return self
+
+    def maybe_single(self):
+        return self
+
+    def update(self, payload):
+        self.update_payload = payload
+        return self
+
+    def execute(self):
+        if self._table == "athletes":
+            return MagicMock(data=self._athlete_row)
+        if self._table == "workouts" and self._select_cols == "tss":
+            return MagicMock(data={"tss": self._existing_tss})
+        return MagicMock(data=None)
+
+
+_TEST_ATHLETE_ROW = {
+    "lthr": None,
+    "threshold_hr": 165,
+    "max_hr": 190,
+    "resting_hr": 50,
+    "threshold_hr_source": "manual",
+    "hr_zone_method": "lthr",
+    "gender": "male",
+}
+
+
+def test_hr_zones_use_workout_duration_not_truncated_stream_length(monkeypatch):
+    """
+    A device that stops recording mid-activity (and is manually restarted)
+    produces a stream far shorter than the workout's real duration. Zone
+    minutes (and everything derived from them — strain, TSS) must scale
+    against the workout's actual duration_seconds, not len(hr_samples),
+    or a 26-minute effort with a 9-minute recording gets scored as if it
+    were only 9 minutes long.
+    """
+    from app.services.algorithms import compute_strain_score
+
+    monkeypatch.setattr(
+        garmin_service, "compute_zone_distribution", lambda samples, zones: {"Z3": 100.0}
+    )
+
+    # 9 minutes of recorded samples; the workout actually took 26 minutes.
+    streams = {"heartrate": [165] * 540}
+    db = _FakeZonesDB(_TEST_ATHLETE_ROW, existing_tss=0.0)
+
+    garmin_service._update_workout_hr_zones_from_streams(
+        db, "workout-1", "athlete-1", streams, duration_seconds=1560, sport="row",
+    )
+
+    assert db.update_payload is not None
+    expected_strain = compute_strain_score({3: 26.0}, sport="row")
+    assert db.update_payload["strain_score"] == expected_strain
+    # The buggy (stream-length) computation would have used 9.0 minutes here
+    # instead of 26.0, producing a strictly lower strain_score.
+    assert db.update_payload["strain_score"] > compute_strain_score({3: 9.0}, sport="row")
+
+
+def test_hr_zones_backfill_fills_missing_tss(monkeypatch):
+    """
+    build_workout_payload() never populates hr_zone_*_pct (Garmin's activity
+    summary doesn't include it), so process_and_save_workout()'s HR-zone TSS
+    branch can't fire on first sync — tss is left at 0.0. Once zones are known
+    from the downloaded stream, this function must fill tss in rather than
+    leave the workout permanently stuck at 0.
+    """
+    from app.services.algorithms import compute_hrss_from_zones
+
+    monkeypatch.setattr(
+        garmin_service, "compute_zone_distribution", lambda samples, zones: {"Z3": 100.0}
+    )
+    streams = {"heartrate": [165] * 540}
+    db = _FakeZonesDB(_TEST_ATHLETE_ROW, existing_tss=0.0)
+
+    garmin_service._update_workout_hr_zones_from_streams(
+        db, "workout-1", "athlete-1", streams, duration_seconds=1560, sport="row",
+    )
+
+    expected_tss = compute_hrss_from_zones(
+        zone_minutes={3: 26.0},
+        max_hr=190, resting_hr=50, threshold_hr=165,
+        sport="row", gender="male",
+        threshold_hr_source="manual", hr_zone_method="lthr",
+    )
+    assert expected_tss > 0
+    assert db.update_payload["tss"] == expected_tss
+
+
+def test_hr_zones_backfill_does_not_clobber_existing_tss(monkeypatch):
+    """A workout that already has a real (power/pace-derived) TSS must not be
+    overwritten by the weaker HR-zone estimate when zones arrive later."""
+    monkeypatch.setattr(
+        garmin_service, "compute_zone_distribution", lambda samples, zones: {"Z3": 100.0}
+    )
+    streams = {"heartrate": [165] * 540}
+    db = _FakeZonesDB(_TEST_ATHLETE_ROW, existing_tss=45.0)
+
+    garmin_service._update_workout_hr_zones_from_streams(
+        db, "workout-1", "athlete-1", streams, duration_seconds=1560, sport="row",
+    )
+
+    assert "tss" not in db.update_payload
+    # Zones/strain still update — only tss is protected.
+    assert "hr_zone_3_pct" in db.update_payload
+    assert "strain_score" in db.update_payload
+
+
+def test_recompute_workout_tss_for_athlete_reprocesses_zero_tss(monkeypatch):
+    """
+    process_and_save_workout() always writes a numeric tss (defaulting to
+    0.0, never NULL), so an `is not None` guard here would skip every row
+    unconditionally and never recompute anything. A workout stuck at tss=0
+    must be treated as "missing" and reprocessed.
+    """
+    from app.services import processing
+
+    row = {
+        "id": "workout-1",
+        "source": "garmin",
+        "sport": "row",
+        "started_at": datetime(2026, 8, 3, 21, 15, tzinfo=timezone.utc),
+        "duration_seconds": 1560,
+        "tss": 0.0,
+    }
+    fake_db = MagicMock()
+    fake_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = MagicMock(
+        data=[row]
+    )
+
+    calls = []
+
+    async def fake_process_and_save_workout(payload, athlete_id, db, **kwargs):
+        calls.append(payload)
+        return "workout-1"
+
+    monkeypatch.setattr(processing, "process_and_save_workout", fake_process_and_save_workout)
+
+    updated = _run_async(processing.recompute_workout_tss_for_athlete("athlete-1", fake_db))
+
+    assert updated == 1
+    assert len(calls) == 1
