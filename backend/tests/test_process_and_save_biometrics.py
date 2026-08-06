@@ -104,23 +104,24 @@ def test_process_and_save_biometrics_minimal_payload_upserts_row():
 
 
 def test_process_and_save_biometrics_with_sleep_session_upserts_sleep_period():
+    # sleep_periods is queried twice in this flow: once for the session upsert
+    # (return value unused) and once for the aggregation select -- the queue
+    # needs an entry for each call, in order.
+    period_row = {
+        "in_bed_min": 480,
+        "duration_min": 420,
+        "awake_pct": 12.5,
+        "deep_pct": 20.0,
+        "rem_pct": 25.0,
+        "light_pct": 42.5,
+        "started_at": "2026-05-19T22:00:00Z",
+        "ended_at": "2026-05-20T06:00:00Z",
+    }
     db = _BioDb(
         _default_responses(
             sleep_periods=[
-                SimpleNamespace(
-                    data=[
-                        {
-                            "in_bed_min": 480,
-                            "duration_min": 420,
-                            "awake_pct": 12.5,
-                            "deep_pct": 20.0,
-                            "rem_pct": 25.0,
-                            "light_pct": 42.5,
-                            "started_at": "2026-05-19T22:00:00Z",
-                            "ended_at": "2026-05-20T06:00:00Z",
-                        }
-                    ]
-                )
+                SimpleNamespace(data=None),  # upsert() return value, unused
+                SimpleNamespace(data=[period_row]),  # aggregation select
             ]
         )
     )
@@ -140,6 +141,9 @@ def test_process_and_save_biometrics_with_sleep_session_upserts_sleep_period():
     assert session["in_bed_min"] > 0
     bio_payload = db.upserts["biometrics"][0]
     assert bio_payload["sleep_score"] is not None
+    # The aggregation loop actually ran over the queried period row.
+    assert bio_payload["sleep_deep_pct"] == 20.0
+    assert bio_payload["sleep_duration_min"] > 0
 
 
 def test_process_and_save_biometrics_duration_only_backup_path():
