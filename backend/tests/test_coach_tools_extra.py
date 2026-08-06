@@ -759,3 +759,13 @@ def test_handle_update_memory_returns_original_error_when_no_fields_survive_drop
         {"memory_id": "m1", "event_date": "2026-06-01"}, athlete_id="athlete-1", db=db
     )
     assert "does not exist" in result["error"]
+
+
+def test_workout_structure_bodyweight_hr_band_none_when_hrr_non_positive():
+    result = coach_tools._workout_structure_bodyweight("Endurance", 45, 165, 50, 190, "mobility")
+    assert all(block["target_hr"] is None for block in result["structure"])
+
+
+def test_workout_structure_power_based_hr_band_none_when_hrr_non_positive():
+    result = coach_tools._workout_structure("Endurance", 45, 250, 165, 50, 190, "run")
+    assert all(block["target_hr"] is None for block in result["structure"])
