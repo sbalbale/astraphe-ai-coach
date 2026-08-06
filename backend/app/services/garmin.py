@@ -35,7 +35,7 @@ from app.config import settings
 from app.dependencies import get_admin_db
 from app.models.biometrics import DailyBiometrics
 from app.models.workout import WorkoutPayload
-from app.services.algorithms import compute_strain_score
+from app.services.algorithms import compute_hrss_from_zones, compute_strain_score
 from app.services.ai_coach import invalidate_context_cache
 from app.services import stream_storage
 from app.services.hr_zones import compute_zone_distribution, get_athlete_zones
@@ -664,14 +664,19 @@ def _hr_samples_from_streams(streams: dict[str, Any]) -> list[int]:
 
 
 def _update_workout_hr_zones_from_streams(
-    db: Any, workout_id: str, athlete_id: str, streams: dict[str, Any]
+    db: Any,
+    workout_id: str,
+    athlete_id: str,
+    streams: dict[str, Any],
+    duration_seconds: int | None = None,
+    sport: str | None = None,
 ) -> None:
     hr_samples = _hr_samples_from_streams(streams)
     if not hr_samples:
         return
     athlete_res = (
         db.table("athletes")
-        .select("lthr,threshold_hr,max_hr,resting_hr,threshold_hr_source,hr_zone_method")
+        .select("lthr,threshold_hr,max_hr,resting_hr,threshold_hr_source,hr_zone_method,gender")
         .eq("id", athlete_id)
         .maybe_single()
         .execute()
@@ -680,7 +685,16 @@ def _update_workout_hr_zones_from_streams(
     zone_dist = compute_zone_distribution(hr_samples, get_athlete_zones(athlete))
     update: dict[str, Any] = {}
     zone_minutes: dict[int, float] = {}
-    duration_min = len(hr_samples) / 60.0
+    # Prefer the workout's true elapsed duration over the recorded-stream sample
+    # count. Garmin sometimes stops recording mid-activity (device hiccup, the
+    # athlete pausing without cleanly resuming) so the FIT stream can cover far
+    # less time than the activity actually took; using len(hr_samples) here
+    # would silently treat the un-recorded gap as "no effort happened",
+    # understating strain/TSS for exactly the kind of workout most likely to
+    # have one (a longer, harder effort that outlasted a device issue).
+    duration_min = (
+        duration_seconds / 60.0 if duration_seconds else len(hr_samples) / 60.0
+    )
     for idx in range(1, 6):
         pct = zone_dist.get(f"Z{idx}")
         if pct is None:
@@ -689,7 +703,31 @@ def _update_workout_hr_zones_from_streams(
         update[f"hr_zone_{idx}_pct"] = max(0, min(100, pct_i))
         zone_minutes[idx] = (float(pct) / 100.0) * duration_min
     if zone_minutes:
-        update["strain_score"] = compute_strain_score(zone_minutes)
+        update["strain_score"] = compute_strain_score(zone_minutes, sport=sport or "other")
+        # build_workout_payload() never populates hr_zone_*_pct — Garmin's
+        # activity-list summary doesn't include a zone breakdown, only the
+        # downloaded FIT stream does — so process_and_save_workout()'s
+        # has_hr_zones branch can't fire on first sync and tss is left at its
+        # 0.0 default for any Garmin activity without power or pace data (e.g.
+        # indoor rowing, strength). Fill it in now that zones are known, but
+        # only if a stronger method (power/pace) hasn't already set a real
+        # value — this only ever runs right after process_and_save_workout()
+        # for the same workout, so a fresh read is needed to see what it wrote.
+        existing = (
+            db.table("workouts").select("tss").eq("id", workout_id).maybe_single().execute()
+        )
+        existing_tss = (getattr(existing, "data", None) or {}).get("tss")
+        if not existing_tss:
+            update["tss"] = compute_hrss_from_zones(
+                zone_minutes=zone_minutes,
+                max_hr=int(athlete.get("max_hr") or 0),
+                resting_hr=int(athlete.get("resting_hr") or 0),
+                threshold_hr=int(athlete.get("threshold_hr") or 0),
+                sport=sport or "other",
+                gender=str(athlete.get("gender") or "male"),
+                threshold_hr_source=athlete.get("threshold_hr_source"),
+                hr_zone_method=athlete.get("hr_zone_method"),
+            )
     if update:
         db.table("workouts").update(update).eq("id", workout_id).execute()
 
@@ -721,7 +759,11 @@ async def _save_one_activity(
 
     streams_saved = _upsert_activity_streams(db, workout_id, athlete_id, streams)
     if streams_saved:
-        _update_workout_hr_zones_from_streams(db, workout_id, athlete_id, streams)
+        _update_workout_hr_zones_from_streams(
+            db, workout_id, athlete_id, streams,
+            duration_seconds=payload.duration_seconds,
+            sport=payload.workout_type,
+        )
     if laps:
         _persist_activity_laps(db, workout_id, athlete_id, laps)
 
