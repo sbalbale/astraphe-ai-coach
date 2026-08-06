@@ -51,10 +51,32 @@ class Settings(BaseSettings):
     WHOOP_WEBHOOK_SKIP_SIG_CHECK: bool = False
 
     # --- Garmin API ---
+    # CONSUMER_KEY/SECRET/OAUTH_CONFIRM_URL below are dormant scaffolding for
+    # Garmin's official OAuth1.0a Connect Developer Program flow, which is
+    # partner-approval-only and not currently in use. The active integration
+    # (backend/app/services/garmin.py) instead authenticates via the
+    # community `garminconnect` library using the athlete's own Garmin
+    # username/password (see docs/GARMIN_INTEGRATION.md).
     GARMIN_CONSUMER_KEY: Optional[str] = None
     GARMIN_CONSUMER_SECRET: Optional[str] = None
     GARMIN_WEBHOOK_SECRET: Optional[str] = None
     GARMIN_OAUTH_CONFIRM_URL: str = "https://connect.garmin.com/oauthConfirm"
+    # How often the background poll loop syncs each connected Garmin athlete.
+    # Hourly by default so sleep/recovery data is fresh soon after waking,
+    # rather than stale for up to several hours. No separate "startup backfill"
+    # setting is needed (unlike Strava/WHOOP) — the poll loop runs its first
+    # tick immediately on startup, which self-heals the same way.
+    GARMIN_SYNC_POLL_HOURS: int = 1
+
+    # --- OAuth token encryption at rest ---
+    # Fernet key (url-safe base64, 32 bytes) for encrypting every provider's
+    # oauth_tokens.access_token / refresh_token (WHOOP, Strava, intervals.icu,
+    # Garmin — see app/services/token_crypto.py). Generate with:
+    #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    # When unset, tokens are stored plaintext (dev only). Production should set this.
+    # Existing plaintext rows keep working after the key is introduced (read
+    # path accepts plaintext); new writes are encrypted immediately.
+    OAUTH_TOKEN_ENCRYPTION_KEY: Optional[str] = None
 
     # --- Strava API ---
     STRAVA_CLIENT_ID: str = ""
