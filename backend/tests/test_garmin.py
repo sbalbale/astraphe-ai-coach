@@ -735,3 +735,33 @@ def test_recompute_workout_tss_for_athlete_reprocesses_zero_tss(monkeypatch):
 
     assert updated == 1
     assert len(calls) == 1
+
+
+# --------------------------------------------------------------------------
+# _poll_interval_sec: GARMIN_SYNC_POLL_MINUTES overrides GARMIN_SYNC_POLL_HOURS
+# --------------------------------------------------------------------------
+
+def test_poll_interval_defaults_to_hours(monkeypatch):
+    monkeypatch.setattr(garmin_service.settings, "GARMIN_SYNC_POLL_HOURS", 2)
+    monkeypatch.setattr(garmin_service.settings, "GARMIN_SYNC_POLL_MINUTES", None)
+    assert garmin_service._poll_interval_sec() == 2 * 3600
+
+
+def test_poll_interval_minutes_overrides_hours(monkeypatch):
+    monkeypatch.setattr(garmin_service.settings, "GARMIN_SYNC_POLL_HOURS", 1)
+    monkeypatch.setattr(garmin_service.settings, "GARMIN_SYNC_POLL_MINUTES", 15)
+    assert garmin_service._poll_interval_sec() == 15 * 60
+
+
+def test_poll_interval_zero_minutes_falls_back_to_hours(monkeypatch):
+    """0 is falsy — treated as "not overridden" rather than "poll instantly"."""
+    monkeypatch.setattr(garmin_service.settings, "GARMIN_SYNC_POLL_HOURS", 3)
+    monkeypatch.setattr(garmin_service.settings, "GARMIN_SYNC_POLL_MINUTES", 0)
+    assert garmin_service._poll_interval_sec() == 3 * 3600
+
+
+def test_poll_interval_negative_minutes_clamped_to_a_60s_floor(monkeypatch):
+    """Guards against a misconfigured negative value turning the poll loop
+    into a tight hammer against Garmin's API."""
+    monkeypatch.setattr(garmin_service.settings, "GARMIN_SYNC_POLL_MINUTES", -5)
+    assert garmin_service._poll_interval_sec() == 60

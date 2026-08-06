@@ -95,6 +95,13 @@ class Settings(BaseSettings):
     # setting is needed (unlike Strava/WHOOP) — the poll loop runs its first
     # tick immediately on startup, which self-heals the same way.
     GARMIN_SYNC_POLL_HOURS: int = 1
+    # Overrides GARMIN_SYNC_POLL_HOURS when set, for sub-hourly polling (e.g.
+    # 15). The poll loop reuses the persisted session every tick (never
+    # re-logs-in), so more frequent ticks only add more of Garmin's
+    # lighter-weight authenticated-API rate limit, not the much stricter
+    # SSO-login one — see garmin.py's module docstring. A 429 still triggers
+    # the normal GARMIN_RATE_LIMIT_COOLDOWN_SEC backoff regardless of cadence.
+    GARMIN_SYNC_POLL_MINUTES: Optional[int] = None
 
     # --- OAuth token encryption at rest ---
     # Fernet key (url-safe base64, 32 bytes) for encrypting every provider's
