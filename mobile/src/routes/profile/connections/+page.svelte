@@ -21,6 +21,21 @@
   let intervalsError = $state('');
   const intervalsFormReady = $derived(intervalsAthleteId.trim().length > 0 && intervalsApiKey.trim().length > 0);
 
+  // Garmin Connect brand blue (matches DataSources.svelte)
+  const GARMIN_BLUE = '#009CDE';
+
+  let showGarminModal = $state(false);
+  let garminStep = $state<'credentials' | 'mfa'>('credentials');
+  let garminUsername = $state('');
+  let garminPassword = $state('');
+  let garminMfaCode = $state('');
+  let garminStateToken = $state('');
+  let garminError = $state('');
+  const garminCredentialsReady = $derived(
+    garminUsername.trim().length > 0 && garminPassword.trim().length > 0
+  );
+  const garminMfaReady = $derived(garminMfaCode.trim().length > 0);
+
   const integrations = $derived({
     apple: athleteStore.syncStatus?.integrations?.healthkit || { connected: false },
     garmin: athleteStore.syncStatus?.integrations?.garmin || { connected: false },
@@ -105,6 +120,21 @@
     intervalsApiKey = '';
   }
 
+  function closeGarminModal() {
+    if (syncing === 'garmin') return;
+    showGarminModal = false;
+    garminStep = 'credentials';
+    garminError = '';
+    garminPassword = '';
+    garminMfaCode = '';
+    garminStateToken = '';
+  }
+
+  async function refreshAfterConnect() {
+    const syncData = await api.getSyncStatus();
+    if (syncData) athleteStore.syncStatus = syncData;
+  }
+
   async function submitIntervalsIcu(event: SubmitEvent) {
     event.preventDefault();
     if (!intervalsFormReady || syncing) return;
@@ -116,12 +146,70 @@
       days: 90
     });
     if (result?.status === 'success') {
-      const syncData = await api.getSyncStatus();
-      if (syncData) athleteStore.syncStatus = syncData;
+      await refreshAfterConnect();
       showIntervalsModal = false;
       intervalsApiKey = '';
     } else {
       intervalsError = 'Connection failed';
+    }
+    syncing = '';
+  }
+
+  async function submitGarminCredentials(event: SubmitEvent) {
+    event.preventDefault();
+    if (!garminCredentialsReady || syncing) return;
+    syncing = 'garmin';
+    garminError = '';
+    const result = await api.connectGarmin({
+      username: garminUsername.trim(),
+      password: garminPassword,
+      days: 90
+    });
+    if (result?.mfa_required && result?.state_token) {
+      garminStateToken = result.state_token;
+      garminStep = 'mfa';
+      garminPassword = '';
+      syncing = '';
+      return;
+    }
+    if (result?.status === 'success') {
+      await refreshAfterConnect();
+      showGarminModal = false;
+      garminStep = 'credentials';
+      garminError = '';
+      garminUsername = '';
+      garminPassword = '';
+      garminMfaCode = '';
+      garminStateToken = '';
+    } else {
+      garminError =
+        typeof result?.detail === 'string' ? result.detail : 'Connection failed';
+    }
+    syncing = '';
+  }
+
+  async function submitGarminMfa(event: SubmitEvent) {
+    event.preventDefault();
+    if (!garminMfaReady || syncing || !garminStateToken) return;
+    syncing = 'garmin';
+    garminError = '';
+    const result = await api.connectGarminMfa({
+      state_token: garminStateToken,
+      mfa_code: garminMfaCode.trim(),
+      days: 90
+    });
+    if (result?.status === 'success') {
+      await refreshAfterConnect();
+      showGarminModal = false;
+      garminStep = 'credentials';
+      garminError = '';
+      garminUsername = '';
+      garminPassword = '';
+      garminMfaCode = '';
+      garminStateToken = '';
+    } else {
+      garminError =
+        typeof result?.detail === 'string' ? result.detail : 'MFA verification failed';
     }
     syncing = '';
   }
@@ -137,8 +225,7 @@
         const granted = await HealthIntegration.requestPermissions();
         if (granted) {
           await HealthIntegration.syncRecentData();
-          const syncData = await api.getSyncStatus();
-          if (syncData) athleteStore.syncStatus = syncData;
+          await refreshAfterConnect();
         }
       }
     } else if (id === 'whoop') {
@@ -163,9 +250,9 @@
       if (integrations.garmin.connected) {
         await athleteStore.unlinkIntegration('garmin');
       } else {
-        await new Promise((resolve) => setTimeout(resolve, 1500));
-        const syncData = await api.getSyncStatus();
-        if (syncData) athleteStore.syncStatus = syncData;
+        showGarminModal = true;
+        garminStep = 'credentials';
+        garminError = '';
       }
     }
 
@@ -225,29 +312,32 @@
           <div class="flex items-center gap-3 min-w-0">
             <div
               class="w-9 h-9 rounded-xl flex items-center justify-center border shrink-0"
-              style="background: rgba(0, 160, 233, 0.14); border-color: rgba(0, 160, 233, 0.28)"
+              style="background: rgba(0, 156, 222, 0.14); border-color: rgba(0, 156, 222, 0.28)"
             >
-              <!-- Garmin Connect app blue -->
-              <Icon icon="simple-icons:garmin" width={22} height={22} color="#00A0E9" aria-hidden="true" />
+              <!-- Garmin Connect brand blue -->
+              <Icon icon="simple-icons:garmin" width={22} height={22} color={GARMIN_BLUE} aria-hidden="true" />
             </div>
             <div class="min-w-0">
               <p class="text-[13px] font-medium">Garmin Connect</p>
-              <p class="text-[10px] text-text2">Performance Data</p>
+              <p class="text-[10px] text-text2">Workouts & recovery</p>
               {#if integrations.garmin.connected}
                 <span
                   class="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono uppercase tracking-wide bg-teal-dim text-teal border border-teal/30"
                 >
-                  <Icon icon="simple-icons:garmin" width={12} height={12} color="#00A0E9" aria-hidden="true" />
+                  <Icon icon="simple-icons:garmin" width={12} height={12} color={GARMIN_BLUE} aria-hidden="true" />
                   Connected
                 </span>
               {/if}
             </div>
           </div>
-          <span
-            class="px-3 py-1 rounded-full text-[10px] font-mono uppercase tracking-wide shrink-0 border border-border bg-glass text-text2"
+          <button
+            class="px-3 py-1 rounded-full text-[11px] font-medium cursor-pointer transition-all duration-200 shrink-0 border {integrations.garmin.connected
+              ? 'bg-red-dim text-red border-red/30'
+              : 'border-[rgba(0,156,222,0.32)] bg-[rgba(0,156,222,0.14)] text-[#009CDE]'}"
+            onclick={() => toggleIntegration('garmin')}
           >
-            Coming soon
-          </span>
+            {syncing === 'garmin' ? '...' : integrations.garmin.connected ? 'Unlink' : 'Connect'}
+          </button>
         </div>
 
         <!-- Intervals.icu -->
@@ -393,4 +483,96 @@
       </button>
     </div>
   </form>
+</Modal>
+
+<Modal
+  show={showGarminModal}
+  title={garminStep === 'mfa' ? 'Garmin MFA' : 'Garmin Connect'}
+  onClose={closeGarminModal}
+>
+  {#if garminStep === 'credentials'}
+    <form class="flex flex-col gap-4" onsubmit={submitGarminCredentials}>
+      <p class="text-[12px] text-text1 leading-relaxed">
+        Sign in with your Garmin account. Your password is not stored — only a session token is kept.
+        You can invalidate a session by changing your Garmin password.
+      </p>
+
+      <label class="flex flex-col gap-1.5">
+        <span class="text-[11px] font-mono uppercase tracking-wide text-text2">Email or username</span>
+        <input
+          class="w-full bg-bg2 border border-border rounded-xl px-3 py-2 text-[14px] outline-none focus:border-teal"
+          bind:value={garminUsername}
+          autocomplete="username"
+        />
+      </label>
+
+      <label class="flex flex-col gap-1.5">
+        <span class="text-[11px] font-mono uppercase tracking-wide text-text2">Password</span>
+        <input
+          class="w-full bg-bg2 border border-border rounded-xl px-3 py-2 text-[14px] outline-none focus:border-teal"
+          bind:value={garminPassword}
+          type="password"
+          autocomplete="current-password"
+        />
+      </label>
+
+      {#if garminError}
+        <p class="text-[12px] text-red">{garminError}</p>
+      {/if}
+
+      <div class="flex gap-2 justify-end pt-1">
+        <button
+          type="button"
+          class="px-4 py-2 rounded-xl border border-border bg-glass text-[13px] text-text1"
+          onclick={closeGarminModal}
+        >
+          Cancel
+        </button>
+        <button
+          type="submit"
+          disabled={!garminCredentialsReady || syncing === 'garmin'}
+          class="px-4 py-2 rounded-xl border border-teal/30 bg-teal-dim text-[13px] font-medium text-teal disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {syncing === 'garmin' ? 'Connecting...' : 'Connect'}
+        </button>
+      </div>
+    </form>
+  {:else}
+    <form class="flex flex-col gap-4" onsubmit={submitGarminMfa}>
+      <p class="text-[12px] text-text1 leading-relaxed">
+        Enter the verification code from your Garmin MFA method to finish connecting.
+      </p>
+
+      <label class="flex flex-col gap-1.5">
+        <span class="text-[11px] font-mono uppercase tracking-wide text-text2">MFA code</span>
+        <input
+          class="w-full bg-bg2 border border-border rounded-xl px-3 py-2 text-[14px] outline-none focus:border-teal"
+          bind:value={garminMfaCode}
+          inputmode="numeric"
+          autocomplete="one-time-code"
+        />
+      </label>
+
+      {#if garminError}
+        <p class="text-[12px] text-red">{garminError}</p>
+      {/if}
+
+      <div class="flex gap-2 justify-end pt-1">
+        <button
+          type="button"
+          class="px-4 py-2 rounded-xl border border-border bg-glass text-[13px] text-text1"
+          onclick={closeGarminModal}
+        >
+          Cancel
+        </button>
+        <button
+          type="submit"
+          disabled={!garminMfaReady || syncing === 'garmin'}
+          class="px-4 py-2 rounded-xl border border-teal/30 bg-teal-dim text-[13px] font-medium text-teal disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {syncing === 'garmin' ? 'Verifying...' : 'Verify'}
+        </button>
+      </div>
+    </form>
+  {/if}
 </Modal>

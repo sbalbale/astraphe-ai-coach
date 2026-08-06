@@ -35,7 +35,13 @@ def test_workout_update_payload_tracks_average_watts_as_editable_field():
     assert "average_power" in payload.model_fields_set
 
 
-def test_quality_merge_keeps_strava_fields_over_intervals_summary():
+def test_quality_merge_keeps_strava_fields_over_manual_summary():
+    """
+    Source priority (highest to lowest): garmin, whoop, intervals_icu, strava,
+    healthkit, manual (SOURCE_PRIORITY in processing.py). Strava outranks
+    manual, so an existing Strava row's tracked fields resist a manual update
+    — except a field the row has no existing value for, which always fills in.
+    """
     existing = {
         "source": "strava",
         "primary_source": "strava",
@@ -47,9 +53,9 @@ def test_quality_merge_keeps_strava_fields_over_intervals_summary():
 
     filtered = _quality_filter_workout_update(
         existing,
-        "intervals_icu",
+        "manual",
         {
-            "title": "Intervals ride",
+            "title": "Manual ride",
             "distance_m": 39900,
             "avg_power_w": 205,
             "avg_hr": 151,
@@ -57,10 +63,11 @@ def test_quality_merge_keeps_strava_fields_over_intervals_summary():
         },
     )
 
-    assert filtered == {"avg_hr": 151, "max_hr": 178}
+    assert filtered == {"max_hr": 178}
 
 
-def test_quality_merge_allows_higher_quality_hr_over_strava():
+def test_quality_merge_prefers_garmin_over_strava_for_workout_summary():
+    """Garmin is the highest-priority source, so it overrides an existing Strava row's fields."""
     existing = {
         "source": "strava",
         "primary_source": "strava",
@@ -70,7 +77,7 @@ def test_quality_merge_allows_higher_quality_hr_over_strava():
 
     filtered = _quality_filter_workout_update(
         existing,
-        "intervals_icu",
+        "garmin",
         {
             "avg_hr": 152,
             "hr_zone_1_pct": 10,

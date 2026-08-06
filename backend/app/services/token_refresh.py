@@ -22,6 +22,7 @@ from datetime import datetime, timedelta, timezone
 
 from app.dependencies import get_admin_db
 from app.services import whoop
+from app.services.token_crypto import decrypt_oauth_row, encrypt_oauth_fields
 
 _REFRESH_INTERVAL_SEC = 30 * 60   # check every 30 minutes
 _EXPIRY_BUFFER_SEC    = 10 * 60   # refresh when < 10 minutes remain
@@ -50,7 +51,7 @@ async def _refresh_expiring_whoop_tokens() -> None:
             .lte("expires_at", cutoff)
             .execute()
         )
-        rows = res.data or []
+        rows = [decrypt_oauth_row(r) for r in (res.data or [])]
     except Exception as e:
         print(f"[token_refresh] failed to query expiring tokens: {e}")
         return
@@ -60,6 +61,11 @@ async def _refresh_expiring_whoop_tokens() -> None:
 
     print(f"[token_refresh] found {len(rows)} expiring WHOOP token(s)")
     for row in rows:
+        if not row.get("refresh_token"):
+            # Decrypt failed under the current key (rotated/corrupted) — skip
+            # rather than call WHOOP's refresh endpoint with a bad value.
+            print(f"[token_refresh] undecryptable refresh_token for athlete_id={row.get('athlete_id')}; skipping")
+            continue
         try:
             token_data = await claim_and_refresh_whoop_token(
                 db, row["athlete_id"], row["refresh_token"]
@@ -124,7 +130,7 @@ async def claim_and_refresh_whoop_token(db, athlete_id: str, refresh_token: str)
     update["refresh_token"] = new_refresh
     if new_expires:
         update["expires_at"] = new_expires
-    db.table("oauth_tokens").update(update).eq("athlete_id", athlete_id).eq("provider", "whoop").execute()
+    db.table("oauth_tokens").update(encrypt_oauth_fields(update)).eq("athlete_id", athlete_id).eq("provider", "whoop").execute()
     return token_data
 
 

@@ -84,7 +84,7 @@ SPORT_CANONICAL = {
 
 _SPORT_CANONICAL_LOOKUP: dict[str, str] = {k.lower(): v for k, v in SPORT_CANONICAL.items()}
 
-SOURCE_PRIORITY = ["strava", "intervals_icu", "garmin", "healthkit", "whoop", "manual"]
+SOURCE_PRIORITY = ["garmin", "whoop", "intervals_icu", "strava", "healthkit", "manual"]
 
 _DB_SPORTS = frozenset({"run", "bike", "swim", "strength", "row", "mobility", "other"})
 
@@ -140,23 +140,28 @@ def _strip_none_update_values(d: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in d.items() if v is not None}
 
 _QUALITY_FIELD_SOURCES: dict[str, tuple[str, ...]] = {
-    "title": ("strava", "intervals_icu", "garmin", "healthkit", "whoop", "manual"),
-    "started_at": ("strava", "intervals_icu", "garmin", "healthkit", "whoop", "manual"),
-    "ended_at": ("strava", "intervals_icu", "garmin", "healthkit", "whoop", "manual"),
-    "duration_seconds": ("strava", "intervals_icu", "garmin", "healthkit", "whoop", "manual"),
-    "distance_m": ("strava", "intervals_icu", "garmin", "healthkit", "whoop", "manual"),
-    "avg_power_w": ("strava", "intervals_icu", "garmin", "healthkit", "whoop", "manual"),
-    "norm_power_w": ("strava", "intervals_icu", "garmin", "healthkit", "whoop", "manual"),
-    "avg_pace_sec_km": ("strava", "intervals_icu", "garmin", "healthkit", "whoop", "manual"),
-    "tss": ("strava", "intervals_icu", "garmin", "whoop", "healthkit", "manual"),
-    "avg_hr": ("intervals_icu", "strava", "garmin", "whoop", "healthkit", "manual"),
-    "max_hr": ("intervals_icu", "strava", "garmin", "whoop", "healthkit", "manual"),
-    "hr_zone_1_pct": ("intervals_icu", "strava", "garmin", "whoop", "healthkit", "manual"),
-    "hr_zone_2_pct": ("intervals_icu", "strava", "garmin", "whoop", "healthkit", "manual"),
-    "hr_zone_3_pct": ("intervals_icu", "strava", "garmin", "whoop", "healthkit", "manual"),
-    "hr_zone_4_pct": ("intervals_icu", "strava", "garmin", "whoop", "healthkit", "manual"),
-    "hr_zone_5_pct": ("intervals_icu", "strava", "garmin", "whoop", "healthkit", "manual"),
-    "strain_score": ("intervals_icu", "strava", "garmin", "whoop", "healthkit", "manual"),
+    field: tuple(SOURCE_PRIORITY)
+    for field in (
+        "title",
+        "started_at",
+        "ended_at",
+        "duration_seconds",
+        "distance_m",
+        "elevation_gain_m",
+        "calories",
+        "avg_power_w",
+        "norm_power_w",
+        "avg_pace_sec_km",
+        "tss",
+        "avg_hr",
+        "max_hr",
+        "hr_zone_1_pct",
+        "hr_zone_2_pct",
+        "hr_zone_3_pct",
+        "hr_zone_4_pct",
+        "hr_zone_5_pct",
+        "strain_score",
+    )
 }
 
 
@@ -197,20 +202,20 @@ def _quality_filter_workout_update(
     return filtered
 
 _BIOMETRIC_FIELD_SOURCES: dict[str, tuple[str, ...]] = {
-    "hrv_rmssd": ("whoop", "garmin", "healthkit", "intervals_icu", "manual"),
-    "resting_hr": ("whoop", "garmin", "healthkit", "intervals_icu", "manual"),
-    "skin_temp": ("whoop", "garmin", "healthkit", "intervals_icu", "manual"),
-    "spo2_pct": ("whoop", "garmin", "healthkit", "intervals_icu", "manual"),
-    "sleep_duration_min": ("whoop", "garmin", "healthkit", "intervals_icu", "manual"),
-    "sleep_in_bed_min": ("whoop", "garmin", "healthkit", "intervals_icu", "manual"),
-    "sleep_deep_pct": ("whoop", "garmin", "healthkit", "intervals_icu", "manual"),
-    "sleep_rem_pct": ("whoop", "garmin", "healthkit", "intervals_icu", "manual"),
-    "sleep_light_pct": ("whoop", "garmin", "healthkit", "intervals_icu", "manual"),
-    "sleep_awake_pct": ("whoop", "garmin", "healthkit", "intervals_icu", "manual"),
-    "sleep_bedtime": ("whoop", "garmin", "healthkit", "intervals_icu", "manual"),
-    "sleep_wakeup": ("whoop", "garmin", "healthkit", "intervals_icu", "manual"),
-    "weight_kg": ("manual", "whoop", "garmin", "healthkit", "intervals_icu"),
-    "height_cm": ("manual", "whoop", "garmin", "healthkit", "intervals_icu"),
+    "hrv_rmssd": ("garmin", "whoop", "intervals_icu", "healthkit", "manual"),
+    "resting_hr": ("garmin", "whoop", "intervals_icu", "healthkit", "manual"),
+    "skin_temp": ("garmin", "whoop", "intervals_icu", "healthkit", "manual"),
+    "spo2_pct": ("garmin", "whoop", "intervals_icu", "healthkit", "manual"),
+    "sleep_duration_min": ("garmin", "whoop", "intervals_icu", "healthkit", "manual"),
+    "sleep_in_bed_min": ("garmin", "whoop", "intervals_icu", "healthkit", "manual"),
+    "sleep_deep_pct": ("garmin", "whoop", "intervals_icu", "healthkit", "manual"),
+    "sleep_rem_pct": ("garmin", "whoop", "intervals_icu", "healthkit", "manual"),
+    "sleep_light_pct": ("garmin", "whoop", "intervals_icu", "healthkit", "manual"),
+    "sleep_awake_pct": ("garmin", "whoop", "intervals_icu", "healthkit", "manual"),
+    "sleep_bedtime": ("garmin", "whoop", "intervals_icu", "healthkit", "manual"),
+    "sleep_wakeup": ("garmin", "whoop", "intervals_icu", "healthkit", "manual"),
+    "weight_kg": ("manual", "garmin", "whoop", "healthkit", "intervals_icu"),
+    "height_cm": ("manual", "garmin", "whoop", "healthkit", "intervals_icu"),
 }
 
 
@@ -387,6 +392,7 @@ def _find_or_create_canonical_workout_sync(
     external_id: str | None = None,
     strava_activity_id: int | None = None,
     strava_activity_payload: dict | None = None,
+    garmin_activity_id: int | None = None,
 ) -> tuple[dict, bool]:
     """
     Find an existing canonical workout that matches this session, or create a new one.
@@ -394,7 +400,8 @@ def _find_or_create_canonical_workout_sync(
 
     Match criteria:
       1. Exact: strava_activity_id matches (Strava fast path)
-      2. Fuzzy: same athlete + sport + started_at within ±10min + duration within 20%
+      2. Exact: garmin_activity_id matches (Garmin fast path)
+      3. Fuzzy: same athlete + sport + started_at within ±10min + duration within 20%
 
     On merge: updates source_ids, elevates primary_source by SOURCE_PRIORITY order.
     Strava duplicates accumulate in ``source_ids["strava"]`` (list of ids). Primary
@@ -413,6 +420,38 @@ def _find_or_create_canonical_workout_sync(
     dur_i = max(0, int(elapsed_time_seconds or 0))
     ended_at = started_at + timedelta(seconds=dur_i)
 
+    def _merge_exact_hit(row: dict[str, Any]) -> tuple[dict, bool]:
+        existing_source_ids = dict(row.get("source_ids") or {})
+        if external_id and source != "strava":
+            existing_source_ids[source] = external_id
+        if strava_activity_id is not None:
+            _merge_strava_source_ids(existing_source_ids, strava_activity_id)
+        if row.get("source") == "whoop" and row.get("external_id"):
+            existing_source_ids.setdefault("whoop", str(row["external_id"]))
+
+        current_primary = row.get("primary_source") or "manual"
+        new_primary = current_primary
+        if current_primary in SOURCE_PRIORITY:
+            if SOURCE_PRIORITY.index(source) < SOURCE_PRIORITY.index(current_primary):
+                new_primary = source
+        else:
+            new_primary = source
+
+        merge_update: dict[str, Any] = {
+            "source_ids": existing_source_ids,
+            "primary_source": new_primary,
+        }
+        if garmin_activity_id is not None and not row.get("garmin_activity_id"):
+            merge_update["garmin_activity_id"] = garmin_activity_id
+        if strava_activity_id is not None and not row.get("strava_activity_id"):
+            merge_update["strava_activity_id"] = strava_activity_id
+        merge_payload = _strip_none_update_values(merge_update)
+        if merge_payload:
+            updated = db.table("workouts").update(merge_payload).eq("id", row["id"]).execute()
+            merged_row = (updated.data or [row])[0]
+            return (merged_row, False)
+        return (row, False)
+
     if strava_activity_id is not None:
         exact = (
             db.table("workouts")
@@ -423,34 +462,19 @@ def _find_or_create_canonical_workout_sync(
             .execute()
         )
         if exact and exact.data:
-            row = exact.data
-            # Same bookkeeping as fuzzy merge: source_ids + primary_source (exact path used to return early).
-            existing_source_ids = dict(row.get("source_ids") or {})
-            if external_id and source != "strava":
-                existing_source_ids[source] = external_id
-            if strava_activity_id is not None:
-                _merge_strava_source_ids(existing_source_ids, strava_activity_id)
-            if row.get("source") == "whoop" and row.get("external_id"):
-                existing_source_ids.setdefault("whoop", str(row["external_id"]))
+            return _merge_exact_hit(exact.data)
 
-            current_primary = row.get("primary_source") or "manual"
-            new_primary = current_primary
-            if current_primary in SOURCE_PRIORITY:
-                if SOURCE_PRIORITY.index(source) < SOURCE_PRIORITY.index(current_primary):
-                    new_primary = source
-            else:
-                new_primary = source
-
-            merge_update: dict[str, Any] = {
-                "source_ids": existing_source_ids,
-                "primary_source": new_primary,
-            }
-            merge_payload = _strip_none_update_values(merge_update)
-            if merge_payload:
-                updated = db.table("workouts").update(merge_payload).eq("id", row["id"]).execute()
-                merged_row = (updated.data or [row])[0]
-                return (merged_row, False)
-            return (row, False)
+    if garmin_activity_id is not None:
+        exact = (
+            db.table("workouts")
+            .select("*")
+            .eq("athlete_id", athlete_id)
+            .eq("garmin_activity_id", garmin_activity_id)
+            .maybe_single()
+            .execute()
+        )
+        if exact and exact.data:
+            return _merge_exact_hit(exact.data)
 
     from_ts = started_at.timestamp() - DEDUP_WINDOW_SECONDS
     to_ts = started_at.timestamp() + DEDUP_WINDOW_SECONDS
@@ -507,6 +531,8 @@ def _find_or_create_canonical_workout_sync(
         }
         if strava_activity_id is not None and not matched.get("strava_activity_id"):
             merge_update["strava_activity_id"] = strava_activity_id
+        if garmin_activity_id is not None and not matched.get("garmin_activity_id"):
+            merge_update["garmin_activity_id"] = garmin_activity_id
 
         merge_payload = _strip_none_update_values(merge_update)
         if merge_payload:
@@ -536,6 +562,8 @@ def _find_or_create_canonical_workout_sync(
         insert_row["external_id"] = external_id
     if strava_activity_id is not None:
         insert_row["strava_activity_id"] = strava_activity_id
+    if garmin_activity_id is not None:
+        insert_row["garmin_activity_id"] = garmin_activity_id
 
     created = db.table("workouts").insert(insert_row).execute()
     new_row = (created.data or [{}])[0]
@@ -552,6 +580,7 @@ async def find_or_create_canonical_workout(
     external_id: str | None = None,
     strava_activity_id: int | None = None,
     strava_activity_payload: dict | None = None,
+    garmin_activity_id: int | None = None,
 ) -> tuple[dict, bool]:
     return await asyncio.to_thread(
         _find_or_create_canonical_workout_sync,
@@ -564,6 +593,7 @@ async def find_or_create_canonical_workout(
         external_id,
         strava_activity_id,
         strava_activity_payload,
+        garmin_activity_id,
     )
 
 
@@ -723,6 +753,7 @@ async def process_and_save_workout(
     source = payload.source or "manual"
     external_id = str(payload.external_id) if payload.external_id else None
     strava_int = int(payload.strava_activity_id) if payload.strava_activity_id is not None else None
+    garmin_int = int(payload.garmin_activity_id) if payload.garmin_activity_id is not None else None
 
     row, _ = await find_or_create_canonical_workout(
         db,
@@ -733,6 +764,8 @@ async def process_and_save_workout(
         dedupe_dur,
         external_id,
         strava_int,
+        None,
+        garmin_int,
     )
     workout_id = row["id"]
 
@@ -824,6 +857,8 @@ async def process_and_save_workout(
         "ended_at": ended_at.isoformat() if ended_at else None,
         "duration_seconds": duration_seconds,
         "distance_m": payload.distance_m,
+        "elevation_gain_m": payload.elevation_gain_m,
+        "calories": payload.calories,
         "avg_power_w": payload.average_power,
         "avg_hr": payload.average_hr,
         "max_hr": payload.max_hr,

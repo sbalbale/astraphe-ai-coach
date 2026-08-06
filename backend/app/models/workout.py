@@ -8,11 +8,14 @@ class WorkoutPayload(BaseModel):
     source: str = Field(..., description="e.g., garmin, apple_health")
     external_id: Optional[str] = None
     strava_activity_id: Optional[int] = None
+    garmin_activity_id: Optional[int] = None
     workout_type: str = Field(alias="sport", description="e.g., cycling, running")
     start_time: datetime = Field(alias="started_at")
     ended_at: Optional[datetime] = None
     duration_seconds: Optional[int] = None
     distance_m: Optional[float] = None
+    elevation_gain_m: Optional[float] = None
+    calories: Optional[float] = None
     average_power: Optional[int] = Field(
         None,
         validation_alias=AliasChoices("avg_power_w", "average_watts", "avg_power"),
@@ -42,6 +45,8 @@ class WorkoutUpdatePayload(BaseModel):
     ended_at: Optional[datetime] = None
     duration_seconds: Optional[int] = None
     distance_m: Optional[float] = None
+    elevation_gain_m: Optional[float] = None
+    calories: Optional[float] = None
     average_power: Optional[int] = Field(
         None,
         validation_alias=AliasChoices("avg_power_w", "average_watts", "avg_power"),
