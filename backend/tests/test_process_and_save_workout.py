@@ -164,3 +164,28 @@ def test_process_and_save_workout_schedules_background_recalc_when_not_skipped()
 
     mock_recalc.assert_called_once()
     mock_strain.assert_called_once()
+
+
+def test_process_and_save_workout_normalizes_yoga_to_mobility():
+    payload = _base_payload(sport="yoga")
+    p1, p2, p3 = _patch_common()
+    with p1 as mock_find, p2, p3:
+        _run_async(
+            processing.process_and_save_workout(
+                payload, "athlete-1", MagicMock(), skip_tss_recalc=True, skip_daily_strain_refresh=True
+            )
+        )
+    assert mock_find.call_args[0][3] == "mobility"
+
+
+def test_process_and_save_workout_computes_duration_from_ended_at():
+    payload = _base_payload(duration_seconds=None, ended_at="2026-05-20T10:30:00Z")
+    p1, p2, p3 = _patch_common()
+    with p1, p2, p3 as mock_update:
+        _run_async(
+            processing.process_and_save_workout(
+                payload, "athlete-1", MagicMock(), skip_tss_recalc=True, skip_daily_strain_refresh=True
+            )
+        )
+    update_data = mock_update.call_args[0][2]
+    assert update_data["duration_seconds"] == 1800

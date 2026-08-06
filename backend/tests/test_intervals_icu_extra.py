@@ -447,3 +447,13 @@ def test_backfill_historical_data_clamps_days_range():
         )
 
     assert result["days"] == 365
+
+
+def test_parse_datetime_from_date_object():
+    result = intervals_icu._parse_datetime(date(2026, 5, 20))
+    assert result == datetime(2026, 5, 20, tzinfo=timezone.utc)
+
+
+def test_minutes_converts_oversized_sleep_value_from_seconds():
+    # A "sleep" key with a value > 24*60 is assumed to actually be seconds, not minutes.
+    assert intervals_icu._minutes({"sleep": 30000}, "sleep") == 500

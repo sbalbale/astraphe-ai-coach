@@ -235,6 +235,15 @@ def test_fetch_recovery_for_event_id_numeric_uses_cycle_lookup():
     assert result["score"]["recovery_score"] == 90
 
 
+def test_fetch_recovery_for_event_id_numeric_returns_none_when_unscored():
+    async def _fake_fetch_recovery(_token, _cycle_id):
+        return {"score_state": "PENDING_SCORE"}
+
+    with patch.object(whoop, "fetch_recovery_data", _fake_fetch_recovery):
+        result = _run_async(whoop.fetch_recovery_for_event_id("tok", "123"))
+    assert result is None
+
+
 def test_fetch_recovery_for_event_id_numeric_404_returns_none():
     async def _fake_fetch_recovery(_token, _cycle_id):
         raise HTTPException(status_code=404)
