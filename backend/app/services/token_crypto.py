@@ -3,10 +3,19 @@
 Applies to every provider's ``oauth_tokens.access_token`` / ``refresh_token``
 (WHOOP, Strava, intervals.icu, Garmin) — not just one integration. Plaintext
 legacy rows (no Fernet prefix) are accepted on decrypt so existing
-connections keep working after the key is introduced or rotated; a value
-that fails to decrypt under the *current* key is treated as absent (fails
-closed) rather than raising, so a bad/rotated key can't propagate ciphertext
-into a caller that would use it as a bearer token.
+connections keep working after the key is introduced or rotated.
+
+Two decrypt entry points, deliberately different failure behavior:
+
+- ``decrypt_token`` is the raw primitive — a value that fails to decrypt
+  under the *current* key raises ``InvalidToken``. Callers using it directly
+  must handle that themselves.
+- ``decrypt_oauth_row`` (what every provider's read path actually calls)
+  fails closed instead: an undecryptable field is set to ``None`` rather
+  than raising or returning ciphertext, so a bad/rotated key can't
+  propagate ciphertext into a caller that would use it as a bearer token —
+  it's treated the same as "no token", which every caller already handles
+  as "needs reconnect".
 """
 from __future__ import annotations
 

@@ -171,6 +171,8 @@ def resume_mfa(state_token: str, mfa_code: str) -> Garmin:
         # `client_state` is ignored by this library version (state lives on
         # `client` itself) but the parameter is kept for forward compat.
         client.resume_login({}, mfa_code)
+    except GarminConnectTooManyRequestsError as exc:
+        raise GarminRateLimitedError(str(exc)) from exc
     except GarminConnectAuthenticationError as exc:
         raise GarminAuthError(str(exc)) from exc
     return client
@@ -436,8 +438,15 @@ def _extract_fit_bytes(original_zip_bytes: bytes) -> bytes | None:
             return zf.read(fit_names[0])
     except zipfile.BadZipFile:
         # Some activities (e.g. manually-entered, no device file) return a
-        # bare .fit or nothing usable; treat as "no FIT data".
-        return original_zip_bytes if original_zip_bytes[:4] == b".FIT" else None
+        # bare .fit or nothing usable; treat unrecognized bytes as "no FIT
+        # data". FIT's file header puts the ".FIT" data-type signature at
+        # byte offset 8 (header_size(1) + protocol_version(1) +
+        # profile_version(2) + data_size(4) precede it), not offset 0.
+        return (
+            original_zip_bytes
+            if len(original_zip_bytes) >= 12 and original_zip_bytes[8:12] == b".FIT"
+            else None
+        )
 
 
 def _persist_activity_laps(db: Any, workout_id: str, athlete_id: str, laps: list[dict]) -> None:

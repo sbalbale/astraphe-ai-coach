@@ -99,8 +99,12 @@ async def garmin_connect(
             status_code=401, detail=str(exc) or "Garmin authentication failed"
         )
     except Exception as exc:
+        # Log the real exception server-side, but don't hand an arbitrary/
+        # unexpected exception's message to the client — unlike the typed
+        # errors above (whose messages we control), this branch can catch
+        # anything, including internals we don't want to leak.
         logger.warning("garmin_connect failed athlete_id=%s: %s", athlete_id, exc)
-        raise HTTPException(status_code=502, detail=f"Garmin connect failed: {exc}")
+        raise HTTPException(status_code=502, detail="Garmin connect failed")
 
     return _persist_and_schedule(client, athlete_id, admin_db, background_tasks, payload.days)
 
@@ -122,13 +126,18 @@ async def garmin_connect_mfa(
         client = await asyncio.to_thread(
             garmin_service.resume_mfa, payload.state_token, payload.mfa_code
         )
+    except garmin_service.GarminRateLimitedError as exc:
+        raise HTTPException(
+            status_code=429, detail=str(exc) or "Garmin rate limit; try again later"
+        )
     except garmin_service.GarminAuthError as exc:
         raise HTTPException(
             status_code=401, detail=str(exc) or "Garmin MFA verification failed"
         )
     except Exception as exc:
+        # See the equivalent comment in garmin_connect() above.
         logger.warning("garmin_connect_mfa failed athlete_id=%s: %s", athlete_id, exc)
-        raise HTTPException(status_code=502, detail=f"Garmin MFA failed: {exc}")
+        raise HTTPException(status_code=502, detail="Garmin MFA failed")
 
     return _persist_and_schedule(client, athlete_id, admin_db, background_tasks, payload.days)
 

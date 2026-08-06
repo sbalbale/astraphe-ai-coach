@@ -137,6 +137,30 @@ def test_extract_fit_bytes_returns_none_without_fit_entry():
     assert garmin_service._extract_fit_bytes(buf.getvalue()) is None
 
 
+def _fake_fit_header_bytes(body: bytes = b"restofdata") -> bytes:
+    """
+    A minimal, structurally-plausible FIT file: the ".FIT" data-type
+    signature lives at byte offset 8 (after header_size(1) +
+    protocol_version(1) + profile_version(2) + data_size(4)), not offset 0.
+    """
+    return bytes([14, 0x10]) + b"\x00\x00" + b"\x00\x00\x00\x00" + b".FIT" + body
+
+
+def test_extract_fit_bytes_detects_bare_fit_file_not_wrapped_in_zip():
+    """
+    Some activities (e.g. manually-entered) return a bare, non-zip FIT file
+    for the ORIGINAL download format. Regression test for a real bug: the
+    ".FIT" signature was checked at byte offset 0 instead of 8, so this path
+    never actually detected a valid bare FIT file.
+    """
+    raw = _fake_fit_header_bytes()
+    assert garmin_service._extract_fit_bytes(raw) == raw
+
+
+def test_extract_fit_bytes_returns_none_for_non_fit_non_zip_bytes():
+    assert garmin_service._extract_fit_bytes(b"not a fit file, not a zip either") is None
+
+
 class _FakeFitFrame:
     def __init__(self, name: str, values: dict):
         self.frame_type = fitdecode.FIT_FRAME_DATA
