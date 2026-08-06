@@ -15,6 +15,7 @@ from app.services.ai_coach import (
     _load_conversation_history,
     _strip_internal_reasoning,
 )
+from app.services.gemini_quota import GeminiQuotaExceededError
 from app.services.memory import extract_and_save_memories
 from app.dependencies import (
     get_current_athlete,
@@ -432,6 +433,17 @@ async def _run_coach_response_and_notify(
             model_name=model_name,
             timezone_offset_min=timezone_offset_min,
         )
+    except GeminiQuotaExceededError as e:
+        # Both the primary and fallback chat models' free-tier RPM budgets
+        # were exhausted (gemini_quota.wait_for_slot already waited as long
+        # as it reasonably could before giving up) — tell the athlete
+        # something actionable instead of the generic error below.
+        retry_min = max(1, round(e.retry_after_sec / 60))
+        coach_reply = (
+            f"I've hit the AI model's request limit for the moment — try again in "
+            f"about {retry_min} minute{'s' if retry_min != 1 else ''}."
+        )
+        coach_sources = []
     except Exception:
         traceback.print_exc()
         coach_reply = "Sorry, I ran into an error putting that response together. Please try asking again."
@@ -593,6 +605,12 @@ async def chat_with_coach(
             "reply": coach_reply,
             "sources": coach_sources,
         }
+    except GeminiQuotaExceededError as e:
+        retry_min = max(1, round(e.retry_after_sec / 60))
+        raise HTTPException(
+            status_code=429,
+            detail=f"AI model request limit reached — try again in about {retry_min} minute{'s' if retry_min != 1 else ''}.",
+        )
     except Exception as e:
         print("--- AI COACH CRASH LOG ---")
         traceback.print_exc()
