@@ -11,6 +11,7 @@ python-dotenv==1.0.1
 
 # --- AI & Intelligence ---
 google-genai>=1.74.0
+openai>=1.55.0  # OpenAI-compatible provider option (local llama.cpp/vLLM/LM Studio/etc.) — see app/services/llm_provider.py
 
 # --- Math & Data Processing ---
 numpy>=1.26.4

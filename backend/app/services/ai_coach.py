@@ -1,9 +1,10 @@
-from google import genai
 from google.genai import types
 from app.config import settings
 from app.services import coach_tools
+from app.services import gemini_quota
 from app.services.coach_workout_data import recent_workouts_teaser
 from app.services.algorithms import compute_z_score
+from app.services.llm_provider import get_llm_client
 from app.services.memory import retrieve_relevant_memories, should_skip_rag_for_message
 import logging
 
@@ -23,7 +24,7 @@ from supabase import Client
 from datetime import date, timedelta
 
 
-_client = genai.Client(api_key=settings.GEMINI_API_KEY)
+_client = get_llm_client()
 
 def _should_fallback_chat_model(err_str: str) -> bool:
     """
@@ -646,6 +647,7 @@ def build_initialization_message(
         for idx, model in enumerate(candidates):
             for attempt in range(3):
                 try:
+                    gemini_quota.wait_for_slot(model, max_wait_sec=15.0)
                     response = _client.models.generate_content(
                         model=model,
                         contents=prompt,
@@ -1277,6 +1279,7 @@ def get_coach_response_agentic(
     if not db:
         final_prompt = f"{system_with_ctx}\n\nAthlete Message: {message}"
         effective_model = model_name or settings.GEMINI_MODEL
+        gemini_quota.wait_for_slot(effective_model, max_wait_sec=15.0)
         response = _client.models.generate_content(
             model=effective_model,
             contents=final_prompt,
@@ -1369,6 +1372,15 @@ def get_coach_response_agentic(
             _hop_error = None
             for _attempt in range(3):  # 3 attempts for larger models
                 try:
+                    # Blocks (bounded) rather than firing and getting a 429 —
+                    # the free-tier RPM budget for the Gemma models here is
+                    # tight enough (~30/min) that a single multi-hop turn
+                    # plus its title/memory background calls can burn
+                    # through it on their own. A GeminiQuotaExceededError
+                    # here contains "quota exceeded", so it flows straight
+                    # into the existing _should_fallback_chat_model() check
+                    # below like any other overload signal.
+                    gemini_quota.wait_for_slot(effective_model, max_wait_sec=20.0)
                     last_response = _client.models.generate_content(
                         model=effective_model,
                         contents=contents,
@@ -1852,6 +1864,11 @@ def generate_coach_conversation_title(
     effective_model = model_name or settings.GEMINI_MODEL
     prompt = f"{_TITLE_SYSTEM}\n\n---\n{transcript}\n---\nTitle:"
     try:
+        # Best-effort background work competing with the chat model's own
+        # RPM budget right after a reply — a short wait here means a busy
+        # budget just falls back to the heuristic title below instead of
+        # eating into the budget the actual chat reply needs.
+        gemini_quota.wait_for_slot(effective_model, max_wait_sec=5.0)
         response = _client.models.generate_content(
             model=effective_model,
             contents=prompt,
