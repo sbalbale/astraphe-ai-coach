@@ -402,6 +402,122 @@ async def initialize_coach(
         }
 
 
+async def _run_coach_response_and_notify(
+    athlete_id: str,
+    effective_message: str,
+    recent_tss: float,
+    db,
+    conversation_id: str,
+    model_name: str | None,
+    analysis_model_name: str | None,
+    timezone_offset_min: Optional[int],
+) -> None:
+    """
+    The async counterpart of chat_with_coach()'s body, minus the parts that
+    have to happen before the HTTP response goes out (creating the
+    conversation, inserting the user's message). Runs as a BackgroundTask —
+    the client already has its response and may not be connected anymore —
+    so every step below is best-effort: a failure here must still leave the
+    athlete with *something* in coach_messages and, if possible, a push
+    notification, rather than a silently stuck "thinking" placeholder.
+    """
+    try:
+        coach_reply, coach_sources = await asyncio.to_thread(
+            get_coach_response,
+            athlete_id=athlete_id,
+            message=effective_message,
+            current_tss=recent_tss,
+            db=db,
+            conversation_id=conversation_id,
+            model_name=model_name,
+            timezone_offset_min=timezone_offset_min,
+        )
+    except Exception:
+        traceback.print_exc()
+        coach_reply = "Sorry, I ran into an error putting that response together. Please try asking again."
+        coach_sources = []
+
+    try:
+        _insert_message(db, athlete_id, conversation_id, role="ai", content=coach_reply, image_urls=None)
+    except Exception:
+        traceback.print_exc()
+        return  # Nothing to notify/extract from if the reply itself never landed.
+
+    try:
+        recent_history = await asyncio.to_thread(
+            _load_conversation_history, db, athlete_id, conversation_id, 10
+        )
+        await _run_memory_extraction(athlete_id, recent_history, db, analysis_model_name)
+    except Exception:
+        pass
+
+    await _run_conversation_title(db, athlete_id, conversation_id, model_name)
+
+    try:
+        from app.services.push import send_push_to_athlete
+        from app.services.text_format import notification_preview
+
+        preview = notification_preview(coach_reply or "")
+        send_push_to_athlete(
+            athlete_id=athlete_id,
+            title="ASTRAPHE Coach",
+            body=preview,
+            db=db,
+            data={"url": "/chat", "conversation_id": conversation_id},
+            notification_type="coach",
+        )
+    except Exception:
+        pass
+
+
+@router.post("/message/async")
+async def submit_coach_message(
+    payload: ChatMessage,
+    background_tasks: BackgroundTasks,
+    athlete_id: str = Depends(get_current_athlete),
+    config: UserConfig = Depends(get_user_config),
+    _rl: None = Depends(require_ai_rate_limit),
+    db = Depends(get_user_db),
+):
+    """
+    Fire-and-forget counterpart to /message and /stream: inserts the user's
+    message and returns immediately with `status: "pending"` rather than
+    holding the connection open for the full (sometimes multi-hop) Gemini
+    call. The reply lands in coach_messages and triggers the existing push
+    notification (see _run_coach_response_and_notify) whenever it's ready —
+    the client is expected to poll GET /conversations/{id}/messages (or just
+    wait for the push) rather than block on this request.
+    """
+    _require_premium(config)
+    conversation_id = payload.conversation_id or _create_conversation(db, athlete_id, title=None)
+    _insert_message(db, athlete_id, conversation_id, role="user", content=payload.message, image_urls=payload.image_urls)
+
+    effective_message = payload.message
+    if payload.document_contents:
+        doc_parts = [
+            f"[ATTACHED DOCUMENT {i}]\n{content}"
+            for i, content in enumerate(payload.document_contents, 1)
+        ]
+        effective_message = "\n\n".join(doc_parts) + "\n\n[ATHLETE MESSAGE]\n" + payload.message
+
+    background_tasks.add_task(
+        _run_coach_response_and_notify,
+        athlete_id,
+        effective_message,
+        payload.recent_tss,
+        db,
+        conversation_id,
+        config.gemini_model,
+        config.gemini_analysis_model,
+        payload.timezone_offset_min,
+    )
+
+    return {
+        "status": "pending",
+        "conversation_id": conversation_id,
+    }
+
+
 @router.post("/message")
 async def chat_with_coach(
     payload: ChatMessage,
