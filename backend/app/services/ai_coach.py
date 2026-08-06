@@ -1219,6 +1219,23 @@ def _coach_progress(
     except Exception:
         pass
 
+# Tool names whose handlers actually write data (see coach_tools.TOOL_HANDLERS).
+# Used only to word the post-tool-call failure fallback honestly — claiming
+# "I updated your status" is fine if one of these just ran, but false (and
+# misleading) if the hop only ran read-only lookups.
+_MUTATING_TOOL_NAMES = frozenset({
+    "schedule_workout",
+    "log_workout",
+    "update_workout",
+    "log_biometrics",
+    "update_planned_workout",
+    "delete_planned_workout",
+    "clear_training_plans",
+    "save_memory",
+    "update_memory",
+})
+
+
 def get_coach_response_agentic(
     athlete_id: str,
     message: str,
@@ -1360,6 +1377,7 @@ def get_coach_response_agentic(
 
     last_response = None
     planned_dates_from_tools: list[str] = []
+    last_tool_names: list[str] = []
     max_hops = _agentic_max_tool_hops(message)
     for _hop in range(max_hops):
         hop_t0 = time.perf_counter()
@@ -1382,7 +1400,14 @@ def get_coach_response_agentic(
                     # Catch broad transient errors and connection-level failures
                     is_transient = any(
                         k in err_str
-                        for k in ("500", "503", "INTERNAL", "overloaded", "Server disconnected", "RemoteProtocolError", "EOF")
+                        for k in (
+                            "500", "503", "INTERNAL", "overloaded", "Server disconnected",
+                            "RemoteProtocolError", "EOF",
+                            # Rate-limit/timeout signatures — previously excluded, so a 429
+                            # or a slow tool-heavy hop skipped straight to the single-attempt
+                            # failure path below instead of getting a backoff-and-retry.
+                            "429", "RESOURCE_EXHAUSTED", "DEADLINE_EXCEEDED", "timeout", "Timeout",
+                        )
                     )
                     if _attempt < 2 and is_transient:
                         wait = 1.5 * (_attempt + 1)
@@ -1419,8 +1444,22 @@ def get_coach_response_agentic(
             if parts_list and any(
                 getattr(p, "function_response", None) for p in parts_list
             ):
+                # The call that was meant to turn tool results into a final
+                # answer failed — this used to unconditionally claim "I have
+                # successfully processed your data and updated your status",
+                # which is actively false for a read-only question (nothing
+                # was updated) and gives no signal that anything went wrong.
+                # Only claim a change happened if a mutating tool actually
+                # ran in the hop right before this failure.
+                if any(name in _MUTATING_TOOL_NAMES for name in last_tool_names):
+                    return (
+                        "I went ahead and made that change, but hit an error putting together "
+                        "the full explanation. Let me know if you'd like me to try again.",
+                        [],
+                    )
                 return (
-                    "I have successfully processed your data and updated your status. Please let me know if you need anything else!",
+                    "Sorry, I ran into an error putting that response together. "
+                    "Could you try asking again?",
                     [],
                 )
             raise _hop_error
@@ -1445,6 +1484,7 @@ def get_coach_response_agentic(
                 fc_parts.append(types.Part(function_call=fc))
             if not fc_parts:
                 break
+            last_tool_names = [fc.name for fc in fcs if fc is not None and fc.name]
             contents.append(types.Content(role="model", parts=fc_parts))
 
             fr_parts: list[types.Part] = []
