@@ -1074,10 +1074,17 @@ async def poll_tick(db: Any) -> int:
     return len(athlete_ids)
 
 
+def _poll_interval_sec() -> int:
+    minutes = getattr(settings, "GARMIN_SYNC_POLL_MINUTES", None)
+    if minutes:
+        return max(60, int(minutes) * 60)
+    return max(1, int(settings.GARMIN_SYNC_POLL_HOURS)) * 3600
+
+
 async def poll_loop() -> None:
     """Long-running asyncio task started at FastAPI startup (see main.py)."""
     while True:
-        interval_sec = max(1, int(settings.GARMIN_SYNC_POLL_HOURS)) * 3600
+        interval_sec = _poll_interval_sec()
         try:
             db = get_admin_db()
             processed = await poll_tick(db)
