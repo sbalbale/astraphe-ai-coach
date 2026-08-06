@@ -343,9 +343,10 @@ def test_backfill_recent_swallows_per_athlete_error(capsys):
 
 
 class _BackfillListResponse:
-    def __init__(self, status_code=200, json_data=None):
+    def __init__(self, status_code=200, json_data=None, headers=None):
         self.status_code = status_code
         self._json_data = json_data or []
+        self.headers = headers or {}
 
     def json(self):
         return self._json_data
@@ -442,5 +443,91 @@ def test_backfill_historical_data_uses_hours_window_when_set():
         total = _run_async(
             strava_service.backfill_historical_data("athlete-1", 999, "tok", db, hours=6)
         )
+
+    assert total == 0
+
+
+def test_backfill_historical_data_list_429_then_success():
+    retry_resp = _BackfillListResponse(status_code=429)
+    ok_resp = _BackfillListResponse(status_code=200, json_data=[])
+    db = MagicMock()
+
+    with patch.object(
+        strava_service.httpx,
+        "AsyncClient",
+        lambda *a, **k: _BackfillAsyncClient(*a, pages=[retry_resp, ok_resp], **k),
+    ), patch.object(strava_service, "_finalize_strava_sync", AsyncMock()), patch.object(
+        strava_service.asyncio, "sleep", AsyncMock()
+    ) as mock_sleep:
+        total = _run_async(strava_service.backfill_historical_data("athlete-1", 999, "tok", db, days=30))
+
+    assert total == 0
+    mock_sleep.assert_awaited()  # slept once for the 429 backoff (plus the per-page pacing sleep)
+
+
+def test_backfill_historical_data_list_error_status_breaks():
+    error_resp = _BackfillListResponse(status_code=500)
+    db = MagicMock()
+
+    with patch.object(
+        strava_service.httpx, "AsyncClient", lambda *a, **k: _BackfillAsyncClient(*a, pages=[error_resp], **k)
+    ), patch.object(strava_service, "_finalize_strava_sync", AsyncMock()) as mock_finalize, patch.object(
+        strava_service.asyncio, "sleep", AsyncMock()
+    ):
+        total = _run_async(strava_service.backfill_historical_data("athlete-1", 999, "tok", db, days=30))
+
+    assert total == 0
+    mock_finalize.assert_awaited_once()
+
+
+def test_backfill_historical_data_activity_rate_limited_then_succeeds():
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+    activity = {"id": 1, "start_date": (now - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")}
+    page1 = _BackfillListResponse(json_data=[activity])
+    db = MagicMock()
+    db.table.return_value.select.return_value.eq.return_value.eq.return_value.eq.return_value.maybe_single.return_value.execute.return_value = SimpleNamespace(
+        data=None
+    )
+
+    ingest_calls = {"n": 0}
+
+    async def _fake_ingest(**_kwargs):
+        ingest_calls["n"] += 1
+        if ingest_calls["n"] == 1:
+            raise strava_service.StravaRateLimitError(retry_after=1)
+        return {"id": "w1"}
+
+    with patch.object(
+        strava_service.httpx, "AsyncClient", lambda *a, **k: _BackfillAsyncClient(*a, pages=[page1], **k)
+    ), patch.object(strava_service, "ingest_strava_activity", _fake_ingest), patch.object(
+        strava_service, "_finalize_strava_sync", AsyncMock()
+    ), patch.object(strava_service.asyncio, "sleep", AsyncMock()):
+        total = _run_async(strava_service.backfill_historical_data("athlete-1", 999, "tok", db, days=30))
+
+    assert total == 1
+    assert ingest_calls["n"] == 2
+
+
+def test_backfill_historical_data_activity_exception_is_swallowed():
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+    activity = {"id": 1, "start_date": (now - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")}
+    page1 = _BackfillListResponse(json_data=[activity])
+    db = MagicMock()
+    db.table.return_value.select.return_value.eq.return_value.eq.return_value.eq.return_value.maybe_single.return_value.execute.return_value = SimpleNamespace(
+        data=None
+    )
+
+    with patch.object(
+        strava_service.httpx, "AsyncClient", lambda *a, **k: _BackfillAsyncClient(*a, pages=[page1], **k)
+    ), patch.object(
+        strava_service, "ingest_strava_activity", AsyncMock(side_effect=RuntimeError("boom"))
+    ), patch.object(strava_service, "_finalize_strava_sync", AsyncMock()), patch.object(
+        strava_service.asyncio, "sleep", AsyncMock()
+    ):
+        total = _run_async(strava_service.backfill_historical_data("athlete-1", 999, "tok", db, days=30))
 
     assert total == 0
