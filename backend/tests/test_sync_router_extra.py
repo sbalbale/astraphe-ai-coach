@@ -934,3 +934,196 @@ def test_strava_oauth_callback_unexpected_error_returns_error_dict():
         assert res.json()["status"] == "error"
     finally:
         _teardown()
+
+
+# ---------------------------------------------------------------------------
+# POST /v1/sync/garmin/webhook
+# ---------------------------------------------------------------------------
+
+
+def test_garmin_webhook_invalid_signature_401():
+    admin_db = MagicMock()
+    app.dependency_overrides[get_admin_db] = lambda: admin_db
+    try:
+        with patch.object(sync_router.settings, "GARMIN_WEBHOOK_SECRET", "shh"):
+            res = client.post(
+                "/v1/sync/garmin/webhook",
+                json={"activities": []},
+                headers={"X-Garmin-Signature": "wrong"},
+            )
+        assert res.status_code == 401
+    finally:
+        _teardown()
+
+
+def test_garmin_webhook_valid_signature_passes():
+    admin_db = MagicMock()
+    app.dependency_overrides[get_admin_db] = lambda: admin_db
+    try:
+        import hashlib
+        import hmac as hmac_mod
+
+        body = b'{"activities": []}'
+        secret = "shh"
+        sig = hmac_mod.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
+        with patch.object(sync_router.settings, "GARMIN_WEBHOOK_SECRET", secret):
+            res = client.post(
+                "/v1/sync/garmin/webhook",
+                content=body,
+                headers={"X-Garmin-Signature": sig, "content-type": "application/json"},
+            )
+        assert res.status_code == 200
+    finally:
+        _teardown()
+
+
+def test_garmin_webhook_invalid_json_400():
+    admin_db = MagicMock()
+    app.dependency_overrides[get_admin_db] = lambda: admin_db
+    try:
+        with patch.object(sync_router.settings, "GARMIN_WEBHOOK_SECRET", None):
+            res = client.post(
+                "/v1/sync/garmin/webhook",
+                content=b"not json",
+                headers={"content-type": "application/json"},
+            )
+        assert res.status_code == 400
+    finally:
+        _teardown()
+
+
+def test_garmin_webhook_activity_no_athlete_found_skipped():
+    admin_db = MagicMock()
+    admin_db.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value = SimpleNamespace(
+        data=[]
+    )
+    app.dependency_overrides[get_admin_db] = lambda: admin_db
+    try:
+        with patch.object(sync_router.settings, "GARMIN_WEBHOOK_SECRET", None):
+            res = client.post(
+                "/v1/sync/garmin/webhook",
+                json={"activities": [{"userId": "g1", "startTimeInSeconds": 1_700_000_000}]},
+            )
+        assert res.status_code == 200
+    finally:
+        _teardown()
+
+
+def test_garmin_webhook_activity_schedules_save():
+    admin_db = MagicMock()
+    admin_db.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value = SimpleNamespace(
+        data=[{"athlete_id": "ath-1"}]
+    )
+    admin_db.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = SimpleNamespace(
+        data={"timezone_offset_min": -120}
+    )
+    app.dependency_overrides[get_admin_db] = lambda: admin_db
+    try:
+        with patch.object(sync_router.settings, "GARMIN_WEBHOOK_SECRET", None), patch.object(
+            sync_router, "process_and_save_workout", AsyncMock()
+        ):
+            res = client.post(
+                "/v1/sync/garmin/webhook",
+                json={
+                    "activities": [
+                        {
+                            "userId": "g1",
+                            "activityId": 555,
+                            "activityType": "RUNNING",
+                            "startTimeInSeconds": 1_700_000_000,
+                            "durationInSeconds": 1800,
+                            "trainingStressScore": 55.0,
+                        }
+                    ]
+                },
+            )
+        assert res.status_code == 200
+    finally:
+        _teardown()
+
+
+def test_garmin_webhook_activity_processing_exception_is_swallowed():
+    admin_db = MagicMock()
+    admin_db.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.side_effect = RuntimeError(
+        "db exploded"
+    )
+    app.dependency_overrides[get_admin_db] = lambda: admin_db
+    try:
+        with patch.object(sync_router.settings, "GARMIN_WEBHOOK_SECRET", None):
+            res = client.post(
+                "/v1/sync/garmin/webhook",
+                json={"activities": [{"userId": "g1", "startTimeInSeconds": 1_700_000_000}]},
+            )
+        assert res.status_code == 200
+    finally:
+        _teardown()
+
+
+def test_garmin_webhook_body_comp_no_athlete_found_skipped():
+    admin_db = MagicMock()
+    admin_db.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value = SimpleNamespace(
+        data=[]
+    )
+    app.dependency_overrides[get_admin_db] = lambda: admin_db
+    try:
+        with patch.object(sync_router.settings, "GARMIN_WEBHOOK_SECRET", None):
+            res = client.post(
+                "/v1/sync/garmin/webhook",
+                json={"bodyComps": [{"userId": "g1", "weightInGrams": 70000}]},
+            )
+        assert res.status_code == 200
+    finally:
+        _teardown()
+
+
+def test_garmin_webhook_body_comp_updates_weight():
+    admin_db = MagicMock()
+    admin_db.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value = SimpleNamespace(
+        data=[{"athlete_id": "ath-1"}]
+    )
+    app.dependency_overrides[get_admin_db] = lambda: admin_db
+    try:
+        with patch.object(sync_router.settings, "GARMIN_WEBHOOK_SECRET", None):
+            res = client.post(
+                "/v1/sync/garmin/webhook",
+                json={"bodyComps": [{"userId": "g1", "weightInGrams": 70000}]},
+            )
+        assert res.status_code == 200
+        admin_db.table.return_value.update.assert_called_once_with({"weight_kg": 70.0})
+    finally:
+        _teardown()
+
+
+def test_garmin_webhook_body_comp_no_weight_skips_update():
+    admin_db = MagicMock()
+    admin_db.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value = SimpleNamespace(
+        data=[{"athlete_id": "ath-1"}]
+    )
+    app.dependency_overrides[get_admin_db] = lambda: admin_db
+    try:
+        with patch.object(sync_router.settings, "GARMIN_WEBHOOK_SECRET", None):
+            res = client.post(
+                "/v1/sync/garmin/webhook",
+                json={"bodyComps": [{"userId": "g1"}]},
+            )
+        assert res.status_code == 200
+        admin_db.table.return_value.update.assert_not_called()
+    finally:
+        _teardown()
+
+
+def test_garmin_webhook_body_comp_processing_exception_is_swallowed():
+    admin_db = MagicMock()
+    admin_db.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.side_effect = RuntimeError(
+        "db exploded"
+    )
+    app.dependency_overrides[get_admin_db] = lambda: admin_db
+    try:
+        with patch.object(sync_router.settings, "GARMIN_WEBHOOK_SECRET", None):
+            res = client.post(
+                "/v1/sync/garmin/webhook",
+                json={"bodyComps": [{"userId": "g1", "weightInGrams": 70000}]},
+            )
+        assert res.status_code == 200
+    finally:
+        _teardown()
