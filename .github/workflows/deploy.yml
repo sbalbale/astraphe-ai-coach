@@ -8,6 +8,15 @@ on:
       - 'backend/**'
       - 'supabase/**'
       - '.github/workflows/deploy.yml'
+  # No `paths` filter here, deliberately: this is a required status check
+  # (branch protection on main), and a required check whose workflow never
+  # triggers for a given PR (e.g. one that only touches mobile/) leaves that
+  # check permanently "Expected — waiting", blocking the merge forever. Run
+  # unconditionally on every PR into main instead — see the `build` job's
+  # `push: false` below for why this is still cheap/safe to do broadly.
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: read
@@ -23,24 +32,36 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Skipped for pull_request: nothing is published in that case (see
+      # push: below), so registry credentials aren't needed — and PRs from
+      # forks only get a read-only GITHUB_TOKEN with no secrets access
+      # anyway, which would make this step fail outright rather than just
+      # be a no-op.
       - name: Log in to GitHub Container Registry
+        if: github.event_name == 'push'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push
+      - name: Build (and push on merge to main)
         uses: docker/build-push-action@v5
         with:
           context: ./backend
-          push: true
+          # A PR build only has to prove the image compiles — it must never
+          # publish over :latest with unmerged code. Only an actual push to
+          # main (post-merge) publishes.
+          push: ${{ github.event_name == 'push' }}
           tags: |
             ghcr.io/sbalbale/astraphe-api:latest
             ghcr.io/sbalbale/astraphe-api:${{ github.sha }}
 
   deploy:
     needs: build
+    # Never on pull_request — this ships to production. Only a real push to
+    # main (post-merge) deploys.
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
 
     steps:
@@ -125,6 +146,9 @@ jobs:
 
   migrate:
     needs: deploy
+    # Never on pull_request — this applies migrations to production. Only a
+    # real push to main (post-merge) migrates.
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
 
     steps:
