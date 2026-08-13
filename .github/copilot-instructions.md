@@ -29,7 +29,7 @@ You are GitHub Copilot performing **pull request code review** for this reposito
 First determine which areas changed, then tailor the review accordingly:
 - `backend/`: FastAPI + Python services and APIs
 - `supabase/`: DB migrations, RLS policies, functions, Storage templates/rules
-- `mobile/`: Flutter/Dart app
+- `mobile/`: Svelte 5 + SvelteKit + TypeScript + Capacitor app
 - Web packages (if present): TypeScript/SvelteKit or other frontend code
 
 If multiple packages are touched, keep feedback separated by package to prevent confusion.

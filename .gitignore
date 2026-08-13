@@ -124,7 +124,16 @@ supabase/.env.*.local
 supabase/backups/*
 
 # ------------------------------------------
-# 6. OS & Editor Files
+# 6. Ad hoc dumps & scratch scripts (never commit real data)
+# ------------------------------------------
+database-dumps/
+dump.sql
+scratch/
+gcloud
+.claude/settings.local.json
+
+# ------------------------------------------
+# 7. OS & Editor Files
 # ------------------------------------------
 .DS_Store
 .DS_Store?
