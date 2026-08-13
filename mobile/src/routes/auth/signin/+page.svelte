@@ -34,7 +34,12 @@
     } else {
       await authStore.refreshSession();
     }
-    await goto('/dashboard', { replaceState: true });
+    // Used by the MCP OAuth consent screen (/oauth/consent) to send the user back to
+    // the pending authorization request after signing in, instead of always /dashboard.
+    // Only same-origin relative paths are honored — never redirect off-app.
+    const redirect = $page.url.searchParams.get('redirect');
+    const target = redirect && redirect.startsWith('/') && !redirect.startsWith('//') ? redirect : '/dashboard';
+    await goto(target, { replaceState: true });
     loading = false;
   }
 </script>
