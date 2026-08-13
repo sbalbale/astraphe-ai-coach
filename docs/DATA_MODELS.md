@@ -27,13 +27,20 @@ Admin-controlled user settings are read from `auth.users.app_metadata`:
 
 ## RLS Pattern
 
-Athlete-owned public tables generally use this ownership pattern:
+All 14 public tables have RLS enabled. Athlete-owned tables generally use this ownership pattern:
 
 ```sql
 athlete_id IN (
-  SELECT id FROM athletes WHERE user_id = auth.uid()
+  SELECT id FROM athletes WHERE user_id = (SELECT auth.uid())
 )
 ```
+
+Two details matter if you're writing a new policy:
+
+- `auth.uid()` is wrapped in `(SELECT ...)` deliberately — this caches it once per statement (Postgres "initplan") instead of re-evaluating per row. `20260526233437_rls_policy_performance_fixes.sql` and `20260527014001_fix_rls_initplan_and_duplicate_indexes.sql` rewrote every policy to this form after the unwrapped version caused per-row re-evaluation at scale. Don't reintroduce the bare form.
+- Every policy is scoped `TO authenticated` (never `PUBLIC`) and pairs a `USING` clause with a matching `WITH CHECK` clause.
+
+This pattern covers `activity_streams` and `activity_laps` too — their original scalar-subquery policies (`athlete_id = (SELECT id FROM athletes ...)`) would error against a user with multiple athlete rows; `20260526233437` rewrote them to the `IN (...)` form.
 
 The API also scopes every request by resolved athlete ID and uses a per-request Supabase client authenticated with the user's JWT, so RLS remains active.
 
@@ -58,21 +65,25 @@ Important fields:
 - `resting_hr`
 - `threshold_hr`
 - `threshold_hr_source`
-- `threshold_pace`
+- `threshold_pace` — `TEXT` holding `"mm:ss"` (migrated from `NUMERIC` by `20260428000003_profile_pace_units.sql`; not a plain number)
 - `ftp_watts`
 - `vo2max_est`
 - `sport_focus`
 - `weekly_tss_target`
 - `timezone_offset_min`
 - `measurement_units`
-- `training_zones`
+- `time_format` — `'12h'` or `'24h'`, default `'12h'`
+- `hrv_baseline`, `rhr_baseline` — rolling baselines used for readiness scoring
 - `hr_zone_method`
+- `zone_method` — **generated column** (`GENERATED ALWAYS ... STORED`), derived from `threshold_hr`/`threshold_hr_source`/`max_hr`/`resting_hr`; cannot be written directly
+- `lthr` — **generated column**, mirrors `threshold_hr`; cannot be written directly
+- `strava_athlete_id` — unique, nullable
 - `notification_settings`
 - `privacy_settings`
 - `tier` default `premium`
-- timestamps
+- `created_at` only — no `updated_at` on this table
 
-Allowed `hr_zone_method` values are `lthr`, `hrr`, and `max_hr`.
+Allowed `hr_zone_method` values are `lthr`, `hrr`, and `max_hr`. There is no `athletes.training_zones` column — zone data is derived (`zone_method`/`lthr`) or lives on `training_plans.target_zones`.
 
 ### `workouts`
 
@@ -101,6 +112,8 @@ Important fields:
 - `if_value`
 - `strain_score`
 - `fit_file_url` — optional URL/path to a **raw Garmin `.fit` artifact** (future direct Garmin ingest). Not the canonical stream store; canonical streams live in Supabase Storage bucket `activity-streams` as gzip JSON (`activity_streams.storage_path`). Parsed FIT/Intervals.icu/Strava data uses the same `time_series` schema.
+- `garmin_activity_id` — unique, nullable (`20260805150000_garmin_activity_id_and_calories.sql`)
+- `calories`
 - Integration detail/source columns from later migrations, including Strava IDs and source merge metadata.
 
 Allowed sources include `garmin`, `whoop`, `healthkit`, `manual`, `strava`, and `intervals_icu`.
@@ -117,36 +130,50 @@ Daily physiological summaries.
 
 Important fields:
 
+There is no `biometrics.source` or `biometrics.external_id` column — those exist on `workouts` and `sleep_periods`, not here. Per-field provenance on this table is tracked via `metric_sources` instead (see below).
+
 - `id`
 - `athlete_id`
 - `date`
-- `source`
-- `external_id`
 - `hrv_rmssd`
 - `hrv_source`
 - `resting_hr`
 - `sleep_duration_min`
 - `sleep_in_bed_min`
-- `sleep_score`
+- `sleep_score`, `source_sleep_score` — `sleep_score` is Astraphe's normalized value; `source_sleep_score` is the provider's original, unmodified score (`20260429000000_unify_score_names.sql`). Same pairing for recovery below.
+- `recovery_score`, `source_recovery_score`
 - sleep stage percentages/minutes where present
 - `sleep_bedtime`
 - `sleep_wakeup`
 - `skin_temp`
 - `spo2_pct`
-- `recovery_score`
 - `readiness_score`
 - `strain_score`
+- `day_strain`
+- `sleep_need_min`, `sleep_debt_min`
+- `weight_kg`, `height_cm`
 - `metric_sources` — JSONB per-field provenance used for quality-ranked biometrics merges
 
-`skin_temp` stores absolute Celsius.
-Intervals.icu wellness rows may use `id` as the local wellness date; ingestion maps that to `biometrics.date` and keeps the same value as `external_id`. If Intervals.icu supplies sleep duration without sleep-stage percentages, ingestion stores the duration, leaves stage percentages `NULL`, and computes Astraphe's backup sleep score from known duration versus baseline nightly need instead of using the provider `sleepScore`.
-
+`skin_temp` stores absolute Celsius (renamed from `skin_temp_deviation` by `20260521130000_rename_skin_temp_column.sql`).
+Intervals.icu wellness rows may use `id` as the local wellness date; ingestion maps that to `biometrics.date` (there is no column that stores the original Intervals.icu id). If Intervals.icu supplies sleep duration without sleep-stage percentages, ingestion stores the duration, leaves stage percentages `NULL`, and computes Astraphe's backup sleep score from known duration versus baseline nightly need instead of using the provider `sleepScore`.
 
 ### `sleep_periods`
 
-Per-period sleep records, including naps, linked to an athlete and source.
+Per-period sleep records, including naps, linked to an athlete and source. Used when daily sleep has multiple periods or richer source details than the daily `biometrics` row captures.
 
-Used when daily sleep has multiple periods or richer source details.
+Important fields:
+
+- `id`
+- `athlete_id`
+- `date`
+- `started_at`, `ended_at`
+- `duration_min`
+- `in_bed_min`
+- `score`
+- `deep_pct`, `rem_pct`, `light_pct`, `awake_pct`
+- `is_nap` — default `false`
+- `source`
+- `external_id` — unique together with `source`
 
 ### `tss_history`
 
@@ -184,13 +211,11 @@ Important fields:
 - `target_zones`
 - `primary_zone`
 - `structure`
-- `goal`
-- `context`
 - `status`
 - `completed_workout_id`
 - `generated_by`
 
-`structure` stores structured intervals as JSONB.
+There is no `training_plans.goal` or `training_plans.context` column — `20260504153000_training_plans_add_structure.sql` added only `primary_zone` and `structure`. `structure` stores structured intervals as JSONB.
 
 ## Integrations
 
@@ -204,11 +229,13 @@ Important fields:
 
 - `athlete_id`
 - `provider`
+- `external_user_id`
 - `access_token`
 - `refresh_token`
 - `expires_at`
-- `scope`
-- provider metadata columns from integration migrations
+- `refresh_lock_expires_at` — default `1970-01-01T00:00:00Z`; used to prevent concurrent refresh races (`20260708190000_oauth_token_refresh_lock.sql`)
+
+There is no `oauth_tokens.scope` column — the only `scope` in the codebase is an OAuth *request* parameter (`backend/app/routers/sync.py`), not a stored value. Unique on `(athlete_id, provider)`.
 
 ### `activity_streams`
 
@@ -245,11 +272,11 @@ Stores web and native push tokens/subscriptions.
 Important fields:
 
 - `athlete_id`
-- `platform`
+- `platform` — must be `ios`, `android`, or `web`
 - `token`
-- timestamps
+- timestamps (`created_at`, `updated_at`)
 
-Protected by RLS so athletes manage their own token rows.
+Unique on `(athlete_id, token)`. Protected by RLS so athletes manage their own token rows (policy `push_tokens_athlete_access`).
 
 ## Coach And AI
 
@@ -264,14 +291,14 @@ Conversation thread metadata:
 
 ### `coach_messages`
 
-Individual user/assistant messages:
+Individual messages within a conversation:
 
 - `conversation_id`
 - `athlete_id`
-- `role`
+- `role` — must be `user`, `ai`, or `system` (not `assistant`)
 - `content`
 - `image_urls`
-- timestamps
+- `created_at` only — no `updated_at` on this table
 
 ### `coach_memories`
 
@@ -281,13 +308,13 @@ Important fields:
 
 - `athlete_id`
 - `content`
-- `memory_type`
-- `context_date`
-- `metadata`
+- `memory_type` — must be `note`, `race`, or `NULL`
+- `entity_key`
+- `event_date`
 - `embedding vector(3072)`
-- timestamps
+- timestamps (`created_at`, `updated_at`)
 
-The current migration creates vector support and RLS. Do not assume an HNSW index exists unless verified against the latest migration state.
+There is no `coach_memories.context_date` or `coach_memories.metadata` column — the real columns are `event_date` and `entity_key` (`20260527160000`). Do not assume an HNSW index exists — `20260520140000` dropped and re-added `embedding` with no index (HNSW caps at 2000 dims; this column is 3072), so similarity search runs unindexed unless a later migration changes that.
 
 ### `athlete_analyses`
 
@@ -296,18 +323,18 @@ Cached screen-level AI analysis results.
 Important fields:
 
 - `athlete_id`
-- `analysis_type`
+- `analysis_type` — one of `recovery`, `sleep`, `strain`, `training_load`, `dashboard_summary`, `workout`, `time_in_zones`
 - `scope_key`
 - `fingerprint`
 - `content`
 - `model`
 - timestamps
 
-Used by `/v1/analysis/*` routes to avoid repeated LLM calls when source data has not changed.
+Unique on `(athlete_id, analysis_type, scope_key)`. Used by `/v1/analysis/*` routes to avoid repeated LLM calls when source data has not changed.
 
 ## Storage
 
-Coach uploads use the `coach-uploads` bucket and path prefixes based on the authenticated user/conversation. The bucket privacy/RLS state is governed by migrations and Supabase Storage policies; the current frontend upload helper still uses `getPublicUrl()` after upload.
+Coach uploads use the `coach-uploads` bucket and path prefixes based on the authenticated user/conversation. `20260519120000_coach_uploads_private.sql` sets the bucket `public = false` unconditionally — it is not ambiguous or migration-dependent. **Known issue:** the frontend upload helper still calls `getPublicUrl()` after upload, which returns a non-functional URL against a private bucket. This needs a signed-URL fetch instead, not just a doc fix.
 
 ## Pydantic Models
 

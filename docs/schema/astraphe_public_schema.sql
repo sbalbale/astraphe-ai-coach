@@ -1,6 +1,6 @@
 -- ASTRAPHE AI Coach — public schema (generated)
 -- Source: live PostgreSQL introspection via docs/tools/generate_schema.py
--- Generated: 2026-05-16 14:53:25 UTC
+-- Generated: 2026-08-13 17:43:26 UTC
 --
 -- Prerequisites:
 --   - Supabase local or hosted project with auth schema
@@ -37,7 +37,7 @@ CREATE TABLE public.athletes (
   time_format text DEFAULT '12h'::text NOT NULL,
   gender text DEFAULT 'male'::text NOT NULL,
   timezone_offset_min integer DEFAULT 0 NOT NULL,
-  tier text DEFAULT 'free'::text NOT NULL,
+  tier text DEFAULT 'premium'::text NOT NULL,
   threshold_hr_source text,
   zone_method text GENERATED ALWAYS AS (
 CASE
@@ -94,7 +94,7 @@ CREATE TABLE public.biometrics (
   sleep_awake_pct numeric(4,1),
   sleep_bedtime timestamp with time zone,
   sleep_wakeup timestamp with time zone,
-  skin_temp_deviation numeric(4,2),
+  skin_temp numeric(4,2),
   spo2_pct numeric(4,1),
   source_recovery_score smallint,
   sleep_score smallint,
@@ -105,9 +105,12 @@ CREATE TABLE public.biometrics (
   readiness_score smallint,
   strain_score smallint,
   sleep_in_bed_min smallint,
+  weight_kg numeric(5,2),
+  height_cm numeric(5,1),
+  metric_sources jsonb DEFAULT '{}'::jsonb NOT NULL,
   CONSTRAINT biometrics_pkey PRIMARY KEY (id),
   CONSTRAINT biometrics_athlete_date_unique UNIQUE (athlete_id, date),
-  CONSTRAINT biometrics_hrv_source_check CHECK (hrv_source = ANY (ARRAY['whoop'::text, 'garmin'::text, 'healthkit'::text, 'intervals_icu'::text])),
+  CONSTRAINT biometrics_hrv_source_check CHECK (hrv_source IS NULL OR (hrv_source = ANY (ARRAY['whoop'::text, 'garmin'::text, 'healthkit'::text, 'intervals_icu'::text]))),
   CONSTRAINT biometrics_athlete_id_fkey FOREIGN KEY (athlete_id) REFERENCES athletes(id) ON DELETE CASCADE
 );
 
@@ -125,6 +128,23 @@ CREATE TABLE public.coach_conversations (
 
 
 
+CREATE TABLE public.coach_memories (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  athlete_id uuid NOT NULL,
+  content text NOT NULL,
+  created_at timestamp with time zone DEFAULT now() NOT NULL,
+  embedding vector(3072),
+  memory_type text,
+  entity_key text,
+  event_date date,
+  updated_at timestamp with time zone DEFAULT now() NOT NULL,
+  CONSTRAINT coach_memories_pkey PRIMARY KEY (id),
+  CONSTRAINT coach_memories_memory_type_check CHECK (memory_type IS NULL OR (memory_type = ANY (ARRAY['note'::text, 'race'::text]))),
+  CONSTRAINT coach_memories_athlete_id_fkey FOREIGN KEY (athlete_id) REFERENCES athletes(id) ON DELETE CASCADE
+);
+
+
+
 CREATE TABLE public.oauth_tokens (
   id uuid DEFAULT gen_random_uuid() NOT NULL,
   athlete_id uuid NOT NULL,
@@ -135,9 +155,25 @@ CREATE TABLE public.oauth_tokens (
   expires_at timestamp with time zone,
   created_at timestamp with time zone DEFAULT now() NOT NULL,
   updated_at timestamp with time zone DEFAULT now() NOT NULL,
+  refresh_lock_expires_at timestamp with time zone DEFAULT '1970-01-01 00:00:00+00'::timestamp with time zone NOT NULL,
   CONSTRAINT oauth_tokens_pkey PRIMARY KEY (id),
   CONSTRAINT oauth_tokens_athlete_provider_unique UNIQUE (athlete_id, provider),
   CONSTRAINT oauth_tokens_athlete_id_fkey FOREIGN KEY (athlete_id) REFERENCES athletes(id) ON DELETE CASCADE
+);
+
+
+
+CREATE TABLE public.push_tokens (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  athlete_id uuid NOT NULL,
+  token text NOT NULL,
+  platform text NOT NULL,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT push_tokens_pkey PRIMARY KEY (id),
+  CONSTRAINT push_tokens_athlete_id_token_key UNIQUE (athlete_id, token),
+  CONSTRAINT push_tokens_platform_check CHECK (platform = ANY (ARRAY['ios'::text, 'android'::text, 'web'::text])),
+  CONSTRAINT push_tokens_athlete_id_fkey FOREIGN KEY (athlete_id) REFERENCES athletes(id) ON DELETE CASCADE
 );
 
 
@@ -219,8 +255,11 @@ CREATE TABLE public.workouts (
   intervals_source text,
   splits_metric jsonb,
   splits_standard jsonb,
+  garmin_activity_id bigint,
+  calories numeric(8,1),
   CONSTRAINT workouts_pkey PRIMARY KEY (id),
   CONSTRAINT workouts_external_id_unique UNIQUE (source, external_id),
+  CONSTRAINT workouts_garmin_activity_id_key UNIQUE (garmin_activity_id),
   CONSTRAINT workouts_strava_activity_id_key UNIQUE (strava_activity_id),
   CONSTRAINT workouts_source_check CHECK (source = ANY (ARRAY['garmin'::text, 'whoop'::text, 'healthkit'::text, 'manual'::text, 'strava'::text, 'intervals_icu'::text])),
   CONSTRAINT workouts_sport_check CHECK (sport = ANY (ARRAY['run'::text, 'bike'::text, 'swim'::text, 'strength'::text, 'row'::text, 'mobility'::text, 'other'::text])),
@@ -274,9 +313,12 @@ CREATE TABLE public.activity_streams (
   id uuid DEFAULT gen_random_uuid() NOT NULL,
   workout_id uuid NOT NULL,
   athlete_id uuid NOT NULL,
-  time_series jsonb NOT NULL,
+  time_series jsonb,
   resolution_seconds integer DEFAULT 1,
   created_at timestamp with time zone DEFAULT now(),
+  storage_path text,
+  byte_size bigint,
+  content_encoding text DEFAULT 'gzip'::text,
   CONSTRAINT activity_streams_pkey PRIMARY KEY (id),
   CONSTRAINT activity_streams_athlete_id_fkey FOREIGN KEY (athlete_id) REFERENCES athletes(id) ON DELETE CASCADE,
   CONSTRAINT activity_streams_workout_id_fkey FOREIGN KEY (workout_id) REFERENCES workouts(id) ON DELETE CASCADE
@@ -318,11 +360,17 @@ CREATE INDEX biometrics_athlete_date ON public.biometrics USING btree (athlete_i
 
 CREATE INDEX coach_conversations_athlete_updated ON public.coach_conversations USING btree (athlete_id, updated_at DESC);
 
+CREATE INDEX coach_memories_athlete_idx ON public.coach_memories USING btree (athlete_id, created_at DESC);
+
+CREATE INDEX coach_memories_entity_idx ON public.coach_memories USING btree (athlete_id, memory_type, entity_key, updated_at DESC);
+
+CREATE INDEX push_tokens_athlete_idx ON public.push_tokens USING btree (athlete_id);
+
 CREATE INDEX sleep_periods_athlete_date ON public.sleep_periods USING btree (athlete_id, date DESC);
 
 CREATE INDEX tss_history_athlete_date ON public.tss_history USING btree (athlete_id, date DESC);
 
-CREATE INDEX idx_workouts_athlete_start ON public.workouts USING btree (athlete_id, started_at);
+CREATE INDEX idx_workouts_garmin_id ON public.workouts USING btree (garmin_activity_id) WHERE (garmin_activity_id IS NOT NULL);
 
 CREATE INDEX idx_workouts_strava_id ON public.workouts USING btree (strava_activity_id) WHERE (strava_activity_id IS NOT NULL);
 
