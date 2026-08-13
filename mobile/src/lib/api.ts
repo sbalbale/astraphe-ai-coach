@@ -11,6 +11,12 @@ console.log(`[API] Initialized with API_URL: ${API_URL}`);
 
 const getUserTimezoneOffsetMin = () => -new Date().getTimezoneOffset();
 
+/** coach-uploads is a private bucket (20260519120000_coach_uploads_private.sql); signed
+ *  URLs are the only way to get a working link. Long-lived because these URLs get
+ *  persisted in coach_messages.image_urls and displayed whenever the conversation is
+ *  reopened, not just right after upload. */
+const COACH_UPLOAD_SIGNED_URL_TTL_SECONDS = 60 * 60 * 24 * 365;
+
 let _initCache: { result: unknown; expiresAt: number; period: TimeOfDayPeriod; timezoneOffsetMin: number } | null = null;
 
 export const api = {
@@ -512,9 +518,10 @@ export const api = {
     const uploadRes = await bucket.upload(path, file, { contentType: file.type, upsert: false });
     if (uploadRes.error) throw uploadRes.error;
 
-    const { data } = bucket.getPublicUrl(path);
-    if (!data?.publicUrl) throw new Error('Failed to get public URL');
-    return data.publicUrl;
+    // coach-uploads is private -- getPublicUrl() would silently return an unusable URL.
+    const { data, error } = await bucket.createSignedUrl(path, COACH_UPLOAD_SIGNED_URL_TTL_SECONDS);
+    if (error || !data?.signedUrl) throw error ?? new Error('Failed to get signed URL');
+    return data.signedUrl;
   },
 
   /**

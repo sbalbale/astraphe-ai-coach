@@ -7,14 +7,14 @@ vi.mock('./apiAuth', () => ({
 
 const getUserMock = vi.fn();
 const uploadMock = vi.fn();
-const getPublicUrlMock = vi.fn();
+const createSignedUrlMock = vi.fn();
 vi.mock('$lib/supabase', () => ({
   supabase: {
     auth: { getUser: (...args: unknown[]) => getUserMock(...args) },
     storage: {
       from: () => ({
         upload: (...args: unknown[]) => uploadMock(...args),
-        getPublicUrl: (...args: unknown[]) => getPublicUrlMock(...args)
+        createSignedUrl: (...args: unknown[]) => createSignedUrlMock(...args)
       })
     }
   }
@@ -43,7 +43,7 @@ afterEach(() => {
   getAuthHeadersMock.mockClear();
   getUserMock.mockReset();
   uploadMock.mockReset();
-  getPublicUrlMock.mockReset();
+  createSignedUrlMock.mockReset();
   vi.restoreAllMocks();
 });
 
@@ -424,21 +424,29 @@ describe('uploadCoachImage', () => {
     await expect(api.uploadCoachImage(file, 'conv-1')).rejects.toThrow('upload failed');
   });
 
-  it('throws when no public URL is returned', async () => {
+  it('throws when signing the URL fails', async () => {
     getUserMock.mockResolvedValue({ data: { user: { id: 'u1' } } });
     uploadMock.mockResolvedValue({ error: null });
-    getPublicUrlMock.mockReturnValue({ data: { publicUrl: null } });
+    createSignedUrlMock.mockResolvedValue({ data: null, error: new Error('sign failed') });
     const file = new File(['x'], 'photo.jpg', { type: 'image/jpeg' });
-    await expect(api.uploadCoachImage(file, 'conv-1')).rejects.toThrow('Failed to get public URL');
+    await expect(api.uploadCoachImage(file, 'conv-1')).rejects.toThrow('sign failed');
   });
 
-  it('returns the public URL on success, defaulting unknown extensions to jpg', async () => {
+  it('throws when no signed URL is returned', async () => {
     getUserMock.mockResolvedValue({ data: { user: { id: 'u1' } } });
     uploadMock.mockResolvedValue({ error: null });
-    getPublicUrlMock.mockReturnValue({ data: { publicUrl: 'https://cdn.example.com/x.jpg' } });
+    createSignedUrlMock.mockResolvedValue({ data: { signedUrl: null }, error: null });
+    const file = new File(['x'], 'photo.jpg', { type: 'image/jpeg' });
+    await expect(api.uploadCoachImage(file, 'conv-1')).rejects.toThrow('Failed to get signed URL');
+  });
+
+  it('returns the signed URL on success, defaulting unknown extensions to jpg', async () => {
+    getUserMock.mockResolvedValue({ data: { user: { id: 'u1' } } });
+    uploadMock.mockResolvedValue({ error: null });
+    createSignedUrlMock.mockResolvedValue({ data: { signedUrl: 'https://cdn.example.com/x.jpg?token=abc' }, error: null });
     const file = new File(['x'], 'photo.unknownext', { type: 'image/jpeg' });
     const result = await api.uploadCoachImage(file, 'conv-1');
-    expect(result).toBe('https://cdn.example.com/x.jpg');
+    expect(result).toBe('https://cdn.example.com/x.jpg?token=abc');
   });
 });
 
