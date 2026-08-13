@@ -334,7 +334,7 @@ Unique on `(athlete_id, analysis_type, scope_key)`. Used by `/v1/analysis/*` rou
 
 ## Storage
 
-Coach uploads use the `coach-uploads` bucket and path prefixes based on the authenticated user/conversation. `20260519120000_coach_uploads_private.sql` sets the bucket `public = false` unconditionally — it is not ambiguous or migration-dependent. **Known issue:** the frontend upload helper still calls `getPublicUrl()` after upload, which returns a non-functional URL against a private bucket. This needs a signed-URL fetch instead, not just a doc fix.
+Coach uploads use the `coach-uploads` bucket and path prefixes based on the authenticated user/conversation. `20260519120000_coach_uploads_private.sql` sets the bucket `public = false` unconditionally — it is not ambiguous or migration-dependent. The frontend upload helper (`mobile/src/lib/api.ts`, `uploadCoachImage`) uses `createSignedUrl()` with a one-year TTL rather than `getPublicUrl()`, since the bucket is private and the resulting URL gets persisted in `coach_messages.image_urls` for later display, not just used immediately after upload.
 
 ## Pydantic Models
 
