@@ -356,14 +356,17 @@ enabled = false
 # domain = "example.clerk.accounts.dev"
 
 # OAuth server configuration — backs the Astraphe MCP server's OAuth flow (see docs/MCP_SERVER.md).
-# Local/dev only for now; hosted-project enablement is a separate, deliberate rollout step.
+# Also enabled on the hosted/production project (self-hosted Supabase env vars, not this
+# file — see docs/MCP_SERVER.md's Self-hosting section).
 [auth.oauth_server]
 # Enable OAuth server functionality
 enabled = true
 # Path for OAuth consent flow UI
 authorization_url_path = "/oauth/consent"
-# Dynamic client registration stays off through Phase 1 (MCP server rollout) — see
-# docs/MCP_SERVER.md's phased rollout. Turned on in Phase 2 once auth is proven stable.
+# Off here deliberately, even though production has it on: local dev doesn't need
+# self-registering clients, and keeping it off keeps the local auth flow simpler to
+# reason about. Not a drift bug — see docs/MCP_SERVER.md's Rollout section. Flip this
+# locally if you're specifically testing the DCR flow itself.
 allow_dynamic_registration = false
 
 [edge_runtime]

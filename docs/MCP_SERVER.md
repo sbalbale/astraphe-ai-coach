@@ -9,9 +9,12 @@ It lives in `mcp-server/` as a separate service from the main API (`backend/`), 
 own Dockerfile, its own deployment, and its own auth story — see [Architecture](#architecture)
 for why.
 
-**Status: Phase 1 (read-only).** The tools below let a connected client read your data.
-Nothing it can call writes anything back to Astraphe yet — see [Rollout](#rollout) for
-what's coming.
+**Status: Phase 2 (read-only, self-registering clients).** The tools below let a connected
+client read your data. Nothing it can call writes anything back to Astraphe yet. Dynamic
+Client Registration is on in production, so any MCP client — not just manually-registered
+test ones — can connect without a maintainer having to hand it a client ID first; that's
+also why the per-athlete rate limit exists (see [Rate limiting](#rate-limiting)). See
+[Rollout](#rollout) for what's coming.
 
 ## Connecting a client
 
@@ -32,7 +35,7 @@ what's coming.
 To disconnect, revoke the connection from your MCP client's settings (or, if you were
 testing locally, delete the OAuth client registration in Supabase).
 
-## Tools (read-only, Phase 1)
+## Tools (read-only)
 
 | Tool | What it returns |
 |---|---|
@@ -93,8 +96,10 @@ separate authorization layer to write or trust.
 Concretely:
 
 - `supabase/config.toml` has `[auth.oauth_server] enabled = true`. Dynamic client
-  registration (`allow_dynamic_registration`) stays **off** through Phase 1 — see
-  [Rollout](#rollout).
+  registration (`allow_dynamic_registration`) is **on** in production — any MCP client can
+  self-register without a maintainer manually issuing it a client ID/secret first. Local
+  dev defaults to off (see the comment in `supabase/config.toml`); flip it locally if
+  you're specifically testing the DCR flow itself.
 - `mcp-server/astraphe_mcp/auth/token_verifier.py` validates bearer tokens the same way
   every other Astraphe request does: `db.auth.get_user(token)` (delegates verification to
   Supabase Auth itself — nothing here manually decodes a JWT).
@@ -107,8 +112,8 @@ Concretely:
 standard OIDC scopes (`openid`, `profile`, `email`, `phone`) — requesting a custom scope
 like `astraphe:read` at the `/oauth/authorize` step is rejected outright with
 `unsupported scope`. There is currently no scope-based way to distinguish "read" access
-from a future "write" access at the OAuth layer. Phase 1 doesn't need this distinction
-(everything is read-only), but Phase 3 (write tools) will need a different gating
+from a future "write" access at the OAuth layer. Not needed yet (everything is read-only),
+but Phase 3 (write tools) will need a different gating
 mechanism than OAuth scopes — see [Rollout](#rollout).
 
 ### The consent screen
@@ -139,11 +144,38 @@ anywhere with example requests at the time this was built, so recorded here in f
    redirect on deny) — the page navigates the browser there to hand control back to the
    MCP client.
 
+### Rate limiting
+
+Every tool call goes through a per-athlete sliding-window limit (`MCP_RATE_LIMIT_RPM`,
+default 30/min), enforced in `astraphe_mcp/tools/_call.py::call_handler()` before it
+reaches `TOOL_HANDLERS`. This reuses `backend/app/core/rate_limiter.py`'s `RateLimiter`
+class unmodified — Redis sorted-set sliding window when the **backend's** `REDIS_URL` is
+configured, in-process fallback otherwise — with its own key namespace (`{athlete_id}:mcp:minute`)
+so a user's MCP budget is tracked separately from their in-app coach quota
+(`{athlete_id}:ai:minute`/`:ai:hour` in `backend/app/dependencies.py`). There's
+deliberately no separate `REDIS_URL` setting on the MCP server itself — it shares the
+backend's Redis instance and config on purpose, so set `REDIS_URL` on the **backend**
+service if you want rate-limit state to survive a restart or be consistent across
+multiple MCP server replicas.
+
+This exists specifically because Dynamic Client Registration is on: with self-registration,
+"who can call this server" is no longer gated by a maintainer manually vetting each OAuth
+client, so a per-athlete request budget is the remaining backstop against a runaway or
+malicious client hammering the database through someone's own account.
+
 ### Transport
 
 Streamable HTTP only (`astraphe_mcp/asgi.py` — `mcp.streamable_http_app()`), the current
 MCP spec's standard remote transport. No stdio (that's for local single-user servers with
 no OAuth story) and no legacy bare-SSE transport.
+
+`streamable_http_app()`'s DNS-rebinding protection defaults to accepting only `localhost`/
+`127.0.0.1` `Host` headers when `transport_security` isn't passed explicitly — it can't
+infer what public hostname the server will actually be reached as. `asgi.py` builds
+`TransportSecuritySettings(allowed_hosts=...)` from `MCP_RESOURCE_URL` specifically to
+avoid this; if you change how this server is exposed (a different domain, a path prefix,
+etc.), make sure `MCP_RESOURCE_URL` still matches exactly, or every request 421s with
+"Invalid Host header" despite auth working fine.
 
 ## Self-hosting
 
@@ -151,33 +183,61 @@ Requirements beyond a standard Astraphe self-host ([SETUP.md](./SETUP.md)):
 
 1. Enable Supabase's OAuth Server on your own Supabase project (self-hosted or hosted) —
    see the [Auth](#auth-supabase-auth-as-the-oauth-21-authorization-server) section above
-   for the config.toml flag. For local dev this "just works" with zero extra key setup —
-   GoTrue provisions asymmetric (ES256) signing automatically when the feature is
-   enabled, at least as of the GoTrue version this was built and tested against
-   (`v2.188.1`); verify this still holds for whatever version you're running.
-2. Copy `mcp-server/.env.example` to `mcp-server/.env` and fill in your Supabase project's
+   for the config.toml flag. For a fresh local project (`supabase start`) this "just
+   works" with zero extra key setup. **A self-hosted docker-compose/Kubernetes install
+   started from an older `.env`/template may not** — GoTrue needs asymmetric (ES256 or
+   RS256) signing to issue an OIDC ID token, and a JWT signing config that predates this
+   feature typically only has the legacy symmetric `JWT_SECRET` (HS256) wired up. Symptom:
+   `/oauth/token` 500s with `"HS256 is not supported for ID token signing"` right after a
+   successful consent approval. Supabase's own self-hosted docs cover the fix — add an
+   ES256 keypair via `JWT_KEYS`/`JWT_JWKS` env vars alongside the existing `JWT_SECRET`
+   (kept for backward compatibility with existing sessions, zero downtime): see
+   ["New API Keys and Asymmetric Authentication"](https://supabase.com/docs/guides/self-hosting/self-hosted-auth-keys).
+   Check whether your `JWT_KEYS`/`JWT_JWKS` already exist as *empty* placeholder values
+   before assuming you need to add new ones from scratch — a template that was applied
+   without ever running the actual key-generation step looks configured but isn't.
+2. If you're on a self-hosted docker-compose/Kubernetes install with Kong (or another API
+   gateway) in front of Supabase Auth, check whether it gates `/auth/v1/*` behind a
+   Supabase `apikey` header — Supabase's own default self-hosted `kong.yml` does, on the
+   catch-all `/auth/v1/` route. That breaks every OAuth endpoint here (discovery,
+   authorize, token, and especially `/auth/v1/oauth/clients/register` for DCR — not
+   `/auth/v1/oauth/register`, verify the real path against your instance's own
+   `.well-known/oauth-authorization-server` `registration_endpoint` rather than assuming),
+   since a spec-compliant OAuth client like Claude has no reason to send a Supabase-specific
+   header. Fix: add "open" routes (CORS plugin only, no key-auth) for those specific paths,
+   mirroring whatever pattern your `kong.yml` already uses for other unauthenticated routes
+   (e.g. `/auth/v1/verify`, `/auth/v1/.well-known/jwks.json`).
+3. Copy `mcp-server/.env.example` to `mcp-server/.env` and fill in your Supabase project's
    URL/anon key, plus `MCP_ISSUER_URL` (your project's `/auth/v1`) and `MCP_RESOURCE_URL`
-   (the public URL you'll expose this server at).
-3. Register at least one OAuth client for testing (Dynamic Client Registration is off by
-   default — see [Rollout](#rollout)):
+   (the public URL you'll expose this server at — see the [Transport](#transport) section's
+   note on why this has to match exactly).
+4. Register at least one OAuth client for testing if you're keeping Dynamic Client
+   Registration off (see [Rollout](#rollout) — production runs with it on):
    ```
    POST {SUPABASE_URL}/auth/v1/admin/oauth/clients
    Headers: apikey: <service-role key>, Authorization: Bearer <service-role key>
    Body: { "client_name": "...", "redirect_uris": [...], "grant_types": ["authorization_code","refresh_token"], "response_types": ["code"], "token_endpoint_auth_method": "none" }
    ```
-4. Run it: `docker build -f mcp-server/Dockerfile -t astraphe-mcp .` from the **repo
+5. Run it: `docker build -f mcp-server/Dockerfile -t astraphe-mcp .` from the **repo
    root** (not `mcp-server/` — the image needs `backend/app` too), then
    `docker run -p 8090:8090 --env-file mcp-server/.env astraphe-mcp`. Or run directly:
    `PYTHONPATH=backend:mcp-server uvicorn astraphe_mcp.asgi:app --app-dir mcp-server --port 8090`.
-5. Streamable HTTP + OAuth needs a public HTTPS endpoint for a client like Claude Desktop
+6. Streamable HTTP + OAuth needs a public HTTPS endpoint for a client like Claude Desktop
    to reach — put it behind whatever reverse proxy/tunnel you already use for the rest of
    your Astraphe deployment.
 
 There is no tracked Kubernetes manifest for this service (same as `astraphe-api` — see
 [DEPLOYMENT.md](./DEPLOYMENT.md)): the maintainer's reference instance has its own
-`astraphe-mcp` Deployment/Service created once, out of band, on the cluster, which CI then
-patches the image on via `.github/workflows/deploy.yml`'s `build-mcp` job. If you're
-self-hosting, create the equivalent for your own infrastructure.
+`astraphe-mcp` Deployment/Service created once, out of band, on the cluster. CI then
+builds+publishes the image (`build-mcp` job, tagged both `:latest` and by commit SHA) and,
+once the `mcp-server` test job has passed, rolls it out (`deploy-mcp` job) via
+`kubectl set image deployment/astraphe-mcp` to that commit-SHA tag — same pattern
+`astraphe-api`'s own `deploy` job uses, and deliberately *not* just re-pointing at
+`:latest`: a `kubectl set image` to an unchanged tag is a no-op to Kubernetes (no spec
+diff means no rollout), so tagging by commit SHA is what makes each deploy actually land
+without a manual `kubectl rollout restart`. If you're self-hosting, create the equivalent
+for your own infrastructure — including scoping whatever CI ServiceAccount/Role you use to
+the specific Deployment name(s) it needs to patch, not a wildcard.
 
 ## Rollout
 
@@ -185,15 +245,14 @@ self-hosting, create the equivalent for your own infrastructure.
    verified the full `backend/tests` suite and a real password-grant login still work
    against it (they do — nothing in `backend/` manually decodes a JWT, so the signing
    algorithm change is invisible to existing code).
-2. **Phase 1 — this PR.** Read-only tools + auth, with Dynamic Client Registration off
-   (test clients registered manually via the admin API above). Keeps the surface area
-   small while the auth flow gets real-world use.
-3. **Phase 2.** Turn on Dynamic Client Registration once Phase 1 has proven stable — this
-   is the point arbitrary MCP clients (not just manually-registered test ones) can
-   self-register and connect. **Rate limiting must land before this phase**: `config.py`'s
-   `REDIS_URL`/`MCP_RATE_LIMIT_RPM` settings exist but nothing calls
-   `backend/app/core/rate_limiter.py`'s `RateLimiter` yet — fine while only manually-vetted
-   test clients can connect, not once anyone can self-register.
+2. **Phase 1 — done.** Read-only tools + auth, with Dynamic Client Registration off
+   initially (test clients registered manually via the admin API above). Kept the surface
+   area small while the auth flow got real-world use.
+3. **Phase 2 — done.** Dynamic Client Registration is on in production — arbitrary MCP
+   clients (not just manually-registered test ones) can self-register and connect. Landed
+   together with the per-athlete rate limit this phase was gated on (see
+   [Rate limiting](#rate-limiting)) — `astraphe_mcp/tools/_call.py::call_handler()` now
+   calls `backend/app/core/rate_limiter.py`'s `RateLimiter` on every tool call.
 4. **Phase 3.** Write tools (`log_workout`, `update_workout`, `log_biometrics`,
    `schedule_workout`, `update_planned_workout`, `delete_planned_workout`, `save_memory`,
    `update_memory`), gated separately from read access. Since GoTrue's OAuth Server
