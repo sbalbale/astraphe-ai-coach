@@ -41,7 +41,7 @@ def test_asgi_app_wires_transport_security_from_settings():
     from astraphe_mcp.asgi import mcp
     from astraphe_mcp.config import settings
 
-    security = mcp._session_manager.security_settings
+    security = mcp.session_manager.security_settings
     assert security is not None
 
     resource_netloc = str(settings.MCP_RESOURCE_URL).split("://", 1)[1].rstrip("/")
