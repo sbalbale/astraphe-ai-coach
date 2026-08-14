@@ -190,7 +190,10 @@ self-hosting, create the equivalent for your own infrastructure.
    small while the auth flow gets real-world use.
 3. **Phase 2.** Turn on Dynamic Client Registration once Phase 1 has proven stable — this
    is the point arbitrary MCP clients (not just manually-registered test ones) can
-   self-register and connect.
+   self-register and connect. **Rate limiting must land before this phase**: `config.py`'s
+   `REDIS_URL`/`MCP_RATE_LIMIT_RPM` settings exist but nothing calls
+   `backend/app/core/rate_limiter.py`'s `RateLimiter` yet — fine while only manually-vetted
+   test clients can connect, not once anyone can self-register.
 4. **Phase 3.** Write tools (`log_workout`, `update_workout`, `log_biometrics`,
    `schedule_workout`, `update_planned_workout`, `delete_planned_workout`, `save_memory`,
    `update_memory`), gated separately from read access. Since GoTrue's OAuth Server

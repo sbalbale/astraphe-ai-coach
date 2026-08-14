@@ -34,9 +34,13 @@ class Settings(BaseSettings):
     # docs/MCP_SERVER.md) — flip once the auth flow has been proven stable in production.
     MCP_ALLOW_DYNAMIC_CLIENT_REGISTRATION: bool = False
 
-    # --- Rate limiting (shares the backend's Redis if REDIS_URL points at the same instance;
-    # uses a distinct key prefix in app/core/rate_limiter.py callers so MCP tool calls don't
-    # share quota with in-app coach calls) ---
+    # --- Rate limiting: NOT YET WIRED UP. These settings are reserved for when
+    # astraphe_mcp/tools/_call.py starts calling backend/app/core/rate_limiter.py's
+    # RateLimiter directly (reusing the class, with a distinct key prefix so MCP tool
+    # calls don't share quota with in-app coach calls) — tracked for before Phase 2
+    # (Dynamic Client Registration) opens this server to arbitrary clients, not required
+    # for Phase 1's manually-registered-client rollout. Don't assume traffic is limited
+    # just because these fields exist.
     REDIS_URL: str | None = None
     MCP_RATE_LIMIT_RPM: int = 30
 

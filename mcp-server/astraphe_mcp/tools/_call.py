@@ -23,7 +23,7 @@ def _clean(args: dict[str, Any]) -> dict[str, Any]:
 
 async def call_handler(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
     access_token_info = get_access_token()
-    if access_token_info is None:
+    if access_token_info is None or not access_token_info.subject:
         raise ToolError("Not authenticated")
 
     from app.dependencies import run_supabase_call  # backend/app on PYTHONPATH, see docs/MCP_SERVER.md
@@ -31,7 +31,10 @@ async def call_handler(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
 
     db = get_scoped_db(access_token_info.token)
     try:
-        athlete_id = await resolve_athlete_id(db, access_token_info.token)
+        # subject is already the verified user_id (AstrapheTokenVerifier set it from the
+        # same auth.get_user() call that validated this token) — reuse it instead of a
+        # second auth.get_user() round trip inside resolve_athlete_id.
+        athlete_id = await resolve_athlete_id(db, access_token_info.token, access_token_info.subject)
     except AthleteProfileNotFound as e:
         raise ToolError(str(e)) from e
 

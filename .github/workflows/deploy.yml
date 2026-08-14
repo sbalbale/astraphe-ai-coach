@@ -80,8 +80,8 @@ jobs:
       - name: Install dependencies
         run: pip install -r backend/requirements.txt -r mcp-server/requirements.txt
 
-      - name: Run mcp-server tests
-        run: python -m pytest --cov=astraphe_mcp --cov-report=term-missing
+      - name: Run mcp-server tests with coverage gate (80%)
+        run: python -m pytest --cov=astraphe_mcp --cov-report=term-missing --cov-fail-under=80
         working-directory: mcp-server
 
   mobile:

@@ -39,7 +39,13 @@
     ['/auth/callback', '/auth/reset-password'].includes($page.url.pathname)
   );
   let isOnboardingRoute = $derived($page.url.pathname === '/onboarding');
-  let isNoShellRoute = $derived(isAuthRoute || isOnboardingRoute);
+  // The MCP OAuth consent screen: needs to render standalone (no Sidebar/BottomNav) and,
+  // for a logged-out visitor, must NOT be redirected to /auth/signin the way every other
+  // route is below — that redirect drops the ?authorization_id= query param, permanently
+  // losing the pending OAuth request. See mobile/src/routes/oauth/consent/+page.svelte
+  // and docs/MCP_SERVER.md.
+  let isOAuthRoute = $derived($page.url.pathname.startsWith('/oauth/'));
+  let isNoShellRoute = $derived(isAuthRoute || isOnboardingRoute || isOAuthRoute);
   const mobileSubtabRoutes = ['/recovery', '/sleep', '/strain', '/dashboard', '/training', '/zones'];
   let hasMobileSubtabs = $derived(mobileSubtabRoutes.includes($page.url.pathname));
   /** Logo header already adds bottom spacing; skip duplicate top pad on these pages. */
@@ -111,10 +117,12 @@
   $effect(() => {
     if (authStore.loading) return;
 
-    // Signed out: everything except /auth/* requires signin.
+    // Signed out: everything except /auth/* and /oauth/* requires signin. /oauth/consent
+    // handles its own sign-in prompt (preserving ?authorization_id=) rather than being
+    // bounced to /auth/signin here, which would drop it.
     if (!authStore.user) {
       if (athleteStore.initialLoadDone) athleteStore.reset();
-      if (!isAuthRoute) goto('/auth/signin', { replaceState: true });
+      if (!isAuthRoute && !isOAuthRoute) goto('/auth/signin', { replaceState: true });
       return;
     }
 

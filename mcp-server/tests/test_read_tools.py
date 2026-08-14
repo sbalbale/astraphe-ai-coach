@@ -81,6 +81,75 @@ async def test_call_handler_requires_authentication(monkeypatch):
         await call_handler("list_workouts", {})
 
 
+MINIMAL_VALID_ARGS: dict[str, dict] = {
+    "list_workouts": {},
+    "get_workout_summary": {},
+    "get_workout_streams_window": {},
+    "list_planned_workouts": {},
+    "get_training_load_series": {},
+    "get_biometrics_for_dates": {"dates": ["2026-08-01"]},
+    "summarize_workouts": {},
+    "compare_workouts": {"workout_id_b": "w2"},
+    "get_athlete_zones": {},
+    "list_memories": {},
+    "simulate_training_impact": {"target_tss": 80, "target_date": "2026-08-20"},
+    "calculate_nutrition": {"estimated_duration_minutes": 60, "estimated_tss": 70},
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool_name,args", MINIMAL_VALID_ARGS.items())
+async def test_every_v1_tool_reaches_its_handler(mcp, fake_authenticated_call, monkeypatch, tool_name, args):
+    """One parametrized smoke test per registered tool: stub TOOL_HANDLERS so this only
+    proves the wrapper (typed params -> args dict -> call_handler -> TOOL_HANDLERS[name])
+    actually wires up correctly for every tool, not that the underlying business logic is
+    correct (that's backend/tests/test_coach_tools*.py's job)."""
+    received = {}
+
+    def fake_handler(call_args, athlete_id, db):
+        received["args"] = call_args
+        received["athlete_id"] = athlete_id
+        return {"ok": True}
+
+    monkeypatch.setitem(
+        __import__("app.services.coach_tools", fromlist=["TOOL_HANDLERS"]).TOOL_HANDLERS,
+        tool_name,
+        fake_handler,
+    )
+
+    result = await mcp.call_tool(tool_name, args)
+
+    assert result.is_error is not True, f"{tool_name} returned an error: {result}"
+    assert _result_dict(result) == {"ok": True}
+    assert received["athlete_id"]  # never empty/None — resolved server-side
+
+
+@pytest.mark.asyncio
+async def test_call_handler_translates_missing_athlete_profile(fake_authenticated_call):
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    fake_authenticated_call._table_seeds["athletes"] = []
+    with pytest.raises(ToolError, match="athlete profile"):
+        await call_handler("list_workouts", {})
+
+
+@pytest.mark.asyncio
+async def test_call_handler_translates_handler_exceptions(fake_authenticated_call, monkeypatch):
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    def broken_handler(args, athlete_id, db):
+        raise RuntimeError("boom")
+
+    monkeypatch.setitem(
+        __import__("app.services.coach_tools", fromlist=["TOOL_HANDLERS"]).TOOL_HANDLERS,
+        "list_workouts",
+        broken_handler,
+    )
+
+    with pytest.raises(ToolError, match="list_workouts failed: boom"):
+        await call_handler("list_workouts", {})
+
+
 @pytest.mark.asyncio
 async def test_none_args_are_dropped_before_reaching_handler(fake_authenticated_call, monkeypatch):
     """MCPServer always passes every declared parameter (None for unset optional ones);

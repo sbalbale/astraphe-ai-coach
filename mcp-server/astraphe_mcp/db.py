@@ -38,23 +38,32 @@ def get_scoped_db(access_token: str) -> Client:
     return db
 
 
-async def resolve_athlete_id(db: Client, access_token: str) -> str:
+def _prune_expired_athlete_id_cache_entries(now: float) -> None:
+    expired = [
+        token for token, (_, cached_at) in _athlete_id_cache.items()
+        if now - cached_at >= _ATHLETE_ID_CACHE_TTL_SECONDS
+    ]
+    for token in expired:
+        del _athlete_id_cache[token]
+
+
+async def resolve_athlete_id(db: Client, access_token: str, user_id: str) -> str:
     """Resolve the calling user's athletes.id from their verified access token.
 
-    Never derived from client-supplied input — always looked up server-side from the
-    user_id embedded in the (already-verified) token, same invariant as
-    backend/app/dependencies.py:get_current_athlete().
+    `user_id` must come from the same token's AccessToken.subject (set by
+    AstrapheTokenVerifier from the auth.get_user() call already made during token
+    verification) — never re-derive it here with a second auth.get_user() round trip, and
+    never accept it as client-supplied input. `athlete_id` itself is always looked up
+    server-side, same invariant as backend/app/dependencies.py:get_current_athlete().
     """
+    now = time.monotonic()
     cached = _athlete_id_cache.get(access_token)
     if cached is not None:
         athlete_id, cached_at = cached
-        if time.monotonic() - cached_at < _ATHLETE_ID_CACHE_TTL_SECONDS:
+        if now - cached_at < _ATHLETE_ID_CACHE_TTL_SECONDS:
             return athlete_id
 
     from app.dependencies import run_supabase_call  # backend/app on PYTHONPATH, see docs/MCP_SERVER.md
-
-    user_res = await run_supabase_call(lambda: db.auth.get_user(access_token))
-    user_id = user_res.user.id
 
     athlete_res = await run_supabase_call(
         lambda: db.table("athletes").select("id").eq("user_id", user_id).execute()
@@ -63,5 +72,9 @@ async def resolve_athlete_id(db: Client, access_token: str) -> str:
         raise AthleteProfileNotFound("No Astraphe athlete profile found for this account")
 
     athlete_id = athlete_res.data[0]["id"]
-    _athlete_id_cache[access_token] = (athlete_id, time.monotonic())
+    # Sweep expired entries on every cache miss instead of a background task — bounds
+    # growth in a long-running process without needing a scheduler. O(n) on miss only,
+    # not on every lookup.
+    _prune_expired_athlete_id_cache_entries(now)
+    _athlete_id_cache[access_token] = (athlete_id, now)
     return athlete_id

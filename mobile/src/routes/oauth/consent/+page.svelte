@@ -88,14 +88,18 @@
     }
   }
 
-  let authorizationFetchStarted = false;
-
   // authStore hydrates asynchronously on app load; wait for it before deciding whether
   // to show the sign-in prompt or fetch the pending request. Same top-level $effect
-  // idiom as +layout.svelte's own auth-gating effect.
+  // idiom as +layout.svelte's own auth-gating effect. Reads authStore.session directly
+  // (not a one-shot latch) so this correctly re-fires if session populates after loading
+  // flips false, instead of getting stuck forever on a race between the two.
   $effect(() => {
-    if (authStore.loading || authorizationFetchStarted) return;
-    authorizationFetchStarted = true;
+    if (!authorizationId) {
+      status = 'missing_id';
+      return;
+    }
+    if (authStore.loading || !authStore.session) return;
+    if (status !== 'loading') return; // already fetched (or failed) — don't refetch
     void loadAuthorization();
   });
 </script>

@@ -40,11 +40,12 @@ class AstrapheTokenVerifier(TokenVerifier):
         return AccessToken(
             token=token,
             client_id=client_id or "",
-            # Read-only for the whole of Phase 1 (see docs/MCP_SERVER.md) — no per-token
-            # scope distinction to make yet; write tools in Phase 3 will gate on a real
-            # "astraphe:write" scope read from the token/consent grant instead of this
-            # hardcoded value.
-            scopes=["astraphe:read"],
+            # "openid" is the real GoTrue-granted scope this must match (see server.py's
+            # required_scopes — GoTrue's OAuth Server only supports openid/profile/email/
+            # phone). "astraphe:read" is an app-level marker only, not enforced by
+            # anything yet — Phase 3 write tools will need a real gating mechanism since
+            # GoTrue can't grant a custom "astraphe:write" scope either.
+            scopes=["openid", "astraphe:read"],
             resource=str(settings.MCP_RESOURCE_URL),
             subject=user.id,
         )

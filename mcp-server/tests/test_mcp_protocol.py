@@ -28,8 +28,42 @@ def test_protected_resource_metadata_is_published(app):
     resp = client.get("/.well-known/oauth-protected-resource")
     assert resp.status_code == 200
     body = resp.json()
-    assert body["scopes_supported"] == ["astraphe:read"]
+    # Must be a scope GoTrue's OAuth Server actually supports (openid/profile/email/
+    # phone) — a custom scope here gets rejected by GoTrue at /oauth/authorize before a
+    # client can ever get a token. See server.py's required_scopes comment.
+    assert body["scopes_supported"] == ["openid"]
     assert body["bearer_methods_supported"] == ["header"]
+
+
+@pytest.mark.asyncio
+async def test_required_scopes_are_a_subset_of_what_the_verifier_grants(app, monkeypatch):
+    """Regression test: server.py's AuthSettings(required_scopes=...) must only list
+    scopes AstrapheTokenVerifier actually puts on a verified AccessToken. A published
+    required scope the verifier never grants means every real login gets rejected with
+    403 insufficient_scope even after a successful GoTrue token exchange — exactly what
+    happened when required_scopes was ["astraphe:read"] but the verifier granted a
+    different set."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, patch
+
+    from astraphe_mcp.auth.token_verifier import AstrapheTokenVerifier
+
+    client = TestClient(app)
+    published_scopes = client.get("/.well-known/oauth-protected-resource").json()["scopes_supported"]
+
+    verifier = AstrapheTokenVerifier()
+    fake_user = SimpleNamespace(id="user-123", app_metadata={})
+    with patch.object(
+        AstrapheTokenVerifier, "_get_user", new=AsyncMock(return_value=SimpleNamespace(user=fake_user))
+    ):
+        access_token = await verifier.verify_token("a-valid-token")
+
+    assert access_token is not None
+    for scope in published_scopes:
+        assert scope in access_token.scopes, (
+            f"'{scope}' is published as required/supported but AstrapheTokenVerifier "
+            f"never grants it (grants {access_token.scopes}) — every real login would 403"
+        )
 
 
 def test_unauthenticated_request_gets_401_with_challenge(app):
