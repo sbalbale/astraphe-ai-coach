@@ -9,10 +9,38 @@ from __future__ import annotations
 
 from typing import Any
 
+from fastapi import HTTPException
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.mcpserver.exceptions import ToolError
 
+from astraphe_mcp.config import settings
 from astraphe_mcp.db import AthleteProfileNotFound, get_scoped_db, resolve_athlete_id
+
+# Reused unmodified from the backend (see backend/app/core/rate_limiter.py) — Redis
+# sorted-set sliding window when REDIS_URL is configured, in-process fallback
+# otherwise. Note this picks up *backend's* REDIS_URL (via app.core.redis.get_redis()'s
+# own settings import), not a separate mcp-server one — same Redis instance, one shared
+# rate-limiting backend, deliberately (see docs/MCP_SERVER.md). Distinct key namespace
+# (":mcp:" instead of dependencies.py's ":ai:") so a user's MCP tool-call budget is
+# tracked separately from their in-app coach quota, matching the ":ai:minute"/":ai:hour"
+# key-shape convention there.
+_RATE_LIMIT_WINDOW_SECONDS = 60
+_rate_limiter_instance = None
+
+
+def _rate_limiter():
+    # Lazy singleton (not a top-level `RateLimiter()` call) for the same reason the
+    # backend/app imports below are deferred into call_handler(): backend/app needs
+    # PYTHONPATH wired up first (see docs/MCP_SERVER.md), which isn't guaranteed at
+    # plain module-import time (e.g. test collection). Cached after the first call so
+    # its in-process sliding-window state (the Redis fallback) actually persists across
+    # calls instead of resetting every request.
+    global _rate_limiter_instance
+    if _rate_limiter_instance is None:
+        from app.core.rate_limiter import RateLimiter
+
+        _rate_limiter_instance = RateLimiter()
+    return _rate_limiter_instance
 
 
 def _clean(args: dict[str, Any]) -> dict[str, Any]:
@@ -37,6 +65,16 @@ async def call_handler(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
         athlete_id = await resolve_athlete_id(db, access_token_info.token, access_token_info.subject)
     except AthleteProfileNotFound as e:
         raise ToolError(str(e)) from e
+
+    try:
+        await _rate_limiter().require(
+            key=f"{athlete_id}:mcp:minute",
+            limit=settings.MCP_RATE_LIMIT_RPM,
+            window_seconds=_RATE_LIMIT_WINDOW_SECONDS,
+            detail=f"Rate limit exceeded: max {settings.MCP_RATE_LIMIT_RPM} tool calls per minute.",
+        )
+    except HTTPException as e:
+        raise ToolError(str(e.detail)) from e
 
     handler = TOOL_HANDLERS.get(tool_name)
     if handler is None:

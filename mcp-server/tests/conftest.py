@@ -43,6 +43,21 @@ def reset_athlete_id_cache():
     _athlete_id_cache.clear()
 
 
+@pytest.fixture(autouse=True)
+def reset_mcp_rate_limiter():
+    """astraphe_mcp.tools._call's RateLimiter singleton is process-global too (same
+    reasoning as reset_athlete_id_cache above) — its in-memory sliding window persists
+    across tests in the same pytest session. Every test in this suite uses the same
+    MOCK_ATHLETE_ID, so without resetting this, enough tool-calling tests in one run
+    would start tripping MCP_RATE_LIMIT_RPM and failing for reasons unrelated to what
+    they're actually testing."""
+    from astraphe_mcp.tools._call import _rate_limiter
+
+    _rate_limiter()._memory.clear()
+    yield
+    _rate_limiter()._memory.clear()
+
+
 @pytest.fixture
 def mock_athlete_id() -> str:
     return MOCK_ATHLETE_ID

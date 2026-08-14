@@ -30,18 +30,19 @@ class Settings(BaseSettings):
     MCP_ISSUER_URL: AnyHttpUrl = AnyHttpUrl("http://127.0.0.1:54321/auth/v1")
     MCP_RESOURCE_URL: AnyHttpUrl = AnyHttpUrl("http://127.0.0.1:8090")
 
-    # Dynamic client registration stays off through Phase 1 of the rollout (see
-    # docs/MCP_SERVER.md) — flip once the auth flow has been proven stable in production.
+    # Dynamic client registration is on in production (see docs/MCP_SERVER.md) — any
+    # MCP client can self-register without a manually-issued client ID/secret, which is
+    # exactly why MCP_RATE_LIMIT_RPM below is enforced rather than aspirational.
     MCP_ALLOW_DYNAMIC_CLIENT_REGISTRATION: bool = False
 
-    # --- Rate limiting: NOT YET WIRED UP. These settings are reserved for when
-    # astraphe_mcp/tools/_call.py starts calling backend/app/core/rate_limiter.py's
-    # RateLimiter directly (reusing the class, with a distinct key prefix so MCP tool
-    # calls don't share quota with in-app coach calls) — tracked for before Phase 2
-    # (Dynamic Client Registration) opens this server to arbitrary clients, not required
-    # for Phase 1's manually-registered-client rollout. Don't assume traffic is limited
-    # just because these fields exist.
-    REDIS_URL: str | None = None
+    # --- Rate limiting: enforced in astraphe_mcp/tools/_call.py via backend/app/core/
+    # rate_limiter.py's RateLimiter, reused unmodified, with a distinct key prefix so
+    # MCP tool calls don't share quota with in-app coach calls. Deliberately no REDIS_URL
+    # field here — that RateLimiter reads backend's own app.config.settings.REDIS_URL
+    # (via app.core.redis.get_redis()) to get a shared Redis instance/state, not a
+    # separate one; set REDIS_URL on the backend service to make this multi-instance-safe,
+    # otherwise it falls back to this process's own in-memory state (fine for a single
+    # replica, resets on restart).
     MCP_RATE_LIMIT_RPM: int = 30
 
     model_config = SettingsConfigDict(

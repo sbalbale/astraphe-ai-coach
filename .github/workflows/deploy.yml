@@ -148,12 +148,13 @@ jobs:
             ghcr.io/sbalbale/astraphe-api:${{ github.sha }}
 
   build-mcp:
-    # Independent of `build` (astraphe-api) — separate image, separate service. No
-    # deploy step yet: the astraphe-mcp Deployment/Service don't exist on the cluster
-    # yet (same one-time-manual-kubectl-apply pattern astraphe-api's own Deployment/
-    # Service were created with — see docs/MCP_SERVER.md). This job only builds/
-    # publishes the image so it's ready once that one-time setup happens.
+    # Independent of `build` (astraphe-api) and of the `mcp-server` test job — same
+    # "build doesn't wait on tests, deploy does" split as `build`/`backend`/`deploy`
+    # above. `deploy-mcp` below is what actually requires `mcp-server` to have passed.
     runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ github.sha }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -254,8 +255,9 @@ jobs:
         # VIP; kubectl there runs against a kubeconfig for a narrowly-scoped
         # ServiceAccount (`ci-deployer`, namespace `astraphe`) provisioned
         # ahead of time at /root/.kube/ci-deployer-config on all 3 nodes —
-        # it can only patch the astraphe-api Deployment's image and read
-        # rollout status, nothing else.
+        # it can only patch the astraphe-api/astraphe-mcp Deployments' images
+        # and read rollout status, nothing else (see deploy-mcp below for the
+        # latter).
         run: |
           ssh root@ssh.astrapheai.com env IMAGE_TAG="${{ needs.build.outputs.image_tag }}" bash -s <<'ENDSSH'
             set -euo pipefail
@@ -264,6 +266,65 @@ jobs:
               astraphe-api="ghcr.io/sbalbale/astraphe-api:${IMAGE_TAG}"
             kubectl rollout status deployment/astraphe-api -n astraphe --timeout=180s
             kubectl get pods -n astraphe -l app=astraphe-api
+          ENDSSH
+
+  deploy-mcp:
+    needs: [build-mcp, mcp-server]
+    # Separate job from `deploy` (astraphe-api) rather than an extra step in it: distinct
+    # Deployment, distinct image, distinct set of required upstream jobs (astraphe-mcp
+    # doesn't depend on `backend`'s or `mobile`'s tests passing, only its own). Previously
+    # build-mcp published an image but nothing ever rolled it out — every deploy needed a
+    # manual `kubectl rollout restart` after the fact (see docs/MCP_SERVER.md). Tagging by
+    # commit SHA here (not just floating `:latest`) is what actually fixes that: a
+    # `kubectl set image` to a new, distinct tag always triggers a real rollout, unlike
+    # repointing at the same `:latest` tag which k8s sees as no spec change at all.
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install cloudflared
+        run: |
+          curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
+            -o cloudflared
+          chmod +x cloudflared
+          sudo mv cloudflared /usr/local/bin/
+          cloudflared --version
+
+      - name: Setup SSH via Cloudflare Tunnel
+        env:
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.PROXMOX_SSH_KEY }}" > ~/.ssh/id_ed25519_deploy
+          chmod 600 ~/.ssh/id_ed25519_deploy
+
+          printf '#!/bin/bash\nexec cloudflared access ssh --hostname "$1" --service-token-id "%s" --service-token-secret "%s"\n' \
+            "$CF_ACCESS_CLIENT_ID" "$CF_ACCESS_CLIENT_SECRET" > /tmp/cf-proxy.sh
+          chmod +x /tmp/cf-proxy.sh
+
+          cat >> ~/.ssh/config << 'EOF'
+          Host ssh.astrapheai.com
+            HostName ssh.astrapheai.com
+            User root
+            IdentityFile ~/.ssh/id_ed25519_deploy
+            ProxyCommand /tmp/cf-proxy.sh %h
+            StrictHostKeyChecking no
+            BatchMode yes
+          EOF
+
+      - name: Deploy to k3s
+        run: |
+          ssh root@ssh.astrapheai.com env IMAGE_TAG="${{ needs['build-mcp'].outputs.image_tag }}" bash -s <<'ENDSSH'
+            set -euo pipefail
+            export KUBECONFIG=/root/.kube/ci-deployer-config
+            kubectl set image deployment/astraphe-mcp -n astraphe \
+              astraphe-mcp="ghcr.io/sbalbale/astraphe-mcp:${IMAGE_TAG}"
+            kubectl rollout status deployment/astraphe-mcp -n astraphe --timeout=180s
+            kubectl get pods -n astraphe -l app=astraphe-mcp
           ENDSSH
 
   migrate:
