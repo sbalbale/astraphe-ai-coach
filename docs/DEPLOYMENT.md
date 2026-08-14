@@ -7,6 +7,7 @@ This doc has two parts: **how the maintainer's reference instance is deployed** 
 This section describes `sbalbale/astraphe-ai-coach`'s own production deployment — not something a contributor needs to set up, and not required to run this project yourself. Skip to [Self-Hosting](#self-hosting) below if that's what you're after.
 
 - Backend API: GitHub Actions -> GHCR container image -> `kubectl set image` against a private k3s cluster, reached over a Cloudflare Access SSH tunnel.
+- MCP server: same GHCR/k3s pattern, separate image (`ghcr.io/sbalbale/astraphe-mcp`) and separate `astraphe-mcp` Deployment/Service — see [MCP_SERVER.md](./MCP_SERVER.md).
 - Frontend: GitHub Actions -> Firebase Hosting, via a custom REST-API deploy script (`mobile/scripts/deploy-firebase-hosting-rest.mjs`).
 - Database migrations: GitHub Actions SSHes in and runs `supabase db push` against the cluster's Postgres pod via `kubectl port-forward`.
 

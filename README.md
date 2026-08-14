@@ -123,6 +123,7 @@ astraphe-ai-coach/
 | [MOBILE.md](./docs/MOBILE.md) | Svelte 5 runes, Capacitor config, HealthKit background runner |
 | [STRAVA_INTEGRATION.md](./docs/STRAVA_INTEGRATION.md) | Strava OAuth, sync, and webhook setup |
 | [GARMIN_INTEGRATION.md](./docs/GARMIN_INTEGRATION.md) | Garmin Connect integration and API access notes |
+| [MCP_SERVER.md](./docs/MCP_SERVER.md) | Connect your Astraphe data to Claude and other MCP clients |
 
 ---
 

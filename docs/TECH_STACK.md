@@ -103,6 +103,16 @@ Important tables include:
 - `activity_laps`
 - `push_tokens`
 
+## MCP Server
+
+`mcp-server/` is a standalone service that exposes read-only Astraphe data to any
+MCP-compatible AI client (Claude Desktop, claude.ai Connectors, Claude Code) via the
+official `mcp` Python SDK (`FastMCP`/`MCPServer`, v2.0.0+), Streamable HTTP transport, and
+OAuth 2.1 (RFC 8414/9728/7591/8707). Supabase Auth's OAuth Server mode acts as the
+authorization server — see [MCP_SERVER.md](./MCP_SERVER.md) for the full architecture,
+auth flow, and tool reference. It imports `backend/app`'s tool-handler functions directly
+rather than duplicating them.
+
 ## Redis
 
 Redis is optional locally and recommended in production.
@@ -136,7 +146,8 @@ If Redis is unavailable, rate limiting falls back to process-local memory.
 
 Current repo automation:
 
-- Backend: `.github/workflows/deploy.yml` builds `ghcr.io/sbalbale/astraphe-api`, deploys to Proxmox over Cloudflare Access SSH, and runs migrations in the remote database container.
+- Backend: `.github/workflows/deploy.yml` builds `ghcr.io/sbalbale/astraphe-api` and deploys it to the k3s cluster (see [DEPLOYMENT.md](./DEPLOYMENT.md) — this doc's older Proxmox/Cloud Run mentions predate that migration).
+- MCP server: the same workflow's `mcp-server`/`build-mcp` jobs test and publish `ghcr.io/sbalbale/astraphe-mcp` — see [MCP_SERVER.md](./MCP_SERVER.md).
 - Frontend: Firebase Hosting workflows build `mobile/` with pnpm and deploy live/preview channels.
 
 `backend/cloudbuild.yaml` remains in the repo as an alternate/historical Cloud Run build pipeline and should not be described as the primary deployment path unless it is reactivated.
@@ -172,4 +183,13 @@ pnpm run dev
 pnpm run check
 pnpm run test
 pnpm run build
+```
+
+MCP server:
+
+```bash
+cd mcp-server
+pip install -r ../backend/requirements.txt -r requirements.txt
+python -m pytest
+uvicorn astraphe_mcp.asgi:app --reload --port 8090
 ```

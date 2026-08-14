@@ -17,6 +17,15 @@ FastAPI backend
           +--> Redis rate limits + activity caches
           +--> Google GenAI coach, analysis, embeddings, grounding
           +--> Strava, WHOOP, Garmin, Resend, FCM/VAPID
+
+Claude / any MCP client
+  OAuth 2.1 (Supabase Auth as authorization server) + Streamable HTTP
+          |
+          v
+MCP server (mcp-server/) -- separate service, imports backend/app's
+  tool handlers directly; RLS-scoped by the caller's own token
+          |
+          +--> Supabase Postgres/Auth/RLS (same project as the backend)
 ```
 
 ## Runtime Layers
@@ -52,6 +61,16 @@ Routers:
 - `admin`: app-metadata user configuration.
 - `notifications`: push token registration and non-production test send.
 - `debug`: development-only connection/RLS diagnostics.
+
+### MCP Server
+
+`mcp-server/` is a separate service, not a router on the FastAPI backend — see
+[MCP_SERVER.md](./MCP_SERVER.md) for the full design. It exposes read-only Astraphe data
+(workouts, biometrics, training load, coach memory) to external MCP clients like Claude,
+authenticated via Supabase Auth's OAuth 2.1 Server mode rather than the interactive session
+JWT the mobile app uses. It imports `backend/app/services/coach_tools.py`'s tool-handler
+functions directly instead of duplicating them, so its data-access behavior is identical to
+the in-app AI coach's.
 
 ### Data Layer
 
