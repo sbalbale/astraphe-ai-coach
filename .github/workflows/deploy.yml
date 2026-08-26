@@ -379,10 +379,15 @@ jobs:
         # this run instead of relying on a stateful git clone there. The CLI
         # expects to run from a project root containing a `supabase/`
         # subdirectory (supabase/config.toml, supabase/migrations/), not
-        # those files directly in cwd, so preserve that layout.
+        # those files directly in cwd, so preserve that layout. `supabase db
+        # push` validates the whole config.toml before doing anything,
+        # including auth.email.template.*.content_path — so the referenced
+        # supabase/templates/*.html must be synced too, or config validation
+        # fails before it ever gets to the migrations.
         run: |
           ssh root@ssh.astrapheai.com 'rm -rf /root/ci-migrate && mkdir -p /root/ci-migrate/supabase'
           scp -r supabase/migrations root@ssh.astrapheai.com:/root/ci-migrate/supabase/migrations
+          scp -r supabase/templates root@ssh.astrapheai.com:/root/ci-migrate/supabase/templates
           scp supabase/config.toml root@ssh.astrapheai.com:/root/ci-migrate/supabase/config.toml
 
       - name: Run new migrations
