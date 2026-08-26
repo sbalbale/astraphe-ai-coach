@@ -129,6 +129,17 @@ npx supabase db push
 
 For production, use the workflow or the operational process for the deployed Supabase/Postgres instance.
 
+## Auth Email Templates (Manual k3s Step — Not Automated)
+
+`supabase/templates/*.html` (confirmation, recovery, invite) are **not** wired into the production k3s `auth` (GoTrue) Deployment. CI only patches the `astraphe-api`/`astraphe-mcp` image tags and runs `supabase db push` for migrations — it never touches the auth pod's mailer config (see the note in `.github/workflows/deploy.yml` near the deploy steps). `supabase db push` / `supabase link` only push config for a Supabase Cloud-linked project; they have no effect on a self-hosted GoTrue pod's env vars.
+
+As a result, production currently sends GoTrue's generic default emails regardless of what's in `supabase/templates/`, until someone manually updates the live `auth` Deployment/Secret (outside this repo, since no `k8s/`/`infra/`/`deploy/` manifests are checked in here) to either:
+
+- Set `GOTRUE_MAILER_TEMPLATES_CONFIRMATION` / `GOTRUE_MAILER_TEMPLATES_RECOVERY` / `GOTRUE_MAILER_TEMPLATES_INVITE` to publicly reachable URLs serving these template files, or
+- Mount them into the pod via a ConfigMap + volume mount and point the equivalent `*_content_path`-style config at them.
+
+Until that manual change is made, the styled templates (including the emailed 6-digit verification code in `confirm.html`) only render when testing locally via `npx supabase start` (which does read `supabase/config.toml`'s `[auth.email.template.*]` blocks) — not in production.
+
 ## Health And Verification
 
 After backend deployment:

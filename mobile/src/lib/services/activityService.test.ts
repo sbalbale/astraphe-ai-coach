@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const getAuthHeadersMock = vi.fn(async () => ({}));
+const getAuthHeadersMock = vi.fn(async (..._args: unknown[]) => ({}));
 vi.mock('$lib/apiAuth', () => ({
   getAuthHeaders: (...args: unknown[]) => getAuthHeadersMock(...args)
 }));

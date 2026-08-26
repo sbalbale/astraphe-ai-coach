@@ -2,27 +2,14 @@
   import { onMount } from 'svelte';
   import type { Session } from '@supabase/supabase-js';
   import { supabase } from '$lib/supabase';
-  import { authStore } from '$lib/stores/authStore.svelte';
-  import { goto } from '$app/navigation';
+  import { completeAuthSession } from '$lib/utils/completeAuthSession';
 
   let sessionOk = $state<boolean | null>(null);
 
   async function handleConfirmedSession(session: Session) {
     if (sessionOk !== null) return;
     sessionOk = true;
-    try {
-      await fetch(`${import.meta.env.VITE_API_URL}/v1/athlete/onboard`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-          'Content-Type': 'application/json',
-        },
-      });
-    } catch {
-      // Non-fatal
-    }
-    authStore.applySession(session);
-    await goto('/onboarding', { replaceState: true });
+    await completeAuthSession(session);
   }
 
   onMount(() => {

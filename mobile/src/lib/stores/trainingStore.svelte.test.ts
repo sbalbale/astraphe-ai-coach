@@ -12,8 +12,9 @@ vi.mock('../api', () => ({
 }));
 
 import { trainingStore } from './trainingStore.svelte';
+import type { Workout } from '$lib/types/training';
 
-function workout(overrides: Record<string, unknown> = {}) {
+function workout(overrides: Partial<Workout> = {}): Workout {
   return {
     id: 'w1',
     date: '2026-05-20',

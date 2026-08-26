@@ -1,9 +1,13 @@
 import { goto } from '$app/navigation';
-import { resolve } from '$app/paths';
 
-/** Client-side nav — avoids full document loads that break iOS PWA standalone. */
+/**
+ * Client-side nav — avoids full document loads that break iOS PWA standalone.
+ * `path` is dynamic (tab ids, hrefs from data), so — like the same-origin
+ * link handler below — it goes straight to `goto()` rather than `resolve()`,
+ * whose typed-route overloads only accept statically-known literal routes.
+ */
 export function navTo(path: string): void {
-	void goto(resolve(path), { keepFocus: true, noScroll: true });
+	void goto(path, { keepFocus: true, noScroll: true });
 }
 
 /** Catch any remaining same-origin <a href> (profile menu, etc.) on iOS PWA. */
