@@ -1,4 +1,8 @@
 name: Build, Test, and Deploy
+# CI nudge: PR #29's squash-merge to main (689c2f4) never triggered a push
+# run — no webhook delivery, not a config issue. This comment-only touch
+# to a watched path forces a fresh push event to re-run the pipeline,
+# specifically to confirm the migrate job's fix actually works.
 
 on:
   push:
