@@ -89,9 +89,26 @@ Garmin contributes to:
   `garmin_activity_id` (unique fast-path dedup column, mirrors
   `strava_activity_id`), `elevation_gain_m`, and `calories`.
 - `activity_streams` / `activity_laps`: FIT-derived streams and laps (same keys as Strava).
-- `biometrics`: sleep / HRV / resting HR merged per-field via `metric_sources`
-  (a JSONB map of field → winning source) — there's no single row-level
-  `source` column. A day where Garmin's HRV value wins shows `hrv_source='garmin'`.
+- `biometrics`: sleep / HRV / resting HR / SpO2 / skin temp deviation merged
+  per-field via `metric_sources` (a JSONB map of field → winning source) —
+  there's no single row-level `source` column. A day where Garmin's HRV value
+  wins shows `hrv_source='garmin'`. `spo2_pct` comes from `dailySleepDTO.avgSpO2`
+  in the same sleep-summary call already made for sleep/HRV — no extra Garmin
+  API request.
+  `skin_temp_deviation_c` comes from the same call's top-level `avgSkinTempDeviationC`
+  (a sibling of `dailySleepDTO`, not nested inside it), gated on `skinTempDataExists`
+  since the value is stale/untrustworthy during Garmin's ~2-3 week baseline
+  calibration window. This is a **deviation from the athlete's own baseline**
+  (Garmin Connect's "Avg Skin Temp Change"), not an absolute reading like
+  WHOOP's `skin_temp` (`skin_temp_celsius`, ~33-35°C) — so it doesn't merge
+  directly with `skin_temp`. Instead, `process_and_save_biometrics` normalizes
+  any absolute-reading source into the same signal by subtracting a 7-day
+  trailing average of that athlete's own prior `skin_temp` values before it
+  reaches the merge step, so both Garmin's native deviation and WHOOP's
+  computed one land in `skin_temp_deviation_c` as directly comparable deltas
+  from personal baseline (see `docs/DATA_MODELS.md`). No official partner
+  Health API access is needed for either field — both come from the same
+  community-login `get_sleep_data()` call already in use.
 
 `workouts.source` and `biometrics.hrv_source` have included `'garmin'` since the
 initial schema — no migration was needed for those. `garmin_activity_id` and
@@ -138,7 +155,7 @@ Connect / backfill / poll tick
   -> map summary → WorkoutPayload(source="garmin")
   -> process_and_save_workout (canonical merge/dedup)
   -> download ORIGINAL FIT → parse streams/laps → activity_streams / activity_laps
-  -> fetch sleep / HRV / resting HR per day
+  -> fetch sleep (incl. SpO2, skin temp deviation) / HRV / resting HR per day
   -> process_and_save_biometrics
 ```
 
