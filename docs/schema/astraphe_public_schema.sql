@@ -96,6 +96,7 @@ CREATE TABLE public.biometrics (
   sleep_wakeup timestamp with time zone,
   skin_temp numeric(4,2),
   spo2_pct numeric(4,1),
+  skin_temp_deviation_c numeric(4,2),
   source_recovery_score smallint,
   sleep_score smallint,
   recovery_score smallint,

@@ -206,6 +206,9 @@ _BIOMETRIC_FIELD_SOURCES: dict[str, tuple[str, ...]] = {
     "resting_hr": ("garmin", "whoop", "intervals_icu", "healthkit", "manual"),
     "skin_temp": ("garmin", "whoop", "intervals_icu", "healthkit", "manual"),
     "spo2_pct": ("garmin", "whoop", "intervals_icu", "healthkit", "manual"),
+    # Deviation-from-baseline, not an absolute temperature -- only Garmin
+    # provides this today. See skin_temp for the absolute-reading column.
+    "skin_temp_deviation_c": ("garmin", "manual"),
     "sleep_duration_min": ("garmin", "whoop", "intervals_icu", "healthkit", "manual"),
     "sleep_in_bed_min": ("garmin", "whoop", "intervals_icu", "healthkit", "manual"),
     "sleep_deep_pct": ("garmin", "whoop", "intervals_icu", "healthkit", "manual"),
@@ -1172,6 +1175,9 @@ def process_and_save_biometrics(
     final_spo2, spo2_source = _choose_biometric_metric(
         existing, metric_sources, "spo2_pct", payload.spo2_pct, incoming_source
     )
+    final_skin_temp_dev, skin_temp_dev_source = _choose_biometric_metric(
+        existing, metric_sources, "skin_temp_deviation_c", payload.skin_temp_deviation_c, incoming_source
+    )
     final_weight, weight_source = _choose_biometric_metric(
         existing, metric_sources, "weight_kg", payload.weight_kg, incoming_source
     )
@@ -1241,6 +1247,7 @@ def process_and_save_biometrics(
         ("resting_hr", rhr_source, final_rhr),
         ("skin_temp", temp_source, final_temp),
         ("spo2_pct", spo2_source, final_spo2),
+        ("skin_temp_deviation_c", skin_temp_dev_source, final_skin_temp_dev),
         ("weight_kg", weight_source, final_weight),
         ("height_cm", height_source, final_height),
         ("sleep_duration_min", sleep_duration_source, final_sleep_duration),
@@ -1307,7 +1314,8 @@ def process_and_save_biometrics(
         "sleep_bedtime": final_bedtime,
         "sleep_wakeup": final_wakeup,
         "skin_temp": final_temp,
-        "spo2_pct": final_spo2
+        "spo2_pct": final_spo2,
+        "skin_temp_deviation_c": final_skin_temp_dev,
         }
     _upsert_biometrics_sync(db, bio_upsert_payload)
 
@@ -1391,6 +1399,9 @@ async def reprocess_athlete_metrics(athlete_id: str, db) -> dict[str, int]:
             sleep_wakeup=None,
             skin_temp=float(b["skin_temp"]) if b.get("skin_temp") is not None else None,
             spo2_pct=float(b["spo2_pct"]) if b.get("spo2_pct") is not None else None,
+            skin_temp_deviation_c=(
+                float(b["skin_temp_deviation_c"]) if b.get("skin_temp_deviation_c") is not None else None
+            ),
             recovery_score=b.get("recovery_score"),
         )
         process_and_save_biometrics(payload, athlete_id, db, skip_pmc_recalc=True)

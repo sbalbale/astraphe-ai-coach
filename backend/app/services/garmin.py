@@ -873,9 +873,22 @@ def _daily_biometrics_from_garmin(
     resting_hr = _round_int((heart_rates or {}).get("restingHeartRate"))
     spo2_pct = sleep_dto.get("avgSpO2")
 
+    # avgSkinTempDeviationC lives at the top level of the sleep response (a
+    # sibling of dailySleepDTO/hrvStatus/restingHeartRate), not inside
+    # dailySleepDTO like avgSpO2 is. It's a *deviation* from the athlete's own
+    # baseline (Garmin Connect's "Avg Skin Temp Change"), not an absolute
+    # temperature like WHOOP's skin_temp_celsius -- stored separately as
+    # skin_temp_deviation_c, never merged into skin_temp. Garmin needs ~2-3
+    # weeks to establish that baseline (skinTempCalibrationDays); before then,
+    # or on devices without the sensor, skinTempDataExists is False and the
+    # deviation value (often a stale 0.0) should not be trusted.
+    skin_temp_deviation_c = (
+        (sleep or {}).get("avgSkinTempDeviationC") if (sleep or {}).get("skinTempDataExists") else None
+    )
+
     has_any = any(
         v is not None
-        for v in (sleep_duration_min, hrv_summary.get("lastNightAvg"), resting_hr, spo2_pct)
+        for v in (sleep_duration_min, hrv_summary.get("lastNightAvg"), resting_hr, spo2_pct, skin_temp_deviation_c)
     )
     if not has_any:
         return None
@@ -887,6 +900,7 @@ def _daily_biometrics_from_garmin(
         hrv_rmssd=hrv_summary.get("lastNightAvg"),
         resting_hr=resting_hr,
         spo2_pct=spo2_pct,
+        skin_temp_deviation_c=skin_temp_deviation_c,
         sleep_duration_min=sleep_duration_min,
         sleep_deep_pct=_pct(deep_s, total_s),
         sleep_rem_pct=_pct(rem_s, total_s),

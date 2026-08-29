@@ -96,7 +96,9 @@ def test_daily_biometrics_from_garmin():
             "sleepStartTimestampGMT": sleep_start_ms,
             "sleepEndTimestampGMT": sleep_end_ms,
             "avgSpO2": 96.0,
-        }
+        },
+        "skinTempDataExists": True,
+        "avgSkinTempDeviationC": 0.3,
     }
     hrv = {"hrvSummary": {"lastNightAvg": 62.5}}
     heart_rates = {"restingHeartRate": 48.2}
@@ -110,6 +112,7 @@ def test_daily_biometrics_from_garmin():
     assert bio.hrv_rmssd == 62.5
     assert bio.resting_hr == 48
     assert bio.spo2_pct == 96.0
+    assert bio.skin_temp_deviation_c == 0.3
     assert bio.sleep_duration_min == 480
     assert bio.sleep_deep_pct == 18.8
     assert bio.sleep_rem_pct == 25.0
@@ -121,6 +124,21 @@ def test_daily_biometrics_from_garmin():
 
 def test_daily_biometrics_from_garmin_returns_none_when_empty():
     assert garmin_service._daily_biometrics_from_garmin(date(2026, 6, 18), {}, {}, {}) is None
+
+
+def test_daily_biometrics_from_garmin_ignores_skin_temp_before_calibration():
+    """skinTempDataExists=False means the device hasn't finished baselining yet
+    (~2-3 weeks) -- avgSkinTempDeviationC (often a stale 0.0) shouldn't be trusted."""
+    sleep = {
+        "dailySleepDTO": {"sleepTimeSeconds": 8 * 3600},
+        "skinTempDataExists": False,
+        "avgSkinTempDeviationC": 0.0,
+    }
+
+    bio = garmin_service._daily_biometrics_from_garmin(date(2026, 6, 18), sleep, {}, {})
+
+    assert bio is not None
+    assert bio.skin_temp_deviation_c is None
 
 
 def test_daily_biometrics_from_garmin_spo2_only():
