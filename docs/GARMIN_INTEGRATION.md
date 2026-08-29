@@ -89,9 +89,14 @@ Garmin contributes to:
   `garmin_activity_id` (unique fast-path dedup column, mirrors
   `strava_activity_id`), `elevation_gain_m`, and `calories`.
 - `activity_streams` / `activity_laps`: FIT-derived streams and laps (same keys as Strava).
-- `biometrics`: sleep / HRV / resting HR merged per-field via `metric_sources`
+- `biometrics`: sleep / HRV / resting HR / SpO2 merged per-field via `metric_sources`
   (a JSONB map of field → winning source) — there's no single row-level
   `source` column. A day where Garmin's HRV value wins shows `hrv_source='garmin'`.
+  `spo2_pct` comes from `dailySleepDTO.avgSpO2` in the same sleep-summary call
+  already made for sleep/HRV — no extra Garmin API request. (Skin temperature is
+  not available through this integration — Garmin only pushes it via the official
+  partner Health API webhook, which is approval-only; see the dormant webhook note
+  above.)
 
 `workouts.source` and `biometrics.hrv_source` have included `'garmin'` since the
 initial schema — no migration was needed for those. `garmin_activity_id` and
@@ -138,7 +143,7 @@ Connect / backfill / poll tick
   -> map summary → WorkoutPayload(source="garmin")
   -> process_and_save_workout (canonical merge/dedup)
   -> download ORIGINAL FIT → parse streams/laps → activity_streams / activity_laps
-  -> fetch sleep / HRV / resting HR per day
+  -> fetch sleep (incl. SpO2) / HRV / resting HR per day
   -> process_and_save_biometrics
 ```
 

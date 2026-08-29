@@ -927,7 +927,7 @@ def get_biometrics_for_dates(db: Client, athlete_id: str, args: dict[str, Any]) 
         res = (
             db.table("biometrics")
             .select(
-                "date,hrv_rmssd,resting_hr,sleep_duration_min,sleep_score,"
+                "date,hrv_rmssd,resting_hr,spo2_pct,sleep_duration_min,sleep_score,"
                 "recovery_score,readiness_score,strain_score"
             )
             .eq("athlete_id", athlete_id)
@@ -949,6 +949,7 @@ def get_biometrics_for_dates(db: Client, athlete_id: str, args: dict[str, Any]) 
                     "date": d,
                     "hrv_rmssd": row.get("hrv_rmssd"),
                     "resting_hr": row.get("resting_hr"),
+                    "spo2_pct": row.get("spo2_pct"),
                     "sleep_duration_min": row.get("sleep_duration_min"),
                     "sleep_score": row.get("sleep_score"),
                     "recovery_score": row.get("recovery_score"),

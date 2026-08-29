@@ -844,7 +844,7 @@ async def sync_activities_for_athlete(
 
 
 # --------------------------------------------------------------------------
-# Biometrics (sleep / HRV / resting HR)
+# Biometrics (sleep / HRV / resting HR / SpO2)
 # --------------------------------------------------------------------------
 
 def _daily_biometrics_from_garmin(
@@ -871,10 +871,11 @@ def _daily_biometrics_from_garmin(
     sleep_end = _parse_epoch_ms(sleep_dto.get("sleepEndTimestampGMT"))
 
     resting_hr = _round_int((heart_rates or {}).get("restingHeartRate"))
+    spo2_pct = sleep_dto.get("avgSpO2")
 
     has_any = any(
         v is not None
-        for v in (sleep_duration_min, hrv_summary.get("lastNightAvg"), resting_hr)
+        for v in (sleep_duration_min, hrv_summary.get("lastNightAvg"), resting_hr, spo2_pct)
     )
     if not has_any:
         return None
@@ -885,6 +886,7 @@ def _daily_biometrics_from_garmin(
         external_id=f"{PROVIDER}:{day.isoformat()}",
         hrv_rmssd=hrv_summary.get("lastNightAvg"),
         resting_hr=resting_hr,
+        spo2_pct=spo2_pct,
         sleep_duration_min=sleep_duration_min,
         sleep_deep_pct=_pct(deep_s, total_s),
         sleep_rem_pct=_pct(rem_s, total_s),
