@@ -195,6 +195,56 @@ def test_process_and_save_biometrics_estimates_threshold_hr_when_missing(monkeyp
     assert profile_update.get("threshold_hr_source") == "estimated"
 
 
+def test_process_and_save_biometrics_normalizes_absolute_skin_temp_to_deviation():
+    """WHOOP-style absolute skin_temp gets converted to a delta from the athlete's
+    own 7-day trailing average (excluding today), same math as the mobile
+    recovery page's baselineAvg7d/signedDeltaVsBaseline."""
+    db = _BioDb(
+        _default_responses(
+            biometrics=[
+                SimpleNamespace(data=None),  # prev day
+                SimpleNamespace(
+                    data=[
+                        {"resting_hr": None, "hrv_rmssd": None, "skin_temp": t}
+                        for t in (33.0, 33.0, 33.0, 33.0, 33.0, 33.0, 33.0)
+                    ]
+                ),
+                SimpleNamespace(data=None),  # existing today row
+            ]
+        )
+    )
+    payload = _payload(skin_temp=34.0)  # +1.0C above the 33.0 baseline average
+    processing.process_and_save_biometrics(payload, "athlete-1", db, skip_pmc_recalc=True)
+
+    bio_payload = db.upserts["biometrics"][0]
+    assert bio_payload["skin_temp"] == 34.0
+    assert bio_payload["skin_temp_deviation_c"] == 1.0
+
+
+def test_process_and_save_biometrics_garmin_native_deviation_skips_normalization():
+    """Garmin already supplies a deviation directly -- it should pass through
+    unchanged, not get recomputed against skin_temp history (which is empty
+    for a Garmin-only payload since Garmin never sets skin_temp)."""
+    db = _BioDb(_default_responses())
+    payload = _payload(source="garmin", skin_temp_deviation_c=0.3)
+    processing.process_and_save_biometrics(payload, "athlete-1", db, skip_pmc_recalc=True)
+
+    bio_payload = db.upserts["biometrics"][0]
+    assert bio_payload["skin_temp_deviation_c"] == 0.3
+
+
+def test_process_and_save_biometrics_no_deviation_without_baseline_history():
+    """Absolute skin_temp with no prior history yields no deviation yet, rather
+    than a misleading delta-from-nothing."""
+    db = _BioDb(_default_responses())  # empty 42d history
+    payload = _payload(skin_temp=34.0)
+    processing.process_and_save_biometrics(payload, "athlete-1", db, skip_pmc_recalc=True)
+
+    bio_payload = db.upserts["biometrics"][0]
+    assert bio_payload["skin_temp"] == 34.0
+    assert bio_payload["skin_temp_deviation_c"] is None
+
+
 def test_process_and_save_biometrics_uses_history_baselines_when_present():
     db = _BioDb(
         _default_responses(

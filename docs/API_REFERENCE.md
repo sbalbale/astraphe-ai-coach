@@ -157,7 +157,9 @@ Query parameters:
 
 ### `POST /v1/biometrics/daily`
 
-Ingests a daily biometric summary. Current payloads use `skin_temp` for absolute Celsius skin temperature.
+Ingests a daily biometric summary. Current payloads use `skin_temp` for absolute Celsius skin temperature;
+ingestion derives `skin_temp_deviation_c` (delta from the athlete's own 7-day baseline) from it automatically
+unless the source (e.g. Garmin) already supplies a native deviation — see `docs/DATA_MODELS.md`.
 
 ## AI Coach
 

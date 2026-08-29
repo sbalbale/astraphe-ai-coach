@@ -206,9 +206,10 @@ _BIOMETRIC_FIELD_SOURCES: dict[str, tuple[str, ...]] = {
     "resting_hr": ("garmin", "whoop", "intervals_icu", "healthkit", "manual"),
     "skin_temp": ("garmin", "whoop", "intervals_icu", "healthkit", "manual"),
     "spo2_pct": ("garmin", "whoop", "intervals_icu", "healthkit", "manual"),
-    # Deviation-from-baseline, not an absolute temperature -- only Garmin
-    # provides this today. See skin_temp for the absolute-reading column.
-    "skin_temp_deviation_c": ("garmin", "manual"),
+    # Deviation-from-personal-baseline. Garmin reports this natively; other
+    # sources' absolute skin_temp gets normalized into the same signal in
+    # process_and_save_biometrics before this priority table ever sees it.
+    "skin_temp_deviation_c": ("garmin", "whoop", "intervals_icu", "healthkit", "manual"),
     "sleep_duration_min": ("garmin", "whoop", "intervals_icu", "healthkit", "manual"),
     "sleep_in_bed_min": ("garmin", "whoop", "intervals_icu", "healthkit", "manual"),
     "sleep_deep_pct": ("garmin", "whoop", "intervals_icu", "healthkit", "manual"),
@@ -1021,7 +1022,7 @@ def process_and_save_biometrics(
         )
         _history_fut = _ex.submit(
             db.table("biometrics")
-            .select("resting_hr, hrv_rmssd")
+            .select("resting_hr, hrv_rmssd, skin_temp")
             .eq("athlete_id", athlete_id)
             .gte("date", start_date_42d)
             .order("date")
@@ -1067,6 +1068,27 @@ def process_and_save_biometrics(
             recent_hrvs = hrvs[-30:] if len(hrvs) >= 1 else []
             if recent_hrvs:
                 hrv_avg_30d, hrv_std_30d = compute_ewma_stats(np.array(recent_hrvs, dtype=float), span=30)
+
+    # Skin temp deviation: only Garmin reports this natively (avgSkinTempDeviationC,
+    # set on the payload already). Sources that report an absolute skin_temp
+    # instead (WHOOP's skin_temp_celsius, intervals.icu) get normalized into the
+    # same "delta from personal baseline" signal so both act as the same thing
+    # downstream. Baseline is a 7-day trailing average *excluding today* --
+    # mirrors mobile's baselineAvg7d()/signedDeltaVsBaseline() exactly (unlike
+    # the HRV/RHR baselines above, which fold today's value into their own
+    # average by design).
+    incoming_skin_temp_deviation_c = payload.skin_temp_deviation_c
+    if (
+        incoming_skin_temp_deviation_c is None
+        and payload.skin_temp is not None
+        and history_res
+        and history_res.data
+    ):
+        prior_temps = [float(row["skin_temp"]) for row in history_res.data if row.get("skin_temp") is not None]
+        recent_temps = prior_temps[-7:]
+        if recent_temps:
+            baseline_temp = sum(recent_temps) / len(recent_temps)
+            incoming_skin_temp_deviation_c = round(payload.skin_temp - baseline_temp, 2)
 
     # 4.5 Rebuild PMC first so today's CTL/ATL exist before readiness is computed.
     # Without this, tss_history has no row for today → current_ctl=0 → TSB = -ATL → readiness≈3.
@@ -1176,7 +1198,7 @@ def process_and_save_biometrics(
         existing, metric_sources, "spo2_pct", payload.spo2_pct, incoming_source
     )
     final_skin_temp_dev, skin_temp_dev_source = _choose_biometric_metric(
-        existing, metric_sources, "skin_temp_deviation_c", payload.skin_temp_deviation_c, incoming_source
+        existing, metric_sources, "skin_temp_deviation_c", incoming_skin_temp_deviation_c, incoming_source
     )
     final_weight, weight_source = _choose_biometric_metric(
         existing, metric_sources, "weight_kg", payload.weight_kg, incoming_source

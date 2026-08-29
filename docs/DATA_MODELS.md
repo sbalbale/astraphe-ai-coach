@@ -147,6 +147,7 @@ There is no `biometrics.source` or `biometrics.external_id` column — those exi
 - `sleep_wakeup`
 - `skin_temp`
 - `spo2_pct`
+- `skin_temp_deviation_c`
 - `readiness_score`
 - `strain_score`
 - `day_strain`
@@ -155,6 +156,12 @@ There is no `biometrics.source` or `biometrics.external_id` column — those exi
 - `metric_sources` — JSONB per-field provenance used for quality-ranked biometrics merges
 
 `skin_temp` stores absolute Celsius (renamed from `skin_temp_deviation` by `20260521130000_rename_skin_temp_column.sql`).
+`skin_temp_deviation_c` (added by `20260829190000_biometrics_skin_temp_deviation.sql`) is the canonical
+"delta from this athlete's own baseline" signal, comparable across providers regardless of whether the
+source reports a deviation natively (Garmin's `avgSkinTempDeviationC`) or an absolute reading (WHOOP,
+intervals.icu): `process_and_save_biometrics` normalizes the latter by subtracting a 7-day trailing
+average of the athlete's own prior `skin_temp` values (mirrors the mobile recovery page's
+`baselineAvg7d`/`signedDeltaVsBaseline`, excluding the current day from its own baseline).
 Intervals.icu wellness rows may use `id` as the local wellness date; ingestion maps that to `biometrics.date` (there is no column that stores the original Intervals.icu id). If Intervals.icu supplies sleep duration without sleep-stage percentages, ingestion stores the duration, leaves stage percentages `NULL`, and computes Astraphe's backup sleep score from known duration versus baseline nightly need instead of using the provider `sleepScore`.
 
 ### `sleep_periods`

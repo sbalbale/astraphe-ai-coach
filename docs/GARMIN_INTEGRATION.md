@@ -99,13 +99,16 @@ Garmin contributes to:
   (a sibling of `dailySleepDTO`, not nested inside it), gated on `skinTempDataExists`
   since the value is stale/untrustworthy during Garmin's ~2-3 week baseline
   calibration window. This is a **deviation from the athlete's own baseline**
-  (Garmin Connect's "Avg Skin Temp Change"), not an absolute reading — it does
-  not merge into `skin_temp`, which WHOOP populates with an actual Celsius
-  reading (`skin_temp_celsius`, ~33-35°C). Mixing the two would corrupt the
-  mobile recovery page's baseline/z-score math, which treats `skin_temp` as
-  absolute. No official partner Health API access is needed for either field —
-  both come from the same community-login `get_sleep_data()` call already in
-  use.
+  (Garmin Connect's "Avg Skin Temp Change"), not an absolute reading like
+  WHOOP's `skin_temp` (`skin_temp_celsius`, ~33-35°C) — so it doesn't merge
+  directly with `skin_temp`. Instead, `process_and_save_biometrics` normalizes
+  any absolute-reading source into the same signal by subtracting a 7-day
+  trailing average of that athlete's own prior `skin_temp` values before it
+  reaches the merge step, so both Garmin's native deviation and WHOOP's
+  computed one land in `skin_temp_deviation_c` as directly comparable deltas
+  from personal baseline (see `docs/DATA_MODELS.md`). No official partner
+  Health API access is needed for either field — both come from the same
+  community-login `get_sleep_data()` call already in use.
 
 `workouts.source` and `biometrics.hrv_source` have included `'garmin'` since the
 initial schema — no migration was needed for those. `garmin_activity_id` and
