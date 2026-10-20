@@ -467,6 +467,17 @@
       }
       mapInstance = map;
 
+      // MapLibre's compact attribution starts expanded and only collapses on user
+      // interaction, which never happens on this non-interactive card map. Collapse it
+      // to the (i) button; the full text opens from the button in the explore view.
+      const collapseAttribution = () => {
+        const el = map.getContainer().querySelector('.maplibregl-ctrl-attrib');
+        el?.classList.remove('maplibregl-compact-show');
+        el?.removeAttribute('open');
+      };
+      collapseAttribution();
+      map.once('load', collapseAttribution);
+
       map.on('error', (e) => {
         console.warn('[GpsTrace] MapLibre error', e.error);
       });
@@ -757,6 +768,12 @@
 
   .map-host.interactive {
     pointer-events: auto;
+  }
+
+  /* Keep the attribution small when it is opened (it is collapsed by default). */
+  .map-host :global(.maplibregl-ctrl-attrib-inner) {
+    font-size: 10px;
+    line-height: 14px;
   }
 
   .map-host:not(.interactive) :global(.maplibregl-canvas-container),
