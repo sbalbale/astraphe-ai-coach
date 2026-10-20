@@ -1,0 +1,60 @@
+# One-time bootstrap for the photon-bridge Deployment (CI only does `kubectl set image` afterwards).
+#   kubectl apply -f photon-bridge/k8s.yaml
+# Requires the Secret `photon-bridge-secrets` (see docs/PHOTON_MESSAGING.md, "Cluster bootstrap").
+#
+# replicas MUST stay 1 with strategy Recreate: the Photon gRPC stream has a single consumer, so
+# a rolling update (old + new pod running together) or a second replica would split/lose messages.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: photon-bridge
+  namespace: astraphe
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: photon-bridge
+  template:
+    metadata:
+      labels:
+        app: photon-bridge
+    spec:
+      imagePullSecrets:
+        - name: ghcr-pull-secret
+      containers:
+        - name: photon-bridge
+          imagePullPolicy: Always
+          image: ghcr.io/sbalbale/astraphe-photon-bridge:latest
+          ports:
+            - containerPort: 8790
+          env:
+            - name: BACKEND_URL
+              value: http://astraphe-api-lb.astraphe.svc.cluster.local:8000
+            - name: PHOTON_ALLOWED_NUMBER
+              value: "+15555550100"  # placeholder: set to the allow-listed E.164 number before applying
+            - name: PHOTON_PROJECT_ID
+              valueFrom: { secretKeyRef: { name: photon-bridge-secrets, key: project-id } }
+            - name: PHOTON_PROJECT_SECRET
+              valueFrom: { secretKeyRef: { name: photon-bridge-secrets, key: project-secret } }
+            - name: PHOTON_BRIDGE_TOKEN
+              valueFrom: { secretKeyRef: { name: photon-bridge-secrets, key: bridge-token } }
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8790 }
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 25m, memory: 96Mi }
+            limits: { memory: 256Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: photon-bridge
+  namespace: astraphe
+spec:
+  selector:
+    app: photon-bridge
+  ports:
+    - port: 8790
+      targetPort: 8790
