@@ -454,6 +454,29 @@ def test_save_one_activity_full_flow():
     mock_laps.assert_called_once()
 
 
+def test_save_one_activity_texts_after_enrichment():
+    """The Photon post-workout text fires only after zones/laps are saved, not at first save."""
+    activity = _activity()
+    db = MagicMock()
+    order: list[str] = []
+    with patch.object(
+        garmin_service, "process_and_save_workout", AsyncMock(return_value="workout-1")
+    ), patch.object(
+        garmin_service, "download_and_parse_fit", return_value=({"heartrate": [140]}, [{"lap_index": 1}])
+    ), patch.object(
+        garmin_service, "_upsert_activity_streams", return_value=True
+    ), patch.object(
+        garmin_service, "_update_workout_hr_zones_from_streams", side_effect=lambda *a, **k: order.append("zones")
+    ), patch.object(
+        garmin_service, "_persist_activity_laps", side_effect=lambda *a, **k: order.append("laps")
+    ), patch(
+        "app.services.messaging.maybe_text_workout",
+        AsyncMock(side_effect=lambda *a, **k: order.append("text")),
+    ) as mock_text:
+        _run_async(garmin_service._save_one_activity(MagicMock(), activity, "ath-1", db))
+    mock_text.assert_called_once_with(db, "ath-1", "workout-1")
+
+
 def test_save_one_activity_no_streams_saved_skips_zones():
     activity = _activity()
     db = MagicMock()

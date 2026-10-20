@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
-from app.routers import workouts, activity_detail, coach, athlete, biometrics, sync, garmin_sync, plan, debug, analysis, training_plans, admin, notifications
+from app.routers import workouts, activity_detail, coach, athlete, biometrics, sync, garmin_sync, plan, debug, analysis, training_plans, admin, notifications, messaging
 from app.config import settings
 from app.core.rate_limiter import RateLimiter
 from app.core.redis import close_redis, describe_redis_url, ping_redis
@@ -211,6 +211,7 @@ if settings.APP_ENV != "production":
 app.include_router(analysis.router)
 app.include_router(admin.router)
 app.include_router(notifications.router)
+app.include_router(messaging.router)
 
 @app.get("/health")
 async def health_check():

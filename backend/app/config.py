@@ -154,6 +154,23 @@ class Settings(BaseSettings):
     VAPID_PRIVATE_KEY: Optional[str] = None
     VAPID_SUBJECT: str = "mailto:admin@astraphe.app"
 
+    # --- Photon (iMessage) coach channel ---
+    # Single-user: one allow-listed number mapped to one athlete. Photon only
+    # speaks gRPC (spectrum-ts), so a separate Node bridge (photon-bridge/) holds
+    # the stream; the backend talks to it over HTTP. Everything is off unless
+    # PHOTON_ATHLETE_ID and PHOTON_ALLOWED_NUMBER are both set.
+    PHOTON_ATHLETE_ID: Optional[str] = None
+    PHOTON_ALLOWED_NUMBER: Optional[str] = None  # E.164, e.g. +15551234567
+    # Shared secret the bridge sends on inbound POSTs (X-Photon-Bridge-Token) and
+    # the backend sends on outbound calls to the bridge.
+    PHOTON_BRIDGE_TOKEN: Optional[str] = None
+    PHOTON_BRIDGE_URL: str = "http://photon-bridge:8790"
+    # Post-workout texts are skipped for sessions shorter than this.
+    PHOTON_MIN_WORKOUT_MINUTES: int = 10
+    # Only text for workouts that ended within this many hours (skips backfills).
+    PHOTON_WORKOUT_MAX_AGE_HOURS: int = 12
+    PHOTON_MAX_INBOUND_PER_MINUTE: int = 10
+
     # --- Manual Testing ---
     TEST_ATHLETE_ID: str | None = None
 

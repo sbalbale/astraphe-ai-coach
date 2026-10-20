@@ -879,6 +879,12 @@ async def process_and_save_workout(
 
     update_data = _quality_filter_workout_update(row, source, update_data)
     await asyncio.to_thread(_workouts_update_by_id_sync, db, workout_id, update_data)
+    # Post-workout Photon text. Batch/backfill callers pass skip_tss_recalc, and
+    # maybe_text_workout also checks recency + notified_at, so history never texts.
+    if not skip_tss_recalc:
+        from app.services.messaging import maybe_text_workout
+
+        asyncio.ensure_future(maybe_text_workout(db, athlete_id, str(workout_id)))
     # In batch contexts (Strava/WHOOP backfill) the caller recalculates TSS once at the end.
     if not skip_tss_recalc:
         asyncio.ensure_future(asyncio.to_thread(recalculate_tss_history, athlete_id, db))

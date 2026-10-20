@@ -412,8 +412,12 @@ async def _run_coach_response_and_notify(
     model_name: str | None,
     analysis_model_name: str | None,
     timezone_offset_min: Optional[int],
+    reply_sink=None,
 ) -> None:
     """
+    reply_sink: optional async callable(reply_text). When set (the Photon text
+    channel), the reply is delivered through it instead of an app push notification.
+
     The async counterpart of chat_with_coach()'s body, minus the parts that
     have to happen before the HTTP response goes out (creating the
     conversation, inserting the user's message). Runs as a BackgroundTask —
@@ -464,6 +468,13 @@ async def _run_coach_response_and_notify(
         pass
 
     await _run_conversation_title(db, athlete_id, conversation_id, model_name)
+
+    if reply_sink is not None:
+        try:
+            await reply_sink(coach_reply)
+        except Exception:
+            traceback.print_exc()
+        return
 
     try:
         from app.services.push import send_push_to_athlete

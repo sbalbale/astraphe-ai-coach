@@ -13,6 +13,7 @@ on:
       - 'mobile/**'
       - 'supabase/**'
       - 'mcp-server/**'
+      - 'photon-bridge/**'
       - '.github/workflows/deploy.yml'
   # No `paths` filter here, deliberately: backend/mobile/build are required
   # status checks (branch protection on main), and a required check whose
@@ -335,6 +336,105 @@ jobs:
               astraphe-mcp="ghcr.io/sbalbale/astraphe-mcp:${IMAGE_TAG}"
             kubectl rollout status deployment/astraphe-mcp -n astraphe --timeout=180s
             kubectl get pods -n astraphe -l app=astraphe-mcp
+          ENDSSH
+
+  photon-bridge:
+    # Node service that holds the Photon (iMessage) gRPC stream — see docs/PHOTON_MESSAGING.md.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: photon-bridge/package-lock.json
+
+      - name: Install and test
+        run: |
+          npm ci
+          npm test
+        working-directory: photon-bridge
+
+  build-photon-bridge:
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ github.sha }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build (and push on merge to main)
+        uses: docker/build-push-action@v5
+        with:
+          context: photon-bridge
+          push: ${{ github.event_name == 'push' }}
+          tags: |
+            ghcr.io/sbalbale/astraphe-photon-bridge:latest
+            ghcr.io/sbalbale/astraphe-photon-bridge:${{ github.sha }}
+
+  deploy-photon-bridge:
+    # PREREQUISITE (one-time, outside this repo): the `photon-bridge` Deployment must exist in
+    # namespace `astraphe` and the ci-deployer role must be allowed to patch it — see
+    # docs/PHOTON_MESSAGING.md ("Cluster bootstrap"). Until then this job fails at `kubectl set image`.
+    needs: [build-photon-bridge, photon-bridge]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install cloudflared
+        run: |
+          curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
+            -o cloudflared
+          chmod +x cloudflared
+          sudo mv cloudflared /usr/local/bin/
+
+      - name: Setup SSH via Cloudflare Tunnel
+        env:
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.PROXMOX_SSH_KEY }}" > ~/.ssh/id_ed25519_deploy
+          chmod 600 ~/.ssh/id_ed25519_deploy
+
+          printf '#!/bin/bash\nexec cloudflared access ssh --hostname "$1" --service-token-id "%s" --service-token-secret "%s"\n' \
+            "$CF_ACCESS_CLIENT_ID" "$CF_ACCESS_CLIENT_SECRET" > /tmp/cf-proxy.sh
+          chmod +x /tmp/cf-proxy.sh
+
+          cat >> ~/.ssh/config << 'EOF'
+          Host ssh.astrapheai.com
+            HostName ssh.astrapheai.com
+            User root
+            IdentityFile ~/.ssh/id_ed25519_deploy
+            ProxyCommand /tmp/cf-proxy.sh %h
+            StrictHostKeyChecking no
+            BatchMode yes
+          EOF
+
+      - name: Deploy to k3s
+        run: |
+          ssh root@ssh.astrapheai.com env IMAGE_TAG="${{ needs['build-photon-bridge'].outputs.image_tag }}" bash -s <<'ENDSSH'
+            set -euo pipefail
+            export KUBECONFIG=/root/.kube/ci-deployer-config
+            kubectl set image deployment/photon-bridge -n astraphe \
+              photon-bridge="ghcr.io/sbalbale/astraphe-photon-bridge:${IMAGE_TAG}"
+            kubectl rollout status deployment/photon-bridge -n astraphe --timeout=180s
+            kubectl get pods -n astraphe -l app=photon-bridge
           ENDSSH
 
   migrate:

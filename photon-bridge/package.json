@@ -1,0 +1,18 @@
+{
+  "name": "astraphe-photon-bridge",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Holds the Photon Spectrum gRPC stream and bridges iMessage <-> the Astraphe backend over HTTP.",
+  "type": "module",
+  "main": "index.mjs",
+  "scripts": {
+    "start": "node index.mjs",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18.17"
+  },
+  "dependencies": {
+    "spectrum-ts": "12.7.0"
+  }
+}

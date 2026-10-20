@@ -767,6 +767,14 @@ async def _save_one_activity(
     if laps:
         _persist_activity_laps(db, workout_id, athlete_id, laps)
 
+    # Post-workout Photon text. It fires here rather than inside process_and_save_workout
+    # (which Garmin calls with skip_tss_recalc=True, and before HR zones/TSS/laps exist)
+    # so the coach sees the fully enriched workout. maybe_text_workout checks recency and
+    # notified_at itself, so history backfills and re-syncs never text.
+    from app.services.messaging import maybe_text_workout
+
+    asyncio.ensure_future(maybe_text_workout(db, athlete_id, str(workout_id)))
+
     return True, streams_saved
 
 
