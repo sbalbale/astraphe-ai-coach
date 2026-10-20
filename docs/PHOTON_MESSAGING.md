@@ -24,7 +24,7 @@ bridge holds the stream. Run **exactly one** bridge replica per Photon project.
   Inbound ids are deduped in `messaging_events`.
 - `/new` (or `/new chat`) by text starts a fresh conversation and opens it with the app's own chat-open message (`ai_coach.build_initialization_message`: proactive anomaly warning, else a context-aware greeting), stored as the first coach message so the app shows it too.
 - Post-workout: `services/processing.process_and_save_workout` -> `messaging.maybe_text_workout`.
-  Skips backfills (`skip_tss_recalc`), workouts older than `PHOTON_WORKOUT_MAX_AGE_HOURS`, shorter
+  Garmin triggers it from `garmin._save_one_activity` after the FIT download has filled in zones, TSS and laps (its ingest always sets `skip_tss_recalc`). Skips workouts older than `PHOTON_WORKOUT_MAX_AGE_HOURS`, shorter
   than `PHOTON_MIN_WORKOUT_MINUTES`, or already texted (`workouts.notified_at`, claimed atomically).
 
 ## Setup
