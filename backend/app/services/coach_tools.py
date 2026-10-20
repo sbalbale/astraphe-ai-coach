@@ -11,6 +11,7 @@ import numpy as np
 from google.genai import types
 from supabase import Client
 
+from app.config import settings
 from app.services.algorithms import compute_atl, compute_ctl
 from app.services import coach_workout_data as workout_data
 from app.services.text_format import normalize_markdown_notes
@@ -1442,6 +1443,23 @@ TOOLS: list[types.Tool] = [
     ]),
     types.Tool(google_search=types.GoogleSearch()),
 ]
+
+
+def search_grounding_available(model: str | None) -> bool:
+    """Google Search grounding has no free-tier quota on Gemini 3+ models: attaching the
+    google_search tool there returns a bare 429 RESOURCE_EXHAUSTED on every request, which
+    would fail the whole coach call, not just the search."""
+    if not settings.GEMINI_FREE_TIER:
+        return True
+    return not (model or "").strip().lower().startswith("gemini-3")
+
+
+def tools_for_models(models: list[str]) -> list[types.Tool]:
+    """TOOLS, minus google_search if any candidate model can't use it (the primary and
+    fallback models share one request config)."""
+    if all(search_grounding_available(m) for m in models):
+        return TOOLS
+    return [t for t in TOOLS if getattr(t, "google_search", None) is None]
 
 ToolHandler = Callable[[dict[str, Any], str, Client], dict[str, Any]]
 

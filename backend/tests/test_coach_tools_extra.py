@@ -769,3 +769,29 @@ def test_workout_structure_bodyweight_hr_band_none_when_hrr_non_positive():
 def test_workout_structure_power_based_hr_band_none_when_hrr_non_positive():
     result = coach_tools._workout_structure("Endurance", 45, 250, 165, 50, 190, "run")
     assert all(block["target_hr"] is None for block in result["structure"])
+
+
+# ---------------------------------------------------------------------------
+# google_search availability per model
+# ---------------------------------------------------------------------------
+
+def _has_search(tools) -> bool:
+    return any(getattr(t, "google_search", None) is not None for t in tools)
+
+
+def test_tools_keep_search_on_gemma_models(monkeypatch):
+    monkeypatch.setattr(coach_tools.settings, "GEMINI_FREE_TIER", True)
+    assert _has_search(coach_tools.tools_for_models(["gemma-4-31b-it", "gemma-4-26b-a4b-it"]))
+
+
+def test_tools_drop_search_when_any_model_is_gemini3_on_free_tier(monkeypatch):
+    monkeypatch.setattr(coach_tools.settings, "GEMINI_FREE_TIER", True)
+    assert not _has_search(coach_tools.tools_for_models(["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]))
+    assert not _has_search(coach_tools.tools_for_models(["gemma-4-31b-it", "gemini-3.1-flash-lite"]))
+    # the function declarations are still there
+    assert any(getattr(t, "function_declarations", None) for t in coach_tools.tools_for_models(["gemini-3.5-flash-lite"]))
+
+
+def test_tools_keep_search_on_gemini3_when_paid(monkeypatch):
+    monkeypatch.setattr(coach_tools.settings, "GEMINI_FREE_TIER", False)
+    assert _has_search(coach_tools.tools_for_models(["gemini-3.5-flash-lite"]))
