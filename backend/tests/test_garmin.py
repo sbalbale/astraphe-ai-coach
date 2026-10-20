@@ -153,6 +153,24 @@ def test_daily_biometrics_from_garmin_spo2_only():
     assert bio.resting_hr is None
 
 
+@pytest.mark.parametrize("raw", [0, 0.0, -1, None, "n/a"])
+def test_daily_biometrics_from_garmin_treats_zero_or_invalid_spo2_as_missing(raw):
+    """A 0 (or negative / non-numeric / absent) avgSpO2 must not be stored as a real
+    reading; with nothing else present the whole day is dropped."""
+    sleep = {"dailySleepDTO": {"avgSpO2": raw}}
+    assert garmin_service._daily_biometrics_from_garmin(date(2026, 6, 18), sleep, {}, {}) is None
+
+
+def test_daily_biometrics_from_garmin_zero_spo2_keeps_other_metrics():
+    sleep = {"dailySleepDTO": {"sleepTimeSeconds": 8 * 3600, "avgSpO2": 0}}
+
+    bio = garmin_service._daily_biometrics_from_garmin(date(2026, 6, 18), sleep, {}, {})
+
+    assert bio is not None
+    assert bio.spo2_pct is None
+    assert bio.sleep_duration_min == 480
+
+
 def test_extract_fit_bytes_from_zip():
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:

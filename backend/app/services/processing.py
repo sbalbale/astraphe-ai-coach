@@ -1022,7 +1022,7 @@ def process_and_save_biometrics(
         )
         _history_fut = _ex.submit(
             db.table("biometrics")
-            .select("resting_hr, hrv_rmssd, skin_temp")
+            .select("date, resting_hr, hrv_rmssd, skin_temp")
             .eq("athlete_id", athlete_id)
             .gte("date", start_date_42d)
             .order("date")
@@ -1073,10 +1073,11 @@ def process_and_save_biometrics(
     # set on the payload already). Sources that report an absolute skin_temp
     # instead (WHOOP's skin_temp_celsius, intervals.icu) get normalized into the
     # same "delta from personal baseline" signal so both act as the same thing
-    # downstream. Baseline is a 7-day trailing average *excluding today* --
-    # mirrors mobile's baselineAvg7d()/signedDeltaVsBaseline() exactly (unlike
-    # the HRV/RHR baselines above, which fold today's value into their own
-    # average by design).
+    # downstream. Baseline is the average over the 7 calendar days *before* today
+    # (today's own stored value is excluded, so a re-sync can't bias its own
+    # baseline) -- mirrors mobile's baselineWindowVals()/baselineAvg7d(), including
+    # skipping missing and 0 readings (unlike the HRV/RHR baselines above, which
+    # fold today's value into their own average by design).
     incoming_skin_temp_deviation_c = payload.skin_temp_deviation_c
     if (
         incoming_skin_temp_deviation_c is None
@@ -1084,8 +1085,13 @@ def process_and_save_biometrics(
         and history_res
         and history_res.data
     ):
-        prior_temps = [float(row["skin_temp"]) for row in history_res.data if row.get("skin_temp") is not None]
-        recent_temps = prior_temps[-7:]
+        window_start = (payload.date - timedelta(days=7)).isoformat()
+        window_end = (payload.date - timedelta(days=1)).isoformat()
+        recent_temps = [
+            float(row["skin_temp"])
+            for row in history_res.data
+            if row.get("skin_temp") and window_start <= str(row.get("date") or "") <= window_end
+        ]
         if recent_temps:
             baseline_temp = sum(recent_temps) / len(recent_temps)
             incoming_skin_temp_deviation_c = round(payload.skin_temp - baseline_temp, 2)

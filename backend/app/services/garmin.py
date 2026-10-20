@@ -871,7 +871,14 @@ def _daily_biometrics_from_garmin(
     sleep_end = _parse_epoch_ms(sleep_dto.get("sleepEndTimestampGMT"))
 
     resting_hr = _round_int((heart_rates or {}).get("restingHeartRate"))
-    spo2_pct = sleep_dto.get("avgSpO2")
+    # 0% is not a physiological SpO2 reading, so a 0 (or negative / non-numeric / absent)
+    # avgSpO2 is treated as missing rather than stored -- otherwise it would be saved as
+    # real data and could win source-priority over a valid value from another source.
+    try:
+        spo2_raw = float(sleep_dto.get("avgSpO2"))
+    except (TypeError, ValueError):
+        spo2_raw = None
+    spo2_pct = spo2_raw if spo2_raw and spo2_raw > 0 else None
 
     # avgSkinTempDeviationC lives at the top level of the sleep response (a
     # sibling of dailySleepDTO/hrvStatus/restingHeartRate), not inside

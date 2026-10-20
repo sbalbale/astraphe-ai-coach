@@ -94,7 +94,8 @@ Garmin contributes to:
   there's no single row-level `source` column. A day where Garmin's HRV value
   wins shows `hrv_source='garmin'`. `spo2_pct` comes from `dailySleepDTO.avgSpO2`
   in the same sleep-summary call already made for sleep/HRV — no extra Garmin
-  API request.
+  API request. A `0` (or negative / non-numeric / missing) `avgSpO2` is treated as
+  no reading and not stored.
   `skin_temp_deviation_c` comes from the same call's top-level `avgSkinTempDeviationC`
   (a sibling of `dailySleepDTO`, not nested inside it), gated on `skinTempDataExists`
   since the value is stale/untrustworthy during Garmin's ~2-3 week baseline
@@ -102,8 +103,10 @@ Garmin contributes to:
   (Garmin Connect's "Avg Skin Temp Change"), not an absolute reading like
   WHOOP's `skin_temp` (`skin_temp_celsius`, ~33-35°C) — so it doesn't merge
   directly with `skin_temp`. Instead, `process_and_save_biometrics` normalizes
-  any absolute-reading source into the same signal by subtracting a 7-day
-  trailing average of that athlete's own prior `skin_temp` values before it
+  any absolute-reading source into the same signal by subtracting the average
+  of that athlete's own `skin_temp` values over the 7 calendar days before the
+  reading (today's own stored value and any 0/missing readings are excluded,
+  matching the mobile recovery page's `baselineAvg7d`) before it
   reaches the merge step, so both Garmin's native deviation and WHOOP's
   computed one land in `skin_temp_deviation_c` as directly comparable deltas
   from personal baseline (see `docs/DATA_MODELS.md`). No official partner

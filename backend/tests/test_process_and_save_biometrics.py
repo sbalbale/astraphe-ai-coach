@@ -205,8 +205,8 @@ def test_process_and_save_biometrics_normalizes_absolute_skin_temp_to_deviation(
                 SimpleNamespace(data=None),  # prev day
                 SimpleNamespace(
                     data=[
-                        {"resting_hr": None, "hrv_rmssd": None, "skin_temp": t}
-                        for t in (33.0, 33.0, 33.0, 33.0, 33.0, 33.0, 33.0)
+                        {"date": f"2026-05-{day:02d}", "resting_hr": None, "hrv_rmssd": None, "skin_temp": 33.0}
+                        for day in range(13, 20)  # the 7 days before the 2026-05-20 payload
                     ]
                 ),
                 SimpleNamespace(data=None),  # existing today row
@@ -219,6 +219,56 @@ def test_process_and_save_biometrics_normalizes_absolute_skin_temp_to_deviation(
     bio_payload = db.upserts["biometrics"][0]
     assert bio_payload["skin_temp"] == 34.0
     assert bio_payload["skin_temp_deviation_c"] == 1.0
+
+
+def _skin_temp_history_db(rows: list[dict]) -> _BioDb:
+    return _BioDb(
+        _default_responses(
+            biometrics=[
+                SimpleNamespace(data=None),  # prev day
+                SimpleNamespace(data=rows),  # 42d history
+                SimpleNamespace(data=None),  # existing today row
+            ]
+        )
+    )
+
+
+def _hist(day: int, temp, month: int = 5) -> dict:
+    return {"date": f"2026-{month:02d}-{day:02d}", "resting_hr": None, "hrv_rmssd": None, "skin_temp": temp}
+
+
+def test_skin_temp_baseline_excludes_todays_own_stored_value():
+    """A re-sync of today must not fold today's already-stored skin_temp into its own
+    baseline (that would shrink the deviation toward 0)."""
+    rows = [_hist(d, 33.0) for d in range(13, 20)] + [_hist(20, 35.0)]  # 20th == payload date
+    db = _skin_temp_history_db(rows)
+    processing.process_and_save_biometrics(_payload(skin_temp=34.0), "athlete-1", db, skip_pmc_recalc=True)
+
+    assert db.upserts["biometrics"][0]["skin_temp_deviation_c"] == 1.0  # not diluted by the 35.0
+
+
+def test_skin_temp_baseline_uses_only_the_prior_7_calendar_days():
+    """Older readings (a gap in data) don't stretch the window past 7 days."""
+    rows = [_hist(1, 40.0), _hist(5, 40.0)] + [_hist(d, 33.0) for d in (15, 17, 19)]
+    db = _skin_temp_history_db(rows)
+    processing.process_and_save_biometrics(_payload(skin_temp=34.0), "athlete-1", db, skip_pmc_recalc=True)
+
+    assert db.upserts["biometrics"][0]["skin_temp_deviation_c"] == 1.0
+
+
+def test_skin_temp_baseline_ignores_zero_readings():
+    rows = [_hist(d, 33.0) for d in (16, 17, 18)] + [_hist(19, 0.0)]
+    db = _skin_temp_history_db(rows)
+    processing.process_and_save_biometrics(_payload(skin_temp=34.0), "athlete-1", db, skip_pmc_recalc=True)
+
+    assert db.upserts["biometrics"][0]["skin_temp_deviation_c"] == 1.0
+
+
+def test_skin_temp_no_deviation_when_only_out_of_window_history():
+    db = _skin_temp_history_db([_hist(1, 33.0), _hist(20, 35.0)])
+    processing.process_and_save_biometrics(_payload(skin_temp=34.0), "athlete-1", db, skip_pmc_recalc=True)
+
+    assert db.upserts["biometrics"][0]["skin_temp_deviation_c"] is None
 
 
 def test_process_and_save_biometrics_garmin_native_deviation_skips_normalization():
