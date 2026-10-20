@@ -82,7 +82,7 @@ CI (`deploy.yml`) builds `ghcr.io/sbalbale/astraphe-photon-bridge` and rolls it 
    `PHOTON_BRIDGE_TOKEN=<same token>`, `PHOTON_BRIDGE_URL=http://photon-bridge.astraphe.svc.cluster.local:8790` (backend env comes from the `astraphe-env` Secret via `envFrom`).
    Then `kubectl -n astraphe rollout restart deployment/astraphe-api`.
 
-The migration (`20261020120000_photon_messaging.sql`) is additive and applied automatically by the
+The migration (`20261020120000_photon_messaging.sql`) also marks workouts that started before 2026-10-20 (EDT) as already notified, so the first deploy does not text about history. It is additive and applied automatically by the
 `migrate` job on merge, before the new backend rolls out.
 - Workouts that sync together are texted one at a time, in order (an `asyncio.Lock` in
   `messaging.py`), so the second note can see the first. The lock is per process; across backend

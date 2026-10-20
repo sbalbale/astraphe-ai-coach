@@ -18,3 +18,13 @@ CREATE TABLE IF NOT EXISTS messaging_events (
 -- Service-role only (the webhook uses the admin client); no policies means no
 -- access for anon/authenticated roles.
 ALTER TABLE messaging_events ENABLE ROW LEVEL SECURITY;
+
+-- Workouts that already exist predate the Photon channel. Mark them notified so the first
+-- deploy (and Garmin's next re-sync of recent activity) doesn't text about history.
+-- Workouts from 2026-10-20 (athlete-local, EDT) onward are deliberately left eligible so the
+-- first real texts come from them; the app's 12 hour window still applies on top of that.
+-- Idempotent: only touches rows that are still un-notified.
+UPDATE workouts
+   SET notified_at = now()
+ WHERE notified_at IS NULL
+   AND started_at < TIMESTAMPTZ '2026-10-20 00:00:00-04';
