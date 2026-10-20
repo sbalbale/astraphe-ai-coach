@@ -95,7 +95,10 @@ def test_daily_biometrics_from_garmin():
             "awakeSleepSeconds": 30 * 60,
             "sleepStartTimestampGMT": sleep_start_ms,
             "sleepEndTimestampGMT": sleep_end_ms,
-        }
+            "avgSpO2": 96.0,
+        },
+        "skinTempDataExists": True,
+        "avgSkinTempDeviationC": 0.3,
     }
     hrv = {"hrvSummary": {"lastNightAvg": 62.5}}
     heart_rates = {"restingHeartRate": 48.2}
@@ -108,6 +111,8 @@ def test_daily_biometrics_from_garmin():
     assert bio.external_id == "garmin:2026-06-18"
     assert bio.hrv_rmssd == 62.5
     assert bio.resting_hr == 48
+    assert bio.spo2_pct == 96.0
+    assert bio.skin_temp_deviation_c == 0.3
     assert bio.sleep_duration_min == 480
     assert bio.sleep_deep_pct == 18.8
     assert bio.sleep_rem_pct == 25.0
@@ -119,6 +124,51 @@ def test_daily_biometrics_from_garmin():
 
 def test_daily_biometrics_from_garmin_returns_none_when_empty():
     assert garmin_service._daily_biometrics_from_garmin(date(2026, 6, 18), {}, {}, {}) is None
+
+
+def test_daily_biometrics_from_garmin_ignores_skin_temp_before_calibration():
+    """skinTempDataExists=False means the device hasn't finished baselining yet
+    (~2-3 weeks) -- avgSkinTempDeviationC (often a stale 0.0) shouldn't be trusted."""
+    sleep = {
+        "dailySleepDTO": {"sleepTimeSeconds": 8 * 3600},
+        "skinTempDataExists": False,
+        "avgSkinTempDeviationC": 0.0,
+    }
+
+    bio = garmin_service._daily_biometrics_from_garmin(date(2026, 6, 18), sleep, {}, {})
+
+    assert bio is not None
+    assert bio.skin_temp_deviation_c is None
+
+
+def test_daily_biometrics_from_garmin_spo2_only():
+    day = date(2026, 6, 18)
+    sleep = {"dailySleepDTO": {"avgSpO2": 94.0}}
+
+    bio = garmin_service._daily_biometrics_from_garmin(day, sleep, {}, {})
+
+    assert bio is not None
+    assert bio.spo2_pct == 94.0
+    assert bio.hrv_rmssd is None
+    assert bio.resting_hr is None
+
+
+@pytest.mark.parametrize("raw", [0, 0.0, -1, None, "n/a"])
+def test_daily_biometrics_from_garmin_treats_zero_or_invalid_spo2_as_missing(raw):
+    """A 0 (or negative / non-numeric / absent) avgSpO2 must not be stored as a real
+    reading; with nothing else present the whole day is dropped."""
+    sleep = {"dailySleepDTO": {"avgSpO2": raw}}
+    assert garmin_service._daily_biometrics_from_garmin(date(2026, 6, 18), sleep, {}, {}) is None
+
+
+def test_daily_biometrics_from_garmin_zero_spo2_keeps_other_metrics():
+    sleep = {"dailySleepDTO": {"sleepTimeSeconds": 8 * 3600, "avgSpO2": 0}}
+
+    bio = garmin_service._daily_biometrics_from_garmin(date(2026, 6, 18), sleep, {}, {})
+
+    assert bio is not None
+    assert bio.spo2_pct is None
+    assert bio.sleep_duration_min == 480
 
 
 def test_extract_fit_bytes_from_zip():

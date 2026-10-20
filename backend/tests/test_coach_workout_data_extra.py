@@ -764,9 +764,24 @@ def test_get_biometrics_for_dates_query_failure():
 
 
 def test_get_biometrics_for_dates_marks_missing_days():
-    db = _Db({"biometrics": SimpleNamespace(data=[{"date": "2026-05-20", "hrv_rmssd": 55}])})
+    db = _Db(
+        {
+            "biometrics": SimpleNamespace(
+                data=[
+                    {
+                        "date": "2026-05-20",
+                        "hrv_rmssd": 55,
+                        "spo2_pct": 97.0,
+                        "skin_temp_deviation_c": 0.4,
+                    }
+                ]
+            )
+        }
+    )
     result = cwd.get_biometrics_for_dates(db, "athlete-1", {"dates": ["2026-05-20", "2026-05-21"]})
     assert result["days"][0]["hrv_rmssd"] == 55
+    assert result["days"][0]["spo2_pct"] == 97.0
+    assert result["days"][0]["skin_temp_deviation_c"] == 0.4
     assert result["days"][1] == {"date": "2026-05-21", "available": False}
 
 

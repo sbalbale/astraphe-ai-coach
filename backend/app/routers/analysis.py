@@ -87,7 +87,8 @@ def _zscore_for(rows: list[dict], field: str, latest: Optional[float], span: int
 _STALE_AFTER_HOURS = 36
 _BIOMETRICS_CONTEXT_SELECT = (
     "date,hrv_rmssd,resting_hr,sleep_duration_min,sleep_score,sleep_deep_pct,sleep_rem_pct,sleep_light_pct,sleep_awake_pct,"
-    "sleep_bedtime,sleep_wakeup,spo2_pct,skin_temp,recovery_score,readiness_score,strain_score,sleep_need_min,sleep_debt_min"
+    "sleep_bedtime,sleep_wakeup,spo2_pct,skin_temp,skin_temp_deviation_c,recovery_score,readiness_score,strain_score,"
+    "sleep_need_min,sleep_debt_min"
 )
 
 

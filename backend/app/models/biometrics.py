@@ -24,6 +24,7 @@ class DailyBiometrics(BaseModel):
     strain_score: Optional[int] = None # Astraphe proprietary
     skin_temp: Optional[float] = None
     spo2_pct: Optional[float] = None
+    skin_temp_deviation_c: Optional[float] = None  # Garmin: delta from personal baseline, not absolute (see skin_temp)
     recovery_score: Optional[int] = None # Astraphe proprietary
     readiness_score: Optional[int] = None # Astraphe proprietary
     is_nap: Optional[bool] = False
