@@ -12,24 +12,155 @@
   import { onMount, tick } from 'svelte';
   import type { Map as MapLibreMap } from 'maplibre-gl';
 
+  // OpenFreeMap vector tiles (free, no API key) with a small dark style. Text labels use
+  // OpenFreeMap's hosted Noto Sans glyphs; no sprite is needed (no icons). Layer ids
+  // follow the OpenMapTiles schema.
   const STYLE = {
     version: 8 as const,
+    glyphs: 'https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf',
     sources: {
-      'carto-dark': {
-        type: 'raster' as const,
-        tiles: [
-          'https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png',
-          'https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png',
-          'https://c.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png',
-        ],
-        tileSize: 256,
-        minzoom: 0,
-        maxzoom: 22,
+      openmaptiles: {
+        type: 'vector' as const,
+        url: 'https://tiles.openfreemap.org/planet',
         attribution:
-          '© <a href="https://carto.com/">CARTO</a> © <a href="https://www.openstreetmap.org/">OSM</a>',
+          '<a href="https://openfreemap.org" target="_blank">OpenFreeMap</a> © <a href="https://openmaptiles.org/" target="_blank">OpenMapTiles</a> Data from <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a>',
       },
     },
-    layers: [{ id: 'carto-dark-layer', type: 'raster' as const, source: 'carto-dark' }],
+    layers: [
+      { id: 'bg', type: 'background' as const, paint: { 'background-color': '#12121A' } },
+      {
+        id: 'landcover',
+        type: 'fill' as const,
+        source: 'openmaptiles',
+        'source-layer': 'landcover',
+        paint: { 'fill-color': '#182720', 'fill-opacity': 0.9 },
+      },
+      {
+        id: 'park',
+        type: 'fill' as const,
+        source: 'openmaptiles',
+        'source-layer': 'park',
+        paint: { 'fill-color': '#192B21', 'fill-opacity': 0.9 },
+      },
+      {
+        id: 'landuse',
+        type: 'fill' as const,
+        source: 'openmaptiles',
+        'source-layer': 'landuse',
+        filter: ['in', 'class', 'residential', 'commercial', 'industrial', 'cemetery', 'pitch'],
+        paint: { 'fill-color': '#1A1A28', 'fill-opacity': 0.8 },
+      },
+      {
+        id: 'water',
+        type: 'fill' as const,
+        source: 'openmaptiles',
+        'source-layer': 'water',
+        paint: { 'fill-color': '#0B1B30' },
+      },
+      {
+        id: 'waterway',
+        type: 'line' as const,
+        source: 'openmaptiles',
+        'source-layer': 'waterway',
+        paint: { 'line-color': '#0B1B30', 'line-width': ['interpolate', ['linear'], ['zoom'], 8, 0.5, 14, 2] },
+      },
+      {
+        id: 'building',
+        type: 'fill' as const,
+        source: 'openmaptiles',
+        'source-layer': 'building',
+        minzoom: 13,
+        paint: { 'fill-color': '#232336', 'fill-opacity': 0.85 },
+      },
+      {
+        id: 'road-minor',
+        type: 'line' as const,
+        source: 'openmaptiles',
+        'source-layer': 'transportation',
+        filter: ['in', 'class', 'minor', 'service', 'track', 'path', 'tertiary'],
+        layout: { 'line-cap': 'round' as const, 'line-join': 'round' as const },
+        paint: {
+          'line-color': '#3B3B50',
+          'line-width': ['interpolate', ['linear'], ['zoom'], 10, 0.4, 14, 1.2, 18, 5],
+        },
+      },
+      {
+        id: 'road-major',
+        type: 'line' as const,
+        source: 'openmaptiles',
+        'source-layer': 'transportation',
+        filter: ['in', 'class', 'motorway', 'trunk', 'primary', 'secondary'],
+        layout: { 'line-cap': 'round' as const, 'line-join': 'round' as const },
+        paint: {
+          'line-color': '#575772',
+          'line-width': ['interpolate', ['linear'], ['zoom'], 6, 0.5, 12, 1.5, 18, 8],
+        },
+      },
+      {
+        id: 'boundary',
+        type: 'line' as const,
+        source: 'openmaptiles',
+        'source-layer': 'boundary',
+        filter: ['<=', 'admin_level', 4],
+        paint: { 'line-color': '#3B3B50', 'line-width': 0.8, 'line-dasharray': [3, 2] },
+      },
+      {
+        id: 'road-label',
+        type: 'symbol' as const,
+        source: 'openmaptiles',
+        'source-layer': 'transportation_name',
+        minzoom: 13,
+        layout: {
+          'symbol-placement': 'line' as const,
+          'text-field': ['coalesce', ['get', 'name:latin'], ['get', 'name']],
+          'text-font': ['Noto Sans Regular'],
+          'text-size': ['interpolate', ['linear'], ['zoom'], 13, 10, 18, 13],
+          'text-letter-spacing': 0.05,
+        },
+        paint: { 'text-color': '#8E8EAA', 'text-halo-color': '#12121A', 'text-halo-width': 1.5 },
+      },
+      {
+        id: 'water-label',
+        type: 'symbol' as const,
+        source: 'openmaptiles',
+        'source-layer': 'water_name',
+        layout: {
+          'text-field': ['coalesce', ['get', 'name:latin'], ['get', 'name']],
+          'text-font': ['Noto Sans Italic'],
+          'text-size': 11,
+        },
+        paint: { 'text-color': '#52779F', 'text-halo-color': '#0B1B30', 'text-halo-width': 1.2 },
+      },
+      {
+        id: 'place-minor',
+        type: 'symbol' as const,
+        source: 'openmaptiles',
+        'source-layer': 'place',
+        minzoom: 10,
+        filter: ['in', 'class', 'suburb', 'neighbourhood', 'hamlet', 'village'],
+        layout: {
+          'text-field': ['coalesce', ['get', 'name:latin'], ['get', 'name']],
+          'text-font': ['Noto Sans Regular'],
+          'text-size': ['interpolate', ['linear'], ['zoom'], 10, 10, 16, 13],
+          'text-max-width': 8,
+        },
+        paint: { 'text-color': '#9E9EBA', 'text-halo-color': '#12121A', 'text-halo-width': 1.5 },
+      },
+      {
+        id: 'place-major',
+        type: 'symbol' as const,
+        source: 'openmaptiles',
+        'source-layer': 'place',
+        filter: ['in', 'class', 'city', 'town', 'state'],
+        layout: {
+          'text-field': ['coalesce', ['get', 'name:latin'], ['get', 'name']],
+          'text-font': ['Noto Sans Bold'],
+          'text-size': ['interpolate', ['linear'], ['zoom'], 6, 11, 12, 16],
+          'text-max-width': 8,
+        },
+        paint: { 'text-color': '#CACADC', 'text-halo-color': '#12121A', 'text-halo-width': 2 },
+      },
+    ],
   };
 
   const ZONE_COLORS = HR_ZONE_COLOR_BY_INDEX;
@@ -327,7 +458,7 @@
       const map = new Map({
         container: mapContainer,
         style: STYLE as import('maplibre-gl').StyleSpecification,
-        attributionControl: false,
+        attributionControl: { compact: true },
       });
 
       if (cancelled) {
@@ -343,26 +474,26 @@
       map.on('load', () => {
         if (cancelled) return;
         try {
-          if (hr) {
-            map.addSource('route-casing', {
-              type: 'geojson',
-              data: buildRouteCasingGeoJson(coords),
-            });
-            map.addLayer({
-              id: 'route-line-casing',
-              type: 'line',
-              source: 'route-casing',
-              layout: {
-                'line-cap': 'round',
-                'line-join': 'round',
-              },
-              paint: {
-                'line-color': '#0F0F1A',
-                'line-opacity': 0.92,
-                'line-width': 9,
-              },
-            });
-          }
+          // Dark casing keeps the route separated from roads/labels on the dark basemap,
+          // with or without HR zone coloring.
+          map.addSource('route-casing', {
+            type: 'geojson',
+            data: buildRouteCasingGeoJson(coords),
+          });
+          map.addLayer({
+            id: 'route-line-casing',
+            type: 'line',
+            source: 'route-casing',
+            layout: {
+              'line-cap': 'round',
+              'line-join': 'round',
+            },
+            paint: {
+              'line-color': '#0F0F1A',
+              'line-opacity': 0.92,
+              'line-width': 11,
+            },
+          });
 
           map.addSource('route', { type: 'geojson', data: routeData });
           map.addLayer({
@@ -371,8 +502,8 @@
             source: 'route',
             layout: { 'line-cap': 'round', 'line-join': 'round' },
             paint: {
-              'line-color': hr ? ['get', 'color'] : '#4621FF',
-              'line-width': 4,
+              'line-color': hr ? ['get', 'color'] : '#7A5CFF',
+              'line-width': 5,
               'line-opacity': 1,
             },
           });
@@ -383,7 +514,7 @@
             type: 'circle',
             source: 'endpoints',
             paint: {
-              'circle-radius': 6,
+              'circle-radius': 7,
               'circle-color': ['get', 'color'],
               'circle-stroke-width': 2,
               'circle-stroke-color': '#0F0F1A',
