@@ -184,7 +184,13 @@ jobs:
             ghcr.io/sbalbale/astraphe-mcp:${{ github.sha }}
 
   deploy:
-    needs: [build, backend, mobile]
+    # `migrate` runs first so new backend code never goes live against a schema
+    # that doesn't have its columns yet (e.g. a select/upsert of a new column
+    # would fail until the migration landed). If a migration fails, deploy is
+    # skipped. Consequence: migrations must stay backward-compatible with the
+    # previous release (additive: ADD COLUMN IF NOT EXISTS, not DROP/RENAME in
+    # the same change as the code that stops using them).
+    needs: [build, backend, mobile, migrate]
     # Never on pull_request — this ships to production. Only a real push to
     # main (post-merge), with backend+mobile+build all having succeeded,
     # deploys.
@@ -332,7 +338,8 @@ jobs:
           ENDSSH
 
   migrate:
-    needs: deploy
+    # Same upstream gates as `deploy`, but runs before it (see the note there).
+    needs: [build, backend, mobile]
     # Never on pull_request — this applies migrations to production. Only a
     # real push to main (post-merge) migrates.
     if: github.event_name == 'push'
