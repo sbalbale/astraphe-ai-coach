@@ -168,7 +168,7 @@ class Settings(BaseSettings):
     # Post-workout texts are skipped for sessions shorter than this.
     PHOTON_MIN_WORKOUT_MINUTES: int = 10
     # Only text for workouts that ended within this many hours (skips backfills).
-    PHOTON_WORKOUT_MAX_AGE_HOURS: int = 3
+    PHOTON_WORKOUT_MAX_AGE_HOURS: int = 12
     PHOTON_MAX_INBOUND_PER_MINUTE: int = 10
 
     # --- Manual Testing ---

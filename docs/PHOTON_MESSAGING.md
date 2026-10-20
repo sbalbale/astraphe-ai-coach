@@ -40,7 +40,7 @@ bridge holds the stream. Run **exactly one** bridge replica per Photon project.
    | `PHOTON_ALLOWED_NUMBER` | your number, E.164 |
    | `PHOTON_BRIDGE_TOKEN` | long random string, shared with the bridge |
    | `PHOTON_BRIDGE_URL` | bridge URL reachable from the backend (default `http://photon-bridge:8790`) |
-   | `PHOTON_MIN_WORKOUT_MINUTES` / `PHOTON_WORKOUT_MAX_AGE_HOURS` | optional, default 10 / 3 |
+   | `PHOTON_MIN_WORKOUT_MINUTES` / `PHOTON_WORKOUT_MAX_AGE_HOURS` | optional, default 10 / 12 |
 
 4. Bridge env: `PHOTON_PROJECT_ID`, `PHOTON_PROJECT_SECRET`, `PHOTON_BRIDGE_TOKEN` (same as backend),
    `BACKEND_URL` (the backend's in-cluster URL), `PHOTON_ALLOWED_NUMBER`.

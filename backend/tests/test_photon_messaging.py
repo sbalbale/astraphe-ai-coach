@@ -153,6 +153,13 @@ def test_workout_eligible_happy_path():
     assert messaging._workout_eligible(_row())
 
 
+def test_workout_window_is_twelve_hours():
+    """Garmin watches often sync late, so a workout that ended hours ago still gets a text."""
+    now = datetime.now(timezone.utc)
+    assert messaging._workout_eligible(_row(ended_at=(now - timedelta(hours=11)).isoformat()))
+    assert not messaging._workout_eligible(_row(ended_at=(now - timedelta(hours=13)).isoformat()))
+
+
 @pytest.mark.parametrize(
     "over",
     [
