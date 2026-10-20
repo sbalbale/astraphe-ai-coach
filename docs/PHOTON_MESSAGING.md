@@ -84,3 +84,6 @@ CI (`deploy.yml`) builds `ghcr.io/sbalbale/astraphe-photon-bridge` and rolls it 
 
 The migration (`20261020120000_photon_messaging.sql`) is additive and applied automatically by the
 `migrate` job on merge, before the new backend rolls out.
+- Workouts that sync together are texted one at a time, in order (an `asyncio.Lock` in
+  `messaging.py`), so the second note can see the first. The lock is per process; across backend
+  replicas two different workouts could still be composed concurrently.

@@ -31,6 +31,9 @@ TEXT_CHANNEL_NOTE = (
 
 NEW_CHAT_COMMANDS = {"/new", "/new chat"}
 
+# Serializes post-workout texts within one process (see maybe_text_workout).
+_workout_text_lock = asyncio.Lock()
+
 _inbound_times: deque[float] = deque()
 
 
@@ -208,15 +211,29 @@ async def maybe_text_workout(db: Any, athlete_id: str, workout_id: str) -> bool:
         if not await asyncio.to_thread(_claim_workout, db, workout_id):
             return False
 
+        # Workouts that sync together are texted one at a time, in the order they were
+        # claimed (asyncio.Lock is FIFO), so the bubbles arrive in order and each note can
+        # see the previous one in the chat history instead of repeating it.
+        async with _workout_text_lock:
+            return await _compose_and_send_workout_text(db, athlete_id, workout_id, rows[0].get("sport"))
+    except Exception:
+        traceback.print_exc()
+        return False
+
+
+async def _compose_and_send_workout_text(db: Any, athlete_id: str, workout_id: str, sport: Optional[str]) -> bool:
+    try:
         from app.routers.coach import _insert_message
         from app.services.ai_coach import get_coach_response
 
         conversation_id = await asyncio.to_thread(get_or_create_conversation, db, athlete_id)
         directive = (
             f"{TEXT_CHANNEL_NOTE}\n\n[SYSTEM: The athlete just finished workout id {workout_id} "
-            f"({rows[0].get('sport') or 'workout'}). Look it up with get_workout_summary, then "
+            f"({sport or 'workout'}). Look it up with get_workout_summary, then "
             "text them a short post-workout note: what they actually did, one thing worth "
-            "noting, and one next step. Do not greet them or announce that you looked it up.]"
+            "noting, and one next step. Do not greet them or announce that you looked it up. "
+            "If you already texted about another workout in this chat just now, don't repeat "
+            "the advice you gave.]"
         )
         try:
             reply, _sources = await asyncio.to_thread(

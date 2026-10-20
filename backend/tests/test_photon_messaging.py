@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import re
+import time
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -212,3 +214,34 @@ def test_maybe_text_workout_releases_claim_if_coach_fails():
         assert _run(messaging.maybe_text_workout(_db_returning(_row()), ATHLETE, "w1")) is False
     release.assert_called_once()
     send.assert_not_awaited()
+
+
+def test_two_workouts_syncing_together_are_texted_one_at_a_time_in_order():
+    events: list[str] = []
+
+    def slow_coach(**kwargs):
+        wid = re.search(r"workout id (\w+)", kwargs["message"]).group(1)
+        events.append(f"start-{wid}")
+        time.sleep(0.05)
+        events.append(f"end-{wid}")
+        return (f"note {wid}", [])
+
+    async def send(text, to=None):
+        events.append(f"sent-{text}")
+        return True
+
+    async def run_both():
+        return await asyncio.gather(
+            messaging.maybe_text_workout(_db_returning(_row()), ATHLETE, "w1"),
+            messaging.maybe_text_workout(_db_returning(_row()), ATHLETE, "w2"),
+        )
+
+    with patch.object(messaging, "_claim_workout", return_value=True),          patch.object(messaging, "get_or_create_conversation", return_value="conv-1"),          patch.object(coach_router, "_insert_message"),          patch("app.services.ai_coach.get_coach_response", side_effect=slow_coach),          patch.object(photon, "send_text", side_effect=send):
+        results = _run(run_both())
+
+    assert results == [True, True]
+    # The second coach call only starts after the first text has gone out.
+    assert events == [
+        "start-w1", "end-w1", "sent-note w1",
+        "start-w2", "end-w2", "sent-note w2",
+    ]
