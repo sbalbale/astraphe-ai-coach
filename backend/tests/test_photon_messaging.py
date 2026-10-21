@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import time
 from datetime import datetime, timedelta, timezone
@@ -220,7 +221,7 @@ def test_two_workouts_syncing_together_are_texted_one_at_a_time_in_order():
     events: list[str] = []
 
     def slow_coach(**kwargs):
-        wid = re.search(r"workout id (\w+)", kwargs["message"]).group(1)
+        wid = re.search(r'"workout_id":"(\w+)"', kwargs["message"]).group(1)
         events.append(f"start-{wid}")
         time.sleep(0.05)
         events.append(f"end-{wid}")
@@ -236,7 +237,12 @@ def test_two_workouts_syncing_together_are_texted_one_at_a_time_in_order():
             messaging.maybe_text_workout(_db_returning(_row()), ATHLETE, "w2"),
         )
 
-    with patch.object(messaging, "_claim_workout", return_value=True),          patch.object(messaging, "get_or_create_conversation", return_value="conv-1"),          patch.object(coach_router, "_insert_message"),          patch("app.services.ai_coach.get_coach_response", side_effect=slow_coach),          patch.object(photon, "send_text", side_effect=send):
+    with patch.object(messaging, "_claim_workout", return_value=True), \
+         patch.object(messaging, "get_or_create_conversation", return_value="conv-1"), \
+         patch.object(messaging, "_lookup_workout_summary", side_effect=lambda db, aid, wid: json.dumps({"workout_id": wid}, separators=(",", ":"))), \
+         patch.object(coach_router, "_insert_message"), \
+         patch("app.services.ai_coach.get_coach_response", side_effect=slow_coach), \
+         patch.object(photon, "send_text", side_effect=send):
         results = _run(run_both())
 
     assert results == [True, True]
@@ -257,3 +263,51 @@ def test_maybe_text_workout_never_texts_the_coachs_canned_error_reply():
         insert.assert_not_called()
         send.assert_not_awaited()
     assert COACH_ERROR_REPLY in COACH_FAILURE_REPLIES
+
+
+
+def _run_workout_note(lookup_return, reply="Nice row."):
+    """Run maybe_text_workout with _lookup_workout_summary stubbed; return the coach call kwargs."""
+    captured = {}
+
+    def fake_coach(**kwargs):
+        captured.update(kwargs)
+        return (reply, [])
+
+    with patch.object(messaging, "_claim_workout", return_value=True), \
+         patch.object(messaging, "get_or_create_conversation", return_value="conv-1"), \
+         patch.object(messaging, "_lookup_workout_summary", return_value=lookup_return), \
+         patch.object(coach_router, "_insert_message"), \
+         patch("app.services.ai_coach.get_coach_response", side_effect=fake_coach), \
+         patch.object(photon, "send_text", AsyncMock(return_value=True)):
+        assert _run(messaging.maybe_text_workout(_db_returning(_row()), ATHLETE, "w1")) is True
+    return captured
+
+
+def test_workout_note_is_one_model_call_with_the_data_in_the_prompt():
+    kw = _run_workout_note('{"duration_min":50,"avg_hr":133}')
+    assert kw["tools_enabled"] is False
+    assert "[WORKOUT DATA]" in kw["message"] and '{"duration_min":50,"avg_hr":133}' in kw["message"]
+    assert "get_workout_summary" not in kw["message"]
+
+
+def test_workout_note_falls_back_to_the_tool_loop_when_lookup_fails():
+    kw = _run_workout_note(None)
+    assert kw["tools_enabled"] is True
+    assert "get_workout_summary" in kw["message"] and "[WORKOUT DATA]" not in kw["message"]
+
+
+def test_lookup_workout_summary_returns_compact_json_or_none():
+    from app.services import coach_tools
+
+    ok = {"duration_min": 50, "avg_hr": 133}
+    with patch.dict(coach_tools.TOOL_HANDLERS, {"get_workout_summary": lambda args, aid, db: ok}):
+        assert messaging._lookup_workout_summary(MagicMock(), ATHLETE, "w1") == '{"duration_min":50,"avg_hr":133}'
+    with patch.dict(coach_tools.TOOL_HANDLERS, {"get_workout_summary": lambda args, aid, db: {"error": "nope"}}):
+        assert messaging._lookup_workout_summary(MagicMock(), ATHLETE, "w1") is None
+
+    def boom(args, aid, db):
+        raise RuntimeError("db down")
+
+    with patch.dict(coach_tools.TOOL_HANDLERS, {"get_workout_summary": boom}):
+        assert messaging._lookup_workout_summary(MagicMock(), ATHLETE, "w1") is None

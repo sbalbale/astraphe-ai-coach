@@ -7,6 +7,7 @@ app and vice versa. The coach itself is the same get_coach_response() the app us
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 import traceback
@@ -221,20 +222,48 @@ async def maybe_text_workout(db: Any, athlete_id: str, workout_id: str) -> bool:
         return False
 
 
+def _lookup_workout_summary(db: Any, athlete_id: str, workout_id: str) -> Optional[str]:
+    """The coach's own get_workout_summary data as compact JSON, or None if it can't be read."""
+    try:
+        from app.services.coach_tools import TOOL_HANDLERS
+
+        res = TOOL_HANDLERS["get_workout_summary"]({"workout_id": workout_id}, athlete_id, db)
+        if not isinstance(res, dict) or res.get("error"):
+            return None
+        return json.dumps(res, default=str, separators=(",", ":"))[:6000]
+    except Exception:
+        traceback.print_exc()
+        return None
+
+
 async def _compose_and_send_workout_text(db: Any, athlete_id: str, workout_id: str, sport: Optional[str]) -> bool:
     try:
         from app.routers.coach import _insert_message
         from app.services.ai_coach import get_coach_response
 
         conversation_id = await asyncio.to_thread(get_or_create_conversation, db, athlete_id)
-        directive = (
-            f"{TEXT_CHANNEL_NOTE}\n\n[SYSTEM: The athlete just finished workout id {workout_id} "
-            f"({sport or 'workout'}). Look it up with get_workout_summary, then "
-            "text them a short post-workout note: what they actually did, one thing worth "
-            "noting, and one next step. Do not greet them or announce that you looked it up. "
-            "If you already texted about another workout in this chat just now, don't repeat "
-            "the advice you gave.]"
-        )
+        # Look the workout up here and hand it to the model: the tool loop costs a full model
+        # round trip per hop (3 hops ~ 50s+), a single call with the data in the prompt ~10s.
+        summary = await asyncio.to_thread(_lookup_workout_summary, db, athlete_id, workout_id)
+        if summary:
+            directive = (
+                f"{TEXT_CHANNEL_NOTE}\n\n[SYSTEM: The athlete just finished a workout "
+                f"({sport or 'workout'}); its data is below, already looked up. Text them a short "
+                "post-workout note: what they actually did, one thing worth noting, and one next "
+                "step. Do not greet them or mention looking anything up. If you already texted "
+                "about another workout in this chat just now, don't repeat the advice you gave. "
+                "Reply with only your <response> block; no tools, no scratchpad.]\n"
+                f"[WORKOUT DATA]\n{summary}"
+            )
+        else:  # lookup failed: fall back to letting the coach fetch it with tools
+            directive = (
+                f"{TEXT_CHANNEL_NOTE}\n\n[SYSTEM: The athlete just finished workout id {workout_id} "
+                f"({sport or 'workout'}). Look it up with get_workout_summary, then "
+                "text them a short post-workout note: what they actually did, one thing worth "
+                "noting, and one next step. Do not greet them or announce that you looked it up. "
+                "If you already texted about another workout in this chat just now, don't repeat "
+                "the advice you gave.]"
+            )
         try:
             reply, _sources = await asyncio.to_thread(
                 get_coach_response,
@@ -245,6 +274,7 @@ async def _compose_and_send_workout_text(db: Any, athlete_id: str, workout_id: s
                 conversation_id=conversation_id,
                 model_name=None,
                 timezone_offset_min=None,
+                tools_enabled=not summary,
             )
         except Exception:
             traceback.print_exc()

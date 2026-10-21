@@ -1298,9 +1298,12 @@ def get_coach_response_agentic(
     timezone_offset_min: int | None = None,
     max_tool_hops: int = 15,
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
+    tools_enabled: bool = True,
 ) -> tuple[str, list[dict[str, str]]]:
     """
     Non-streaming coach reply with manual Gemini function calling (tool loop).
+    tools_enabled=False skips every tool: one model call, for callers that already put the
+    data in the prompt (each extra tool hop is a full model round trip).
     Returns (athlete-facing message, web search citation sources when present).
     """
     system_instruction = load_coach_instructions()
@@ -1418,13 +1421,16 @@ def get_coach_response_agentic(
     # Only use ThinkingConfig for models that specifically support it
     is_thinking_model = "thinking" in primary_model.lower()
     
-    config = types.GenerateContentConfig(
-        system_instruction=system_with_ctx,
-        tools=coach_tools.tools_for_models(candidates),
-        automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
-        tool_config=types.ToolConfig(include_server_side_tool_invocations=True),
-        temperature=0.4,
-    )
+    if tools_enabled:
+        config = types.GenerateContentConfig(
+            system_instruction=system_with_ctx,
+            tools=coach_tools.tools_for_models(candidates),
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+            tool_config=types.ToolConfig(include_server_side_tool_invocations=True),
+            temperature=0.4,
+        )
+    else:
+        config = types.GenerateContentConfig(system_instruction=system_with_ctx, temperature=0.4)
     if is_thinking_model:
         config.thinking_config = types.ThinkingConfig(include_thoughts=False)
 
@@ -1822,6 +1828,7 @@ def get_coach_response(
     model_name: str | None = None,
     timezone_offset_min: int | None = None,
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
+    tools_enabled: bool = True,
 ) -> tuple[str, list[dict[str, str]]]:
     return get_coach_response_agentic(
         athlete_id=athlete_id,
@@ -1832,6 +1839,7 @@ def get_coach_response(
         model_name=model_name,
         timezone_offset_min=timezone_offset_min,
         progress_callback=progress_callback,
+        tools_enabled=tools_enabled,
     )
 
 async def get_coach_response_stream(

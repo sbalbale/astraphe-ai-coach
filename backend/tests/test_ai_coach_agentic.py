@@ -378,3 +378,19 @@ def test_agentic_progress_callback_receives_context_and_thinking_and_tool_events
     assert "context_ready" in statuses
     assert "thinking" in statuses
     assert "tool" in statuses
+
+
+def test_agentic_tools_disabled_is_one_model_call_with_no_tools():
+    db = MagicMock()
+    seen: list[dict] = []
+
+    def fake_generate(**kwargs):
+        seen.append(kwargs)
+        return _response([_text_part("<response>ok</response>")])
+
+    with _db_patches(), patch.object(ai_coach._client.models, "generate_content", side_effect=fake_generate):
+        text, _ = ai_coach.get_coach_response_agentic("ath-1", "write a note", db=db, tools_enabled=False)
+    assert text == "ok"
+    assert len(seen) == 1
+    assert not seen[0]["config"].tools
+    assert seen[0]["config"].system_instruction
