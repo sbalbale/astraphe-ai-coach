@@ -150,6 +150,29 @@ def test_agentic_single_tool_call_then_final_reply():
     assert text == "You had 3 rides this week."
 
 
+def test_agentic_preserves_thought_signature_on_function_call_parts():
+    """Gemini 3+ 400s ("missing a thought_signature") if the follow-up request drops it."""
+    db = MagicMock()
+    sig_part = _fc_part("get_recent_workouts", {"limit": 5})
+    sig_part.thought_signature = b"sig-123"
+    responses = [_response([sig_part]), _response([_text_part("<response>ok</response>")])]
+    seen_contents: list[list] = []
+
+    def fake_generate(**kwargs):
+        seen_contents.append(list(kwargs["contents"]))
+        return responses[len(seen_contents) - 1]
+
+    with _db_patches(), patch.object(
+        ai_coach._client.models, "generate_content", side_effect=fake_generate
+    ), patch.dict(
+        coach_tools.TOOL_HANDLERS, {"get_recent_workouts": lambda args, athlete_id, db: {"workouts": []}}
+    ):
+        text, _ = ai_coach.get_coach_response_agentic("ath-1", "how many rides this week", db=db)
+    assert text == "ok"
+    model_turns = [c for c in seen_contents[1] if getattr(c, "role", None) == "model" and c.parts]
+    assert model_turns[-1].parts[0].thought_signature == b"sig-123"
+
+
 def test_agentic_unknown_tool_name_reports_error_to_model():
     db = MagicMock()
     responses = [
