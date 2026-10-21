@@ -1526,11 +1526,16 @@ def get_coach_response_agentic(
         )
 
         if fcs:
-            fc_parts: list[types.Part] = []
-            for fc in fcs:
-                if fc is None:
-                    continue
-                fc_parts.append(types.Part(function_call=fc))
+            # Carry each part's thought_signature over: Gemini 3+ attaches one to the model's
+            # function_call parts and rejects the follow-up request with a 400 if it is missing.
+            fc_parts: list[types.Part] = [
+                types.Part(
+                    function_call=p.function_call,
+                    thought_signature=getattr(p, "thought_signature", None),
+                )
+                for p in parts
+                if getattr(p, "function_call", None)
+            ]
             if not fc_parts:
                 break
             last_tool_names = [fc.name for fc in fcs if fc is not None and fc.name]
