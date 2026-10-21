@@ -882,3 +882,19 @@ def test_tools_keep_native_search_and_skip_web_search_on_gemma(monkeypatch):
     monkeypatch.setattr(coach_tools.settings, "SEARXNG_URL", "http://searx:8888")
     tools = coach_tools.tools_for_models(["gemma-4-31b-it"])
     assert _has_search(tools) and "web_search" not in _fn_names(tools)
+
+
+def test_tools_drop_scratchpad_only_when_every_model_reasons_natively(monkeypatch):
+    monkeypatch.setattr(coach_tools.settings, "GEMINI_FREE_TIER", True)
+    monkeypatch.setattr(coach_tools.settings, "SEARXNG_URL", None)
+    assert "internal_scratchpad" not in _fn_names(coach_tools.tools_for_models(["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]))
+    assert "internal_scratchpad" in _fn_names(coach_tools.tools_for_models(["gemma-4-31b-it", "gemma-4-26b-a4b-it"]))
+    assert "internal_scratchpad" in _fn_names(coach_tools.tools_for_models(["gemini-3.5-flash-lite", "gemma-4-26b-a4b-it"]))
+    assert coach_tools.scratchpad_dropped(["gemini-3.5-flash-lite"]) and not coach_tools.scratchpad_dropped([])
+
+
+def test_tools_on_a_paid_key_keep_native_search_but_still_drop_scratchpad(monkeypatch):
+    monkeypatch.setattr(coach_tools.settings, "GEMINI_FREE_TIER", False)
+    tools = coach_tools.tools_for_models(["gemini-3.5-flash-lite"])
+    assert _has_search(tools)
+    assert "internal_scratchpad" not in _fn_names(tools) and "list_workouts" in _fn_names(tools)

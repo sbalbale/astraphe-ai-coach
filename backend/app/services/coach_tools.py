@@ -1528,16 +1528,39 @@ def search_grounding_available(model: str | None) -> bool:
     return not (model or "").strip().lower().startswith("gemini-3")
 
 
+def has_native_thinking(model: str | None) -> bool:
+    """Gemini 3+ models reason natively, so the internal_scratchpad tool only adds a full
+    model round trip (~10-20s) per turn without improving the answer."""
+    return (model or "").strip().lower().startswith("gemini-3")
+
+
+def scratchpad_dropped(models: list[str]) -> bool:
+    """True when every candidate model reasons natively (see has_native_thinking)."""
+    return bool(models) and all(has_native_thinking(m) for m in models)
+
+
 def tools_for_models(models: list[str]) -> list[types.Tool]:
     """TOOLS, adjusted for the candidate models (the primary and fallback share one request
-    config). If any of them can't use native google_search, drop it and, when SEARXNG_URL is
-    set, add the SearXNG-backed web_search function so the coach can still search."""
-    if all(search_grounding_available(m) for m in models):
+    config).
+    - If any can't use native google_search, drop it and, when SEARXNG_URL is set, add the
+      SearXNG-backed web_search function so the coach can still search.
+    - If all reason natively (Gemini 3+), drop internal_scratchpad to save a model round trip.
+    """
+    keep_search = all(search_grounding_available(m) for m in models)
+    drop_scratchpad = scratchpad_dropped(models)
+    if keep_search and not drop_scratchpad:
         return TOOLS
-    tools = [t for t in TOOLS if getattr(t, "google_search", None) is None]
-    if (settings.SEARXNG_URL or "").strip():
-        decls = [d for t in tools for d in (getattr(t, "function_declarations", None) or [])]
-        tools = [types.Tool(function_declarations=[*decls, _web_search_decl])]
+    decls = [
+        d
+        for t in TOOLS
+        for d in (getattr(t, "function_declarations", None) or [])
+        if not (drop_scratchpad and d.name == "internal_scratchpad")
+    ]
+    if not keep_search and (settings.SEARXNG_URL or "").strip():
+        decls.append(_web_search_decl)
+    tools = [types.Tool(function_declarations=decls)]
+    if keep_search:
+        tools += [t for t in TOOLS if getattr(t, "google_search", None) is not None]
     return tools
 
 

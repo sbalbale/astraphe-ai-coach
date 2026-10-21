@@ -56,6 +56,10 @@ class Settings(BaseSettings):
     # regardless of this setting — that's a legitimate response to a real
     # rate-limit error either way, not a guess at one that hasn't happened.
     GEMINI_FREE_TIER: bool = True
+    # Per-request timeout for the chat/analysis client. Gemini under load can hold one request
+    # for minutes (seen: 233s for a single hop); with a cap, the coach loop treats it as
+    # transient and fails over to GEMINI_FALLBACK_MODEL instead of hanging.
+    GEMINI_REQUEST_TIMEOUT_SEC: int = 45
     GEMINI_MODEL: str = "gemma-4-26b-a4b-it"
     # Fallback chat model when the primary model is overloaded (e.g. 503 UNAVAILABLE).
     GEMINI_FALLBACK_MODEL: str = "gemma-4-26b-a4b-it"

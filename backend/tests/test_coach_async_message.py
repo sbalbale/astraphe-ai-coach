@@ -190,3 +190,45 @@ def test_run_coach_response_and_notify_push_failure_is_swallowed():
                 "ath-1", "hi", 0.0, db, "conv-1", None, None, None
             )
         )
+
+
+def test_run_coach_response_and_notify_delivers_before_memory_and_title():
+    """The push/text must not wait on the two extra model calls (memory extraction, title)."""
+    db = MagicMock()
+    order: list[str] = []
+
+    async def _memory(*a, **k):
+        order.append("memory")
+
+    async def _title(*a, **k):
+        order.append("title")
+
+    with patch.object(coach_router, "get_coach_response", return_value=("Great ride!", [])), \
+         patch.object(coach_router, "_insert_message"), \
+         patch.object(coach_router, "_load_conversation_history", return_value=[]), \
+         patch.object(coach_router, "_run_memory_extraction", side_effect=_memory), \
+         patch.object(coach_router, "_run_conversation_title", side_effect=_title), \
+         patch("app.services.push.send_push_to_athlete", side_effect=lambda **k: order.append("push")):
+        _run_async(coach_router._run_coach_response_and_notify("ath-1", "hi", 0.0, db, "conv-1", "m", "m2", 0))
+    assert order == ["push", "memory", "title"]
+
+
+def test_run_coach_response_and_notify_text_sink_also_goes_first():
+    db = MagicMock()
+    order: list[str] = []
+
+    async def _sink(text):
+        order.append(f"sink:{text}")
+
+    async def _memory(*a, **k):
+        order.append("memory")
+
+    with patch.object(coach_router, "get_coach_response", return_value=("Nice.", [])), \
+         patch.object(coach_router, "_insert_message"), \
+         patch.object(coach_router, "_load_conversation_history", return_value=[]), \
+         patch.object(coach_router, "_run_memory_extraction", side_effect=_memory), \
+         patch.object(coach_router, "_run_conversation_title", AsyncMock()):
+        _run_async(
+            coach_router._run_coach_response_and_notify("ath-1", "hi", 0.0, db, "conv-1", "m", "m2", 0, reply_sink=_sink)
+        )
+    assert order == ["sink:Nice.", "memory"]

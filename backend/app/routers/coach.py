@@ -459,6 +459,30 @@ async def _run_coach_response_and_notify(
         traceback.print_exc()
         return  # Nothing to notify/extract from if the reply itself never landed.
 
+    # Deliver the reply first. Memory extraction and title generation are each a model call
+    # (~10-30s together) that the athlete shouldn't have to wait on before being notified.
+    if reply_sink is not None:
+        try:
+            await reply_sink(coach_reply)
+        except Exception:
+            traceback.print_exc()
+    else:
+        try:
+            from app.services.push import send_push_to_athlete
+            from app.services.text_format import notification_preview
+
+            preview = notification_preview(coach_reply or "")
+            send_push_to_athlete(
+                athlete_id=athlete_id,
+                title="ASTRAPHE Coach",
+                body=preview,
+                db=db,
+                data={"url": "/chat", "conversation_id": conversation_id},
+                notification_type="coach",
+            )
+        except Exception:
+            pass
+
     try:
         recent_history = await asyncio.to_thread(
             _load_conversation_history, db, athlete_id, conversation_id, 10
@@ -468,29 +492,6 @@ async def _run_coach_response_and_notify(
         pass
 
     await _run_conversation_title(db, athlete_id, conversation_id, model_name)
-
-    if reply_sink is not None:
-        try:
-            await reply_sink(coach_reply)
-        except Exception:
-            traceback.print_exc()
-        return
-
-    try:
-        from app.services.push import send_push_to_athlete
-        from app.services.text_format import notification_preview
-
-        preview = notification_preview(coach_reply or "")
-        send_push_to_athlete(
-            athlete_id=athlete_id,
-            title="ASTRAPHE Coach",
-            body=preview,
-            db=db,
-            data={"url": "/chat", "conversation_id": conversation_id},
-            notification_type="coach",
-        )
-    except Exception:
-        pass
 
 
 @router.post("/message/async")
