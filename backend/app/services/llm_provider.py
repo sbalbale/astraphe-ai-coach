@@ -283,4 +283,7 @@ def get_llm_client() -> Any:
             )
         logger.info("[llm_provider] using OpenAI-compatible endpoint %s", settings.OPENAI_API_BASE_URL)
         return _OpenAICompatClient(settings.OPENAI_API_BASE_URL, settings.OPENAI_API_KEY)
-    return genai.Client(api_key=settings.GEMINI_API_KEY)
+    return genai.Client(
+        api_key=settings.GEMINI_API_KEY,
+        http_options=types.HttpOptions(timeout=int(settings.GEMINI_REQUEST_TIMEOUT_SEC) * 1000),
+    )

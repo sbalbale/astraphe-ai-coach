@@ -180,3 +180,13 @@ def test_get_llm_client_openai_returns_shim(monkeypatch):
     client = llm_provider.get_llm_client()
     assert isinstance(client, llm_provider._OpenAICompatClient)
     llm_provider.get_llm_client.cache_clear()
+
+
+def test_get_llm_client_sets_a_request_timeout(monkeypatch):
+    """Without a cap a single overloaded Gemini request can hang for minutes."""
+    monkeypatch.setattr(settings, "LLM_PROVIDER", "gemini")
+    monkeypatch.setattr(settings, "GEMINI_REQUEST_TIMEOUT_SEC", 30)
+    llm_provider.get_llm_client.cache_clear()
+    client = llm_provider.get_llm_client()
+    assert client._api_client._http_options.timeout == 30_000
+    llm_provider.get_llm_client.cache_clear()

@@ -394,3 +394,76 @@ def test_agentic_tools_disabled_is_one_model_call_with_no_tools():
     assert len(seen) == 1
     assert not seen[0]["config"].tools
     assert seen[0]["config"].system_instruction
+
+
+def test_agentic_fails_over_to_the_fallback_model_after_one_transient_error():
+    """A failing call can itself take 10+ s, so the primary is not retried when a fallback exists."""
+    db = MagicMock()
+    calls: list[str] = []
+
+    def _side_effect(*, model, contents, config):
+        calls.append(model)
+        if model == "primary-model":
+            raise RuntimeError("Server disconnected without sending a response")
+        return _response([_text_part("<response>fallback ok</response>")])
+
+    with _db_patches(), patch.object(
+        ai_coach._client.models, "generate_content", side_effect=_side_effect
+    ), patch.object(ai_coach.settings, "GEMINI_FALLBACK_MODEL", "fallback-model"), patch.object(
+        ai_coach.time, "sleep"
+    ) as mock_sleep:
+        text, _sources = ai_coach.get_coach_response_agentic("ath-1", "hi", db=db, model_name="primary-model")
+    assert text == "fallback ok"
+    assert calls == ["primary-model", "fallback-model"]  # one primary attempt, no retries
+    mock_sleep.assert_not_called()
+
+
+def test_agentic_still_retries_when_there_is_no_fallback_model():
+    db = MagicMock()
+    calls = {"n": 0}
+
+    def _side_effect(*, model, contents, config):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise RuntimeError("503 UNAVAILABLE")
+        return _response([_text_part("<response>ok</response>")])
+
+    with _db_patches(), patch.object(
+        ai_coach._client.models, "generate_content", side_effect=_side_effect
+    ), patch.object(ai_coach.settings, "GEMINI_FALLBACK_MODEL", "same-model"):
+        text, _ = ai_coach.get_coach_response_agentic("ath-1", "hi", db=db, model_name="same-model")
+    assert text == "ok" and calls["n"] == 3
+
+
+def test_agentic_drops_scratchpad_and_says_so_on_native_thinking_models():
+    db = MagicMock()
+    seen = {}
+
+    def _side_effect(*, model, contents, config):
+        seen["config"] = config
+        return _response([_text_part("<response>ok</response>")])
+
+    with _db_patches(), patch.object(
+        ai_coach._client.models, "generate_content", side_effect=_side_effect
+    ), patch.object(ai_coach.settings, "GEMINI_FALLBACK_MODEL", "gemini-3.1-flash-lite"):
+        ai_coach.get_coach_response_agentic("ath-1", "hi", db=db, model_name="gemini-3.5-flash-lite")
+    names = {d.name for t in seen["config"].tools for d in (getattr(t, "function_declarations", None) or [])}
+    assert "internal_scratchpad" not in names and "get_workout_summary" in names
+    assert seen["config"].system_instruction.endswith(ai_coach.SCRATCHPAD_UNAVAILABLE_NOTE)
+
+
+def test_agentic_keeps_scratchpad_on_gemma():
+    db = MagicMock()
+    seen = {}
+
+    def _side_effect(*, model, contents, config):
+        seen["config"] = config
+        return _response([_text_part("<response>ok</response>")])
+
+    with _db_patches(), patch.object(
+        ai_coach._client.models, "generate_content", side_effect=_side_effect
+    ), patch.object(ai_coach.settings, "GEMINI_FALLBACK_MODEL", "gemma-4-26b-a4b-it"):
+        ai_coach.get_coach_response_agentic("ath-1", "hi", db=db, model_name="gemma-4-31b-it")
+    names = {d.name for t in seen["config"].tools for d in (getattr(t, "function_declarations", None) or [])}
+    assert "internal_scratchpad" in names
+    assert ai_coach.SCRATCHPAD_UNAVAILABLE_NOTE not in seen["config"].system_instruction

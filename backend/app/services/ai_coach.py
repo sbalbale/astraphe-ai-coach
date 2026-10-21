@@ -1273,6 +1273,12 @@ COACH_ERROR_REPLY = (
     "Could you try asking again?"
 )
 COACH_INCOMPLETE_REPLY = "Unable to complete coach response."
+
+SCRATCHPAD_UNAVAILABLE_NOTE = (
+    "\n\n[SESSION NOTE: The internal_scratchpad tool is not available in this session. Do your "
+    "reasoning silently (never print it), call only the tools you actually need, and then give "
+    "your final answer in the <response> block.]"
+)
 COACH_FAILURE_REPLIES = frozenset({COACH_PARTIAL_ERROR_REPLY, COACH_ERROR_REPLY, COACH_INCOMPLETE_REPLY})
 
 _MUTATING_TOOL_NAMES = frozenset({
@@ -1421,16 +1427,21 @@ def get_coach_response_agentic(
     # Only use ThinkingConfig for models that specifically support it
     is_thinking_model = "thinking" in primary_model.lower()
     
+    # The prompt tells the model to call internal_scratchpad first; when that tool is dropped
+    # (native-thinking models) say so, so it doesn't try to call a tool that isn't there.
+    system_for_models = system_with_ctx
+    if coach_tools.scratchpad_dropped(candidates):
+        system_for_models += SCRATCHPAD_UNAVAILABLE_NOTE
     if tools_enabled:
         config = types.GenerateContentConfig(
-            system_instruction=system_with_ctx,
+            system_instruction=system_for_models,
             tools=coach_tools.tools_for_models(candidates),
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
             tool_config=types.ToolConfig(include_server_side_tool_invocations=True),
             temperature=0.4,
         )
     else:
-        config = types.GenerateContentConfig(system_instruction=system_with_ctx, temperature=0.4)
+        config = types.GenerateContentConfig(system_instruction=system_for_models, temperature=0.4)
     if is_thinking_model:
         config.thinking_config = types.ThinkingConfig(include_thoughts=False)
 
@@ -1444,7 +1455,11 @@ def get_coach_response_agentic(
         _hop_error: Exception | None = None
         for _model_idx, effective_model in enumerate(candidates):
             _hop_error = None
-            for _attempt in range(3):  # 3 attempts for larger models
+            _transient = False
+            # Only the last candidate is retried: a failing call can itself take 10+ s, so when
+            # a fallback model exists it is tried after one failure instead of after 3 retries.
+            max_attempts = 3 if _model_idx == len(candidates) - 1 else 1
+            for _attempt in range(max_attempts):
                 try:
                     # Blocks (bounded) rather than firing and getting a 429 —
                     # the free-tier RPM budget for the Gemma models here is
@@ -1477,7 +1492,8 @@ def get_coach_response_agentic(
                             "429", "RESOURCE_EXHAUSTED", "DEADLINE_EXCEEDED", "timeout", "Timeout",
                         )
                     )
-                    if _attempt < 2 and is_transient:
+                    _transient = is_transient
+                    if _attempt < max_attempts - 1 and is_transient:
                         wait = 1.5 * (_attempt + 1)
                         print(
                             f"[coach] Gemini transient error (hop {_hop}, attempt {_attempt + 1}): {e}. Retrying in {wait}s…"
@@ -1490,9 +1506,10 @@ def get_coach_response_agentic(
             if _hop_error is None:
                 break
 
-            # If primary looks overloaded/unavailable, try fallback model (if configured).
-            if _model_idx == 0 and len(candidates) > 1 and _should_fallback_chat_model(str(_hop_error)):
-                print(f"[coach] Primary model unavailable; trying fallback model={candidates[1]}")
+            # If this model looks overloaded/unavailable (or hit any transient error), try the
+            # next configured fallback model.
+            if _model_idx < len(candidates) - 1 and (_transient or _should_fallback_chat_model(str(_hop_error))):
+                print(f"[coach] Primary model unavailable; trying fallback model={candidates[_model_idx + 1]}")
                 continue
 
             # Otherwise don't keep iterating candidates.
