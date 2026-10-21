@@ -3,6 +3,7 @@ name: Build, Test, and Deploy
 # run — no webhook delivery, not a config issue. This comment-only touch
 # to a watched path forces a fresh push event to re-run the pipeline,
 # specifically to confirm the migrate job's fix actually works.
+# Same again for #37's squash-merge (c5b63e0), which also never got a push run.
 
 on:
   push:
