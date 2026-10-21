@@ -154,6 +154,13 @@ class Settings(BaseSettings):
     VAPID_PRIVATE_KEY: Optional[str] = None
     VAPID_SUBJECT: str = "mailto:admin@astraphe.app"
 
+    # --- Web search for the coach ---
+    # Base URL of a SearXNG instance (JSON format enabled), e.g.
+    # http://searxng.lan-services.svc.cluster.local:8888. Used for the coach's
+    # web_search tool on models that can't use Gemini's native Google Search grounding
+    # (Gemini 3+ on the free tier). Unset = no web_search tool.
+    SEARXNG_URL: Optional[str] = None
+
     # --- Photon (iMessage) coach channel ---
     # Single-user: one allow-listed number mapped to one athlete. Photon only
     # speaks gRPC (spectrum-ts), so a separate Node bridge (photon-bridge/) holds
