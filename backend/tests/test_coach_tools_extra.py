@@ -769,3 +769,116 @@ def test_workout_structure_bodyweight_hr_band_none_when_hrr_non_positive():
 def test_workout_structure_power_based_hr_band_none_when_hrr_non_positive():
     result = coach_tools._workout_structure("Endurance", 45, 250, 165, 50, 190, "run")
     assert all(block["target_hr"] is None for block in result["structure"])
+
+
+# ---------------------------------------------------------------------------
+# google_search availability per model
+# ---------------------------------------------------------------------------
+
+def _has_search(tools) -> bool:
+    return any(getattr(t, "google_search", None) is not None for t in tools)
+
+
+def test_tools_keep_search_on_gemma_models(monkeypatch):
+    monkeypatch.setattr(coach_tools.settings, "GEMINI_FREE_TIER", True)
+    assert _has_search(coach_tools.tools_for_models(["gemma-4-31b-it", "gemma-4-26b-a4b-it"]))
+
+
+def test_tools_drop_search_when_any_model_is_gemini3_on_free_tier(monkeypatch):
+    monkeypatch.setattr(coach_tools.settings, "GEMINI_FREE_TIER", True)
+    assert not _has_search(coach_tools.tools_for_models(["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]))
+    assert not _has_search(coach_tools.tools_for_models(["gemma-4-31b-it", "gemini-3.1-flash-lite"]))
+    # the function declarations are still there
+    assert any(getattr(t, "function_declarations", None) for t in coach_tools.tools_for_models(["gemini-3.5-flash-lite"]))
+
+
+def test_tools_keep_search_on_gemini3_when_paid(monkeypatch):
+    monkeypatch.setattr(coach_tools.settings, "GEMINI_FREE_TIER", False)
+    assert _has_search(coach_tools.tools_for_models(["gemini-3.5-flash-lite"]))
+
+
+# ---------------------------------------------------------------------------
+# web_search (SearXNG)
+# ---------------------------------------------------------------------------
+
+def _searx_response(results, status=200):
+    resp = MagicMock()
+    resp.status_code = status
+    resp.json.return_value = {"results": results}
+    resp.raise_for_status.side_effect = None if status < 400 else RuntimeError(f"HTTP {status}")
+    return resp
+
+
+def _web_search(args):
+    return coach_tools.handle_web_search(args, athlete_id="ath-1", db=MagicMock())
+
+
+def test_web_search_returns_trimmed_deduped_results(monkeypatch):
+    monkeypatch.setattr(coach_tools.settings, "SEARXNG_URL", "http://searx:8888/")
+    rows = [
+        {"title": "A", "url": "https://a.example/1", "content": "x" * 500},
+        {"title": "A dup", "url": "https://a.example/1", "content": "dup"},
+        {"title": "B", "url": "https://b.example/2", "content": "b"},
+        {"title": "no url", "content": "skip"},
+    ]
+    with patch.object(coach_tools.httpx, "get", return_value=_searx_response(rows)) as get:
+        out = _web_search({"query": "tanaka formula", "max_results": 5})
+    assert [r["url"] for r in out["results"]] == ["https://a.example/1", "https://b.example/2"]
+    assert len(out["results"][0]["snippet"]) == 320
+    assert get.call_args.args[0] == "http://searx:8888/search"
+    assert get.call_args.kwargs["params"] == {"q": "tanaka formula", "format": "json"}
+
+
+def test_web_search_respects_limit_and_time_range(monkeypatch):
+    monkeypatch.setattr(coach_tools.settings, "SEARXNG_URL", "http://searx:8888")
+    rows = [{"title": str(i), "url": f"https://x.example/{i}", "content": ""} for i in range(20)]
+    with patch.object(coach_tools.httpx, "get", return_value=_searx_response(rows)) as get:
+        out = _web_search({"query": "q", "max_results": 100, "time_range": "week"})
+        junk = _web_search({"query": "q", "max_results": "abc", "time_range": "decade"})
+    assert len(out["results"]) == 8  # capped
+    assert get.call_args_list[0].kwargs["params"]["time_range"] == "week"
+    assert len(junk["results"]) == 5  # bad max_results -> default
+    assert "time_range" not in get.call_args_list[1].kwargs["params"]
+
+
+def test_web_search_errors_do_not_raise(monkeypatch):
+    monkeypatch.setattr(coach_tools.settings, "SEARXNG_URL", "http://searx:8888")
+    assert _web_search({"query": "  "}) == {"error": "query is required"}
+    with patch.object(coach_tools.httpx, "get", side_effect=RuntimeError("boom")):
+        assert "web search failed" in _web_search({"query": "q"})["error"]
+    with patch.object(coach_tools.httpx, "get", return_value=_searx_response([])):
+        out = _web_search({"query": "q"})
+    assert out["results"] == [] and "could not verify" in out["note"]
+    monkeypatch.setattr(coach_tools.settings, "SEARXNG_URL", None)
+    assert _web_search({"query": "q"}) == {"error": "web search is not configured"}
+
+
+def test_web_search_is_registered_as_a_handler():
+    assert "web_search" in coach_tools.TOOL_HANDLERS
+
+
+def _fn_names(tools):
+    return {d.name for t in tools for d in (getattr(t, "function_declarations", None) or [])}
+
+
+def test_tools_add_web_search_when_native_search_is_dropped(monkeypatch):
+    monkeypatch.setattr(coach_tools.settings, "GEMINI_FREE_TIER", True)
+    monkeypatch.setattr(coach_tools.settings, "SEARXNG_URL", "http://searx:8888")
+    tools = coach_tools.tools_for_models(["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"])
+    assert not _has_search(tools)
+    assert "web_search" in _fn_names(tools) and "list_workouts" in _fn_names(tools)
+    assert len(tools) == 1  # one Tool holding every function declaration
+
+
+def test_tools_without_searxng_have_no_search_at_all(monkeypatch):
+    monkeypatch.setattr(coach_tools.settings, "GEMINI_FREE_TIER", True)
+    monkeypatch.setattr(coach_tools.settings, "SEARXNG_URL", None)
+    tools = coach_tools.tools_for_models(["gemini-3.5-flash-lite"])
+    assert not _has_search(tools) and "web_search" not in _fn_names(tools)
+
+
+def test_tools_keep_native_search_and_skip_web_search_on_gemma(monkeypatch):
+    monkeypatch.setattr(coach_tools.settings, "GEMINI_FREE_TIER", True)
+    monkeypatch.setattr(coach_tools.settings, "SEARXNG_URL", "http://searx:8888")
+    tools = coach_tools.tools_for_models(["gemma-4-31b-it"])
+    assert _has_search(tools) and "web_search" not in _fn_names(tools)

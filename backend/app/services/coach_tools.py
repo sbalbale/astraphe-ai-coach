@@ -7,10 +7,12 @@ import json
 from datetime import date, timedelta
 from typing import Any, Callable
 
+import httpx
 import numpy as np
 from google.genai import types
 from supabase import Client
 
+from app.config import settings
 from app.services.algorithms import compute_atl, compute_ctl
 from app.services import coach_workout_data as workout_data
 from app.services.text_format import normalize_markdown_notes
@@ -728,6 +730,59 @@ def handle_update_memory(
         return {"error": err}
 
 
+def handle_web_search(
+    args: dict[str, Any],
+    *,
+    athlete_id: str,
+    db: Client,
+) -> dict[str, Any]:
+    """Search the web through the configured SearXNG instance. Returns titles, URLs and
+    snippets only; never raises (a failed search comes back as an error for the model)."""
+    query = str(args.get("query") or "").strip()
+    if not query:
+        return {"error": "query is required"}
+    base = (settings.SEARXNG_URL or "").strip().rstrip("/")
+    if not base:
+        return {"error": "web search is not configured"}
+    try:
+        limit = max(1, min(int(args.get("max_results") or 5), 8))
+    except (TypeError, ValueError):
+        limit = 5
+    params: dict[str, str] = {"q": query, "format": "json"}
+    if args.get("time_range") in ("day", "week", "month", "year"):
+        params["time_range"] = str(args["time_range"])
+    try:
+        res = httpx.get(f"{base}/search", params=params, timeout=15.0)
+        res.raise_for_status()
+        data = res.json()
+    except Exception as exc:
+        return {"error": f"web search failed ({type(exc).__name__})"}
+
+    results: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for row in data.get("results", []):
+        url = row.get("url")
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        results.append(
+            {
+                "title": str(row.get("title") or "")[:140],
+                "url": url,
+                "snippet": str(row.get("content") or "")[:320],
+            }
+        )
+        if len(results) >= limit:
+            break
+    if not results:
+        return {
+            "query": query,
+            "results": [],
+            "note": "No results. Say you could not verify this rather than guessing.",
+        }
+    return {"query": query, "results": results}
+
+
 def handle_list_memories(
     args: dict[str, Any],
     *,
@@ -1415,6 +1470,26 @@ _scratchpad_decl = types.FunctionDeclaration(
     ),
 )
 
+_web_search_decl = types.FunctionDeclaration(
+    name="web_search",
+    description=(
+        "Search the web. Returns titles, URLs and short snippets only (no page contents). "
+        "Use for weather forecasts, race course details, and exact product nutrition facts."
+    ),
+    parameters=types.Schema(
+        type=types.Type.OBJECT,
+        properties={
+            "query": types.Schema(type=types.Type.STRING, description="Search query"),
+            "max_results": types.Schema(type=types.Type.INTEGER, description="Results to return (default 5, max 8)"),
+            "time_range": types.Schema(
+                type=types.Type.STRING,
+                description="Optional recency filter: day, week, month or year",
+            ),
+        },
+        required=["query"],
+    ),
+)
+
 TOOLS: list[types.Tool] = [
     types.Tool(function_declarations=[
         _simulate_decl, 
@@ -1443,12 +1518,36 @@ TOOLS: list[types.Tool] = [
     types.Tool(google_search=types.GoogleSearch()),
 ]
 
+
+def search_grounding_available(model: str | None) -> bool:
+    """Google Search grounding has no free-tier quota on Gemini 3+ models: attaching the
+    google_search tool there returns a bare 429 RESOURCE_EXHAUSTED on every request, which
+    would fail the whole coach call, not just the search."""
+    if not settings.GEMINI_FREE_TIER:
+        return True
+    return not (model or "").strip().lower().startswith("gemini-3")
+
+
+def tools_for_models(models: list[str]) -> list[types.Tool]:
+    """TOOLS, adjusted for the candidate models (the primary and fallback share one request
+    config). If any of them can't use native google_search, drop it and, when SEARXNG_URL is
+    set, add the SearXNG-backed web_search function so the coach can still search."""
+    if all(search_grounding_available(m) for m in models):
+        return TOOLS
+    tools = [t for t in TOOLS if getattr(t, "google_search", None) is None]
+    if (settings.SEARXNG_URL or "").strip():
+        decls = [d for t in tools for d in (getattr(t, "function_declarations", None) or [])]
+        tools = [types.Tool(function_declarations=[*decls, _web_search_decl])]
+    return tools
+
+
 ToolHandler = Callable[[dict[str, Any], str, Client], dict[str, Any]]
 
 TOOL_HANDLERS: dict[str, ToolHandler] = {
     "simulate_training_impact": lambda args, aid, db: handle_simulate_training_impact(args, athlete_id=aid, db=db),
     "schedule_workout": lambda args, aid, db: handle_schedule_workout(args, athlete_id=aid, db=db),
     "calculate_nutrition": lambda args, aid, db: handle_calculate_nutrition(args, athlete_id=aid, db=db),
+    "web_search": lambda args, aid, db: handle_web_search(args, athlete_id=aid, db=db),
     "clear_training_plans": lambda args, aid, db: handle_clear_training_plans(args, athlete_id=aid, db=db),
     "list_workouts": lambda args, aid, db: handle_list_workouts(args, athlete_id=aid, db=db),
     "get_workout_summary": lambda args, aid, db: handle_get_workout_summary(args, athlete_id=aid, db=db),
