@@ -1261,6 +1261,20 @@ def _tool_names_from_last_function_response(contents: list) -> list[str]:
     return []
 
 
+# Canned replies get_coach_response_agentic returns (rather than raising) when it can't finish.
+# Callers that send the reply somewhere a person didn't ask for it (the Photon post-workout text)
+# check COACH_FAILURE_REPLIES so an error message is never sent as if it were a coaching note.
+COACH_PARTIAL_ERROR_REPLY = (
+    "I went ahead and made that change, but hit an error putting together "
+    "the full explanation. Let me know if you'd like me to try again."
+)
+COACH_ERROR_REPLY = (
+    "Sorry, I ran into an error putting that response together. "
+    "Could you try asking again?"
+)
+COACH_INCOMPLETE_REPLY = "Unable to complete coach response."
+COACH_FAILURE_REPLIES = frozenset({COACH_PARTIAL_ERROR_REPLY, COACH_ERROR_REPLY, COACH_INCOMPLETE_REPLY})
+
 _MUTATING_TOOL_NAMES = frozenset({
     "schedule_workout",
     "log_workout",
@@ -1501,16 +1515,8 @@ def get_coach_response_agentic(
                 # Only claim a change happened if a mutating tool actually
                 # ran in the hop right before this failure.
                 if any(name in _MUTATING_TOOL_NAMES for name in tool_names):
-                    return (
-                        "I went ahead and made that change, but hit an error putting together "
-                        "the full explanation. Let me know if you'd like me to try again.",
-                        [],
-                    )
-                return (
-                    "Sorry, I ran into an error putting that response together. "
-                    "Could you try asking again?",
-                    [],
-                )
+                    return (COACH_PARTIAL_ERROR_REPLY, [])
+                return (COACH_ERROR_REPLY, [])
             raise _hop_error
 
         if not last_response.candidates:
@@ -1616,7 +1622,7 @@ def get_coach_response_agentic(
             _hop + 1 if last_response else 0,
             part_kinds,
         )
-    return (final or "Unable to complete coach response.", grounding)
+    return (final or COACH_INCOMPLETE_REPLY, grounding)
 
 
 async def get_coach_response_agentic_async(

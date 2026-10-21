@@ -251,7 +251,12 @@ async def _compose_and_send_workout_text(db: Any, athlete_id: str, workout_id: s
             await asyncio.to_thread(_release_workout, db, workout_id)  # allow a retry
             return False
 
-        if not (reply or "").strip():
+        from app.services.ai_coach import COACH_FAILURE_REPLIES
+
+        # The coach returns a canned apology instead of raising when it can't finish; that must
+        # never be texted as if it were the post-workout note.
+        if not (reply or "").strip() or reply.strip() in COACH_FAILURE_REPLIES:
+            logger.warning("[photon] coach could not write the note for workout %s; will retry", workout_id)
             await asyncio.to_thread(_release_workout, db, workout_id)
             return False
 

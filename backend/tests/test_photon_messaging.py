@@ -245,3 +245,15 @@ def test_two_workouts_syncing_together_are_texted_one_at_a_time_in_order():
         "start-w1", "end-w1", "sent-note w1",
         "start-w2", "end-w2", "sent-note w2",
     ]
+
+
+def test_maybe_text_workout_never_texts_the_coachs_canned_error_reply():
+    from app.services.ai_coach import COACH_ERROR_REPLY, COACH_FAILURE_REPLIES
+
+    for canned in COACH_FAILURE_REPLIES:
+        with patch.object(messaging, "_claim_workout", return_value=True),              patch.object(messaging, "_release_workout") as release,              patch.object(messaging, "get_or_create_conversation", return_value="c"),              patch.object(coach_router, "_insert_message") as insert,              patch("app.services.ai_coach.get_coach_response", return_value=(canned, [])),              patch.object(photon, "send_text", AsyncMock()) as send:
+            assert _run(messaging.maybe_text_workout(_db_returning(_row()), ATHLETE, "w1")) is False
+        release.assert_called_once()  # claim is released so a later sync can retry
+        insert.assert_not_called()
+        send.assert_not_awaited()
+    assert COACH_ERROR_REPLY in COACH_FAILURE_REPLIES
