@@ -70,7 +70,7 @@
     const w = weeks[activeWeek];
     if (!w) return null;
     const end = addDays(w.start, 6);
-    return { ...w, range: `${format(w.start, "d MMM")} – ${format(end, "d MMM")}`, weekNo: format(w.start, "I"), current: activeWeek === weeks.length - 1 };
+    return { ...w, range: `${format(w.start, "d MMM")} – ${format(end, "d MMM")}`, current: activeWeek === weeks.length - 1 };
   });
   const fmt1 = (n: number | null | undefined) => (n == null || !Number.isFinite(n) ? '--' : n.toFixed(1));
 
@@ -109,7 +109,7 @@
     const atl = Number(row.atl) || 0;
     const tsb = row.tsb != null && Number.isFinite(Number(row.tsb)) ? Number(row.tsb) : ctl - atl;
     const d = new Date(row.date + "T00:00:00");
-    return { i, ctl, atl, tsb, label: `${format(d, "EEE d MMM")} · Wk ${format(d, "I")}` };
+    return { i, ctl, atl, tsb, label: format(d, "EEE d MMM") };
   });
   function scrubTo(ev: PointerEvent) {
     if (!chart) return;
@@ -190,7 +190,7 @@
       </div>
       {#if activeInfo}
         <div class="flex items-baseline justify-between gap-2" aria-live="polite">
-          <span class="font-mono text-[11px] text-text2 uppercase">{activeInfo.current ? "This week" : `Wk ${activeInfo.weekNo}`} · {activeInfo.range}</span>
+          <span class="font-mono text-[11px] text-text2 uppercase">{activeInfo.current ? "This week · " : ""}{activeInfo.range}</span>
           <span class="flex gap-3 text-xs font-mono tabular-nums">
             <span><span class="text-text2">TSS </span><span style="color: var(--blue)">{activeInfo.tss}</span></span>
             <span><span class="text-text2">Plan </span>{activeInfo.planned > 0 ? activeInfo.planned : "—"}</span>
@@ -216,7 +216,7 @@
         {/each}
       </div>
       <div class="flex justify-between items-center font-mono text-[10px] text-text2">
-        <span>W{format(weeks[0].start, "I")}</span><span>W{format(weeks[5].start, "I")}</span><span>THIS WK</span>
+        <span>{format(weeks[0].start, "d MMM")}</span><span>{format(weeks[5].start, "d MMM")}</span><span>{format(weeks[11].start, "d MMM")}</span>
       </div>
       <div class="flex gap-4 text-[11px] text-text2">
         <span class="flex items-center gap-1.5"><span aria-hidden="true" class="w-3 h-2 rounded-sm bg-bg3"></span>Actual</span>

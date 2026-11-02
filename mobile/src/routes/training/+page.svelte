@@ -723,7 +723,7 @@
   });
 
   $effect(() => {
-    pageHeader.eyebrow = `Week ${format(selectedWeekStart, "I")}`;
+    pageHeader.eyebrow = weekRangeLabel;
     pageHeader.add = () => (addActivityOpen = true);
     pageHeader.addLabel = "Log activity";
     return resetPageHeader;
