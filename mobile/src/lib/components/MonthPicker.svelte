@@ -173,7 +173,7 @@
           class={[
             'h-9 rounded-lg text-[12px] font-mono transition-colors',
             isDisabled ? 'opacity-35 cursor-not-allowed' : 'hover:bg-glass2',
-            isSelected ? 'bg-blue text-white hover:bg-blue' : 'bg-transparent text-text0'
+            isSelected ? 'bg-blue text-bg0 hover:bg-blue' : 'bg-transparent text-text0'
           ].join(' ')}
           disabled={isDisabled}
           onclick={() => setMonth(d)}

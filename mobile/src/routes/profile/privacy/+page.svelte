@@ -104,7 +104,7 @@
       </div>
     </Card>
 
-    <Card class="border-red/30 !bg-gradient-to-br from-red/5 via-transparent to-transparent">
+    <Card class="border-red/30 !bg-red/5">
       <p class="text-[13px] font-semibold text-red mb-2">Danger Zone</p>
       <p class="text-[11px] text-text1 leading-relaxed mb-4">
         Permanently delete your account and wipe all personal data from our servers. This action is irreversible and you will lose all your coaching history, connected integrations, and AI models.

@@ -500,7 +500,7 @@
               'line-join': 'round',
             },
             paint: {
-              'line-color': '#0F0F1A',
+              'line-color': '#141416',
               'line-opacity': 0.92,
               'line-width': 11,
             },
@@ -528,7 +528,7 @@
               'circle-radius': 7,
               'circle-color': ['get', 'color'],
               'circle-stroke-width': 2,
-              'circle-stroke-color': '#0F0F1A',
+              'circle-stroke-color': '#141416',
             },
           });
 

@@ -83,12 +83,12 @@ export function formTone(tsb: unknown): ScoreTone {
 }
 
 // Canvas / SVG identity colors for CTL (fitness line) vs ATL (fatigue bars).
-// Matches Tailwind `blue-500` and slate-700 at ~50% fill opacity.
-export const CHART_CTL_STROKE = '#3b82f6';
+// Matches the `chartCtl` (sky accent) and `chartAtl` (neutral grey) Tailwind tokens.
+export const CHART_CTL_STROKE = '#7FB4FF';
 /** chartAtl token hex — canvas, LayerChart, MetricBadge color prop only */
-export const CHART_ATL_STROKE = '#334155';
-export const CHART_ATL_FILL_REST = 'rgba(51, 65, 85, 0.5)';
-export const CHART_ATL_FILL_ACTIVE = 'rgba(51, 65, 85, 0.65)';
+export const CHART_ATL_STROKE = '#6A6A72';
+export const CHART_ATL_FILL_REST = 'rgba(106, 106, 114, 0.45)';
+export const CHART_ATL_FILL_ACTIVE = 'rgba(106, 106, 114, 0.7)';
 
 export function getFormColor(tsb: unknown): string {
   return toneToTextClass[formTone(tsb)];

@@ -60,7 +60,7 @@
   <!-- Today's value -->
   {#if hasZ}
     <div
-      class="absolute top-1/2 z-[3] rounded-full shadow-[0_0_0_2px_var(--bg1,#0F0F1A),0_1px_2px_rgba(0,0,0,0.4)] transition-[left] duration-200"
+      class="absolute top-1/2 z-[3] rounded-full shadow-[0_0_0_2px_var(--bg1,#141416),0_1px_2px_rgba(0,0,0,0.4)] transition-[left] duration-200"
       style="left: {dotLeftPct}%; width: {dotSize}px; height: {dotSize}px; background: {dotColor}; transform: translate(-50%, -50%);"
       aria-hidden="true"
     ></div>

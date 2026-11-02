@@ -1,5 +1,5 @@
 <script lang="ts">
-  let { data, color = '#4621FF', fill = true, height = 80, yKey, labels, unit = '', formatValue, getValueColor } = $props<{
+  let { data, color = '#7FB4FF', fill = true, height = 80, yKey, labels, unit = '', formatValue, getValueColor } = $props<{
     data: any[];
     color?: string;
     fill?: boolean;
@@ -95,11 +95,11 @@
     }
     
     if (labels) {
-      ctx.font = '9px "Space Grotesk", sans-serif';
-      ctx.fillStyle = 'rgba(240,240,255,0.35)';
+      ctx.font = '10px Inter, system-ui, sans-serif';
+      ctx.fillStyle = 'rgba(237,235,230,0.5)';
       ctx.textAlign = 'center';
       labels.forEach((l: string, i: number) => {
-        ctx.fillStyle = selectedIdx === i ? '#fff' : 'rgba(240,240,255,0.35)';
+        ctx.fillStyle = selectedIdx === i ? '#fff' : 'rgba(237,235,230,0.5)';
         ctx.fillText(l, px(i), H - 4);
       });
     }

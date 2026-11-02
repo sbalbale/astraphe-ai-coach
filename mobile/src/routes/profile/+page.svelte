@@ -56,8 +56,8 @@
     <h1 class="text-[22px] font-bold tracking-[-0.02em]">Me</h1>
   </div>
 
-  <Card class="!bg-gradient-to-br from-blue/10 to-teal/5 text-center" paddingClass="pt-6 pb-6">
-    <div class="w-20 h-20 rounded-full bg-gradient-to-br from-blue to-teal flex items-center justify-center text-[32px] text-text0 font-bold mx-auto mb-3 shadow-[0_4px_24px_rgba(70,33,255,0.3)]">
+  <Card class="text-center" paddingClass="pt-6 pb-6">
+    <div class="w-20 h-20 rounded-full bg-blue-dim border border-blue/30 flex items-center justify-center text-[32px] text-text0 font-bold mx-auto mb-3">
       {athleteStore.profile?.display_name?.charAt(0)?.toUpperCase() || authStore.user?.user_metadata?.full_name?.charAt(0)?.toUpperCase() || 'M'}
     </div>
     <h2 class="text-[18px] font-bold mb-1">{athleteStore.profile?.display_name || authStore.user?.user_metadata?.full_name || 'Athlete'}</h2>

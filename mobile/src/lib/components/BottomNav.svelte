@@ -1,56 +1,47 @@
 <script lang="ts">
   import { navTo } from '$lib/nav';
+  import { NAV_TABS, activeTabFor } from '$lib/navTabs';
 
   let { currentPath } = $props<{ currentPath: string }>();
 
-  const NAV_ITEMS_MOBILE = [
-    { id: '/dashboard', label: 'Home' },
-    { id: '/recovery', label: 'Body' },
-    { id: '/plan', label: 'Plan' },
-    { id: '/chat', label: 'Coach' },
-    { id: '/profile', label: 'Me' },
-  ];
-
-  function getIcon(id: string, active: boolean) {
-    const c = active ? '#4621FF' : 'currentColor';
-    const fill = active ? '#4621FF' : 'none';
-    const fillLight = active ? 'rgba(70,33,255,0.2)' : 'none';
-
-    switch (id) {
-      case '/dashboard':
-        return `<svg width="22" height="22" fill="none" viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8" rx="2" fill="${fill}" stroke="${c}" stroke-width="1.5"/><rect x="13" y="3" width="8" height="8" rx="2" fill="${fill}" stroke="${c}" stroke-width="1.5"/><rect x="3" y="13" width="8" height="8" rx="2" fill="${fill}" stroke="${c}" stroke-width="1.5"/><rect x="13" y="13" width="8" height="8" rx="2" fill="none" stroke="${c}" stroke-width="1.5"/></svg>`;
-      case '/recovery':
-        return `<svg width="22" height="22" fill="none" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2" stroke="${c}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
-      case '/plan':
-        return `<svg width="22" height="22" fill="none" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" stroke="${c}" fill="${fillLight}" stroke-width="1.5"/><line x1="3" y1="9" x2="21" y2="9" stroke="${c}" stroke-width="1.5"/><line x1="8" y1="2" x2="8" y2="6" stroke="${c}" stroke-width="1.5" stroke-linecap="round"/><line x1="16" y1="2" x2="16" y2="6" stroke="${c}" stroke-width="1.5" stroke-linecap="round"/><line x1="7" y1="14" x2="10" y2="14" stroke="${c}" stroke-width="1.5" stroke-linecap="round"/><line x1="7" y1="18" x2="13" y2="18" stroke="${c}" stroke-width="1.5" stroke-linecap="round"/></svg>`;
-      case '/chat':
-        return `<svg width="22" height="22" fill="none" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" stroke="${c}" fill="${fillLight}" stroke-width="1.5"/></svg>`;
-      case '/profile':
-        return `<svg width="22" height="22" fill="none" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4" stroke="${c}" fill="${fillLight}" stroke-width="1.5"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7" stroke="${c}" stroke-width="1.5" stroke-linecap="round"/></svg>`;
-      default:
-        return '';
-    }
-  }
+  let activeTab = $derived(activeTabFor(currentPath));
 </script>
 
 <div
-  class="flex bg-bg1 border-t border-border pt-2 shrink-0"
-  style="padding-bottom: max(8px, env(safe-area-inset-bottom, 0px));"
+  class="shrink-0 px-4 pt-2 bg-bg0"
+  style="padding-bottom: max(12px, env(safe-area-inset-bottom, 0px));"
 >
-  {#each NAV_ITEMS_MOBILE as item}
-    {@const active =
-      currentPath === item.id || (currentPath === '/' && item.id === '/dashboard')}
-    <button
-      type="button"
-      class="flex-1 flex flex-col items-center gap-1 bg-transparent border-none cursor-pointer py-1 transition-colors duration-200 {active
-        ? 'text-blue'
-        : 'text-text2'}"
-      onclick={() => navTo(item.id)}
-      aria-current={active ? 'page' : undefined}
-    >
-      <!-- eslint-disable-next-line svelte/no-at-html-tags -->
-      {@html getIcon(item.id, active)}
-      <span class="text-[9px] font-mono tracking-[0.06em] uppercase">{item.label}</span>
-    </button>
-  {/each}
+  <nav
+    aria-label="Primary"
+    class="grid grid-cols-5 h-16 rounded-[22px] bg-bg3 border border-border"
+  >
+    {#each NAV_TABS as tab (tab.id)}
+      {@const active = activeTab === tab.id}
+      <button
+        type="button"
+        class="flex flex-col items-center justify-center gap-1 bg-transparent border-none cursor-pointer transition-colors duration-200 text-[11px] font-medium {active
+          ? 'text-blue'
+          : 'text-text2'}"
+        onclick={() => navTo(tab.id)}
+        aria-current={active ? 'page' : undefined}
+      >
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          {#if tab.id === '/dashboard'}
+            <circle cx="12" cy="12" r="4" />
+            <path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
+          {:else if tab.id === '/training'}
+            <path d="M3 12h4l3-7 4 14 3-7h4" />
+          {:else if tab.id === '/recovery'}
+            <path d="M20.8 8.6a5 5 0 0 0-8.8-3.2 5 5 0 0 0-8.8 3.2c0 5.4 8.8 11 8.8 11s8.8-5.6 8.8-11z" />
+          {:else if tab.id === '/plan'}
+            <rect x="3" y="5" width="18" height="16" rx="3" />
+            <path d="M3 10h18M8 3v4M16 3v4" />
+          {:else if tab.id === '/chat'}
+            <path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z" />
+          {/if}
+        </svg>
+        {tab.label}
+      </button>
+    {/each}
+  </nav>
 </div>

@@ -105,12 +105,11 @@
 </script>
 
 <div class="min-h-full flex flex-col p-6 items-center justify-center relative">
-  <div class="absolute top-0 left-0 w-full h-[300px] bg-gradient-to-b from-[rgba(70,33,255,0.15)] to-transparent pointer-events-none"></div>
   <div class="absolute -top-[100px] -right-[100px] w-[300px] h-[300px] bg-teal rounded-full blur-[120px] opacity-20 pointer-events-none"></div>
 
   <div class="w-full max-w-sm z-10">
     <div class="mb-8 text-center">
-      <div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue to-teal flex items-center justify-center mx-auto mb-6 shadow-[0_4px_32px_rgba(70,33,255,0.4)]">
+      <div class="w-16 h-16 rounded-2xl bg-blue-dim border border-blue/30 flex items-center justify-center mx-auto mb-6">
         <span class="text-3xl font-bold text-text0">A</span>
       </div>
       <h1 class="text-2xl font-bold tracking-tight mb-2">Connect to Astraphe</h1>
@@ -128,7 +127,7 @@
       </div>
       <a
         href={`/auth/signin?redirect=${encodeURIComponent($page.url.pathname + $page.url.search)}`}
-        class="block w-full text-center px-4 py-3.5 bg-gradient-to-br from-blue to-teal rounded-xl text-text0 text-sm font-medium"
+        class="block w-full text-center px-4 py-3.5 bg-blue rounded-xl text-bg0 text-sm font-medium"
       >
         Sign In
       </a>
@@ -155,7 +154,7 @@
         <button
           onclick={() => respond('approve')}
           disabled={status === 'submitting'}
-          class="w-full px-4 py-3.5 bg-gradient-to-br from-blue to-teal rounded-xl text-text0 text-sm font-medium disabled:opacity-50"
+          class="w-full px-4 py-3.5 bg-blue rounded-xl text-bg0 text-sm font-medium disabled:opacity-50"
         >
           {status === 'submitting' ? 'Connecting…' : 'Allow'}
         </button>

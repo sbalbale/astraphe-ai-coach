@@ -324,8 +324,8 @@
       ctx.lineTo(CHART_PAD.l + plotW, py(v));
       ctx.stroke();
 
-      ctx.font = '9px "Space Mono", monospace';
-      ctx.fillStyle = 'rgba(240,240,255,0.3)';
+      ctx.font = '10px "JetBrains Mono", monospace';
+      ctx.fillStyle = 'rgba(237,235,230,0.45)';
       ctx.textAlign = 'right';
       ctx.fillText(v.toString(), CHART_PAD.l - 4, py(v) + 3);
     });
@@ -375,12 +375,12 @@
         ? uniqueSortedIndices([...baseLabels, selectedIdx])
         : baseLabels;
 
-    ctx.font = '9px "Space Grotesk", sans-serif';
+    ctx.font = '10px Inter, system-ui, sans-serif';
     ctx.textAlign = 'center';
     for (const i of labelIndices) {
       const d = data[i];
       if (!d) continue;
-      ctx.fillStyle = selectedIdx === i ? '#fff' : 'rgba(240,240,255,0.35)';
+      ctx.fillStyle = selectedIdx === i ? '#fff' : 'rgba(237,235,230,0.5)';
       ctx.fillText(formatAxisDate(d, useCompactAxis), px(i), H - 6);
     }
   });

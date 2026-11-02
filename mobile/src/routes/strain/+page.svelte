@@ -551,7 +551,7 @@
 
       <!-- Analysis Card -->
       <Card
-        class="!bg-gradient-to-br from-blue/10 via-transparent to-transparent"
+        class="!bg-bg1 !border-dashed"
       >
         <p class="text-[13px] font-semibold mb-1.5">Strain Analysis</p>
         {#if analysisLoading && analysisText === null}
@@ -651,7 +651,7 @@
       </button>
 
       {#if authStore.tier === 'premium'}
-        <div class="mt-4 pt-4 border-t border-border/40 rounded-xl p-3 bg-gradient-to-br from-blue/10 via-transparent to-transparent">
+        <div class="mt-4 pt-4 border-t border-border/40 rounded-xl p-3 bg-bg1">
           <div class="flex items-center gap-1.5 mb-2">
             <span class="text-[11px] font-mono uppercase tracking-[0.08em] text-blue">AI Insight</span>
             <Tag color="var(--blue)">ASTRAPHE</Tag>

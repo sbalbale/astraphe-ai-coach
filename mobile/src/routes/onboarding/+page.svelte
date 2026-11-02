@@ -182,7 +182,6 @@
 
 <div class="min-h-full flex flex-col p-6 items-center justify-center relative">
   <!-- Decor elements (match auth styling) -->
-  <div class="absolute top-0 left-0 w-full h-[300px] bg-gradient-to-b from-[rgba(70,33,255,0.15)] to-transparent pointer-events-none"></div>
   <div class="absolute -top-[100px] -right-[100px] w-[320px] h-[320px] bg-teal rounded-full blur-[120px] opacity-15 pointer-events-none"></div>
 
   <div class="w-full max-w-sm z-10">

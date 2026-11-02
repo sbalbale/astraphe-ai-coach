@@ -825,7 +825,7 @@
 
       <!-- Analysis Card -->
       <Card
-        class="!bg-gradient-to-br from-blue/10 via-transparent to-transparent"
+        class="!bg-bg1 !border-dashed"
       >
         <p class="text-[13px] font-semibold mb-1.5">Recovery Analysis</p>
         <p class="text-xs text-text1 leading-relaxed">

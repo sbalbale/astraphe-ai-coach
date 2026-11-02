@@ -357,7 +357,7 @@
     />
   {:else}
     <!-- Readiness Card -->
-    <Card class="!bg-gradient-to-br from-blue/15 to-teal/10 border-blue/30 !p-0">
+    <Card class="!bg-bg2 border-blue/30 !p-0">
       <button 
         type="button" 
         class="w-full text-left p-4 cursor-pointer focus:outline-none"
@@ -445,7 +445,7 @@
     </div>
 
     <!-- AI Summary -->
-    <Card class="!bg-gradient-to-br from-blue/10 via-transparent to-transparent">
+    <Card class="!bg-bg1 !border-dashed">
       <div class="flex justify-between items-center mb-2">
         <span class="text-[13px] font-semibold">AI Summary</span>
         <Tag color="var(--blue)">BETA</Tag>

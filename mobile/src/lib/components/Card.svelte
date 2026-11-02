@@ -18,7 +18,7 @@
 </script>
 
 <div
-  class="rounded-2xl border border-border {glass2 ? 'bg-glass2' : 'bg-glass'} {paddingClass} {className}"
+  class="rounded-card border border-border {glass2 ? 'bg-bg3' : 'bg-bg2'} {paddingClass} {className}"
   style={style}
 >
   {@render children()}

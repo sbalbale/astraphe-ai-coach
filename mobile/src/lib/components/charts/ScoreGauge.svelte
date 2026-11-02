@@ -41,7 +41,7 @@
       grad.addColorStop(0, '#F07178'); 
       grad.addColorStop(0.4, '#FFCB88'); 
       grad.addColorStop(0.7, '#00C8A8'); 
-      grad.addColorStop(1, '#4621FF');
+      grad.addColorStop(1, '#7FB4FF');
       ctx.strokeStyle = grad;
     }
     

@@ -212,7 +212,7 @@
               type="button"
               class={[
                 'w-full text-left px-2.5 py-2 rounded-lg text-[12px] font-mono transition-colors',
-                y === viewMonth.getFullYear() ? 'bg-blue text-white' : 'hover:bg-glass2 text-text0'
+                y === viewMonth.getFullYear() ? 'bg-blue text-bg0' : 'hover:bg-glass2 text-text0'
               ].join(' ')}
               onclick={() => setYear(y)}
             >
@@ -238,7 +238,7 @@
                 'h-8 rounded-lg text-[12px] font-mono transition-colors',
                 inMonth ? 'text-text0' : 'text-text2/60',
                 isDisabled ? 'opacity-35 cursor-not-allowed' : 'hover:bg-glass2',
-                isSelected ? 'bg-blue text-white hover:bg-blue' : 'bg-transparent'
+                isSelected ? 'bg-blue text-bg0 hover:bg-blue' : 'bg-transparent'
               ].join(' ')}
               disabled={isDisabled}
               aria-label={format(d, 'yyyy-MM-dd')}

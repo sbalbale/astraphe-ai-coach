@@ -36,7 +36,7 @@
     
     ctx.beginPath();
     ctx.arc(cx, cy, iR, 0, Math.PI * 2);
-    ctx.fillStyle = '#0F0F1A'; // Matches --bg1 in design system
+    ctx.fillStyle = '#141416'; // Matches --bg1 in design system
     ctx.fill();
   });
 </script>

@@ -8,6 +8,7 @@
   import { isStandaloneDisplayMode } from '$lib/utils/pwa';
   import Sidebar from '$lib/components/Sidebar.svelte';
   import BottomNav from '$lib/components/BottomNav.svelte';
+  import { subtabsFor, titleFor } from '$lib/navTabs';
   import ConfirmHost from '$lib/components/ConfirmHost.svelte';
   import { analysisNavEpoch } from '$lib/analysisNavEpoch.svelte';
   import { authStore } from '$lib/stores/authStore.svelte';
@@ -46,8 +47,15 @@
   // and docs/MCP_SERVER.md.
   let isOAuthRoute = $derived($page.url.pathname.startsWith('/oauth/'));
   let isNoShellRoute = $derived(isAuthRoute || isOnboardingRoute || isOAuthRoute);
-  const mobileSubtabRoutes = ['/recovery', '/sleep', '/strain', '/dashboard', '/training', '/zones'];
-  let hasMobileSubtabs = $derived(mobileSubtabRoutes.includes($page.url.pathname));
+  let mobileSubtabs = $derived(subtabsFor($page.url.pathname));
+  let headerTitle = $derived(titleFor($page.url.pathname));
+  let avatarInitials = $derived.by(() => {
+    const name: string =
+      athleteStore.profile?.display_name || authStore.user?.user_metadata?.full_name || '';
+    const parts = name.trim().split(/\s+/).filter(Boolean);
+    if (parts.length === 0) return 'A';
+    return ((parts[0][0] ?? '') + (parts.length > 1 ? parts[parts.length - 1][0] : '')).toUpperCase();
+  });
   /** Logo header already adds bottom spacing; skip duplicate top pad on these pages. */
   const mobileTightContentTopRoutes = ['/profile', '/plan'];
   let hasMobileTightContentTop = $derived(mobileTightContentTopRoutes.includes($page.url.pathname));
@@ -158,7 +166,7 @@
 <svelte:window bind:innerWidth />
 
 <svelte:head>
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
 </svelte:head>
 
 <!-- Show loading state briefly while checking auth -->
@@ -178,37 +186,32 @@
     
     <div class="flex-1 flex flex-col overflow-hidden relative bg-bg0">
       {#if !wide}
-      <!-- Mobile Header -->
-      <div class="px-4 pt-3.5 {hasMobileSubtabs ? 'pb-0' : 'pb-2.5'} flex items-center justify-between shrink-0">
-        <p class="font-mono font-bold text-sm tracking-[0.12em] text-blue">ASTRAPHE</p>
-        <div class="flex items-center gap-2">
-          <div class="w-1.5 h-1.5 rounded-full bg-teal shadow-[0_0_6px_var(--teal)]"></div>
-          <span class="text-[10px] text-text2 font-mono tracking-widest">SYNCED</span>
-        </div>
+      <!-- Mobile Header: serif page title + avatar (Me) -->
+      <div class="px-5 pt-4 {mobileSubtabs ? 'pb-3' : 'pb-2'} flex items-end justify-between shrink-0">
+        <h1 class="font-display text-[34px] leading-none text-text0">{headerTitle}</h1>
+        <button
+          type="button"
+          class="w-11 h-11 rounded-full bg-blue-dim border border-blue/30 flex items-center justify-center text-sm font-semibold text-blue cursor-pointer"
+          onclick={() => navTo('/profile')}
+          aria-label="Your profile"
+          aria-current={$page.url.pathname.startsWith('/profile') ? 'page' : undefined}
+        >
+          {avatarInitials}
+        </button>
       </div>
-      
-      <!-- Subtabs for Body screens -->
-      {#if ['/recovery', '/sleep', '/strain'].includes($page.url.pathname)}
-        <div class="flex gap-5 px-4 pt-2.5 border-b border-border shrink-0">
-          {#each [{id: '/recovery', label: 'Recovery'}, {id: '/sleep', label: 'Sleep'}, {id: '/strain', label: 'Strain'}] as t (t.id)}
+
+      <!-- Sub-tabs for grouped tabs (Training: Log/Zones · Body: Recovery/Sleep/Strain) -->
+      {#if mobileSubtabs}
+        <nav
+          aria-label="{headerTitle} views"
+          class="mx-4 mb-1 grid gap-1 p-1 rounded-[14px] bg-bg2 border border-border shrink-0"
+          style="grid-template-columns: repeat({mobileSubtabs.length}, minmax(0, 1fr));"
+        >
+          {#each mobileSubtabs as t (t.id)}
             <button
               type="button"
-              class="pb-2 text-xs font-medium font-mono tracking-wide border-b-2 -mb-px bg-transparent cursor-pointer transition-all duration-200
-              {$page.url.pathname === t.id ? 'border-blue text-text0' : 'border-transparent text-text2'}"
-              onclick={() => navTo(t.id)}
-              aria-current={$page.url.pathname === t.id ? 'page' : undefined}
-            >
-              {t.label}
-            </button>
-          {/each}
-        </div>
-      {:else if ['/dashboard', '/training', '/zones'].includes($page.url.pathname)}
-        <div class="flex gap-5 px-4 pt-2.5 border-b border-border shrink-0">
-          {#each [{id: '/dashboard', label: 'Home'}, {id: '/training', label: 'Training'}, {id: '/zones', label: 'Zones'}] as t (t.id)}
-            <button
-              type="button"
-              class="pb-2 text-xs font-medium font-mono tracking-wide border-b-2 -mb-px bg-transparent cursor-pointer transition-all duration-200
-              {$page.url.pathname === t.id ? 'border-blue text-text0' : 'border-transparent text-text2'}"
+              class="h-9 rounded-[10px] text-[13px] font-medium border-none cursor-pointer transition-colors duration-200
+              {$page.url.pathname === t.id ? 'bg-bg3 text-text0' : 'bg-transparent text-text2'}"
               onclick={(e) => {
                 if (t.id === '/training') {
                   onTrainingTabClick(e);
@@ -224,7 +227,7 @@
               {t.label}
             </button>
           {/each}
-        </div>
+        </nav>
       {/if}
     {/if}
     

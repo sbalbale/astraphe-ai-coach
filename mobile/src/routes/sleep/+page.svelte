@@ -785,7 +785,7 @@
 
       <!-- Contextual Insight -->
       <Card
-        class="!bg-gradient-to-br from-blue/10 via-transparent to-transparent"
+        class="!bg-bg1 !border-dashed"
       >
         <p class="text-[13px] font-semibold mb-1.5">Sleep Analysis</p>
         {#if analysisLoading && analysisText === null}

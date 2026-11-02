@@ -701,7 +701,7 @@
         ></textarea>
         <button
           type="button"
-          class="w-11 h-11 shrink-0 rounded-xl flex items-center justify-center transition-all bg-blue hover:bg-blue/90 disabled:opacity-35 disabled:pointer-events-none text-text0 shadow-[0_8px_24px_-12px_rgba(70,33,255,0.7)]"
+          class="w-11 h-11 shrink-0 rounded-xl flex items-center justify-center transition-all bg-blue hover:bg-blue/90 disabled:opacity-35 disabled:pointer-events-none text-text0 shadow-[0_8px_24px_-12px_rgba(127,180,255,0.7)]"
           disabled={loading || (!input.trim() && pendingImageUrls.length === 0)}
           onclick={send}
           aria-label="Send message"
@@ -726,7 +726,7 @@
   :global(.chat-md) {
     word-break: break-word;
     overflow-wrap: break-word;
-    font-family: 'ChatSans', 'Space Grotesk', sans-serif;
+    font-family: 'Inter', system-ui, sans-serif;
   }
   :global(.chat-md :where(p, li, blockquote)) {
     overflow-wrap: break-word;
@@ -788,7 +788,7 @@
     border-radius: 0.5rem;
   }
   :global(.chat-md :where(thead)) {
-    background: rgba(70, 33, 255, 0.12);
+    background: rgba(127,180,255, 0.12);
   }
   :global(.chat-md :where(th)) {
     padding: 0.35rem 0.65rem;

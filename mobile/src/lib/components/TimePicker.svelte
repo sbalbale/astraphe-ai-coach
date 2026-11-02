@@ -156,7 +156,7 @@
               type="button"
               class={[
                 'w-full text-center px-2 py-2 rounded-lg text-[12px] font-mono tabular-nums transition-colors',
-                hh === parts.hh ? 'bg-blue text-white' : 'hover:bg-glass2 text-text0'
+                hh === parts.hh ? 'bg-blue text-bg0' : 'hover:bg-glass2 text-text0'
               ].join(' ')}
               onclick={() => setHour(hh)}
             >
@@ -170,7 +170,7 @@
               type="button"
               class={[
                 'w-full text-center px-2 py-2 rounded-lg text-[12px] font-mono tabular-nums transition-colors',
-                mm === parts.mm ? 'bg-blue text-white' : 'hover:bg-glass2 text-text0'
+                mm === parts.mm ? 'bg-blue text-bg0' : 'hover:bg-glass2 text-text0'
               ].join(' ')}
               onclick={() => setMinute(mm)}
             >

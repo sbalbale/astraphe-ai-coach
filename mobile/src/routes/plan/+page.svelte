@@ -383,7 +383,7 @@
                 class={[
                   'h-14 sm:h-16 md:h-[64px] rounded-2xl border transition-colors relative overflow-hidden flex flex-col items-center justify-start pt-1.5',
                   inMonth ? 'border-border bg-glass2/30 hover:bg-glass2' : 'border-border/40 bg-transparent opacity-60 hover:opacity-80',
-                  isSelected ? 'border-blue bg-[linear-gradient(135deg,rgba(70,33,255,0.18),transparent)]' : ''
+                  isSelected ? 'border-blue bg-blue/10' : ''
                 ].join(' ')}
                 aria-label={format(d, 'yyyy-MM-dd')}
                 onclick={() => selectDate(d)}

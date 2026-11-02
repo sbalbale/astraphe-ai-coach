@@ -162,7 +162,7 @@
     <button
       type="submit"
       disabled={!canSubmit}
-      class="w-full py-3 bg-blue text-white text-sm font-semibold rounded-xl hover:bg-blue/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed mt-1"
+      class="w-full py-3 bg-blue text-bg0 text-sm font-semibold rounded-xl hover:bg-blue/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed mt-1"
     >
       {saving ? 'Saving…' : 'Log Sleep'}
     </button>

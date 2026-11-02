@@ -803,7 +803,7 @@
       
       <Card
         paddingClass="px-6 py-4"
-        class="!bg-gradient-to-br from-blue/10 via-transparent to-transparent"
+        class="!bg-bg1 !border-dashed"
       >
         <div class="flex gap-3 items-start">
           <Lightbulb class="w-4 h-4 shrink-0 text-text2 mt-0.5" strokeWidth={1.5} aria-hidden="true" />
@@ -953,7 +953,7 @@
           </div>
 
           {#if authStore.tier === 'premium'}
-            <div class="mt-4 pt-4 border-t border-border/40 rounded-xl p-3 bg-gradient-to-br from-blue/10 via-transparent to-transparent">
+            <div class="mt-4 pt-4 border-t border-border/40 rounded-xl p-3 bg-bg1">
               <div class="flex items-center gap-1.5 mb-2">
                 <span class="text-[11px] font-mono uppercase tracking-[0.08em] text-blue">AI Insight</span>
                 <Tag color="var(--blue)">ASTRAPHE</Tag>

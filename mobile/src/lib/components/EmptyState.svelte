@@ -27,7 +27,7 @@
   <div class="flex flex-col items-center gap-2">
     <button
       onclick={() => (onAction ? onAction() : goto('/profile'))}
-      class="px-4 py-1.5 bg-blue text-white text-[11px] font-medium rounded-full hover:bg-blue/80 transition-colors cursor-pointer"
+      class="px-4 py-1.5 bg-blue text-bg0 text-[11px] font-medium rounded-full hover:bg-blue/80 transition-colors cursor-pointer"
     >
       {actionLabel}
     </button>

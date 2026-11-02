@@ -2,46 +2,39 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Space Grotesk's U+0022 glyph looks like a curly close-quote. Override quote
-   characters to use the system sans-serif (Arial / SF Pro / etc.) which all have
-   clean straight-quote glyphs, while Space Grotesk handles everything else. */
-@font-face {
-  font-family: 'ChatSans';
-  src: local('Arial'), local('Helvetica Neue'), local('Helvetica'), local('Liberation Sans');
-  unicode-range: U+0022, U+0027; /* " and ' */
-}
-@font-face {
-  font-family: 'ChatSans';
-  src: local('Space Grotesk');
-  unicode-range: U+0020-0021, U+0023-0026, U+0028-FFFF; /* Everything except " and ' */
-}
 
 @layer base {
   :root {
-    --bg0: #08080F;
-    --bg1: #0F0F1A;
-    --bg2: #141424;
-    --bg3: #1C1C30;
-    --blue: #4621FF;
+    /* Graphite + Sky (keep in sync with tailwind.config.js) */
+    --bg0: #0E0E10;
+    --bg1: #141416;
+    --bg2: #17171A;
+    --bg3: #1F1F23;
+    --blue: #7FB4FF;
     --teal: #00C8A8;
     --amber: #FFCB88;
     --red: #F07178;
-    --sky: #4A9EFF;
-    --violet: #A78BFA;
+    --sky: #7FB4FF;
+    --violet: #B49CFF;
     --steel: #6B7FA3;
-    --green: #5BAD6F;
-    --text0: #F0F0FF;
-    --text1: rgba(240,240,255,0.65);
-    --text2: rgba(240,240,255,0.35);
-    --border: rgba(255,255,255,0.07);
-    --glass: rgba(255,255,255,0.04);
-    --glass2: rgba(255,255,255,0.08);
+    --green: #6FCF97;
+    --text0: #EDEBE6;
+    --text1: #A9A69E;
+    --text2: #8A877F;
+    --border: #26262B;
+    --glass: rgba(255,255,255,0.03);
+    --glass2: rgba(255,255,255,0.06);
     --zone-0: #94a3b8;
     --zone-1: #579BFA;
     --zone-2: #00C8A8;
     --zone-3: #FFCB88;
     --zone-4: #FF8C42;
     --zone-5: #F07178;
+  }
+  /* Display type: serif page titles and hero numbers */
+  .font-display {
+    font-weight: 400;
+    letter-spacing: -0.005em;
   }
 
   html, body {
