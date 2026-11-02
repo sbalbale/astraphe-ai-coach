@@ -190,7 +190,7 @@
     <div class="flex-1 flex flex-col overflow-hidden relative bg-bg0">
       {#if !wide}
       <!-- Mobile Header: serif page title + avatar (Me) -->
-      <div class="px-5 pt-4 {mobileSubtabs ? 'pb-3' : 'pb-2'} flex items-end justify-between shrink-0">
+      <div class="px-5 pt-4 {mobileSubtabs ? 'pb-3' : 'pb-2'} flex {pageHeader.dateMax ? 'items-center' : 'items-end'} justify-between shrink-0">
         <div class="flex flex-col gap-1">
           {#if $page.url.pathname === '/dashboard'}
             <span class="font-mono text-[11px] tracking-[0.14em] text-text2 uppercase">{format(new Date(), 'EEE dd MMM')}</span>
@@ -199,31 +199,21 @@
           {/if}
           <h1 class="font-display text-[36px] leading-none text-text0">{headerTitle}</h1>
         </div>
-        {#if pageHeader.prev || pageHeader.next || pageHeader.add || pageHeader.today || pageHeader.dateMax}
-          <div class="flex items-center">
-            {#if pageHeader.today}
-              <button type="button" class="h-9 px-2.5 mr-1 rounded-[10px] border border-border bg-transparent text-text0 text-xs font-medium cursor-pointer" onclick={pageHeader.today}>Today</button>
-            {/if}
-            {#if pageHeader.dateMax}
-              <div class="w-[108px]">
-                <DatePicker bind:value={pageHeader.dateValue} max={pageHeader.dateMax} ariaLabel="Pick a date" buttonClass="h-9 px-2.5 rounded-[10px] border border-border bg-transparent text-xs text-text0" popoverClass="!left-auto right-0" />
+        {#if pageHeader.dateMax}
+          <!-- Day stepper (‹ calendar · label ›) plus a Today shortcut, as in the Body designs. -->
+          <div class="flex items-center gap-2">
+            <div class="flex items-center h-11 rounded-[14px] border border-border bg-bg2 px-1">
+              <button type="button" aria-label="Previous day" class="w-8 h-9 border-0 bg-transparent text-text1 flex items-center justify-center cursor-pointer" onclick={pageHeader.prev}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m15 6-6 6 6 6"></path></svg>
+              </button>
+              <div class="min-w-[84px]">
+                <DatePicker bind:value={pageHeader.dateValue} max={pageHeader.dateMax} label={pageHeader.dateLabel} hideChevron ariaLabel="Pick a date" buttonClass="h-9 px-1 justify-center gap-1.5 rounded-[10px] bg-transparent border-0 text-[13px] font-semibold text-text0" popoverClass="!left-auto right-0" />
               </div>
-            {/if}
-            {#if pageHeader.prev}
-              <button type="button" aria-label="Previous day" class="w-11 h-11 border-0 bg-transparent text-text1 flex items-center justify-center cursor-pointer" onclick={pageHeader.prev}>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m15 6-6 6 6 6"></path></svg>
+              <button type="button" aria-label="Next day" disabled={!pageHeader.canNext} class="w-8 h-9 border-0 bg-transparent flex items-center justify-center {pageHeader.canNext ? 'text-text1 cursor-pointer' : 'text-text2/40 cursor-not-allowed'}" onclick={pageHeader.next}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m9 6 6 6-6 6"></path></svg>
               </button>
-            {/if}
-            {#if pageHeader.next}
-              <button type="button" aria-label="Next day" disabled={!pageHeader.canNext} class="w-11 h-11 border-0 bg-transparent flex items-center justify-center {pageHeader.canNext ? 'text-text1 cursor-pointer' : 'text-text2/40 cursor-not-allowed'}" onclick={pageHeader.next}>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m9 6 6 6-6 6"></path></svg>
-              </button>
-            {/if}
-            {#if pageHeader.add}
-              <button type="button" aria-label={pageHeader.addLabel} class="w-11 h-11 rounded-[14px] border border-border bg-transparent text-text0 flex items-center justify-center cursor-pointer" onclick={pageHeader.add}>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
-              </button>
-            {/if}
+            </div>
+            <button type="button" disabled={!pageHeader.canNext} class="h-11 px-3 rounded-[14px] border border-border bg-transparent text-[13px] font-medium {pageHeader.canNext ? 'text-text0 cursor-pointer' : 'text-text2/60 cursor-default'}" onclick={pageHeader.today ?? undefined}>Today</button>
           </div>
         {/if}
         <!-- The design only shows the profile avatar on Today. -->

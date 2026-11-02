@@ -22,7 +22,9 @@
     placeholder = 'Select date',
     buttonClass = '',
     popoverClass = '',
-    ariaLabel
+    ariaLabel,
+    label = '',
+    hideChevron = false
   }: {
     id?: string;
     value: string; // YYYY-MM-DD
@@ -32,6 +34,9 @@
     buttonClass?: string;
     popoverClass?: string;
     ariaLabel?: string;
+    /** Replaces the formatted date in the trigger (e.g. "Today"); also swaps the chevron for a calendar icon. */
+    label?: string;
+    hideChevron?: boolean;
   } = $props();
 
   let open = $state(false);
@@ -158,12 +163,17 @@
     onclick={toggle}
     onkeydown={onKeydown}
   >
-    <span class={selectedDate ? 'truncate' : 'truncate opacity-60'}>{displayLabel}</span>
+    {#if hideChevron}
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="shrink-0 opacity-80"><rect x="3" y="5" width="18" height="16" rx="3"></rect><path d="M3 10h18M8 3v4M16 3v4"></path></svg>
+    {/if}
+    <span class={selectedDate ? 'truncate' : 'truncate opacity-60'}>{label || displayLabel}</span>
+    {#if !hideChevron}
     <span class="opacity-70 shrink-0">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
         <path d="M7 10l5 5 5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
       </svg>
     </span>
+    {/if}
   </button>
 
   {#if open}

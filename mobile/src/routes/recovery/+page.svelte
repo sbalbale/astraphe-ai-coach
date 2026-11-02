@@ -129,12 +129,12 @@
   const canGoForward = $derived(format(windowEnd, 'yyyy-MM-dd') !== todayStr);
 
   $effect(() => {
-    pageHeader.eyebrow = `${format(clampedEndDay, 'EEE dd MMM')}${d?.data?.hrv_source ? ' · ' + d.data.hrv_source : ''}`;
     pageHeader.prev = () => { endPickerValue = format(subDays(windowEnd, 1), 'yyyy-MM-dd'); dayIndex = 6; };
     pageHeader.next = () => { if (canGoForward) { endPickerValue = format(addDays(windowEnd, 1), 'yyyy-MM-dd'); dayIndex = 6; } };
     pageHeader.canNext = canGoForward;
     pageHeader.today = () => { endPickerValue = todayStr; dayIndex = 6; };
     pageHeader.dateMax = todayStr;
+    pageHeader.dateLabel = endPickerValue === todayStr || canGoForward === false ? 'Today' : format(clampedEndDay, 'MMM d');
     pageHeader.dateValue = format(clampedEndDay, "yyyy-MM-dd");
     return resetPageHeader;
   });

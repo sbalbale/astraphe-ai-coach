@@ -74,15 +74,13 @@
   const canGoForward = $derived(format(windowEnd, "yyyy-MM-dd") !== todayStr);
 
   $effect(() => {
-    pageHeader.eyebrow = `${format(subDays(clampedEndDay, 1), 'EEE')} → ${format(clampedEndDay, 'EEE dd MMM')}`;
     pageHeader.prev = () => { endPickerValue = format(subDays(windowEnd, 1), 'yyyy-MM-dd'); nightIndex = 6; };
     pageHeader.next = () => { if (canGoForward) { endPickerValue = format(addDays(windowEnd, 1), 'yyyy-MM-dd'); nightIndex = 6; } };
     pageHeader.canNext = canGoForward;
     pageHeader.today = () => { endPickerValue = todayStr; nightIndex = 6; };
     pageHeader.dateMax = todayStr;
+    pageHeader.dateLabel = endPickerValue === todayStr || canGoForward === false ? 'Today' : format(clampedEndDay, 'MMM d');
     pageHeader.dateValue = format(clampedEndDay, "yyyy-MM-dd");
-    pageHeader.add = () => (addSleepOpen = true);
-    pageHeader.addLabel = 'Log sleep';
     return resetPageHeader;
   });
 
@@ -544,9 +542,12 @@
 
     <!-- Stages -->
     <section aria-label="Sleep stages" class="bg-bg2 border border-border rounded-[24px] px-[18px] py-4 flex flex-col gap-3">
-      <div class="flex justify-between items-baseline">
+      <div class="flex justify-between items-center">
         <h2 class="m-0 font-display font-normal text-[22px]">Stages</h2>
-        <span class="font-mono text-[11px] text-text2">{nightData.bedtime} → {nightData.wakeup}</span>
+        <div class="flex items-center gap-3">
+          <span class="font-mono text-[11px] text-text2">{nightData.bedtime} → {nightData.wakeup}</span>
+          <button type="button" class="h-11 px-3.5 rounded-[14px] border border-border bg-transparent text-text0 text-[13px] font-medium cursor-pointer" onclick={() => (addSleepOpen = true)}>+ Log</button>
+        </div>
       </div>
       {#if nightData.stagesAvailable}
         {@const hyp = buildHypnogram(nightData.stageSegments)}

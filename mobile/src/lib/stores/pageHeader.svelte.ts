@@ -14,7 +14,8 @@ export const pageHeader = $state<{
   today: (() => void) | null;
   dateValue: string;
   dateMax: string;
-}>({ eyebrow: '', prev: null, next: null, canNext: true, add: null, addLabel: '', today: null, dateValue: '', dateMax: '' });
+  dateLabel: string;
+}>({ eyebrow: '', prev: null, next: null, canNext: true, add: null, addLabel: '', today: null, dateValue: '', dateMax: '', dateLabel: '' });
 
 export function resetPageHeader() {
   pageHeader.eyebrow = '';
@@ -26,4 +27,5 @@ export function resetPageHeader() {
   pageHeader.today = null;
   pageHeader.dateValue = '';
   pageHeader.dateMax = '';
+  pageHeader.dateLabel = '';
 }
