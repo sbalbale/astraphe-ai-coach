@@ -311,262 +311,86 @@
   });
 </script>
 
-<div class="flex flex-col gap-3">
-  <div>
-    <p class="text-xs text-text2 font-mono uppercase tracking-[0.1em]">Physical Load</p>
-    <h1 class="text-[22px] font-bold tracking-[-0.02em]">Strain</h1>
+<div class="flex flex-col gap-3.5">
+  <div class="flex items-center justify-between">
+    <span class="font-mono text-[11px] tracking-[0.14em] text-text2 uppercase">{format(clampedEndDay, 'EEE dd MMM')}{#if !canGoForward} · So far{/if}</span>
+    <div class="flex">
+      <button type="button" aria-label="Previous day" class="w-11 h-11 border-0 bg-transparent text-text1 flex items-center justify-center cursor-pointer"
+        onclick={() => { endPickerValue = format(subDays(windowEnd, 1), 'yyyy-MM-dd'); dayIndex = 6; }}>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m15 6-6 6 6 6"></path></svg>
+      </button>
+      <button type="button" aria-label="Next day" disabled={!canGoForward} class="w-11 h-11 border-0 bg-transparent flex items-center justify-center {canGoForward ? 'text-text1 cursor-pointer' : 'text-text2/40 cursor-not-allowed'}"
+        onclick={() => { if (canGoForward) { endPickerValue = format(addDays(windowEnd, 1), 'yyyy-MM-dd'); dayIndex = 6; } }}>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m9 6 6 6-6 6"></path></svg>
+      </button>
+    </div>
   </div>
 
   {#if !isConnected}
-    <EmptyState 
-      title="No Strain Data" 
-      message="Connect WHOOP or your training watch to analyze your physiological load."
-    />
+    <EmptyState title="No Strain Data" message="Connect WHOOP, Garmin, or Apple Health to track your daily strain." />
   {:else if !hasData}
-    <EmptyState 
-      title="Waiting for Activity" 
-      message="We're waiting for your training data to compute your daily strain."
-      icon="🔥"
-    />
+    <EmptyState title="Waiting for Data" message="We're waiting for your first activity to compute strain." icon="⏳" />
   {:else}
-    <!-- 7-day window selector -->
-    <div class="flex items-center justify-between gap-2">
-      <div class="flex items-center gap-1.5 shrink-0">
-        <button
-          type="button"
-          class="h-8 w-8 rounded-md border border-border bg-glass text-text0"
-          aria-label="Previous 7 days"
-          onclick={() => (endPickerValue = format(subDays(windowEnd, 1), 'yyyy-MM-dd'))}
-        >
-          ←
-        </button>
-        <div class="w-[150px]">
-          <DatePicker
-            id="strain-end"
-            bind:value={endPickerValue}
-            max={todayStr}
-            ariaLabel="Select end day"
-            buttonClass="h-8 px-2 pr-2 rounded-md border border-border bg-glass text-[12px] text-text0"
-          />
+    <!-- Score -->
+    <section aria-label="Strain score" class="bg-bg2 border border-border rounded-[24px] px-5 py-[18px] flex gap-[18px] items-center">
+      <div class="relative w-[112px] h-[112px] shrink-0">
+        <svg width="112" height="112" viewBox="0 0 112 112" aria-hidden="true" class="block -rotate-90">
+          <circle cx="56" cy="56" r="48" fill="none" stroke="var(--border)" stroke-width="8"></circle>
+          <circle cx="56" cy="56" r="48" fill="none" stroke="var(--blue)" stroke-width="8" stroke-linecap="round" stroke-dasharray="{(Math.min(score, 100) / 100) * 301.6} 302"></circle>
+        </svg>
+        <div class="absolute inset-0 flex flex-col items-center justify-center">
+          <span class="font-display text-[42px] leading-none">{Math.round(score)}</span>
+          <span class="font-mono text-[10px] text-text2">/ 100</span>
         </div>
-        <button
-          type="button"
-          class="h-8 px-2.5 rounded-md border border-border bg-glass text-text0 text-[12px]"
-          aria-label="Jump to today"
-          onclick={() => {
-            endPickerValue = todayStr;
-            dayIndex = 6;
-          }}
-        >
-          Today
-        </button>
-        <button
-          type="button"
-          class="h-8 w-8 rounded-md border border-border bg-glass text-text0"
-          aria-label="Next 7 days"
-          disabled={!canGoForward}
-          style={!canGoForward ? 'opacity: 0.4; cursor: not-allowed;' : ''}
-          onclick={() => {
-            if (!canGoForward) return;
-            endPickerValue = format(addDays(windowEnd, 1), 'yyyy-MM-dd');
-          }}
-        >
-          →
-        </button>
       </div>
-      <div class="text-[11px] text-text2 font-mono text-right">
-        {rangeLabel}
+      <div class="flex flex-col gap-1.5">
+        <span class="font-mono text-[11px] tracking-[0.14em] text-blue uppercase">{quality}</span>
+        <p class="m-0 text-sm leading-[1.45] text-text1">
+          {score >= 67 ? 'High load today. Prioritise sleep and easy movement next.'
+            : score >= 34 ? 'Moderate load. Anything more is extra fatigue going into your next session.'
+            : 'Light load so far. There is room to add quality work if the plan calls for it.'}
+        </p>
       </div>
-    </div>
+    </section>
 
+    <!-- Fitness / Fatigue / Form -->
+    <dl class="m-0 grid grid-cols-3 gap-2">
+      <div class="bg-bg2 border border-border rounded-2xl p-3 flex flex-col-reverse gap-0.5"><dt class="text-[11px] text-text2">Fitness</dt><dd class="m-0 text-[19px] font-medium">{d.ctl ? d.ctl.toFixed(1) : '--'}</dd></div>
+      <div class="bg-bg2 border border-border rounded-2xl p-3 flex flex-col-reverse gap-0.5"><dt class="text-[11px] text-text2">Fatigue</dt><dd class="m-0 text-[19px] font-medium">{d.atl ? d.atl.toFixed(1) : '--'}</dd></div>
+      <div class="bg-bg2 border border-border rounded-2xl p-3 flex flex-col-reverse gap-0.5"><dt class="text-[11px] text-text2">Form</dt><dd class="m-0 text-[19px] font-medium" style="color: {formCssColor(d.tsb)}">{d.tsb > 0 ? '+' : ''}{d.tsb ? d.tsb.toFixed(1) : '--'}</dd></div>
+    </dl>
 
-    {#if d.missing}
-      <Card style="border-style: dashed; opacity: 0.8;">
-        <div class="flex flex-col items-center justify-center py-6 text-center">
-          <span class="text-[32px] mb-2">🤷‍♂️</span>
-          <p class="text-[14px] font-bold mb-1">No strain data for {d.date}</p>
-          <p class="text-[11px] text-text2 max-w-[200px]">
-            We couldn't find any activity or biometric records for this day.
-          </p>
-        </div>
-      </Card>
-    {:else}
-      <!-- Hero Card (Sleep Page Style) -->
-      <Card style="background: var(--glass); border-color: var(--border);">
-        <div class="flex items-center gap-4">
-          <RadialProgress 
-            value={score} 
-            max={100} 
-            size={72} 
-            color={scoreColor} 
-            label={score.toString()} 
-            sub="STRAIN" 
-          />
-          <div class="flex-1">
-            <div class="flex items-center gap-2 mb-1">
-              <span class="text-[18px] font-bold">{quality}</span>
-              <Tag color={scoreColor}>{score >= 67 ? 'HIGH' : score >= 34 ? 'PRODUCTIVE' : 'BASE'}</Tag>
-            </div>
-            <p class="text-xs text-text1 leading-relaxed">
-              {score >= 67 ? 'Your training volume is significantly higher than your baseline.' : 
-               score >= 34 ? 'Productive stress detected. You are building fitness efficiently.' : 
-               'Light recovery day. Focus on maintaining aerobic foundation.'}
-            </p>
-          </div>
-        </div>
-      </Card>
-
-      <div class="grid grid-cols-3 gap-2">
-        <Card style="padding: 8px 10px;">
-          <MetricBadge label="Fatigue" value={Math.round(d.atl)} unit="" color={ATL_IDENTITY_HEX} sub="ATL" />
-        </Card>
-        <Card style="padding: 8px 10px;">
-          <MetricBadge label="Fitness" value={Math.round(d.ctl)} unit="" color={CTL_IDENTITY_HEX} sub="CTL" />
-        </Card>
-        <Card style="padding: 8px 10px;">
-          <MetricBadge label="Form" value={Math.round(d.tsb)} unit="" color={formCssColor(d.tsb)} sub="TSB" />
-        </Card>
-      </div>
-
-      <!-- Timeline -->
-      <Card>
-        <div class="flex flex-wrap items-start justify-between gap-x-3 gap-y-1 mb-3">
-          <p class="text-[13px] font-semibold">7-Day Trend</p>
-          <span class="text-[10px] text-text2 font-mono text-right ml-auto max-w-full">
-            avg {avg7d === null ? '--' : `${avg7d}%`} · {score}% current
-          </span>
-        </div>
-        <div class="flex gap-2 h-[70px] mb-1 px-1">
-          {#each days as day, i (day.date)}
-            {@const c = boundedScoreCssColor(day.score, true)}
-            <button
-              type="button"
-              class="flex-1 h-full flex flex-col items-center gap-1 cursor-pointer"
-              onclick={() => {
-                endPickerValue = day.date;
-                dayIndex = 6;
-              }}
-              aria-label={`Select ${day.label}: ${day.score}%`}
-            >
-              <div class="h-[50px] w-full flex items-end">
-                <div class="w-full rounded-t-sm transition-all duration-300"
-                     style="background: {c}; opacity: {i === dayIndex ? 1 : 0.35}; height: {Math.max(4, (day.score / 100) * 50)}px;"></div>
-              </div>
-              <span class="text-[9px] font-mono leading-none {i === dayIndex ? 'text-text0' : 'text-text2'}">{day.day}</span>
-            </button>
-          {/each}
-        </div>
-      </Card>
-
-      {#if dayZones.validSeconds > 0}
-        <Card>
-          <div class="flex justify-between items-center mb-3">
-            <p class="text-[13px] font-semibold">Heart Rate Zones</p>
-            <span class="text-[10px] text-text2 font-mono">
-              {formatMinutes(dayZones.validSeconds)} total
+    <!-- Contributing activities -->
+    {#if d.workouts && d.workouts.length > 0}
+      <section aria-label="Contributing activities" class="flex flex-col gap-2">
+        <span class="font-mono text-[11px] tracking-[0.14em] text-text2">CONTRIBUTING</span>
+        {#each d.workouts as w (w.id || w.started_at)}
+          {@const strainVal = Number.isFinite(Number(w?.strain_score)) ? Math.round(Number(w.strain_score)) : null}
+          {@const tssVal = Number.isFinite(Number(w?.tss)) ? Math.round(Number(w.tss)) : null}
+          {@const zp = [1, 2, 3, 4, 5].map((z) => Number(w?.[`hr_zone_${z}_pct`]) || 0)}
+          <button type="button" class="flex flex-col gap-2.5 px-4 py-3.5 rounded-[18px] bg-bg1 border border-border text-left w-full cursor-pointer" onclick={() => openWorkoutDetails(w)}>
+            <span class="flex justify-between items-baseline">
+              <span class="text-sm font-medium text-text0">{w.title || (getWorkoutLabel(w.sport) + ' Session')}</span>
+              <span class="font-mono text-xs text-blue">{strainVal === null ? '--' : `+${strainVal}`}</span>
             </span>
-          </div>
-          <div class="flex flex-col gap-3">
-            {#each [5, 4, 3, 2, 1] as zone (zone)}
-              {@const pct = dayZones.zonePct[zone - 1] || 0}
-              {@const secs = dayZones.zoneSeconds[zone - 1] || 0}
-              {@const zTitle = formatHrZoneTitle(zone)}
-              <div class="flex items-center gap-3">
-                <div class="min-w-[5.75rem] max-w-[6.25rem] flex items-center gap-1.5 shrink-0">
-                  <div class="w-2 h-2 shrink-0 rounded-full" style="background: var(--zone-{zone})"></div>
-                  <div class="min-w-0 leading-tight" title={zTitle}>
-                    <span class="block text-[10px] font-mono text-text2">Z{zone}</span>
-                    <span class="block text-[9px] text-text2 truncate">{canonicalHrZoneShortName(zone)}</span>
-                  </div>
-                </div>
-                <div class="flex-1 h-1.5 bg-glass rounded-full overflow-hidden relative">
-                  <div
-                    class="absolute inset-y-0 left-0 rounded-full transition-all duration-500"
-                    style="width: {pct}%; background: var(--zone-{zone})"
-                  ></div>
-                </div>
-                <div class="w-[84px] text-right shrink-0">
-                  <span class="text-[11px] font-bold font-mono {pct > 0 ? 'text-text1' : 'text-text2'}">
-                    {formatMinutes(secs)} · {pct}%
-                  </span>
-                </div>
-              </div>
-            {/each}
-          </div>
-          <p class="text-[10px] text-text2 italic mt-3 text-center">
-            Aggregated from sessions on {d.date} with zone data.
-          </p>
-        </Card>
-      {/if}
-
-      {#if d.workouts && d.workouts.length > 0}
-        <div>
-          <p class="text-[11px] text-text2 font-mono uppercase tracking-[0.05em] mb-2 px-1">Contributing Activities</p>
-          <div class="flex flex-col gap-2">
-            {#each d.workouts as w (w.id || w.started_at)}
-              {@const strainVal = Number.isFinite(Number(w?.strain_score)) ? Math.round(Number(w.strain_score)) : null}
-              {@const tssVal = Number.isFinite(Number(w?.tss)) ? Math.round(Number(w.tss)) : null}
-              <button 
-                type="button"
-                class="block w-full text-left active:scale-[0.98] transition-transform"
-                onclick={() => openWorkoutDetails(w)}
-              >
-                <Card style="padding: 12px 14px;">
-                  <div class="flex items-center gap-3">
-                    <div class="w-10 h-10 rounded-xl shrink-0 flex items-center justify-center text-[18px] {getWorkoutBg(w.sport)}">
-                      {getWorkoutIcon(w.sport)}
-                    </div>
-                    <div class="flex-1">
-                      <p class="text-[13px] font-semibold text-text0">
-                        {w.title || (getWorkoutLabel(w.sport) + ' Session')}
-                      </p>
-                      <p class="text-[11px] text-text2">
-                        {Math.floor(getDurationSecs(w) / 60)} min · {format(new Date(w.started_at), (athleteStore.profile as any)?.time_format === '24h' ? 'HH:mm' : 'h:mm a')}
-                      </p>
-                    </div>
-                    <div class="text-right flex flex-col gap-1">
-                      <div>
-                        <p class="text-[14px] font-bold tabular-nums" style:color={boundedScoreCssColor(strainVal, true)}>
-                          {strainVal === null ? '--' : strainVal}
-                        </p>
-                        <p class="text-[9px] text-text2 font-mono">STRAIN</p>
-                      </div>
-                      <div>
-                        <p
-                          class="text-[14px] font-bold tabular-nums"
-                          style:color={boundedScoreCssColor(tssVal === null ? null : strainVal, true)}
-                        >
-                          {tssVal === null ? '--' : tssVal}
-                        </p>
-                        <p class="text-[9px] text-text2 font-mono">TSS</p>
-                      </div>
-                    </div>
-                  </div>
-                </Card>
-              </button>
-            {/each}
-          </div>
-        </div>
-      {/if}
-
-      <!-- Analysis Card -->
-      <Card
-        class="!bg-bg1 !border-dashed"
-      >
-        <p class="text-[13px] font-semibold mb-1.5">Strain Analysis</p>
-        {#if analysisLoading && analysisText === null}
-          <p class="text-xs text-text2 animate-pulse">Analyzing...</p>
-        {:else}
-          <p class="text-xs text-text1 leading-relaxed">
-            {analysisText ??
-              (d.tsb < -20
-                ? 'Your training form is highly negative. Prioritize active recovery sessions.'
-                : d.tsb > 10
-                  ? 'Your body is fresh and primed for a high-intensity block. CTL is stable.'
-                  : 'Your training volume is well-balanced with your current fitness level.')}
-          </p>
-        {/if}
-      </Card>
+            {#if zp.some((p) => p > 0)}
+              <span aria-hidden="true" class="flex gap-[3px] h-1.5">
+                {#each zp as p, i (i)}
+                  {#if p > 0}<span class="rounded-[3px]" style="flex: {p} 1 0; background: var(--zone-{i + 1})"></span>{/if}
+                {/each}
+              </span>
+            {/if}
+            <span class="text-xs text-text2">
+              {formatMinutes(getDurationSecs(w))}{#if w.avg_hr} · {w.avg_hr} bpm avg{/if}{#if tssVal !== null} · {tssVal} TSS{/if}
+            </span>
+          </button>
+        {/each}
+      </section>
+    {:else}
+      <div class="flex gap-3 items-start px-4 py-3.5 rounded-[18px] bg-bg1 border border-dashed border-border">
+        <span class="font-mono text-[10px] tracking-[0.12em] text-blue pt-0.5">REST</span>
+        <span class="text-[13px] leading-[1.45] text-text1">No activities logged for {d.label}.</span>
+      </div>
     {/if}
   {/if}
 </div>
