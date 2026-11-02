@@ -792,6 +792,18 @@
     line-height: 14px;
   }
 
+  /* Hero map: the workout sheet overlaps the bottom 24px and the expand icon sits
+     bottom-right, so the (license-required) attribution moves bottom-left, above the
+     overlap, and is dimmed until tapped. */
+  .gps-map-shell.hero :global(.maplibregl-ctrl-bottom-right) {
+    right: auto;
+    left: 4px;
+    bottom: 26px;
+  }
+  .gps-map-shell.hero :global(.maplibregl-ctrl-attrib.maplibregl-compact:not(.maplibregl-compact-show)) {
+    opacity: 0.45;
+  }
+
   .map-host:not(.interactive) :global(.maplibregl-canvas-container),
   .map-host:not(.interactive) :global(.maplibregl-canvas) {
     pointer-events: none !important;
