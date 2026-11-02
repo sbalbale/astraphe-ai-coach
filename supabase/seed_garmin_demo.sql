@@ -143,3 +143,34 @@ VALUES
 ('52c00ba6-d91b-4eb3-b0ad-c533161da9bd', CURRENT_DATE + 1, 'bike', 'Easy spin',
  'Flush the legs.', 45, 25, 'Recovery', 'planned', 'manual',
  '[{"name":"Steady","duration_minutes":45,"target_power_percent_ftp":55}]'::jsonb);
+
+-- Sleep-stage timeline (hypnogram) for the last 7 nights, built from each night's bedtime/wakeup.
+-- Requires migration 20261102185409_sleep_stage_segments.sql.
+DO $$
+DECLARE
+  aid UUID := '52c00ba6-d91b-4eb3-b0ad-c533161da9bd';
+  rec RECORD;
+  t TIMESTAMPTZ;
+  stages TEXT[] := ARRAY['light','deep','light','rem','light','deep','light','rem','awake','light','rem'];
+  mins   INT[]  := ARRAY[14, 38, 16, 22, 20, 34, 18, 28, 4, 40, 36];
+  i INT;
+  nxt TIMESTAMPTZ;
+BEGIN
+  DELETE FROM public.sleep_stage_segments WHERE athlete_id = aid AND source = 'garmin';
+  FOR rec IN
+    SELECT date, sleep_bedtime, sleep_wakeup FROM public.biometrics
+    WHERE athlete_id = aid AND date >= CURRENT_DATE - 6 AND sleep_bedtime IS NOT NULL AND sleep_wakeup IS NOT NULL
+  LOOP
+    t := rec.sleep_bedtime;
+    i := 1;
+    WHILE t < rec.sleep_wakeup LOOP
+      nxt := LEAST(t + make_interval(mins => mins[i]), rec.sleep_wakeup);
+      IF nxt > t THEN
+        INSERT INTO public.sleep_stage_segments (athlete_id, date, source, stage, start_at, end_at)
+        VALUES (aid, rec.date, 'garmin', stages[i], t, nxt);
+      END IF;
+      t := nxt;
+      i := (i % array_length(stages, 1)) + 1;
+    END LOOP;
+  END LOOP;
+END $$;

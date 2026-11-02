@@ -120,6 +120,7 @@
     debt: number;
     need: number;
     periods: any[];
+    stageSegments: { stage: string; start_at: string; end_at: string }[];
   };
 
   type Night = NightMissing | NightData;
@@ -189,7 +190,8 @@
       rhrZ: typeof b.rhr_z === "number" && Number.isFinite(b.rhr_z) ? Number(b.rhr_z) : null,
       debt: b.sleep_debt_min || 0,
       need: b.sleep_need_min || 480,
-      periods: (b.periods || []).map((p: any) => {
+      stageSegments: b.stage_segments || [],
+        periods: (b.periods || []).map((p: any) => {
         const pStart = new Date(p.started_at);
         const pEnd = new Date(p.ended_at);
         const pInBedMin = p.in_bed_min || Math.round((pEnd.getTime() - pStart.getTime()) / 60000);
@@ -306,6 +308,7 @@
         rhrZ: typeof b.rhr_z === 'number' && Number.isFinite(b.rhr_z) ? Number(b.rhr_z) : null,
         debt: b.sleep_debt_min || 0,
         need: b.sleep_need_min || 480,
+        stageSegments: b.stage_segments || [],
         periods: (b.periods || []).map((p: any) => {
           const pStart = new Date(p.started_at);
           const pEnd = new Date(p.ended_at);
@@ -397,11 +400,28 @@
   // — they encode a *category* of sleep architecture, so they're allowed to
   // stay distinct and are not driven by the semantic ASTRAPHE rules.
   const stageColors: Record<string, string> = {
-    deep: 'var(--blue)',
-    rem: 'var(--teal)',
-    light: 'var(--amber)',
-    awake: 'var(--red)',
+    deep: 'var(--stage-deep)',
+    light: 'var(--stage-light)',
+    rem: 'var(--violet)',
+    awake: 'var(--text2)',
   };
+
+  // Hypnogram rows, top to bottom (design order): awake, REM, light, deep.
+  const HYP_W = 314;
+  const HYP_ROW_Y: Record<string, number> = { awake: 12, rem: 36, light: 60, deep: 84 };
+  function buildHypnogram(segs: { stage: string; start_at: string; end_at: string }[]) {
+    const parsed = segs
+      .map((x) => ({ stage: x.stage, a: Date.parse(x.start_at), b: Date.parse(x.end_at) }))
+      .filter((x) => Number.isFinite(x.a) && Number.isFinite(x.b) && x.b > x.a && x.stage in HYP_ROW_Y);
+    if (parsed.length < 2) return null;
+    const t0 = parsed[0].a;
+    const span = parsed[parsed.length - 1].b - t0;
+    if (span <= 0) return null;
+    const px = (t: number) => Math.round(((t - t0) / span) * HYP_W * 10) / 10;
+    const bars = parsed.map((x) => ({ x1: px(x.a), x2: Math.max(px(x.b), px(x.a) + 1), y: HYP_ROW_Y[x.stage], stage: x.stage }));
+    const path = bars.map((bar, i) => (i === 0 ? `M${bar.x1},${bar.y}` : `L${bar.x1},${bar.y}`) + ` L${bar.x2},${bar.y}`).join(' ');
+    return { bars, path };
+  }
   // Sleep score is a bounded 0-100 score so it follows the unified rule of
   // thirds (>=67 teal / 34-66 amber / <=33 red).
   let scoreColor = $derived(
@@ -520,11 +540,22 @@
         <span class="font-mono text-[11px] text-text2">{nightData.bedtime} → {nightData.wakeup}</span>
       </div>
       {#if nightData.stagesAvailable}
+        {@const hyp = buildHypnogram(nightData.stageSegments)}
+        {#if hyp}
+          <svg viewBox="0 0 314 96" width="100%" height="96" role="img" aria-label="Sleep stage timeline" class="block">
+            {#each [12, 36, 60, 84] as y (y)}<line x1="0" y1={y} x2="314" y2={y} stroke="var(--bg3)"></line>{/each}
+            <path d={hyp.path} fill="none" stroke="var(--border)" stroke-width="1"></path>
+            {#each hyp.bars as bar, i (i)}
+              <line x1={bar.x1} y1={bar.y} x2={bar.x2} y2={bar.y} stroke={stageColors[bar.stage]} stroke-width="10" stroke-opacity={bar.stage === 'light' ? 0.7 : 1}></line>
+            {/each}
+          </svg>
+        {:else}
         <div aria-hidden="true" class="flex gap-[3px] h-2.5">
           {#each [['deep', nightData.deep], ['rem', nightData.rem], ['light', nightData.light], ['awake', nightData.awake]] as [k, v] (k)}
             <span class="rounded-[3px]" style="flex: {Math.max(Number(v), 1)} 1 0; background: {stageColors[k as string]}"></span>
           {/each}
         </div>
+        {/if}
         <div class="grid grid-cols-4 gap-2">
           {#each [
             { key: 'awake', name: 'Awake', pct: nightData.awake, mins: nightData.awakeMins },
