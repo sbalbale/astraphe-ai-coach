@@ -195,15 +195,17 @@
           {/if}
           <h1 class="font-display text-[36px] leading-none text-text0">{headerTitle}</h1>
         </div>
-        <button
-          type="button"
-          class="w-11 h-11 rounded-full bg-blue-dim border border-blue/30 flex items-center justify-center text-sm font-semibold text-blue cursor-pointer"
-          onclick={() => navTo('/profile')}
-          aria-label="Your profile"
-          aria-current={$page.url.pathname.startsWith('/profile') ? 'page' : undefined}
-        >
-          {avatarInitials}
-        </button>
+        <!-- The design only shows the profile avatar on Today. -->
+        {#if $page.url.pathname === '/dashboard'}
+          <button
+            type="button"
+            class="w-11 h-11 rounded-full bg-blue-dim border border-blue/30 flex items-center justify-center text-sm font-semibold text-blue cursor-pointer"
+            onclick={() => navTo('/profile')}
+            aria-label="Your profile"
+          >
+            {avatarInitials}
+          </button>
+        {/if}
       </div>
 
       <!-- Sub-tabs for grouped tabs (Training: Log/Zones · Body: Recovery/Sleep/Strain) -->
