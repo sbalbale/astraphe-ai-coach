@@ -56,7 +56,6 @@
   import { supportsPaceChart } from '$lib/utils/paceChart';
   import { intervalsToSplits, lapsToSplits } from '$lib/utils/lapSplits';
   import StreamCharts from '$lib/components/workout/StreamCharts.svelte';
-  import SplitCharts from '$lib/components/workout/SplitCharts.svelte';
   import IntervalsTable from '$lib/components/workout/IntervalsTable.svelte';
   import GpsTrace from '$lib/components/workout/GpsTrace.svelte';
   import LapStrip from '$lib/components/workout/LapStrip.svelte';
@@ -216,8 +215,6 @@
       (streamsHaveHeartrate(detailStreams) || streamsHaveVelocity(detailStreams))
   );
 
-  // Laps tab: lap charts and the splits table whenever there are at least two splits.
-  const showLapSplitCharts = $derived(detailSplits.splits.length >= 2);
 
   const showSplitsTable = $derived(detailSplits.splits.length >= 2);
 
@@ -721,7 +718,6 @@
 
   // --- Workout detail (design) ---
   let detailTab = $state('overview');
-  let splitView = $state<'chart' | 'table'>('chart');
   let showAllSplits = $state(false);
   $effect(() => { void selectedWorkout?.id; detailTab = 'overview'; showAllSplits = false; });
   function splitBlockLabel(sp: any): string {
@@ -942,30 +938,16 @@
             {#if detailTab === 'laps'}
               {#if detailLoading}
                 <div class="rounded-[24px] bg-bg2 animate-pulse" style="height: 160px;"></div>
-              {:else if detailLaps.length >= 2 || showLapSplitCharts || showSplitsTable}
+              {:else if detailLaps.length >= 2 || showSplitsTable}
                 {#if detailLaps.length >= 2}
                   <section aria-label="Laps" class="bg-bg2 border border-border rounded-[24px] p-[18px]">
                     <LapStrip laps={detailLaps} sport={sel.sport} zones={mergedHrZoneDefs} measurementUnits={measurementUnits} />
                   </section>
                 {/if}
-                {#if showLapSplitCharts || showSplitsTable}
-                  {@const splitMode = showLapSplitCharts && showSplitsTable ? splitView : showLapSplitCharts ? 'chart' : 'table'}
+                {#if showSplitsTable}
                   <section aria-label="Splits" class="bg-bg2 border border-border rounded-[24px] p-[18px] flex flex-col gap-3">
-                    <div class="flex items-center justify-between">
-                      <h2 class="m-0 font-display font-normal text-[22px]">Splits</h2>
-                      {#if showLapSplitCharts && showSplitsTable}
-                        <div role="tablist" aria-label="Splits view" class="flex gap-0.5 p-[3px] rounded-[12px] bg-bg0 border border-border">
-                          {#each [['chart', 'Chart'], ['table', 'Table']] as [id, label] (id)}
-                            <button type="button" role="tab" aria-selected={splitView === id} class="h-8 px-3 border-0 rounded-[9px] text-[13px] font-medium cursor-pointer {splitView === id ? 'bg-bg3 text-text0' : 'bg-transparent text-text2'}" onclick={() => (splitView = id as 'chart' | 'table')}>{label}</button>
-                          {/each}
-                        </div>
-                      {/if}
-                    </div>
-                    {#if splitMode === 'chart'}
-                      <SplitCharts splits={detailSplits.splits} sport={sel.sport} zones={mergedHrZoneDefs} measurementUnits={measurementUnits} source={detailSplits.source} />
-                    {:else}
-                      <IntervalsTable splits={detailSplits.splits} sport={sel.sport} source={detailSplits.source} measurementUnits={measurementUnits} />
-                    {/if}
+                    <h2 class="m-0 font-display font-normal text-[22px]">Splits</h2>
+                    <IntervalsTable splits={detailSplits.splits} sport={sel.sport} source={detailSplits.source} measurementUnits={measurementUnits} />
                   </section>
                 {/if}
               {:else}
