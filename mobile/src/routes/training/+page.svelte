@@ -216,20 +216,10 @@
       (streamsHaveHeartrate(detailStreams) || streamsHaveVelocity(detailStreams))
   );
 
-  const showLapSplitCharts = $derived(
-    detailSplits.splits.length >= 2 &&
-      !hasPerSecondStreamCharts &&
-      (selectedWorkout?.sport === 'row' ||
-        selectedWorkout?.sport === 'run' ||
-        selectedWorkout?.sport === 'bike')
-  );
+  // Laps tab: lap charts and the splits table whenever there are at least two splits.
+  const showLapSplitCharts = $derived(detailSplits.splits.length >= 2);
 
-  const showSplitsTable = $derived(
-    detailSplits.splits.length >= 2 &&
-      (selectedWorkout?.sport === 'row' ||
-        selectedWorkout?.sport === 'run' ||
-        selectedWorkout?.sport === 'bike')
-  );
+  const showSplitsTable = $derived(detailSplits.splits.length >= 2);
 
   $effect(() => {
     const w = selectedWorkout;
