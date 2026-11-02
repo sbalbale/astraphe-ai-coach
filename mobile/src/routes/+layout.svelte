@@ -215,6 +215,10 @@
             </div>
             <button type="button" disabled={!pageHeader.canNext} class="h-11 px-3 rounded-[14px] border border-border bg-transparent text-[13px] font-medium {pageHeader.canNext ? 'text-text0 cursor-pointer' : 'text-text2/60 cursor-default'}" onclick={pageHeader.today ?? undefined}>Today</button>
           </div>
+        {:else if pageHeader.add}
+          <button type="button" aria-label={pageHeader.addLabel} class="w-11 h-11 rounded-[14px] border-0 bg-blue text-[#0B1420] flex items-center justify-center cursor-pointer" onclick={pageHeader.add}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+          </button>
         {/if}
         <!-- The design only shows the profile avatar on Today. -->
         {#if $page.url.pathname === '/dashboard'}

@@ -9,7 +9,7 @@ export type NavTab = { id: string; label: string; title: string; routes: string[
 
 export const NAV_TABS: NavTab[] = [
   { id: '/dashboard', label: 'Today', title: 'Today', routes: ['/', '/dashboard'] },
-  { id: '/training', label: 'Training', title: 'Training', routes: ['/training', '/zones'] },
+  { id: '/training', label: 'Training', title: 'Training', routes: ['/training', '/trends', '/zones'] },
   { id: '/recovery', label: 'Body', title: 'Body', routes: ['/recovery', '/sleep', '/strain'] },
   { id: '/plan', label: 'Plan', title: 'Plan', routes: ['/plan'] },
   { id: '/chat', label: 'Coach', title: 'Coach', routes: ['/chat'] }
@@ -19,6 +19,7 @@ export const NAV_TABS: NavTab[] = [
 export const SUBTABS: Record<string, { id: string; label: string }[]> = {
   '/training': [
     { id: '/training', label: 'Log' },
+    { id: '/trends', label: 'Trends' },
     { id: '/zones', label: 'Zones' }
   ],
   '/recovery': [

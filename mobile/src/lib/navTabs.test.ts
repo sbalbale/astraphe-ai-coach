@@ -23,7 +23,7 @@ describe('navTabs', () => {
   });
 
   it('only exposes sub-tabs for grouped tabs', () => {
-    expect(subtabsFor('/training')?.map((t) => t.id)).toEqual(['/training', '/zones']);
+    expect(subtabsFor('/training')?.map((t) => t.id)).toEqual(['/training', '/trends', '/zones']);
     expect(subtabsFor('/strain')?.map((t) => t.id)).toEqual(['/recovery', '/sleep', '/strain']);
     expect(subtabsFor('/dashboard')).toBeNull();
     expect(subtabsFor('/plan')).toBeNull();

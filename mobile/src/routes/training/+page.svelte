@@ -16,6 +16,7 @@
   import DonutChart from '$lib/components/charts/DonutChart.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import { confirm } from '$lib/confirm';
+  import { pageHeader, resetPageHeader } from '$lib/stores/pageHeader.svelte';
   import DatePicker from '$lib/components/DatePicker.svelte';
   import { analysisNavEpoch } from '$lib/analysisNavEpoch.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
@@ -98,7 +99,7 @@
     }
   }
 
-  let metric = $state('load');
+  let metric = $state('history');
   const tabs = ['load', 'history']; // Simplified tabs for now as pace/zones need complex processing
   // Avoid UI flicker: `syncStatus` can be briefly null/undefined even when workouts are loaded.
   // Only show "No Training Data" once we know initial load is done and we truly have no workouts.
@@ -669,6 +670,60 @@
       }
     })();
   });
+
+  // --- Design view: Log (this week + activities) ---
+  const isCurrentWeek = $derived(format(selectedWeekStart, "yyyy-MM-dd") === format(startOfWeek(new Date(), { weekStartsOn: 1 }), "yyyy-MM-dd"));
+  const weekRangeLabel = $derived(
+    format(selectedWeekStart, "MMM") === format(selectedWeekEnd, "MMM")
+      ? `${format(selectedWeekStart, "d")} – ${format(selectedWeekEnd, "d MMM")}`
+      : `${format(selectedWeekStart, "d MMM")} – ${format(selectedWeekEnd, "d MMM")}`
+  );
+  const weeklyTarget = $derived(Number((athleteStore.profile as any)?.weekly_tss_target) || 0);
+  const weekTotals = $derived.by(() => {
+    let tss = 0, secs = 0, meters = 0;
+    for (const w of weekWorkouts as any[]) {
+      tss += Number(w?.tss) || 0;
+      secs += getDurationSecs(w);
+      meters += Number(w?.distance_m) || 0;
+    }
+    const imperial = measurementUnits === "imperial";
+    const dist = imperial ? meters / 1609.344 : meters / 1000;
+    const h = Math.floor(secs / 3600);
+    const m = Math.round((secs % 3600) / 60);
+    return {
+      tss: Math.round(tss),
+      time: h > 0 ? `${h}h ${String(m).padStart(2, "0")}m` : `${m}m`,
+      distance: dist >= 100 ? String(Math.round(dist)) : String(Math.round(dist * 10) / 10),
+      distanceUnit: imperial ? "mi" : "km"
+    };
+  });
+  const SPORT_GLYPHS: Record<string, string> = { bike: "BIKE", cycling: "BIKE", run: "RUN", running: "RUN", swim: "SWIM", swimming: "SWIM", strength: "GYM", gym: "GYM", row: "ROW", rowing: "ROW", mobility: "MOB" };
+  const sportGlyph = (sport: string) => SPORT_GLYPHS[String(sport ?? "").toLowerCase()] ?? "OTHER";
+  function activityMeta(w: any): string {
+    const parts: string[] = [];
+    const d = w?.started_at ? new Date(w.started_at) : null;
+    if (d && !Number.isNaN(d.getTime())) parts.push(format(d, "EEE d MMM"));
+    const secs = getDurationSecs(w);
+    if (secs > 0) { const h = Math.floor(secs / 3600); const m = Math.round((secs % 3600) / 60); parts.push(h > 0 ? `${h}h ${String(m).padStart(2, "0")}m` : `${m}m`); }
+    const meters = Number(w?.distance_m) || 0;
+    if (meters > 0) parts.push(measurementUnits === "imperial" ? `${(meters / 1609.344).toFixed(1)} mi` : `${(meters / 1000).toFixed(1)} km`);
+    const np = Number(w?.norm_power_w) || 0;
+    if (np > 0) parts.push(`${np} W NP`);
+    return parts.join(" · ");
+  }
+  const loadInsight = $derived.by(() => {
+    const ctx = weeklyRollingContext;
+    if (!ctx || ctx.baseline == null || ctx.pct == null) return null;
+    const pct = Math.round(Math.abs(ctx.pct) * 100);
+    return `This week is ${ctx.weekSum} TSS so far, ${pct}% ${ctx.pct >= 0 ? "above" : "below"} your recent average of ${ctx.baseline}.`;
+  });
+
+  $effect(() => {
+    pageHeader.eyebrow = `Week ${format(selectedWeekStart, "I")}`;
+    pageHeader.add = () => (addActivityOpen = true);
+    pageHeader.addLabel = "Log activity";
+    return resetPageHeader;
+  });
 </script>
 
 {#if addActivityOpen}
@@ -692,15 +747,6 @@
 {/if}
 
 <div class="flex flex-col gap-3">
-  <div class="flex items-center justify-between pt-1">
-    <h1 class="text-[20px] font-bold tracking-[-0.02em] text-text0">Training Analysis</h1>
-    <button
-      onclick={() => (addActivityOpen = true)}
-      class="w-8 h-8 flex items-center justify-center rounded-full bg-glass border border-border text-text2 hover:text-text0 hover:border-blue/50 transition-colors text-lg leading-none"
-      aria-label="Log activity"
-    >+</button>
-  </div>
-
   {#if showNoTrainingData}
     <EmptyState
       title="No Training Data"
@@ -715,115 +761,6 @@
       icon="⏳"
     />
   {:else}
-    <!-- Metric Tabs -->
-    <div class="flex gap-1.5 overflow-x-auto pb-0.5 shrink-0">
-      {#each tabs as tab (tab)}
-        <Pill active={metric === tab} onclick={() => { metric = tab; closeWorkout(); }}>
-          {tab.charAt(0).toUpperCase() + tab.slice(1)}
-        </Pill>
-      {/each}
-    </div>
-
-    {#if metric === 'load'}
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
-        <Card paddingClass="px-6 py-5">
-          <div class="flex flex-col justify-start items-start w-full">
-            <MetricBadge
-              label="Fitness (CTL)"
-              value={Math.round(athleteStore.ctl)}
-              color={CTL_IDENTITY_HEX}
-              sub="Long-term load"
-              labelClass="text-[10px] text-text1 uppercase tracking-[0.08em] font-mono"
-              subClass="text-[10px] text-text1"
-            />
-          </div>
-        </Card>
-        <Card paddingClass="px-6 py-5">
-          <div class="flex flex-col justify-start items-start w-full">
-            <MetricBadge
-              label="Fatigue (ATL)"
-              value={Math.round(athleteStore.atl)}
-              color={ATL_IDENTITY_HEX}
-              sub="Short-term load"
-              labelClass="text-[10px] text-text1 uppercase tracking-[0.08em] font-mono"
-              subClass="text-[10px] text-text1"
-              valueClassName="text-text0"
-            />
-          </div>
-        </Card>
-        <Card paddingClass="px-6 py-5">
-          <div class="flex flex-col justify-start items-start w-full">
-            <MetricBadge
-              label="Form (TSB)"
-              value={athleteStore.tsb > 0 ? `+${Math.round(athleteStore.tsb)}` : Math.round(athleteStore.tsb)}
-              color={formCssColor(athleteStore.tsb)}
-              sub="Training balance"
-              labelClass="text-[10px] text-text1 uppercase tracking-[0.08em] font-mono"
-              subClass="text-[10px] text-text1"
-            />
-          </div>
-        </Card>
-        <Card paddingClass="px-6 py-5">
-          <div class="flex flex-col justify-start items-start w-full leading-tight">
-            <div class="flex flex-col gap-0.5 w-full">
-              <span class="text-[10px] font-mono uppercase tracking-wide text-text1">Weekly TSS</span>
-              <div class="flex flex-col gap-1">
-                <p class="text-[22px] font-semibold tabular-nums leading-none text-text0 tracking-[-0.02em]">
-                  {weeklyRollingContext.weekSum}
-                </p>
-                {#if weeklyRollingContext.baseline !== null && weeklyRollingContext.delta !== null && weeklyRollingContext.pct !== null}
-                  {@const delta = weeklyRollingContext.delta}
-                  <div class="flex flex-row flex-wrap items-baseline gap-x-2 gap-y-0">
-                    <span class="text-[10px] font-mono tabular-nums text-text1">
-                      Baseline: {weeklyRollingContext.baseline}
-                    </span>
-                    <span class="text-[10px] font-mono tabular-nums {getWeeklyLoadDeltaColor(weeklyRollingContext.pct)}">
-                      {#if delta > 0}
-                        ↑ {delta}
-                      {:else if delta < 0}
-                        ↓ {Math.abs(delta)}
-                      {:else}
-                        0
-                      {/if}
-                    </span>
-                  </div>
-                {/if}
-              </div>
-            </div>
-          </div>
-        </Card>
-      </div>
-      
-      {#if athleteStore.metrics?.trainingLoadData?.length > 0}
-        <Card>
-          <p class="text-[13px] font-semibold mb-3 text-text0">Training Load Trend</p>
-          <MultiLineChart data={athleteStore.metrics.trainingLoadData} height={120} />
-        </Card>
-      {/if}
-      
-      <Card
-        paddingClass="px-6 py-4"
-        class="!bg-bg1 !border-dashed"
-      >
-        <div class="flex gap-3 items-start">
-          <Lightbulb class="w-4 h-4 shrink-0 text-text2 mt-0.5" strokeWidth={1.5} aria-hidden="true" />
-          <div class="flex-1 min-w-0">
-            <p class="text-[13px] font-semibold mb-1.5 text-text1">Load Insight</p>
-            {#if analysisLoading && analysisText === null}
-              <p class="text-xs text-text2 animate-pulse">Analyzing...</p>
-            {:else}
-              <p class="text-xs text-text1 leading-relaxed">
-                {analysisText ??
-                  (!isConnected
-                    ? 'Keep logging activities to build your training picture. Connect a device for automatic sync and deeper metrics.'
-                    : 'No insight available right now. Check back after your next sync.')}
-              </p>
-            {/if}
-          </div>
-        </div>
-      </Card>
-    {/if}
-
     {#if metric === 'history'}
       {#if selectedWorkout}
         <!-- Detailed Workout View -->
@@ -1089,101 +1026,71 @@
           {/if}
         </Card>
       {:else}
-        <div class="flex flex-col gap-2.5">
-          <!-- Week selector -->
-          <Card style="padding: 12px 14px;">
-            <div class="flex flex-col gap-3 min-w-0 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
-              <div class="min-w-0">
-                <p class="text-[10px] text-text2 font-mono uppercase tracking-[0.08em]">Week</p>
-                <p class="text-[13px] font-semibold break-words">
-                  {format(selectedWeekStart, 'MMM d')} – {format(selectedWeekEnd, 'MMM d, yyyy')}
-                </p>
-              </div>
-
-              <div class="flex items-center gap-2 min-w-0 w-full sm:w-auto sm:shrink-0 sm:max-w-full">
-                <button
-                  class="shrink-0 px-2 py-1 rounded-lg border border-border bg-glass2 text-[11px] text-text1 cursor-pointer"
-                  onclick={() => (weekPickerValue = format(addDays(selectedWeekStart, -7), 'yyyy-MM-dd'))}
-                  aria-label="Previous week"
-                >
-                  ←
-                </button>
-
-                <div class="min-w-0 flex-1 sm:flex-none sm:w-[160px]">
-                  <DatePicker
-                    id="training-history-week"
-                    bind:value={weekPickerValue}
-                    ariaLabel="Select week"
-                    buttonClass="px-2 py-1 pr-2 rounded-lg border border-border bg-glass2 text-[11px] text-text1"
-                  />
+        <div class="flex flex-col gap-3.5">
+          <!-- This week -->
+          <section aria-label="This week" class="bg-bg2 border border-border rounded-[24px] px-[18px] py-4 flex flex-col gap-3.5">
+            <div class="flex justify-between items-center">
+              <button type="button" aria-label="Previous week" class="w-11 h-8 border-0 bg-transparent text-text2 flex items-center justify-start p-0 cursor-pointer"
+                onclick={() => (weekPickerValue = format(addDays(selectedWeekStart, -7), 'yyyy-MM-dd'))}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m15 6-6 6 6 6"></path></svg>
+              </button>
+              <div class="flex items-center gap-1.5">
+                <div class="min-w-[120px]">
+                  <DatePicker bind:value={weekPickerValue} label={weekRangeLabel} hideChevron ariaLabel="Select week" buttonClass="h-8 px-2 justify-center gap-1.5 rounded-[10px] bg-transparent border-0 text-[14px] font-medium text-text0" popoverClass="!left-auto !right-1/2 translate-x-1/2" />
                 </div>
-
-                <button
-                  class="shrink-0 whitespace-nowrap px-2 py-1 rounded-lg border border-border bg-glass2 text-[11px] text-text1 cursor-pointer"
-                  onclick={jumpToCurrentWeek}
-                  aria-label="Jump to current week"
-                >
-                  Today
-                </button>
-
-                <button
-                  class="shrink-0 px-2 py-1 rounded-lg border border-border bg-glass2 text-[11px] text-text1 cursor-pointer"
-                  onclick={() => (weekPickerValue = format(addDays(selectedWeekStart, 7), 'yyyy-MM-dd'))}
-                  aria-label="Next week"
-                >
-                  →
-                </button>
+                {#if !isCurrentWeek}
+                  <button type="button" class="h-8 px-2.5 rounded-[10px] border border-border bg-transparent text-xs font-medium text-text0 cursor-pointer" onclick={jumpToCurrentWeek}>Today</button>
+                {/if}
               </div>
+              <button type="button" aria-label="Next week" disabled={isCurrentWeek} class="w-11 h-8 border-0 bg-transparent flex items-center justify-end p-0 {isCurrentWeek ? 'text-text2/40 cursor-not-allowed' : 'text-text2 cursor-pointer'}"
+                onclick={() => (weekPickerValue = format(addDays(selectedWeekStart, 7), 'yyyy-MM-dd'))}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m9 6 6 6-6 6"></path></svg>
+              </button>
             </div>
-          </Card>
+            <div class="grid grid-cols-3 gap-2">
+              <div class="flex flex-col gap-0.5"><span class="text-[22px] font-medium tracking-[-0.02em]">{weekTotals.tss}{#if weeklyTarget}<span class="text-xs text-text2 font-normal"> / {weeklyTarget}</span>{/if}</span><span class="text-[11px] text-text2">TSS</span></div>
+              <div class="flex flex-col gap-0.5"><span class="text-[22px] font-medium tracking-[-0.02em]">{weekTotals.time}</span><span class="text-[11px] text-text2">Time</span></div>
+              <div class="flex flex-col gap-0.5"><span class="text-[22px] font-medium tracking-[-0.02em]">{weekTotals.distance}<span class="text-xs text-text2 font-normal"> {weekTotals.distanceUnit}</span></span><span class="text-[11px] text-text2">Distance</span></div>
+            </div>
+            {#if weeklyTarget}
+              <div aria-hidden="true" class="h-1.5 rounded-[3px] bg-border overflow-hidden"><div class="h-1.5 rounded-[3px] bg-blue" style="width: {Math.min(100, Math.round((weekTotals.tss / weeklyTarget) * 100))}%"></div></div>
+            {/if}
+          </section>
 
-          {#if weekWorkouts.length === 0}
-            <Card style="padding: 14px;">
-              <p class="text-[12px] text-text2">No workouts logged in this week.</p>
-            </Card>
+          <!-- Activities -->
+          <section aria-label="Activities" class="flex flex-col gap-2">
+            <span class="font-mono text-[11px] tracking-[0.14em] text-text2">{isCurrentWeek ? 'RECENT ACTIVITIES' : 'ACTIVITIES'}</span>
+            {#if weekWorkouts.length === 0}
+              <div class="px-4 py-3.5 rounded-[18px] bg-bg1 border border-border text-[13px] text-text2">No workouts logged in this week.</div>
+            {/if}
+            {#each weekWorkouts as w, i (w?.id ?? w?.started_at)}
+              {@const tssVal = Number.isFinite(Number(w?.tss)) && Number(w.tss) > 0 ? Math.round(Number(w.tss)) : null}
+              <button
+                type="button"
+                class="flex items-center gap-3 px-3.5 py-3 rounded-[18px] bg-bg1 border border-border text-left w-full cursor-pointer"
+                onclick={() => openWorkout(w)}
+                onmouseenter={() => w.id && onWorkoutCardIntent(w.id)}
+                ontouchstart={() => w.id && onWorkoutCardIntent(w.id)}
+              >
+                <span aria-hidden="true" class="shrink-0 w-10 h-10 rounded-xl flex items-center justify-center font-mono text-[11px] font-medium {i === 0 && isCurrentWeek ? 'bg-blue-dim text-blue' : 'bg-bg3 text-text1'}">{sportGlyph(w.sport)}</span>
+                <span class="flex-1 min-w-0 flex flex-col gap-0.5">
+                  <span class="text-sm font-medium truncate">{w.title || (getWorkoutLabel(w.sport) + ' Session')}</span>
+                  <span class="text-xs text-text2 truncate">{activityMeta(w)}</span>
+                </span>
+                <span class="flex flex-col items-end gap-0.5">
+                  <span class="font-mono text-[13px]">{tssVal ?? '—'}</span>
+                  <span class="text-[11px] text-text2">TSS</span>
+                </span>
+              </button>
+            {/each}
+          </section>
+
+          {#if loadInsight}
+            <div class="flex gap-3 items-start px-4 py-3.5 rounded-[18px] bg-bg1 border border-dashed border-border">
+              <span class="font-mono text-[10px] tracking-[0.12em] text-blue pt-0.5">LOAD</span>
+              <span class="text-[13px] leading-[1.45] text-text1">{loadInsight}</span>
+            </div>
           {/if}
-
-          {#each weekWorkouts as w (w?.id ?? w?.started_at)}
-            {@const strainVal = Number.isFinite(Number(w?.strain_score)) ? Math.round(Number(w.strain_score)) : null}
-            {@const tssVal = Number.isFinite(Number(w?.tss)) ? Math.round(Number(w.tss)) : null}
-            <button
-              class="text-left bg-transparent border-none p-0 cursor-pointer w-full"
-              onclick={() => openWorkout(w)}
-              onmouseenter={() => w.id && onWorkoutCardIntent(w.id)}
-              ontouchstart={() => w.id && onWorkoutCardIntent(w.id)}
-            >
-              <Card style="padding: 12px 14px;">
-                <div class="flex items-center gap-3">
-                  <div class="w-10 h-10 rounded-xl shrink-0 flex items-center justify-center text-[18px] {getWorkoutBg(w.sport)}">
-                    {getWorkoutIcon(w.sport)}
-                  </div>
-                  <div class="flex-1">
-                    <p class="text-[13px] font-semibold text-text0">
-                      {w.title || (getWorkoutLabel(w.sport) + ' Session')}
-                    </p>
-                    <p class="text-[11px] text-text2">{format(new Date(w.started_at), 'MMM d')} · {Math.floor(getDurationSecs(w) / 60)} min</p>
-                  </div>
-                  <div class="text-right flex flex-col gap-1">
-                    <div>
-                      <p class="text-[14px] font-bold tabular-nums" style:color={boundedScoreCssColor(strainVal, true)}>
-                        {strainVal === null ? '--' : strainVal}
-                      </p>
-                      <p class="text-[9px] text-text2 font-mono">STRAIN</p>
-                    </div>
-                    <div>
-                      <p
-                        class="text-[14px] font-bold tabular-nums"
-                        style:color={boundedScoreCssColor(tssVal === null ? null : strainVal, true)}
-                      >
-                        {tssVal === null ? '--' : tssVal}
-                      </p>
-                      <p class="text-[9px] text-text2 font-mono">TSS</p>
-                    </div>
-                  </div>
-                </div>
-              </Card>
-            </button>
-          {/each}
         </div>
       {/if}
     {/if}
