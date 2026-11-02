@@ -73,15 +73,18 @@ class _BiometricsQuery:
 
 
 class _BiometricsDb:
-    def __init__(self, bio_rows, period_rows=None):
+    def __init__(self, bio_rows, period_rows=None, segment_rows=None):
         self._bio_rows = bio_rows
         self._period_rows = period_rows or []
+        self._segment_rows = segment_rows or []
 
     def table(self, name):
         if name == "biometrics":
             return _BiometricsQuery(self._bio_rows)
         if name == "sleep_periods":
             return _BiometricsQuery(self._period_rows)
+        if name == "sleep_stage_segments":
+            return _BiometricsQuery(self._segment_rows)
         raise AssertionError(f"unexpected table {name}")
 
 
@@ -156,6 +159,41 @@ def test_get_biometrics_attaches_periods_by_date():
 
     assert res.status_code == 200
     assert res.json()["series"][0]["periods"] == periods
+
+
+def test_get_biometrics_attaches_stage_segments_by_date_in_iso_utc():
+    rows = [{"date": "2026-05-20"}, {"date": "2026-05-21"}]
+    segments = [
+        # PostgREST returns timestamptz as '+00:00'; API normalises to 'Z'
+        {"date": "2026-05-20", "stage": "light", "start_at": "2026-05-20T03:09:18+00:00", "end_at": "2026-05-20T03:24:18+00:00"},
+        {"date": "2026-05-20", "stage": "deep", "start_at": "2026-05-20T03:24:18+00:00", "end_at": "2026-05-20T04:01:18+00:00"},
+    ]
+    _override(_BiometricsDb(rows, segment_rows=segments))
+    try:
+        with TestClient(app) as client:
+            res = client.get("/v1/biometrics")
+    finally:
+        app.dependency_overrides = {}
+
+    assert res.status_code == 200
+    by_date = {r["date"]: r for r in res.json()["series"]}
+    assert by_date["2026-05-20"]["stage_segments"] == [
+        {"stage": "light", "start_at": "2026-05-20T03:09:18Z", "end_at": "2026-05-20T03:24:18Z"},
+        {"stage": "deep", "start_at": "2026-05-20T03:24:18Z", "end_at": "2026-05-20T04:01:18Z"},
+    ]
+    assert by_date["2026-05-21"]["stage_segments"] == []  # night with no segments
+
+
+def test_get_biometrics_stage_segments_empty_when_none_stored():
+    _override(_BiometricsDb([{"date": "2026-05-20"}]))
+    try:
+        with TestClient(app) as client:
+            res = client.get("/v1/biometrics")
+    finally:
+        app.dependency_overrides = {}
+
+    assert res.status_code == 200
+    assert res.json()["series"][0]["stage_segments"] == []
 
 
 def test_ingest_daily_biometrics_queues_background_task():
