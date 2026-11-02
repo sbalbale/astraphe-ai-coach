@@ -253,16 +253,8 @@
   });
 </script>
 
-<div
-  class="w-full rounded-2xl bg-glass2 border border-border p-3 space-y-4 touch-none select-none"
-  bind:this={chartEl}
-  role="presentation"
->
-  <p class="text-[11px] font-semibold text-text1 flex items-center gap-1.5">
-    <span class="w-1.5 h-1.5 rounded-full bg-teal inline-block"></span>
-    {sportKind === 'row' ? 'Split Charts' : 'Lap Charts'}
-  </p>
-  <p class="text-[10px] text-text2 font-mono -mt-2">
+<div class="w-full space-y-4 touch-none select-none" bind:this={chartEl} role="presentation">
+  <p class="m-0 text-[10px] text-text2 font-mono">
     {sourceNote}
   </p>
 
@@ -271,10 +263,12 @@
   {:else}
     {#each chartModels as c (c.id)}
       <div>
-        <p class="text-[11px] font-semibold text-text0 mb-0.5">{c.title}</p>
-        <p class="text-[10px] font-mono text-text2 h-4 mb-0.5">
-          {hoveredIdx === null ? c.subtitle : c.hoverLine(hoveredIdx)}
-        </p>
+        <div class="mb-0.5 flex items-baseline justify-between gap-2">
+          <p class="m-0 text-sm font-medium text-text0">{c.title}</p>
+          <p class="m-0 min-h-4 truncate text-right font-mono text-xs text-text2">
+            {hoveredIdx === null ? c.subtitle : c.hoverLine(hoveredIdx)}
+          </p>
+        </div>
         <svg
           class="block w-full"
           width="100%"

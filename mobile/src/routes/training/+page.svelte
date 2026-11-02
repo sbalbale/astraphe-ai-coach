@@ -731,6 +731,7 @@
 
   // --- Workout detail (design) ---
   let detailTab = $state('overview');
+  let splitView = $state<'chart' | 'table'>('chart');
   let showAllSplits = $state(false);
   $effect(() => { void selectedWorkout?.id; detailTab = 'overview'; showAllSplits = false; });
   function splitBlockLabel(sp: any): string {
@@ -957,14 +958,24 @@
                     <LapStrip laps={detailLaps} sport={sel.sport} zones={mergedHrZoneDefs} measurementUnits={measurementUnits} />
                   </section>
                 {/if}
-                {#if showLapSplitCharts}
-                  <section aria-label="Split charts" class="bg-bg2 border border-border rounded-[24px] p-[18px]">
-                    <SplitCharts splits={detailSplits.splits} sport={sel.sport} zones={mergedHrZoneDefs} measurementUnits={measurementUnits} source={detailSplits.source} />
-                  </section>
-                {/if}
-                {#if showSplitsTable}
-                  <section aria-label="Intervals" class="bg-bg2 border border-border rounded-[24px] p-[18px]">
-                    <IntervalsTable splits={detailSplits.splits} sport={sel.sport} source={detailSplits.source} measurementUnits={measurementUnits} />
+                {#if showLapSplitCharts || showSplitsTable}
+                  {@const splitMode = showLapSplitCharts && showSplitsTable ? splitView : showLapSplitCharts ? 'chart' : 'table'}
+                  <section aria-label="Splits" class="bg-bg2 border border-border rounded-[24px] p-[18px] flex flex-col gap-3">
+                    <div class="flex items-center justify-between">
+                      <h2 class="m-0 font-display font-normal text-[22px]">Splits</h2>
+                      {#if showLapSplitCharts && showSplitsTable}
+                        <div role="tablist" aria-label="Splits view" class="flex gap-0.5 p-[3px] rounded-[12px] bg-bg0 border border-border">
+                          {#each [['chart', 'Chart'], ['table', 'Table']] as [id, label] (id)}
+                            <button type="button" role="tab" aria-selected={splitView === id} class="h-8 px-3 border-0 rounded-[9px] text-[13px] font-medium cursor-pointer {splitView === id ? 'bg-bg3 text-text0' : 'bg-transparent text-text2'}" onclick={() => (splitView = id as 'chart' | 'table')}>{label}</button>
+                          {/each}
+                        </div>
+                      {/if}
+                    </div>
+                    {#if splitMode === 'chart'}
+                      <SplitCharts splits={detailSplits.splits} sport={sel.sport} zones={mergedHrZoneDefs} measurementUnits={measurementUnits} source={detailSplits.source} />
+                    {:else}
+                      <IntervalsTable splits={detailSplits.splits} sport={sel.sport} source={detailSplits.source} measurementUnits={measurementUnits} />
+                    {/if}
                   </section>
                 {/if}
               {:else}

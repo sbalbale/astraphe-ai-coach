@@ -894,11 +894,11 @@
 
 </script>
 
-<div class="rounded-2xl bg-glass2 border border-border p-3 space-y-4">
-  <p class="text-[11px] font-semibold text-text1 flex items-center gap-1.5">
-    <span class="w-1.5 h-1.5 rounded-full bg-teal inline-block"></span>
-    Activity Streams
-  </p>
+<div class="space-y-4">
+  <div class="flex items-baseline justify-between">
+    <h2 class="m-0 font-display font-normal text-[22px]">Activity streams</h2>
+    <span class="font-mono text-[10px] tracking-[0.08em] text-text2 uppercase">Drag to select</span>
+  </div>
 
   {#if chartModels.length === 0}
     <p class="text-[12px] text-text2 font-mono text-center py-6">
@@ -922,10 +922,12 @@
         data-chart-id={c.id}
         class="relative"
       >
-        <p class="text-[11px] font-semibold text-text0 mb-0.5">{c.title}</p>
-        <p class="text-[10px] font-mono text-text2 h-4 mb-0.5">
-          {hoveredIdx === null ? c.stats.subtitle : c.stats.hoverLine(hoveredIdx)}
-        </p>
+        <div class="mb-0.5 flex items-baseline justify-between gap-2">
+          <p class="m-0 flex items-center gap-2 text-sm font-medium text-text0"><span aria-hidden="true" class="h-2.5 w-2.5 rounded-[3px]" style="background: {c.color}"></span>{c.title}</p>
+          <p class="m-0 min-h-4 truncate text-right font-mono text-xs text-text2">
+            {hoveredIdx === null ? c.stats.subtitle : c.stats.hoverLine(hoveredIdx)}
+          </p>
+        </div>
         <svg
           class="pointer-events-none block w-full"
           width="100%"

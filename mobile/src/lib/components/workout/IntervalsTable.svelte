@@ -94,9 +94,9 @@
   const cadenceColHeader = $derived(cadenceColumnHeader(sport));
 </script>
 
-<div class="w-full bg-glass2 border border-border rounded-2xl p-4">
+<div class="w-full">
   <div class="flex items-center justify-between mb-3 gap-2">
-    <p class="text-[11px] font-semibold text-text1 font-sans">{splitsTableTitle(sport)}</p>
+    <p class="m-0 text-[11px] font-semibold text-text1 font-sans">{splitsTableTitle(sport)}</p>
     <span
       class="text-[9px] font-mono uppercase tracking-wider px-2 py-0.5 rounded-full bg-teal-dim text-teal border border-teal/30 shrink-0"
     >

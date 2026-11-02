@@ -87,20 +87,19 @@
 </script>
 
 {#if laps.length >= 2}
-  <div class="bg-glass2 border border-border rounded-2xl p-4">
-    <p class="text-[11px] font-semibold text-text1 mb-3 font-sans">Laps</p>
+  <div>
+    <div class="mb-3 flex items-baseline justify-between">
+      <h2 class="m-0 font-display font-normal text-[22px]">Laps</h2>
+      <span class="font-mono text-[10px] tracking-[0.08em] text-text2 uppercase">{laps.length} laps · tap for detail</span>
+    </div>
 
-    <div
-      class="relative grid h-7 min-w-0 gap-px overflow-hidden rounded-sm"
-      role="list"
-      style="grid-template-columns: {barGridTemplate};"
-    >
+    <div class="grid h-14 min-w-0 gap-1" role="list" style="grid-template-columns: {barGridTemplate};">
       {#each laps as lap, i (lap.lap_index ?? i)}
         <button
           type="button"
-          class="h-full min-w-0 rounded-sm border-0 p-0 cursor-pointer transition-opacity {selectedLap === i
-            ? 'opacity-100 ring-1 ring-inset ring-white/40'
-            : 'opacity-90 hover:opacity-100'}"
+          class="h-full min-w-0 rounded-lg border-0 p-0 cursor-pointer transition-opacity {selectedLap === i
+            ? 'opacity-100 ring-2 ring-text0'
+            : 'opacity-60 hover:opacity-90'}"
           style="background: {lapBarColor(lap.average_heartrate)};"
           aria-label={lapAriaLabel(lap, i)}
           onclick={() => (selectedLap = selectedLap === i ? null : i)}
@@ -108,42 +107,36 @@
       {/each}
     </div>
 
-    {#if selectedLap != null}
-      {@const lap = laps[selectedLap]}
-      <div
-        class="mt-2 p-2 rounded-lg bg-glass border border-border text-[10px] font-mono text-text1 grid grid-cols-2 gap-x-3 gap-y-1"
-      >
-        <span class="text-text2">Lap</span><span>{lap.lap_index ?? selectedLap + 1}</span>
-        <span class="text-text2">Distance</span
-        ><span>{formatSegmentDistance(lap.distance, measurementUnits, sport)}</span>
-        <span class="text-text2">Avg HR</span><span>{lap.average_heartrate != null ? Math.round(lap.average_heartrate) : '—'}</span>
-        <span class="text-text2">HR zone</span>
-        <span class="flex items-center gap-1.5 min-w-0">
-          {#if lap.average_heartrate != null && Number.isFinite(lap.average_heartrate)}
-            <span
-              class="w-2 h-2 rounded-sm shrink-0 border border-border/40"
-              style="background: {lapBarColor(lap.average_heartrate)}"
-            ></span>
-            <span class="truncate">{lapZoneDescription(lap.average_heartrate)}</span>
-          {:else}
-            <span>—</span>
-          {/if}
-        </span>
-        <span class="text-text2">{sport === 'row' ? 'Pace' : 'Avg speed'}</span><span>{formatLapPaceOrSpeed(lap)}</span>
-        <span class="text-text2">Duration</span><span>{formatDuration(lap.elapsed_time ?? 0)}</span>
-      </div>
-    {/if}
-
     <div class="relative mt-2 h-4">
       {#each labelIndices as idx (idx)}
         {@const leftPct = barWidths.slice(0, idx).reduce((s, w) => s + w, 0) + barWidths[idx] / 2}
-        <span
-          class="absolute -translate-x-1/2 text-[9px] font-mono text-text2"
-          style="left: {leftPct}%;"
-        >
+        <span class="absolute -translate-x-1/2 font-mono text-[10px] text-text2" style="left: {leftPct}%;">
           {laps[idx].lap_index ?? idx + 1}
         </span>
       {/each}
     </div>
+
+    {#if selectedLap != null}
+      {@const lap = laps[selectedLap]}
+      <div class="mt-3 grid grid-cols-[auto_1fr_1fr_1fr_1fr] items-end gap-x-4 gap-y-1 rounded-2xl bg-bg3 px-4 py-3">
+        <div class="flex flex-col"><span class="text-[11px] text-text2">Lap</span><span class="font-display text-[28px] leading-none">{lap.lap_index ?? selectedLap + 1}</span></div>
+        <div class="flex flex-col gap-0.5"><span class="text-[11px] text-text2">Duration</span><span class="text-[15px] font-medium">{formatDuration(lap.elapsed_time ?? 0)}</span></div>
+        <div class="flex flex-col gap-0.5"><span class="text-[11px] text-text2">Distance</span><span class="text-[15px] font-medium">{formatSegmentDistance(lap.distance, measurementUnits, sport)}</span></div>
+        <div class="flex flex-col gap-0.5"><span class="text-[11px] text-text2">Avg HR</span><span class="text-[15px] font-medium">{lap.average_heartrate != null ? Math.round(lap.average_heartrate) + ' bpm' : '—'}</span></div>
+        <div class="flex flex-col gap-0.5">
+          <span class="text-[11px] text-text2">HR zone</span>
+          <span class="flex items-center gap-1.5 min-w-0 text-[15px] font-semibold">
+            {#if lap.average_heartrate != null && Number.isFinite(lap.average_heartrate)}
+              <span class="h-2.5 w-2.5 shrink-0 rounded-[3px]" style="background: {lapBarColor(lap.average_heartrate)}"></span>
+              <span class="truncate">{lapZoneDescription(lap.average_heartrate)}</span>
+            {:else}—{/if}
+          </span>
+        </div>
+        <div class="col-span-5 mt-1 flex items-baseline justify-between border-t border-border/60 pt-2 text-xs">
+          <span class="text-text2">{sport === 'row' ? 'Pace' : 'Avg speed'}</span>
+          <span class="font-mono text-text1">{formatLapPaceOrSpeed(lap)}</span>
+        </div>
+      </div>
+    {/if}
   </div>
 {/if}
