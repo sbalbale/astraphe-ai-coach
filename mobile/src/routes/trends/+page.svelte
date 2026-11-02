@@ -1,13 +1,22 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { format, startOfWeek, subDays } from 'date-fns';
+  import { addDays, format, startOfWeek, subDays } from 'date-fns';
+  import { api } from '$lib/api';
+  import type { Workout } from '$lib/types/training';
+  import { weeklyTssTarget } from '$lib/utils/weeklyTarget';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { pageHeader, resetPageHeader } from '$lib/stores/pageHeader.svelte';
   import { formCssColor } from '$lib/scoreColors';
 
-  onMount(() => {
+  let planned = $state<Workout[]>([]);
+  const weeksStart = () => startOfWeek(subDays(new Date(), 11 * 7), { weekStartsOn: 1 });
+
+  onMount(async () => {
     athleteStore.fetchAll();
+    const start = format(weeksStart(), 'yyyy-MM-dd');
+    const end = format(addDays(startOfWeek(new Date(), { weekStartsOn: 1 }), 6), 'yyyy-MM-dd');
+    planned = await api.getWorkouts(start, end);
   });
 
   $effect(() => {
@@ -33,23 +42,36 @@
     return Math.round((latest.ctl - then.ctl) * 10) / 10;
   });
 
-  /** Weekly TSS for the last 12 Monday-start weeks, oldest first. */
+  /** Weekly actual and planned TSS for the last 12 Monday-start weeks, oldest first. */
   const weeks = $derived.by(() => {
-    const start = startOfWeek(subDays(new Date(), 11 * 7), { weekStartsOn: 1 });
+    const start = weeksStart();
     const buckets = Array.from({ length: 12 }, (_, i) => ({
       start: new Date(start.getFullYear(), start.getMonth(), start.getDate() + i * 7),
-      tss: 0
+      tss: 0,
+      planned: 0
     }));
+    const indexOf = (d: Date) => Math.floor((d.getTime() - buckets[0].start.getTime()) / (7 * 24 * 3600 * 1000));
     for (const r of rows) {
-      const d = new Date(r.date + 'T00:00:00');
-      const idx = Math.floor((d.getTime() - buckets[0].start.getTime()) / (7 * 24 * 3600 * 1000));
+      const idx = indexOf(new Date(r.date + "T00:00:00"));
       if (idx >= 0 && idx < 12) buckets[idx].tss += Number(r.daily_tss) || 0;
     }
-    return buckets.map((b) => ({ ...b, tss: Math.round(b.tss) }));
+    for (const p of planned) {
+      const idx = indexOf(new Date(p.date + "T00:00:00"));
+      if (idx >= 0 && idx < 12) buckets[idx].planned += Number(p.projected_tss) || 0;
+    }
+    return buckets.map((b) => ({ ...b, tss: Math.round(b.tss), planned: Math.round(b.planned) }));
   });
-  const maxTss = $derived(Math.max(1, ...weeks.map((w) => w.tss)));
+  const maxTss = $derived(Math.max(1, ...weeks.map((w) => Math.max(w.tss, w.planned))));
   const avgTss = $derived(Math.round(weeks.reduce((a, w) => a + w.tss, 0) / Math.max(1, weeks.filter((w) => w.tss > 0).length)));
-
+  const target = $derived(weeklyTssTarget(athleteStore.ctl, Number((athleteStore.profile as any)?.weekly_tss_target) || null));
+  let pickedWeek = $state<number | null>(null);
+  const activeWeek = $derived(pickedWeek ?? weeks.length - 1);
+  const activeInfo = $derived.by(() => {
+    const w = weeks[activeWeek];
+    if (!w) return null;
+    const end = addDays(w.start, 6);
+    return { ...w, range: `${format(w.start, "d MMM")} – ${format(end, "d MMM")}`, weekNo: format(w.start, "I"), current: activeWeek === weeks.length - 1 };
+  });
   const fmt1 = (n: number | null | undefined) => (n == null || !Number.isFinite(n) ? '--' : n.toFixed(1));
 
   // --- Training-load chart (design: smooth fitness line + area, dashed fatigue, end dot) ---
@@ -164,19 +186,41 @@
     <section aria-label="Weekly TSS" class="bg-bg2 border border-border rounded-[24px] p-[18px] flex flex-col gap-3">
       <div class="flex justify-between items-baseline">
         <h2 class="m-0 font-display font-normal text-2xl">Weekly TSS</h2>
-        <span class="font-mono text-[11px] text-text2">AVG {avgTss}</span>
+        <span class="font-mono text-[11px] text-text2">AVG {avgTss}{#if target} · TARGET {target}{/if}</span>
       </div>
-      <div role="img" aria-label="Weekly TSS over the last 12 weeks" class="flex items-end gap-1.5 h-[72px]">
+      {#if activeInfo}
+        <div class="flex items-baseline justify-between gap-2" aria-live="polite">
+          <span class="font-mono text-[11px] text-text2 uppercase">{activeInfo.current ? "This week" : `Wk ${activeInfo.weekNo}`} · {activeInfo.range}</span>
+          <span class="flex gap-3 text-xs font-mono tabular-nums">
+            <span><span class="text-text2">TSS </span><span style="color: var(--blue)">{activeInfo.tss}</span></span>
+            <span><span class="text-text2">Plan </span>{activeInfo.planned > 0 ? activeInfo.planned : "—"}</span>
+          </span>
+        </div>
+      {/if}
+      <div role="group" aria-label="Weekly TSS over the last 12 weeks. Tap a bar for details." class="flex items-end gap-1.5 h-[72px]">
         {#each weeks as w, i (i)}
-          <span
-            class="flex-1 block rounded"
-            style="height: {Math.max(2, Math.round((w.tss / maxTss) * 72))}px; background: {i === weeks.length - 1 ? 'var(--blue)' : 'var(--bg3)'}"
-            title="{format(w.start, 'd MMM')}: {w.tss} TSS"
-          ></span>
+          <button
+            type="button"
+            aria-label="Week of {format(w.start, 'd MMM')}: {w.tss} TSS, planned {w.planned}"
+            aria-pressed={i === activeWeek}
+            class="relative flex-1 h-full p-0 border-0 bg-transparent cursor-pointer"
+            onclick={() => (pickedWeek = pickedWeek === i ? null : i)}
+            onpointerenter={(e) => { if (e.pointerType === "mouse") pickedWeek = i; }}
+            onpointerleave={(e) => { if (e.pointerType === "mouse") pickedWeek = null; }}
+          >
+            {#if w.planned > 0}
+              <span aria-hidden="true" class="absolute bottom-0 left-0 right-0 rounded border border-dashed border-text2" style="height: {Math.max(3, Math.round((w.planned / maxTss) * 72))}px"></span>
+            {/if}
+            <span aria-hidden="true" class="absolute bottom-0 left-0 right-0 rounded" style="height: {Math.max(2, Math.round((w.tss / maxTss) * 72))}px; background: {i === activeWeek ? 'var(--blue)' : i === weeks.length - 1 ? 'var(--blue)' : 'var(--bg3)'}; opacity: {i === activeWeek || i === weeks.length - 1 ? 1 : 0.9}"></span>
+          </button>
         {/each}
       </div>
-      <div class="flex justify-between font-mono text-[10px] text-text2">
-        <span>W{format(weeks[0].start, 'I')}</span><span>W{format(weeks[5].start, 'I')}</span><span>THIS WK</span>
+      <div class="flex justify-between items-center font-mono text-[10px] text-text2">
+        <span>W{format(weeks[0].start, "I")}</span><span>W{format(weeks[5].start, "I")}</span><span>THIS WK</span>
+      </div>
+      <div class="flex gap-4 text-[11px] text-text2">
+        <span class="flex items-center gap-1.5"><span aria-hidden="true" class="w-3 h-2 rounded-sm bg-bg3"></span>Actual</span>
+        <span class="flex items-center gap-1.5"><span aria-hidden="true" class="w-3 h-2 rounded-sm border border-dashed border-text2"></span>Planned</span>
       </div>
     </section>
   {/if}

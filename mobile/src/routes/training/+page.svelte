@@ -16,6 +16,7 @@
   import DonutChart from '$lib/components/charts/DonutChart.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import { confirm } from '$lib/confirm';
+  import { weeklyTssTarget } from '$lib/utils/weeklyTarget';
   import { pageHeader, resetPageHeader } from '$lib/stores/pageHeader.svelte';
   import DatePicker from '$lib/components/DatePicker.svelte';
   import { analysisNavEpoch } from '$lib/analysisNavEpoch.svelte';
@@ -681,7 +682,7 @@
       ? `${format(selectedWeekStart, "d")} – ${format(selectedWeekEnd, "d MMM")}`
       : `${format(selectedWeekStart, "d MMM")} – ${format(selectedWeekEnd, "d MMM")}`
   );
-  const weeklyTarget = $derived(Number((athleteStore.profile as any)?.weekly_tss_target) || 0);
+  const weeklyTarget = $derived(weeklyTssTarget(athleteStore.ctl, Number((athleteStore.profile as any)?.weekly_tss_target) || null) ?? 0);
   const weekTotals = $derived.by(() => {
     let tss = 0, secs = 0, meters = 0;
     for (const w of weekWorkouts as any[]) {
