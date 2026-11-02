@@ -15,7 +15,10 @@ export const pageHeader = $state<{
   dateValue: string;
   dateMax: string;
   dateLabel: string;
-}>({ eyebrow: '', prev: null, next: null, canNext: true, add: null, addLabel: '', today: null, dateValue: '', dateMax: '', dateLabel: '' });
+  segments: { value: string; label: string }[];
+  segment: string;
+  onSegment: ((value: string) => void) | null;
+}>({ eyebrow: '', prev: null, next: null, canNext: true, add: null, addLabel: '', today: null, dateValue: '', dateMax: '', dateLabel: '', segments: [], segment: '', onSegment: null });
 
 export function resetPageHeader() {
   pageHeader.eyebrow = '';
@@ -28,4 +31,7 @@ export function resetPageHeader() {
   pageHeader.dateValue = '';
   pageHeader.dateMax = '';
   pageHeader.dateLabel = '';
+  pageHeader.segments = [];
+  pageHeader.segment = '';
+  pageHeader.onSegment = null;
 }

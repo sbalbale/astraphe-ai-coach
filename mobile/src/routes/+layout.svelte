@@ -219,6 +219,12 @@
           <button type="button" aria-label={pageHeader.addLabel} class="w-11 h-11 rounded-[14px] border-0 bg-blue text-[#0B1420] flex items-center justify-center cursor-pointer" onclick={pageHeader.add}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
           </button>
+        {:else if pageHeader.segments.length}
+          <div role="tablist" aria-label="Period" class="flex gap-0.5 p-[3px] h-11 rounded-[14px] bg-bg2 border border-border">
+            {#each pageHeader.segments as seg (seg.value)}
+              <button type="button" role="tab" aria-selected={pageHeader.segment === seg.value} class="px-3.5 border-0 rounded-[11px] text-[13px] font-medium cursor-pointer {pageHeader.segment === seg.value ? 'bg-bg3 text-text0' : 'bg-transparent text-text2'}" onclick={() => pageHeader.onSegment?.(seg.value)}>{seg.label}</button>
+            {/each}
+          </div>
         {/if}
         <!-- The design only shows the profile avatar on Today. -->
         {#if $page.url.pathname === '/dashboard'}

@@ -2,7 +2,6 @@
   import { onMount } from 'svelte';
   import { format, startOfWeek, subDays } from 'date-fns';
   import EmptyState from '$lib/components/EmptyState.svelte';
-  import MultiLineChart from '$lib/components/charts/MultiLineChart.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { pageHeader, resetPageHeader } from '$lib/stores/pageHeader.svelte';
   import { formCssColor } from '$lib/scoreColors';
@@ -52,6 +51,32 @@
   const avgTss = $derived(Math.round(weeks.reduce((a, w) => a + w.tss, 0) / Math.max(1, weeks.filter((w) => w.tss > 0).length)));
 
   const fmt1 = (n: number | null | undefined) => (n == null || !Number.isFinite(n) ? '--' : n.toFixed(1));
+
+  // --- Training-load chart (design: smooth fitness line + area, dashed fatigue, end dot) ---
+  const CHART_W = 318;
+  const CHART_H = 124;
+  const chart = $derived.by(() => {
+    const pts = windowRows.filter((_, i) => i % 3 === 0 || i === windowRows.length - 1);
+    if (pts.length < 2) return null;
+    const vals = pts.flatMap((p) => [Number(p.ctl) || 0, Number(p.atl) || 0]);
+    const lo = Math.min(...vals);
+    const hi = Math.max(...vals);
+    const span = Math.max(hi - lo, 1);
+    const x = (i: number) => (i / (pts.length - 1)) * CHART_W;
+    const y = (v: number) => 10 + (1 - (v - lo) / span) * 100;
+    const fit = pts.map((p, i) => ({ x: x(i), y: y(Number(p.ctl) || 0) }));
+    const fat = pts.map((p, i) => `${x(i).toFixed(1)},${y(Number(p.atl) || 0).toFixed(1)}`).join(" ");
+    // Catmull-Rom -> cubic Bezier so the fitness line reads as one smooth curve.
+    let d = `M${fit[0].x.toFixed(1)},${fit[0].y.toFixed(1)}`;
+    for (let i = 0; i < fit.length - 1; i++) {
+      const p0 = fit[Math.max(0, i - 1)], p1 = fit[i], p2 = fit[i + 1], p3 = fit[Math.min(fit.length - 1, i + 2)];
+      const c1x = p1.x + (p2.x - p0.x) / 6, c1y = p1.y + (p2.y - p0.y) / 6;
+      const c2x = p2.x - (p3.x - p1.x) / 6, c2y = p2.y - (p3.y - p1.y) / 6;
+      d += ` C${c1x.toFixed(1)},${c1y.toFixed(1)} ${c2x.toFixed(1)},${c2y.toFixed(1)} ${p2.x.toFixed(1)},${p2.y.toFixed(1)}`;
+    }
+    const last = fit[fit.length - 1];
+    return { line: d, area: `${d} L${CHART_W},${CHART_H} L0,${CHART_H} Z`, fatigue: fat, last };
+  });
 </script>
 
 <div class="flex flex-col gap-3.5">
@@ -72,8 +97,14 @@
           <span class="text-xs" style="color: {fitnessDelta >= 0 ? 'var(--green)' : 'var(--amber)'}">{fitnessDelta >= 0 ? '+' : ''}{fitnessDelta} in 4 wks</span>
         {/if}
       </div>
-      {#if windowRows.length > 1}
-        <MultiLineChart data={windowRows} height={124} />
+      {#if chart}
+        <svg viewBox="0 0 {CHART_W} {CHART_H}" width="100%" role="img" aria-label="Fitness trend with fatigue overlaid over the last 12 weeks" class="block">
+          {#each [28, 62, 96] as gy (gy)}<line x1="0" y1={gy} x2={CHART_W} y2={gy} stroke="var(--bg3)" stroke-width="1"></line>{/each}
+          <polyline fill="none" stroke="var(--chartAtl, #6A6A72)" stroke-width="1.4" stroke-dasharray="3 3" points={chart.fatigue}></polyline>
+          <path d={chart.area} fill="var(--blue)" fill-opacity="0.10"></path>
+          <path d={chart.line} fill="none" stroke="var(--blue)" stroke-width="2"></path>
+          <circle cx={chart.last.x} cy={chart.last.y} r="3.5" fill="var(--blue)"></circle>
+        </svg>
       {/if}
       <div class="flex gap-4 text-[11px] text-text2">
         <span class="flex items-center gap-1.5"><span aria-hidden="true" class="w-3.5 h-0.5 bg-chartCtl"></span>Fitness (42d)</span>
