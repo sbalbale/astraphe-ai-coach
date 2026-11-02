@@ -52,7 +52,7 @@
     clearWorkoutDetailFromCache,
     preloadWorkoutDetail,
   } from '$lib/stores/workoutDetailCache';
-  import { formatWorkoutDistance, normalizeUnits } from '$lib/utils/units';
+  import { formatElevationMeters, formatWorkoutDistance, normalizeUnits } from '$lib/utils/units';
   import { supportsPaceChart } from '$lib/utils/paceChart';
   import { intervalsToSplits, lapsToSplits } from '$lib/utils/lapSplits';
   import StreamCharts from '$lib/components/workout/StreamCharts.svelte';
@@ -730,9 +730,9 @@
   });
 
   // --- Workout detail (design) ---
-  let workoutMenuOpen = $state(false);
+  let detailTab = $state('overview');
   let showAllSplits = $state(false);
-  $effect(() => { void selectedWorkout; workoutMenuOpen = false; showAllSplits = false; });
+  $effect(() => { void selectedWorkout?.id; detailTab = 'overview'; showAllSplits = false; });
   function splitBlockLabel(sp: any): string {
     const secs = Number(sp?.elapsed_time) || 0;
     const dur = secs >= 120 ? `${Math.round(secs / 60)}′` : `${Math.round(secs)}s`;
@@ -790,193 +790,206 @@
   {:else}
     {#if metric === 'history'}
       {#if selectedWorkout}
-        <!-- Detailed Workout View -->
+        <!-- Detailed Workout View (map hero + tabs) -->
         {@const sel = selectedWorkout}
         {@const selTss = Number.isFinite(Number(sel?.tss)) && Number(sel.tss) > 0 ? Math.round(Number(sel.tss)) : null}
         {@const selStrain = Number.isFinite(Number(sel?.strain_score)) && Number(sel.strain_score) > 0 ? Math.round(Number(sel.strain_score)) : null}
         {@const selSecs = getDurationSecs(sel)}
         {@const selNp = Number(sel?.norm_power_w) || 0}
         {@const selLatlng = detailStreams?.time_series?.latlng}
-        {@const splitRows = detailSplits.splits}
-        <div class="flex flex-col gap-3.5">
-          <div class="relative flex items-center justify-between">
-            <button type="button" class="h-11 flex items-center gap-1 border-0 bg-transparent text-text1 text-sm cursor-pointer p-0" onclick={closeWorkout}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m15 6-6 6 6 6"></path></svg>Training
-            </button>
-            <button type="button" aria-label="More options" aria-haspopup="menu" aria-expanded={workoutMenuOpen} class="w-11 h-11 border-0 bg-transparent text-text1 flex items-center justify-center cursor-pointer" onclick={() => (workoutMenuOpen = !workoutMenuOpen)}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.6"></circle><circle cx="12" cy="12" r="1.6"></circle><circle cx="19" cy="12" r="1.6"></circle></svg>
-            </button>
-            {#if workoutMenuOpen}
-              <div role="menu" class="absolute right-0 top-11 z-20 w-40 rounded-2xl bg-bg3 border border-border p-1 shadow-[0_10px_30px_rgba(0,0,0,0.4)]">
-                <button type="button" role="menuitem" class="w-full h-11 px-3 text-left rounded-xl border-0 bg-transparent text-text0 text-sm cursor-pointer" onclick={() => { workoutMenuOpen = false; openEditActivity(); }}>Edit</button>
-                {#if hasActivityDetailSource(sel) && showRepullDataButton}
-                  <button type="button" role="menuitem" class="w-full h-11 px-3 text-left rounded-xl border-0 bg-transparent text-text0 text-sm cursor-pointer disabled:opacity-50" disabled={detailRepulling || detailLoading} onclick={() => { workoutMenuOpen = false; repullWorkoutData(); }}>{detailRepulling ? 'Pulling data…' : 'Repull data'}</button>
-                {/if}
-                <button type="button" role="menuitem" class="w-full h-11 px-3 text-left rounded-xl border-0 bg-transparent text-red text-sm cursor-pointer" onclick={() => { workoutMenuOpen = false; deleteSelectedWorkout(); }}>Delete</button>
-              </div>
-            {/if}
-          </div>
-
-          <header class="flex flex-col gap-1.5">
-            <span class="font-mono text-[11px] tracking-[0.14em] text-blue uppercase">{getWorkoutLabel(sel.sport)} · {format(new Date(sel.started_at), (athleteStore.profile as any)?.time_format === '24h' ? 'EEE d MMM · HH:mm' : 'EEE d MMM · h:mm a')}</span>
-            <h1 class="m-0 font-display font-normal text-[34px] leading-[1.05]">{sel.title || (getWorkoutLabel(sel.sport) + ' Session')}</h1>
-            {#if sel.primary_source || sel.source}
-              <span class="text-xs text-text2 capitalize">{String(sel.primary_source ?? sel.source).replace('_', ' ')}</span>
-            {/if}
-          </header>
-
-          {#if detailLoading}
-            <div class="space-y-3">
-              {#each [150, 120] as h (h)}<div class="rounded-[20px] bg-bg2 animate-pulse" style="height: {h}px;"></div>{/each}
-            </div>
-          {:else if selLatlng && selLatlng.length > 1}
-            <section aria-label="Route" class="bg-bg2 border border-border rounded-[24px] p-3 min-h-[300px]">
+        {@const selLthr = Number((athleteStore.profile as any)?.lthr ?? (athleteStore.profile as any)?.threshold_hr) || 0}
+        {@const selElev = Number(sel?.elevation_gain_m) || 0}
+        <div class="-mx-4 flex flex-col">
+          <!-- Map hero -->
+          <div class="relative">
+            {#if selLatlng && selLatlng.length > 1}
               <GpsTrace
+                hero
                 latlng={selLatlng}
                 heartrate={detailStreams?.time_series?.heartrate}
                 time={detailStreams?.time_series?.time}
                 zones={mergedHrZoneDefs}
               />
-            </section>
-          {/if}
-
-          <dl class="m-0 grid grid-cols-3 gap-2">
-            {#each [
-              { k: 'Duration', v: `${Math.floor(selSecs / 3600)}:${String(Math.floor((selSecs % 3600) / 60)).padStart(2, '0')}`, u: ' h' },
-              { k: 'Distance', v: formatWorkoutDistance(sel.distance_m, measurementUnits, sel.sport), u: '' },
-              { k: 'Norm. power', v: selNp > 0 ? String(selNp) : formatAvgPower(sel), u: selNp > 0 || formatAvgPower(sel) !== '--' ? ' W' : '' },
-              { k: 'Avg HR', v: sel.avg_hr ? String(sel.avg_hr) : '--', u: sel.avg_hr ? ' bpm' : '' },
-              { k: 'TSS', v: selTss === null ? '--' : String(selTss), u: '' },
-              { k: 'Strain', v: selStrain === null ? '--' : String(selStrain), u: selStrain === null ? '' : ' /100' }
-            ] as stat (stat.k)}
-              <div class="bg-bg2 border border-border rounded-2xl p-3 flex flex-col-reverse gap-0.5">
-                <dt class="text-[11px] text-text2">{stat.k}</dt>
-                <dd class="m-0 text-lg font-medium tracking-[-0.02em]">{stat.v}<span class="text-[11px] text-text2 font-normal">{stat.u}</span></dd>
-              </div>
-            {/each}
-          </dl>
-
-          {#if hasActivityDetailSource(sel)}
-            {#if detailError}
-              <p class="m-0 text-[11px] text-red font-mono">{detailError}</p>
-            {:else if !detailLoading}
-              {#if sel.strava_activity_id && sel.strava_streams_fetched === false && !detailHydrating && !detailStreams}
-                <p class="m-0 text-[13px] text-text2 leading-relaxed px-1">
-                  Strava is linked, but stream data has not been imported for this workout yet. Reconnect Strava or run the Strava backfill script to load charts and GPS.
-                </p>
-              {:else if !detailStreams && !detailHydrating}
-                <p class="m-0 text-[13px] text-text2 px-1">No stream data stored for this workout.{#if showRepullDataButton} Use “Repull data” in the menu to fetch it.{/if}</p>
-              {/if}
-
-              {#if detailLaps.length >= 2}
-                <section aria-label="Laps" class="bg-bg2 border border-border rounded-[24px] p-[18px]">
-                  <LapStrip laps={detailLaps} sport={sel.sport} zones={mergedHrZoneDefs} measurementUnits={measurementUnits} />
-                </section>
-              {/if}
-
-              {#if detailMissingPaceStream}
-                <p class="m-0 text-[13px] text-text2 leading-relaxed px-1">
-                  Pace stream unavailable for this activity (heart rate is still shown). Try refreshing imported data if streams were imported incorrectly.
-                </p>
-              {/if}
-
-              {#if detailHydrating && !detailStreams}
-                <div class="space-y-2">
-                  <div class="rounded-[24px] bg-bg2 animate-pulse" style="height: 150px;"></div>
-                  <p class="m-0 text-[11px] text-text2 font-mono animate-pulse px-1">Loading stream data…</p>
-                </div>
-              {:else if detailStreams}
-                <section aria-label="Power and heart rate" class="bg-bg2 border border-border rounded-[24px] p-[18px] min-h-[260px]">
-                  <StreamCharts
-                    streams={detailStreams}
-                    laps={detailLaps}
-                    sport={sel.sport}
-                    zones={mergedHrZoneDefs}
-                    measurementUnits={measurementUnits}
-                  />
-                </section>
-              {/if}
-
-              {#if showLapSplitCharts}
-                <section aria-label="Split charts" class="bg-bg2 border border-border rounded-[24px] p-[18px]">
-                  <SplitCharts
-                    splits={detailSplits.splits}
-                    sport={sel.sport}
-                    zones={mergedHrZoneDefs}
-                    measurementUnits={measurementUnits}
-                    source={detailSplits.source}
-                  />
-                </section>
-              {/if}
-
-              {#if showSplitsTable}
-                <section aria-label="Intervals" class="bg-bg2 border border-border rounded-[24px] p-[18px]">
-                  <IntervalsTable
-                    splits={detailSplits.splits}
-                    sport={sel.sport}
-                    source={detailSplits.source}
-                    measurementUnits={measurementUnits}
-                  />
-                </section>
-              {/if}
+            {:else}
+              <div class="h-[150px] bg-bg1 {detailLoading || detailHydrating ? 'animate-pulse' : ''}"></div>
             {/if}
-          {/if}
+            <div class="absolute left-4 right-4 top-4 z-10 flex justify-between pointer-events-none">
+              <button type="button" aria-label="Back to training" class="pointer-events-auto w-11 h-11 rounded-full bg-bg0/85 border border-border text-text0 flex items-center justify-center cursor-pointer" onclick={closeWorkout}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m15 6-6 6 6 6"></path></svg>
+              </button>
+              <div class="pointer-events-auto flex gap-1.5">
+                <button type="button" aria-label="Edit workout" class="w-11 h-11 rounded-full bg-bg0/85 border border-border text-text0 flex items-center justify-center cursor-pointer" onclick={openEditActivity}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4z"></path><path d="m13 7 4 4"></path></svg>
+                </button>
+                <button type="button" aria-label="Delete workout" class="w-11 h-11 rounded-full bg-bg0/85 border border-border text-red flex items-center justify-center cursor-pointer" onclick={deleteSelectedWorkout}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"></path></svg>
+                </button>
+              </div>
+            </div>
+          </div>
 
-          <section aria-label="Heart-rate zones" class="bg-bg2 border border-border rounded-[24px] px-[18px] py-4 flex flex-col gap-2.5">
-            <h2 class="m-0 font-display font-normal text-[22px]">Heart-rate zones</h2>
-            {#if hasAnyHrZone(sel)}
-              {@const zp = getHrZonePcts(sel)}
-              <div aria-hidden="true" class="flex gap-[3px] h-2.5">
-                {#each zp as p, i (i)}
-                  {#if (p ?? 0) > 0}<span class="rounded-[3px]" style="flex: {p} 1 0; min-width: 4px; background: var(--zone-{i + 1})"></span>{/if}
-                {/each}
+          <!-- Sheet -->
+          <div class="relative -mt-6 px-5 pt-5 pb-10 rounded-t-[28px] bg-bg0 border-t border-border flex flex-col gap-3.5">
+            <header class="flex justify-between items-start gap-3">
+              <div class="flex flex-col gap-1.5 min-w-0">
+                <span class="font-mono text-[11px] tracking-[0.14em] text-blue uppercase">{getWorkoutLabel(sel.sport)} · {format(new Date(sel.started_at), (athleteStore.profile as any)?.time_format === '24h' ? 'EEE d MMM · HH:mm' : 'EEE d MMM · h:mm a')}</span>
+                <h1 class="m-0 font-display font-normal text-[32px] leading-[1.05]">{sel.title || (getWorkoutLabel(sel.sport) + ' Session')}</h1>
               </div>
-              <div class="flex justify-between font-mono text-[11px] text-text1">
-                {#each zp as p, i (i)}
-                  <span>Z{i + 1} {Math.round(((selSecs * (p ?? 0)) / 100) / 60)}m</span>
-                {/each}
-              </div>
-              <div class="mt-2 flex w-full min-w-0 flex-col gap-2 border-t border-border pt-3">
-                {#each getHrZonePctsTopDown(sel) as pct, topIdx (topIdx)}
-                  {@const zone = 5 - topIdx}
-                  {@const zDef = mergedHrZoneDefs.find((d) => d.zone === zone)}
-                  {@const zn = canonicalHrZoneShortName(zone) || zDef?.name}
-                  <div class="grid grid-cols-[14px_1fr_auto_auto] items-center gap-2.5 text-[13px]">
-                    <span aria-hidden="true" class="h-2.5 w-2.5 rounded-[3px]" style="background: {HR_ZONE_HEX[zone]}"></span>
-                    <span class="min-w-0 truncate">Z{zone}{#if zn} · {zn}{/if} <span class="font-mono text-[11px] text-text2">{formatZoneBpmRange(zDef)}</span></span>
-                    <span class="font-mono text-xs text-text2 tabular-nums">{pct == null ? '--' : `${Math.round(pct)}%`}</span>
-                    <span class="w-12 text-right font-mono text-xs tabular-nums">{pct == null ? '--' : formatMMSS((selSecs * pct) / 100)}</span>
+              <span class="shrink-0 flex gap-3 pt-[18px]">
+                <span class="flex flex-col items-center"><span class="font-display text-[28px] leading-none">{selStrain ?? '--'}</span><span class="font-mono text-[9px] text-text2">STRAIN</span></span>
+                <span class="flex flex-col items-center"><span class="font-display text-[28px] leading-none">{selTss ?? '--'}</span><span class="font-mono text-[9px] text-text2">TSS</span></span>
+              </span>
+            </header>
+
+            <dl class="m-0 grid grid-cols-4 gap-1.5">
+              {#each [
+                { k: 'Duration', v: `${Math.floor(selSecs / 3600)}:${String(Math.floor((selSecs % 3600) / 60)).padStart(2, '0')} h` },
+                { k: 'Distance', v: formatWorkoutDistance(sel.distance_m, measurementUnits, sel.sport) },
+                { k: 'Avg HR', v: sel.avg_hr ? String(sel.avg_hr) : '--' },
+                { k: 'Avg W', v: formatAvgPower(sel) }
+              ] as stat (stat.k)}
+                <div class="p-2.5 rounded-[14px] bg-bg2 flex flex-col-reverse gap-0.5">
+                  <dt class="text-[10px] text-text2">{stat.k}</dt>
+                  <dd class="m-0 text-[15px] font-medium truncate">{stat.v}</dd>
+                </div>
+              {/each}
+            </dl>
+
+            <div role="tablist" aria-label="Workout sections" class="grid grid-cols-4 gap-0.5 p-1 rounded-[14px] bg-bg2 border border-border">
+              {#each [['overview', 'Overview'], ['charts', 'Charts'], ['laps', 'Laps'], ['data', 'Data']] as [id, label] (id)}
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={detailTab === id}
+                  class="h-9 border-0 rounded-[10px] text-[13px] font-medium cursor-pointer {detailTab === id ? 'bg-bg3 text-text0' : 'bg-transparent text-text2'}"
+                  onclick={() => (detailTab = id)}
+                >{label}</button>
+              {/each}
+            </div>
+
+            {#if detailTab === 'overview'}
+              {#if authStore.tier === 'premium'}
+                <section aria-label="Coach analysis" class="flex flex-col gap-2 p-4 rounded-[20px] bg-bg1 border border-dashed border-border">
+                  <span class="font-mono text-[10px] tracking-[0.12em] text-blue">COACH ANALYSIS</span>
+                  {#if workoutAnalysisLoading && !workoutAnalysisMemo.has(selectedWorkout.id)}
+                    <p class="m-0 text-sm text-text2 animate-pulse">Analyzing workout…</p>
+                  {:else}
+                    <p class="m-0 text-sm leading-[1.5] text-text1">{workoutAnalysisMemo.get(selectedWorkout.id) ?? 'Insight unavailable.'}</p>
+                  {/if}
+                </section>
+              {:else}
+                <section aria-label="Analysis" class="flex flex-col gap-2 p-4 rounded-[20px] bg-bg1 border border-dashed border-border">
+                  <span class="font-mono text-[10px] tracking-[0.12em] text-blue">ANALYSIS</span>
+                  <p class="m-0 text-sm leading-[1.5] text-text1">
+                    This session added {Math.round(selectedWorkout.tss || 0)} TSS to your acute load. {selectedWorkout.tss > 80 ? 'Make recovery a priority tonight.' : 'A good aerobic contribution.'}
+                  </p>
+                </section>
+              {/if}
+
+              <dl class="m-0 grid grid-cols-3 gap-2">
+                {#each [
+                  { k: 'Norm. power', v: selNp > 0 ? `${selNp} W` : '--' },
+                  { k: 'Max HR', v: sel.max_hr ? String(sel.max_hr) : '--' },
+                  { k: 'Elevation', v: selElev > 0 ? `+${formatElevationMeters(selElev, measurementUnits)}` : '--' }
+                ] as stat (stat.k)}
+                  <div class="bg-bg2 border border-border rounded-2xl p-3 flex flex-col-reverse gap-0.5">
+                    <dt class="text-[11px] text-text2">{stat.k}</dt>
+                    <dd class="m-0 text-[17px] font-medium">{stat.v}</dd>
                   </div>
                 {/each}
-              </div>
-            {:else}
-              <p class="m-0 text-[13px] text-text2">No zone data for this workout.</p>
+              </dl>
+
+              <section aria-label="Heart-rate zones" class="bg-bg2 border border-border rounded-[24px] px-[18px] py-4 flex flex-col gap-3">
+                <div class="flex justify-between items-baseline">
+                  <h2 class="m-0 font-display font-normal text-[22px]">Heart-rate zones</h2>
+                  {#if selLthr}<span class="font-mono text-[11px] text-text2">LTHR {selLthr}</span>{/if}
+                </div>
+                {#if hasAnyHrZone(sel)}
+                  {@const zp = getHrZonePcts(sel)}
+                  <div aria-hidden="true" class="flex gap-[3px] h-2.5">
+                    {#each zp as p, i (i)}
+                      {#if (p ?? 0) > 0}<span class="rounded-[3px]" style="flex: {p} 1 0; min-width: 4px; background: var(--zone-{i + 1})"></span>{/if}
+                    {/each}
+                  </div>
+                  <div class="flex flex-col">
+                    {#each getHrZonePctsTopDown(sel) as pct, topIdx (topIdx)}
+                      {@const zone = 5 - topIdx}
+                      {@const zDef = mergedHrZoneDefs.find((d) => d.zone === zone)}
+                      {@const zn = canonicalHrZoneShortName(zone) || zDef?.name}
+                      <div class="grid grid-cols-[14px_1fr_auto_auto_auto] items-center gap-2.5 py-3 border-t border-border text-[15px]">
+                        <span aria-hidden="true" class="h-2.5 w-2.5 rounded-[3px]" style="background: {HR_ZONE_HEX[zone]}"></span>
+                        <span class="min-w-0 truncate"><span class="font-semibold">Z{zone}</span>{#if zn} <span class="text-text1">{zn}</span>{/if}</span>
+                        <span class="font-mono text-xs text-text2">{formatZoneBpmRange(zDef)}</span>
+                        <span class="w-9 text-right font-mono text-[13px] text-text1 tabular-nums">{pct == null ? '--' : `${Math.round(pct)}%`}</span>
+                        <span class="w-12 text-right font-mono text-[13px] tabular-nums">{pct == null ? '--' : formatMMSS((selSecs * pct) / 100)}</span>
+                      </div>
+                    {/each}
+                  </div>
+                {:else}
+                  <p class="m-0 text-[13px] text-text2">No zone data for this workout.</p>
+                {/if}
+              </section>
             {/if}
-          </section>
 
-          {#if authStore.tier === 'premium'}
-            <div class="flex flex-col gap-2 p-4 rounded-[20px] bg-bg1 border border-dashed border-border">
-              <span class="font-mono text-[10px] tracking-[0.12em] text-blue">COACH ANALYSIS</span>
-              {#if workoutAnalysisLoading && !workoutAnalysisMemo.has(selectedWorkout.id)}
-                <p class="m-0 text-[13px] text-text2 animate-pulse">Analyzing workout…</p>
+            {#if detailTab === 'charts'}
+              {#if detailLoading || (detailHydrating && !detailStreams)}
+                <div class="rounded-[24px] bg-bg2 animate-pulse" style="height: 220px;"></div>
+              {:else if detailError}
+                <p class="m-0 text-[11px] text-red font-mono">{detailError}</p>
+              {:else if detailStreams}
+                {#if detailMissingPaceStream}
+                  <p class="m-0 text-[13px] text-text2 leading-relaxed px-1">Pace stream unavailable for this activity (heart rate is still shown). Try refreshing imported data if streams were imported incorrectly.</p>
+                {/if}
+                <section aria-label="Power and heart rate" class="bg-bg2 border border-border rounded-[24px] p-[18px] min-h-[260px]">
+                  <StreamCharts streams={detailStreams} laps={detailLaps} sport={sel.sport} zones={mergedHrZoneDefs} measurementUnits={measurementUnits} />
+                </section>
               {:else}
-                <p class="m-0 text-[13px] leading-[1.5] text-text1">{workoutAnalysisMemo.get(selectedWorkout.id) ?? 'Insight unavailable.'}</p>
+                <p class="m-0 text-[13px] text-text2 px-1">No stream data stored for this workout.{#if showRepullDataButton} Use “Repull data” on the Data tab to fetch it.{/if}</p>
               {/if}
-            </div>
-          {:else}
-            <div class="flex flex-col gap-2 p-4 rounded-[20px] bg-bg1 border border-dashed border-border">
-              <span class="font-mono text-[10px] tracking-[0.12em] text-blue">ANALYSIS</span>
-              <p class="m-0 text-[13px] leading-[1.5] text-text1">
-                This session added {Math.round(selectedWorkout.tss || 0)} TSS to your acute load. {selectedWorkout.tss > 80 ? 'Make recovery a priority tonight.' : 'A good aerobic contribution.'}
-              </p>
-            </div>
-          {/if}
+            {/if}
 
-          {#if detailError}
-            <p class="m-0 text-[11px] text-red font-mono">{detailError}</p>
-          {/if}
-          <div class="px-1">
-            <DataSources workout={selectedWorkout} />
+            {#if detailTab === 'laps'}
+              {#if detailLoading}
+                <div class="rounded-[24px] bg-bg2 animate-pulse" style="height: 160px;"></div>
+              {:else if detailLaps.length >= 2 || showLapSplitCharts || showSplitsTable}
+                {#if detailLaps.length >= 2}
+                  <section aria-label="Laps" class="bg-bg2 border border-border rounded-[24px] p-[18px]">
+                    <LapStrip laps={detailLaps} sport={sel.sport} zones={mergedHrZoneDefs} measurementUnits={measurementUnits} />
+                  </section>
+                {/if}
+                {#if showLapSplitCharts}
+                  <section aria-label="Split charts" class="bg-bg2 border border-border rounded-[24px] p-[18px]">
+                    <SplitCharts splits={detailSplits.splits} sport={sel.sport} zones={mergedHrZoneDefs} measurementUnits={measurementUnits} source={detailSplits.source} />
+                  </section>
+                {/if}
+                {#if showSplitsTable}
+                  <section aria-label="Intervals" class="bg-bg2 border border-border rounded-[24px] p-[18px]">
+                    <IntervalsTable splits={detailSplits.splits} sport={sel.sport} source={detailSplits.source} measurementUnits={measurementUnits} />
+                  </section>
+                {/if}
+              {:else}
+                <p class="m-0 text-[13px] text-text2 px-1">No laps or splits recorded for this workout.</p>
+              {/if}
+            {/if}
+
+            {#if detailTab === 'data'}
+              <section aria-label="Data sources" class="bg-bg2 border border-border rounded-[24px] p-[18px] flex flex-col gap-4">
+                <DataSources workout={selectedWorkout} />
+                {#if hasActivityDetailSource(sel)}
+                  {#if sel.strava_activity_id && sel.strava_streams_fetched === false && !detailHydrating && !detailStreams}
+                    <p class="m-0 text-[13px] text-text2 leading-relaxed">Strava is linked, but stream data has not been imported for this workout yet. Reconnect Strava or run the Strava backfill script to load charts and GPS.</p>
+                  {/if}
+                  {#if showRepullDataButton}
+                    <button
+                      type="button"
+                      class="self-start h-11 px-4 rounded-[14px] border border-border bg-transparent text-text0 text-sm font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                      disabled={detailRepulling || detailLoading}
+                      onclick={() => repullWorkoutData()}
+                    >{detailRepulling ? 'Pulling data…' : 'Repull data'}</button>
+                  {/if}
+                {/if}
+              </section>
+            {/if}
           </div>
         </div>
       {:else}
