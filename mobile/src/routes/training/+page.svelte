@@ -947,7 +947,7 @@
                 {#if showSplitsTable}
                   <section aria-label="Splits" class="bg-bg2 border border-border rounded-[24px] p-[18px] flex flex-col gap-3">
                     <h2 class="m-0 font-display font-normal text-[22px]">Splits</h2>
-                    <IntervalsTable splits={detailSplits.splits} sport={sel.sport} source={detailSplits.source} measurementUnits={measurementUnits} />
+                    <IntervalsTable bare splits={detailSplits.splits} sport={sel.sport} source={detailSplits.source} measurementUnits={measurementUnits} />
                   </section>
                 {/if}
               {:else}
