@@ -248,7 +248,7 @@
 
   // Week selector (History tab)
   // Source of truth is the picked day (YYYY-MM-DD). We derive the Monday week start from it.
-  let weekPickerValue = $state('');
+  let weekPickerValue = $state(format(new Date(), 'yyyy-MM-dd'));
 
   function openWorkout(w: { id?: string; started_at?: string }) {
     if (!w?.id) return;
@@ -275,7 +275,10 @@
 
   function parseDateInputLocal(value: string): Date {
     const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value || '');
-    if (!m) return new Date(value);
+    if (!m) {
+      const parsed = new Date(value);
+      return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+    }
     const y = Number(m[1]);
     const mo = Number(m[2]);
     const d = Number(m[3]);

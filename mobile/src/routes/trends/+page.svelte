@@ -55,17 +55,19 @@
   // --- Training-load chart (design: smooth fitness line + area, dashed fatigue, end dot) ---
   const CHART_W = 318;
   const CHART_H = 124;
+  let scrubIndex = $state<number | null>(null);
   const chart = $derived.by(() => {
-    const pts = windowRows.filter((_, i) => i % 3 === 0 || i === windowRows.length - 1);
-    if (pts.length < 2) return null;
-    const vals = pts.flatMap((p) => [Number(p.ctl) || 0, Number(p.atl) || 0]);
+    const n = windowRows.length;
+    if (n < 2) return null;
+    const vals = windowRows.flatMap((p) => [Number(p.ctl) || 0, Number(p.atl) || 0]);
     const lo = Math.min(...vals);
     const hi = Math.max(...vals);
     const span = Math.max(hi - lo, 1);
-    const x = (i: number) => (i / (pts.length - 1)) * CHART_W;
+    const x = (i: number) => (i / (n - 1)) * CHART_W;
     const y = (v: number) => 10 + (1 - (v - lo) / span) * 100;
-    const fit = pts.map((p, i) => ({ x: x(i), y: y(Number(p.ctl) || 0) }));
-    const fat = pts.map((p, i) => `${x(i).toFixed(1)},${y(Number(p.atl) || 0).toFixed(1)}`).join(" ");
+    const sampled = windowRows.map((_, i) => i).filter((i) => i % 3 === 0 || i === n - 1);
+    const fit = sampled.map((i) => ({ x: x(i), y: y(Number(windowRows[i].ctl) || 0) }));
+    const fat = sampled.map((i) => `${x(i).toFixed(1)},${y(Number(windowRows[i].atl) || 0).toFixed(1)}`).join(" ");
     // Catmull-Rom -> cubic Bezier so the fitness line reads as one smooth curve.
     let d = `M${fit[0].x.toFixed(1)},${fit[0].y.toFixed(1)}`;
     for (let i = 0; i < fit.length - 1; i++) {
@@ -74,9 +76,26 @@
       const c2x = p2.x - (p3.x - p1.x) / 6, c2y = p2.y - (p3.y - p1.y) / 6;
       d += ` C${c1x.toFixed(1)},${c1y.toFixed(1)} ${c2x.toFixed(1)},${c2y.toFixed(1)} ${p2.x.toFixed(1)},${p2.y.toFixed(1)}`;
     }
-    const last = fit[fit.length - 1];
-    return { line: d, area: `${d} L${CHART_W},${CHART_H} L0,${CHART_H} Z`, fatigue: fat, last };
+    return { line: d, area: `${d} L${CHART_W},${CHART_H} L0,${CHART_H} Z`, fatigue: fat, x, y, n };
   });
+  /** The day under the finger (or the latest day when idle). */
+  const shown = $derived.by(() => {
+    const i = scrubIndex ?? windowRows.length - 1;
+    const row = windowRows[i];
+    if (!row) return null;
+    const ctl = Number(row.ctl) || 0;
+    const atl = Number(row.atl) || 0;
+    const tsb = row.tsb != null && Number.isFinite(Number(row.tsb)) ? Number(row.tsb) : ctl - atl;
+    const d = new Date(row.date + "T00:00:00");
+    return { i, ctl, atl, tsb, label: `${format(d, "EEE d MMM")} · Wk ${format(d, "I")}` };
+  });
+  function scrubTo(ev: PointerEvent) {
+    if (!chart) return;
+    const el = ev.currentTarget as SVGSVGElement;
+    const rect = el.getBoundingClientRect();
+    const ratio = Math.min(1, Math.max(0, (ev.clientX - rect.left) / Math.max(rect.width, 1)));
+    scrubIndex = Math.round(ratio * (chart.n - 1));
+  }
 </script>
 
 <div class="flex flex-col gap-3.5">
@@ -97,13 +116,40 @@
           <span class="text-xs" style="color: {fitnessDelta >= 0 ? 'var(--green)' : 'var(--amber)'}">{fitnessDelta >= 0 ? '+' : ''}{fitnessDelta} in 4 wks</span>
         {/if}
       </div>
+      {#if shown}
+        <div class="flex items-baseline justify-between gap-2" aria-live="polite">
+          <span class="font-mono text-[11px] text-text2 uppercase">{scrubIndex === null ? "Latest" : shown.label}</span>
+          <span class="flex gap-3 text-xs font-mono tabular-nums">
+            <span><span class="text-text2">Fit </span><span style="color: var(--blue)">{shown.ctl.toFixed(1)}</span></span>
+            <span><span class="text-text2">Fat </span>{shown.atl.toFixed(1)}</span>
+            <span><span class="text-text2">Form </span><span style="color: {formCssColor(shown.tsb)}">{shown.tsb > 0 ? "+" : ""}{shown.tsb.toFixed(1)}</span></span>
+          </span>
+        </div>
+      {/if}
       {#if chart}
-        <svg viewBox="0 0 {CHART_W} {CHART_H}" width="100%" role="img" aria-label="Fitness trend with fatigue overlaid over the last 12 weeks" class="block">
+        <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+        <svg
+          viewBox="0 0 {CHART_W} {CHART_H}"
+          width="100%"
+          role="img"
+          aria-label="Fitness trend with fatigue overlaid over the last 12 weeks. Drag to read values."
+          class="block touch-none select-none cursor-crosshair"
+          onpointerdown={(e) => { (e.currentTarget as SVGSVGElement).setPointerCapture(e.pointerId); scrubTo(e); }}
+          onpointermove={scrubTo}
+          onpointerup={() => (scrubIndex = null)}
+          onpointercancel={() => (scrubIndex = null)}
+          onpointerleave={(e) => { if (e.pointerType === "mouse") scrubIndex = null; }}
+        >
           {#each [28, 62, 96] as gy (gy)}<line x1="0" y1={gy} x2={CHART_W} y2={gy} stroke="var(--bg3)" stroke-width="1"></line>{/each}
           <polyline fill="none" stroke="var(--chartAtl, #6A6A72)" stroke-width="1.4" stroke-dasharray="3 3" points={chart.fatigue}></polyline>
           <path d={chart.area} fill="var(--blue)" fill-opacity="0.10"></path>
           <path d={chart.line} fill="none" stroke="var(--blue)" stroke-width="2"></path>
-          <circle cx={chart.last.x} cy={chart.last.y} r="3.5" fill="var(--blue)"></circle>
+          {#if shown}
+            {@const cx = chart.x(shown.i)}
+            {#if scrubIndex !== null}<line x1={cx} y1="0" x2={cx} y2={CHART_H} stroke="var(--text2)" stroke-width="1" stroke-opacity="0.6"></line>{/if}
+            <circle cx={cx} cy={chart.y(shown.ctl)} r="3.5" fill="var(--blue)"></circle>
+            {#if scrubIndex !== null}<circle cx={cx} cy={chart.y(shown.atl)} r="3" fill="var(--bg2)" stroke="var(--text1)" stroke-width="1.5"></circle>{/if}
+          {/if}
         </svg>
       {/if}
       <div class="flex gap-4 text-[11px] text-text2">
