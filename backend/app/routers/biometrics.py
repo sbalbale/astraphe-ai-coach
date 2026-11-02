@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, BackgroundTasks
 from typing import Optional
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 import math
 
 from app.models.biometrics import DailyBiometrics
@@ -46,6 +46,17 @@ def _attach_running_zscores(rows: list[dict], field: str, z_field: str, span: in
             ewma = ewma + alpha * diff
             ewmvar = (1.0 - alpha) * (ewmvar + alpha * (diff ** 2))
         seen += 1
+
+def _iso_utc(value) -> str:
+    """Normalise a PostgREST timestamptz string (e.g. '...+00:00') to ISO UTC with 'Z'."""
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return str(value)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
 
 @router.get("")
 async def get_biometrics(
@@ -115,6 +126,19 @@ async def get_biometrics(
             periods_by_date[d] = []
         periods_by_date[d].append(p)
 
+    # Sleep-stage timeline (hypnogram) segments, keyed by the same night date.
+    seg_q = db.table("sleep_stage_segments").select("date, stage, start_at, end_at").eq("athlete_id", athlete_id)
+    if resolved_start:
+        seg_q = seg_q.gte("date", resolved_start.isoformat())
+    if resolved_end:
+        seg_q = seg_q.lte("date", resolved_end.isoformat())
+    seg_res = seg_q.order("start_at").execute()
+    segments_by_date: dict = {}
+    for s in (seg_res.data or []):
+        segments_by_date.setdefault(s["date"], []).append(
+            {"stage": s["stage"], "start_at": _iso_utc(s["start_at"]), "end_at": _iso_utc(s["end_at"])}
+        )
+
     hrv_data = []
     sleep_data = []
     sleep_scores = []
@@ -140,6 +164,7 @@ async def get_biometrics(
         
         # Attach individual periods to the daily row for easy consumption
         row["periods"] = periods_by_date.get(row["date"], [])
+        row["stage_segments"] = segments_by_date.get(row["date"], [])
         series.append(row)
 
     return {
