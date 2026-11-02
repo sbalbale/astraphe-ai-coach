@@ -8,6 +8,7 @@
   import { isStandaloneDisplayMode } from '$lib/utils/pwa';
   import Sidebar from '$lib/components/Sidebar.svelte';
   import BottomNav from '$lib/components/BottomNav.svelte';
+  import { format } from 'date-fns';
   import { subtabsFor, titleFor } from '$lib/navTabs';
   import ConfirmHost from '$lib/components/ConfirmHost.svelte';
   import { analysisNavEpoch } from '$lib/analysisNavEpoch.svelte';
@@ -188,7 +189,12 @@
       {#if !wide}
       <!-- Mobile Header: serif page title + avatar (Me) -->
       <div class="px-5 pt-4 {mobileSubtabs ? 'pb-3' : 'pb-2'} flex items-end justify-between shrink-0">
-        <h1 class="font-display text-[34px] leading-none text-text0">{headerTitle}</h1>
+        <div class="flex flex-col gap-1">
+          {#if $page.url.pathname === '/dashboard'}
+            <span class="font-mono text-[11px] tracking-[0.14em] text-text2 uppercase">{format(new Date(), 'EEE dd MMM')}</span>
+          {/if}
+          <h1 class="font-display text-[36px] leading-none text-text0">{headerTitle}</h1>
+        </div>
         <button
           type="button"
           class="w-11 h-11 rounded-full bg-blue-dim border border-blue/30 flex items-center justify-center text-sm font-semibold text-blue cursor-pointer"
