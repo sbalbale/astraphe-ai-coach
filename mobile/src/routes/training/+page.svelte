@@ -16,6 +16,8 @@
   import DonutChart from '$lib/components/charts/DonutChart.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import { confirm } from '$lib/confirm';
+  import RouteCard from '$lib/components/workout/RouteCard.svelte';
+  import PowerHrChart from '$lib/components/workout/PowerHrChart.svelte';
   import { pageHeader, resetPageHeader } from '$lib/stores/pageHeader.svelte';
   import DatePicker from '$lib/components/DatePicker.svelte';
   import { analysisNavEpoch } from '$lib/analysisNavEpoch.svelte';
@@ -728,6 +730,29 @@
     pageHeader.addLabel = "Log activity";
     return resetPageHeader;
   });
+
+  // --- Workout detail (design) ---
+  let workoutMenuOpen = $state(false);
+  let showAllSplits = $state(false);
+  $effect(() => { void selectedWorkout; workoutMenuOpen = false; showAllSplits = false; });
+  function splitBlockLabel(sp: any): string {
+    const secs = Number(sp?.elapsed_time) || 0;
+    const dur = secs >= 120 ? `${Math.round(secs / 60)}′` : `${Math.round(secs)}s`;
+    return `${sp.split_number} · ${dur}`;
+  }
+  function splitAvgLabel(sp: any, sport: string): string {
+    if (sp?.average_watts) return `${Math.round(sp.average_watts)} W`;
+    const p = Number(sp?.pace_seconds);
+    if (Number.isFinite(p) && p > 0) {
+      const mm = Math.floor(p / 60);
+      const ss = String(Math.round(p % 60)).padStart(2, "0");
+      const unit = sport === "row" ? "/500m" : measurementUnits === "imperial" ? "/mi" : "/km";
+      return `${mm}:${ss}${unit}`;
+    }
+    const v = Number(sp?.average_speed);
+    if (Number.isFinite(v) && v > 0) return measurementUnits === "imperial" ? `${(v * 2.23694).toFixed(1)} mph` : `${(v * 3.6).toFixed(1)} km/h`;
+    return "--";
+  }
 </script>
 
 {#if addActivityOpen}
@@ -773,15 +798,25 @@
         {@const selStrain = Number.isFinite(Number(sel?.strain_score)) && Number(sel.strain_score) > 0 ? Math.round(Number(sel.strain_score)) : null}
         {@const selSecs = getDurationSecs(sel)}
         {@const selNp = Number(sel?.norm_power_w) || 0}
+        {@const selLatlng = detailStreams?.time_series?.latlng}
+        {@const splitRows = detailSplits.splits}
         <div class="flex flex-col gap-3.5">
-          <div class="flex items-center justify-between">
+          <div class="relative flex items-center justify-between">
             <button type="button" class="h-11 flex items-center gap-1 border-0 bg-transparent text-text1 text-sm cursor-pointer p-0" onclick={closeWorkout}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m15 6-6 6 6 6"></path></svg>Training
             </button>
-            <div class="flex items-center">
-              <button type="button" class="h-11 px-3 border-0 bg-transparent text-blue text-sm cursor-pointer" onclick={openEditActivity}>Edit</button>
-              <button type="button" class="h-11 px-3 border-0 bg-transparent text-red text-sm cursor-pointer" onclick={deleteSelectedWorkout}>Delete</button>
-            </div>
+            <button type="button" aria-label="More options" aria-haspopup="menu" aria-expanded={workoutMenuOpen} class="w-11 h-11 border-0 bg-transparent text-text1 flex items-center justify-center cursor-pointer" onclick={() => (workoutMenuOpen = !workoutMenuOpen)}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.6"></circle><circle cx="12" cy="12" r="1.6"></circle><circle cx="19" cy="12" r="1.6"></circle></svg>
+            </button>
+            {#if workoutMenuOpen}
+              <div role="menu" class="absolute right-0 top-11 z-20 w-40 rounded-2xl bg-bg3 border border-border p-1 shadow-[0_10px_30px_rgba(0,0,0,0.4)]">
+                <button type="button" role="menuitem" class="w-full h-11 px-3 text-left rounded-xl border-0 bg-transparent text-text0 text-sm cursor-pointer" onclick={() => { workoutMenuOpen = false; openEditActivity(); }}>Edit</button>
+                {#if hasActivityDetailSource(sel) && showRepullDataButton}
+                  <button type="button" role="menuitem" class="w-full h-11 px-3 text-left rounded-xl border-0 bg-transparent text-text0 text-sm cursor-pointer disabled:opacity-50" disabled={detailRepulling || detailLoading} onclick={() => { workoutMenuOpen = false; repullWorkoutData(); }}>{detailRepulling ? 'Pulling data…' : 'Repull data'}</button>
+                {/if}
+                <button type="button" role="menuitem" class="w-full h-11 px-3 text-left rounded-xl border-0 bg-transparent text-red text-sm cursor-pointer" onclick={() => { workoutMenuOpen = false; deleteSelectedWorkout(); }}>Delete</button>
+              </div>
+            {/if}
           </div>
 
           <header class="flex flex-col gap-1.5">
@@ -791,6 +826,12 @@
               <span class="text-xs text-text2 capitalize">{String(sel.primary_source ?? sel.source).replace('_', ' ')}</span>
             {/if}
           </header>
+
+          {#if detailLoading || (detailHydrating && !detailStreams)}
+            <div class="h-[150px] rounded-[20px] bg-bg2 animate-pulse"></div>
+          {:else if selLatlng && selLatlng.length > 1}
+            <RouteCard latlng={selLatlng} />
+          {/if}
 
           <dl class="m-0 grid grid-cols-3 gap-2">
             {#each [
@@ -807,6 +848,33 @@
               </div>
             {/each}
           </dl>
+
+          {#if detailStreams}
+            <PowerHrChart streams={detailStreams} durationLabel={`${Math.floor(selSecs / 3600) > 0 ? Math.floor(selSecs / 3600) + 'h ' : ''}${Math.floor((selSecs % 3600) / 60)}m`} />
+          {:else if hasActivityDetailSource(sel) && !detailLoading && !detailHydrating}
+            <p class="m-0 text-[13px] text-text2 px-1">No stream data stored for this workout.{#if showRepullDataButton} Use “Repull data” in the menu to fetch it.{/if}</p>
+          {/if}
+
+          {#if splitRows.length >= 2}
+            <section aria-label="Intervals" class="bg-bg2 border border-border rounded-[24px] px-[18px] py-4 flex flex-col gap-1">
+              <h2 class="m-0 mb-1.5 font-display font-normal text-[22px]">{sel.sport === 'bike' || sel.sport === 'run' ? 'Laps' : 'Intervals'}</h2>
+              <div class="grid grid-cols-[1.4fr_1fr_1fr] gap-2 py-1.5 font-mono text-[10px] tracking-[0.08em] text-text2 border-b border-border">
+                <span>BLOCK</span><span>AVG</span><span>HR</span>
+              </div>
+              {#each showAllSplits ? splitRows : splitRows.slice(0, 8) as sp (sp.split_number)}
+                <div class="grid grid-cols-[1.4fr_1fr_1fr] gap-2 py-2.5 text-[13px] border-b border-border/60">
+                  <span>{splitBlockLabel(sp)}</span>
+                  <span class="font-mono">{splitAvgLabel(sp, sel.sport)}</span>
+                  <span class="font-mono text-text1">{sp.average_heartrate ? Math.round(sp.average_heartrate) : '--'}</span>
+                </div>
+              {/each}
+              {#if splitRows.length > 8}
+                <button type="button" class="mt-1 h-10 border-0 bg-transparent text-blue text-[13px] text-left cursor-pointer p-0" onclick={() => (showAllSplits = !showAllSplits)}>
+                  {showAllSplits ? 'Show fewer' : `Show all ${splitRows.length}`}
+                </button>
+              {/if}
+            </section>
+          {/if}
 
           <section aria-label="Heart-rate zones" class="bg-bg2 border border-border rounded-[24px] px-[18px] py-4 flex flex-col gap-2.5">
             <h2 class="m-0 font-display font-normal text-[22px]">Heart-rate zones</h2>
@@ -845,120 +913,12 @@
             </div>
           {/if}
 
-          <section aria-label="Activity data" class="bg-bg2 border border-border rounded-[24px] p-[18px] flex flex-col gap-4">
-            <div>
-              <DataSources workout={selectedWorkout} />
-            </div>
-
-          {#if hasActivityDetailSource(selectedWorkout)}
-            {#if showRepullDataButton}
-              <div class="mt-3">
-                <button
-                  type="button"
-                  class="px-3 py-1.5 rounded-full text-[11px] font-medium border border-border bg-glass2 text-text1 hover:border-teal/40 hover:text-teal transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  disabled={detailRepulling || detailLoading}
-                  onclick={() => repullWorkoutData()}
-                >
-                  {detailRepulling ? 'Pulling data…' : 'Repull data'}
-                </button>
-              </div>
-            {/if}
-
-            {#if detailLoading}
-              <div class="mt-4 space-y-3">
-                {#each [{ id: 'streams', h: 150 }, { id: 'map', h: 150 }, { id: 'splits', h: 120 }] as skeleton (skeleton.id)}
-                  <div class="rounded-2xl bg-glass animate-pulse" style="height: {skeleton.h}px;"></div>
-                {/each}
-              </div>
-
-            {:else if detailError}
-              <p class="text-[11px] text-red mt-3 font-mono">{detailError}</p>
-
-            {:else}
-              {#if selectedWorkout.strava_activity_id && selectedWorkout.strava_streams_fetched === false && !detailHydrating && !detailStreams}
-                <p class="text-[11px] text-text2 font-mono mt-3 leading-relaxed">
-                  Strava is linked, but stream data has not been imported for this workout yet. Reconnect
-                  Strava or run the Strava backfill script to load charts and GPS.
-                </p>
-              {:else if !detailStreams && !detailHydrating}
-                <p class="text-[11px] text-text2 font-mono mt-3">
-                  No stream data stored for this workout.
-                </p>
-              {/if}
-
-              {#if detailLaps.length >= 2}
-                <div class="mt-4">
-                  <LapStrip
-                    laps={detailLaps}
-                    sport={selectedWorkout.sport}
-                    zones={mergedHrZoneDefs}
-                    measurementUnits={measurementUnits}
-                  />
-                </div>
-              {/if}
-
-              {#if detailMissingPaceStream}
-                <p class="text-[11px] text-text2 font-mono mt-3 leading-relaxed">
-                  Pace stream unavailable for this activity (heart rate is still shown). Try
-                  refreshing imported data if streams were imported incorrectly.
-                </p>
-              {/if}
-
-              {#if detailHydrating && !detailStreams}
-                <div class="mt-4 space-y-2">
-                  <div class="rounded-2xl bg-glass animate-pulse" style="height: 150px;"></div>
-                  <p class="text-[11px] text-text2 font-mono animate-pulse">
-                    Loading stream data…
-                  </p>
-                </div>
-              {:else if detailStreams}
-                <div class="mt-4 min-h-[260px]">
-                  <StreamCharts
-                    streams={detailStreams}
-                    laps={detailLaps}
-                    sport={selectedWorkout.sport}
-                    zones={mergedHrZoneDefs}
-                    measurementUnits={measurementUnits}
-                  />
-                </div>
-              {/if}
-
-              {#if detailStreams?.time_series?.latlng && detailStreams.time_series.latlng.length > 1}
-                <div class="mt-4 min-h-[300px]">
-                  <GpsTrace
-                    latlng={detailStreams.time_series.latlng}
-                    heartrate={detailStreams?.time_series?.heartrate}
-                    time={detailStreams?.time_series?.time}
-                    zones={mergedHrZoneDefs}
-                  />
-                </div>
-              {/if}
-
-              {#if showLapSplitCharts}
-                <div class="mt-4 w-full">
-                  <SplitCharts
-                    splits={detailSplits.splits}
-                    sport={selectedWorkout.sport}
-                    zones={mergedHrZoneDefs}
-                    measurementUnits={measurementUnits}
-                    source={detailSplits.source}
-                  />
-                </div>
-              {/if}
-
-              {#if showSplitsTable}
-                <div class="mt-4 w-full">
-                  <IntervalsTable
-                    splits={detailSplits.splits}
-                    sport={selectedWorkout.sport}
-                    source={detailSplits.source}
-                    measurementUnits={measurementUnits}
-                  />
-                </div>
-              {/if}
-            {/if}
+          {#if detailError}
+            <p class="m-0 text-[11px] text-red font-mono">{detailError}</p>
           {/if}
-          </section>
+          <div class="px-1">
+            <DataSources workout={selectedWorkout} />
+          </div>
         </div>
       {:else}
         <div class="flex flex-col gap-3.5">
