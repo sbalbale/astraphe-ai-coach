@@ -133,7 +133,16 @@
     pageHeader.prev = () => { endPickerValue = format(subDays(windowEnd, 1), 'yyyy-MM-dd'); dayIndex = 6; };
     pageHeader.next = () => { if (canGoForward) { endPickerValue = format(addDays(windowEnd, 1), 'yyyy-MM-dd'); dayIndex = 6; } };
     pageHeader.canNext = canGoForward;
+    pageHeader.today = () => { endPickerValue = todayStr; dayIndex = 6; };
+    pageHeader.dateMax = todayStr;
+    pageHeader.dateValue = format(clampedEndDay, "yyyy-MM-dd");
     return resetPageHeader;
+  });
+
+  // The header calendar writes pageHeader.dateValue; follow it.
+  $effect(() => {
+    const picked = pageHeader.dateValue;
+    if (picked && picked !== endPickerValue && picked <= todayStr) { endPickerValue = picked; dayIndex = 6; }
   });
 
   const days = $derived.by(() => {

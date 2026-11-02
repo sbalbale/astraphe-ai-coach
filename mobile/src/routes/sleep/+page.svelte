@@ -78,9 +78,18 @@
     pageHeader.prev = () => { endPickerValue = format(subDays(windowEnd, 1), 'yyyy-MM-dd'); nightIndex = 6; };
     pageHeader.next = () => { if (canGoForward) { endPickerValue = format(addDays(windowEnd, 1), 'yyyy-MM-dd'); nightIndex = 6; } };
     pageHeader.canNext = canGoForward;
+    pageHeader.today = () => { endPickerValue = todayStr; nightIndex = 6; };
+    pageHeader.dateMax = todayStr;
+    pageHeader.dateValue = format(clampedEndDay, "yyyy-MM-dd");
     pageHeader.add = () => (addSleepOpen = true);
     pageHeader.addLabel = 'Log sleep';
     return resetPageHeader;
+  });
+
+  // The header calendar writes pageHeader.dateValue; follow it.
+  $effect(() => {
+    const picked = pageHeader.dateValue;
+    if (picked && picked !== endPickerValue && picked <= todayStr) { endPickerValue = picked; nightIndex = 6; }
   });
 
   // Map biometrics to nights array (filling in missing dates for the last 7 days)

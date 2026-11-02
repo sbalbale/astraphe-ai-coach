@@ -11,7 +11,10 @@ export const pageHeader = $state<{
   canNext: boolean;
   add: (() => void) | null;
   addLabel: string;
-}>({ eyebrow: '', prev: null, next: null, canNext: true, add: null, addLabel: '' });
+  today: (() => void) | null;
+  dateValue: string;
+  dateMax: string;
+}>({ eyebrow: '', prev: null, next: null, canNext: true, add: null, addLabel: '', today: null, dateValue: '', dateMax: '' });
 
 export function resetPageHeader() {
   pageHeader.eyebrow = '';
@@ -20,4 +23,7 @@ export function resetPageHeader() {
   pageHeader.canNext = true;
   pageHeader.add = null;
   pageHeader.addLabel = '';
+  pageHeader.today = null;
+  pageHeader.dateValue = '';
+  pageHeader.dateMax = '';
 }

@@ -10,6 +10,7 @@
   import BottomNav from '$lib/components/BottomNav.svelte';
   import { format } from 'date-fns';
   import { pageHeader } from '$lib/stores/pageHeader.svelte';
+  import DatePicker from '$lib/components/DatePicker.svelte';
   import { subtabsFor, titleFor } from '$lib/navTabs';
   import ConfirmHost from '$lib/components/ConfirmHost.svelte';
   import { analysisNavEpoch } from '$lib/analysisNavEpoch.svelte';
@@ -198,8 +199,16 @@
           {/if}
           <h1 class="font-display text-[36px] leading-none text-text0">{headerTitle}</h1>
         </div>
-        {#if pageHeader.prev || pageHeader.next || pageHeader.add}
+        {#if pageHeader.prev || pageHeader.next || pageHeader.add || pageHeader.today || pageHeader.dateMax}
           <div class="flex items-center">
+            {#if pageHeader.today}
+              <button type="button" class="h-9 px-2.5 mr-1 rounded-[10px] border border-border bg-transparent text-text0 text-xs font-medium cursor-pointer" onclick={pageHeader.today}>Today</button>
+            {/if}
+            {#if pageHeader.dateMax}
+              <div class="w-[108px]">
+                <DatePicker bind:value={pageHeader.dateValue} max={pageHeader.dateMax} ariaLabel="Pick a date" buttonClass="h-9 px-2.5 rounded-[10px] border border-border bg-transparent text-xs text-text0" popoverClass="!left-auto right-0" />
+              </div>
+            {/if}
             {#if pageHeader.prev}
               <button type="button" aria-label="Previous day" class="w-11 h-11 border-0 bg-transparent text-text1 flex items-center justify-center cursor-pointer" onclick={pageHeader.prev}>
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m15 6-6 6 6 6"></path></svg>
