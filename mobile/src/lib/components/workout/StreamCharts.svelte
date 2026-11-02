@@ -1,7 +1,6 @@
 <script lang="ts">
   import * as d3 from 'd3';
   import { slide } from 'svelte/transition';
-  import { formatHrZoneTitle } from '$lib/hrZoneDisplay';
   import {
     cadenceChartTitle,
     cadenceUnitLabel,
@@ -488,9 +487,7 @@
           hoverLine: (idx: number) => {
             const hb = hrArr[idx];
             if (hb == null || !Number.isFinite(hb)) return '';
-            const z = getZone(hb);
-            const segment = z > 0 ? formatHrZoneTitle(z) : 'Outside zones';
-            return `${Math.round(tArr[idx] / 60)}m · ${Math.round(hb)} bpm · ${segment}`;
+            return `${Math.round(tArr[idx] / 60)}m · ${Math.round(hb)} bpm`;
           },
         },
       });
@@ -963,7 +960,7 @@
         class="relative"
       >
         <div class="mb-0.5 flex items-baseline justify-between gap-2">
-          <p class="m-0 flex items-center gap-2 text-sm font-medium text-text0"><span aria-hidden="true" class="h-2.5 w-2.5 rounded-[3px]" style="background: {c.color}"></span>{c.title}</p>
+          <p class="m-0 flex shrink-0 items-center gap-2 whitespace-nowrap text-sm font-medium text-text0"><span aria-hidden="true" class="h-2.5 w-2.5 rounded-[3px]" style="background: {c.color}"></span>{c.title}</p>
           <p class="m-0 min-h-4 truncate text-right font-mono text-xs text-text2">
             {hoveredIdx === null ? c.stats.subtitle : c.stats.hoverLine(hoveredIdx)}
           </p>
