@@ -6,14 +6,7 @@
 
 <script lang="ts">
   import Card from '$lib/components/Card.svelte';
-  import MetricBadge from '$lib/components/MetricBadge.svelte';
-  import RadialProgress from '$lib/components/RadialProgress.svelte';
-  import Tag from '$lib/components/Tag.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
-  import Pill from '$lib/components/Pill.svelte';
-  import DatePicker from '$lib/components/DatePicker.svelte';
-  import TrendIndicator from '$lib/components/TrendIndicator.svelte';
-  import DeviationTrack from '$lib/components/DeviationTrack.svelte';
   import { boundedScoreCssColor, zScoreCssColor } from '$lib/scoreColors';
   import { analysisNavEpoch } from '$lib/analysisNavEpoch.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
@@ -423,422 +416,104 @@
   });
 </script>
 
-<div class="flex flex-col gap-3">
-  <div>
-    <p class="text-xs text-text2 font-mono uppercase tracking-[0.1em]">Daily Readiness</p>
-    <h1 class="text-[22px] font-bold tracking-[-0.02em]">Recovery</h1>
+<div class="flex flex-col gap-3.5">
+  <div class="flex items-center justify-between">
+    <span class="font-mono text-[11px] tracking-[0.14em] text-text2 uppercase">{format(clampedEndDay, 'EEE dd MMM')}{#if d?.data?.hrv_source} · {d.data.hrv_source}{/if}</span>
+    <div class="flex">
+      <button type="button" aria-label="Previous day" class="w-11 h-11 border-0 bg-transparent text-text1 flex items-center justify-center cursor-pointer"
+        onclick={() => { endPickerValue = format(subDays(windowEnd, 1), 'yyyy-MM-dd'); dayIndex = 6; }}>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m15 6-6 6 6 6"></path></svg>
+      </button>
+      <button type="button" aria-label="Next day" disabled={!canGoForward} class="w-11 h-11 border-0 bg-transparent flex items-center justify-center cursor-pointer {canGoForward ? 'text-text1' : 'text-text2/40 cursor-not-allowed'}"
+        onclick={() => { if (canGoForward) { endPickerValue = format(addDays(windowEnd, 1), 'yyyy-MM-dd'); dayIndex = 6; } }}>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m9 6 6 6-6 6"></path></svg>
+      </button>
+    </div>
   </div>
 
   {#if !isConnected}
-    <EmptyState 
-      title="No Recovery Data" 
-      message="Connect WHOOP, Garmin, or Apple Health to see your recovery analysis."
-    />
+    <EmptyState title="No Recovery Data" message="Connect WHOOP, Garmin, or Apple Health to see your recovery analysis." />
   {:else if !hasData}
-    <EmptyState 
-      title="Waiting for Sync" 
-      message="We're waiting for your biometric data to compute your recovery score."
-      icon="⏳"
-    />
+    <EmptyState title="Waiting for Sync" message="We're waiting for your biometric data to compute your recovery score." icon="⏳" />
+  {:else if !showRecoveryHero}
+    <section class="bg-bg2 border border-dashed border-border rounded-[24px] p-6 text-center">
+      <p class="m-0 text-[14px] font-semibold mb-1">No recovery data for {d.label}</p>
+      <p class="m-0 text-[12px] text-text2">We couldn't find any biometric records for this day. Make sure your device synced recently.</p>
+    </section>
   {:else}
-    <!-- 7-day window selector -->
-    <div class="flex items-center justify-between gap-2">
-      <div class="flex items-center gap-1.5 shrink-0">
-        <button
-          type="button"
-          class="h-8 w-8 rounded-md border border-border bg-glass text-text0"
-          aria-label="Previous 7 days"
-          onclick={() => (endPickerValue = format(subDays(windowEnd, 1), 'yyyy-MM-dd'))}
-        >
-          ←
-        </button>
-        <div class="w-[150px]">
-          <DatePicker
-            id="recovery-end"
-            bind:value={endPickerValue}
-            max={todayStr}
-            ariaLabel="Select end day"
-            buttonClass="h-8 px-2 pr-2 rounded-md border border-border bg-glass text-[12px] text-text0"
-            popoverClass=""
-          />
+    <!-- Score -->
+    <section aria-label="Recovery score" class="bg-bg2 border border-border rounded-[24px] px-5 py-[18px] flex gap-[18px] items-center">
+      <div class="relative w-[112px] h-[112px] shrink-0">
+        <svg width="112" height="112" viewBox="0 0 112 112" aria-hidden="true" class="block -rotate-90">
+          <circle cx="56" cy="56" r="48" fill="none" stroke="var(--border)" stroke-width="8"></circle>
+          <circle cx="56" cy="56" r="48" fill="none" stroke={scoreColor} stroke-width="8" stroke-linecap="round" stroke-dasharray="{(Math.min(score, 100) / 100) * 301.6} 302"></circle>
+        </svg>
+        <div class="absolute inset-0 flex items-center justify-center">
+          <span class="font-display text-[42px] leading-none">{Math.round(score)}<span class="text-[20px]">%</span></span>
         </div>
-        <button
-          type="button"
-          class="h-8 px-2.5 rounded-md border border-border bg-glass text-text0 text-[12px]"
-          aria-label="Jump to today"
-          onclick={() => {
-            endPickerValue = todayStr;
-            dayIndex = 6;
-          }}
-        >
-          Today
-        </button>
-        <button
-          type="button"
-          class="h-8 w-8 rounded-md border border-border bg-glass text-text0"
-          aria-label="Next 7 days"
-          disabled={!canGoForward}
-          style={!canGoForward ? 'opacity: 0.4; cursor: not-allowed;' : ''}
-          onclick={() => {
-            if (!canGoForward) return;
-            endPickerValue = format(addDays(windowEnd, 1), 'yyyy-MM-dd');
-          }}
-        >
-          →
-        </button>
       </div>
-      <div class="text-[11px] text-text2 font-mono text-right">
-        {rangeLabel}
+      <div class="flex flex-col gap-1.5">
+        <span class="font-mono text-[11px] tracking-[0.14em] uppercase" style="color: {scoreColor}">{score >= 67 ? 'Recovered' : score >= 34 ? 'Moderate' : 'Fatigued'}</span>
+        <p class="m-0 text-sm leading-[1.45] text-text1">
+          {score >= 67 ? 'Your nervous system is well-rested and primed for quality effort.'
+            : score >= 34 ? 'Moderate physiological state. Listen to your body during training.'
+            : 'Significant fatigue detected. Prioritize sleep and active recovery today.'}
+        </p>
+        {#if carryOverLabel}<span class="font-mono text-[11px] text-text2">{carryOverLabel}</span>{/if}
+        {#if spo2Pct !== null || bodyTempDeltaDisplay !== null}
+          <span class="font-mono text-[11px] text-text2">
+            {#if spo2Pct !== null}SpO2 {spo2Pct}%{/if}{#if spo2Pct !== null && bodyTempDeltaDisplay !== null} · {/if}{#if bodyTempDeltaDisplay !== null}Skin {formatSigned1dp(bodyTempDeltaDisplay, '°')}{/if}
+          </span>
+        {/if}
       </div>
-    </div>
+    </section>
 
-
-    {#if !showRecoveryHero}
-      <Card style="border-style: dashed; opacity: 0.8;">
-        <div class="flex flex-col items-center justify-center py-6 text-center">
-          <span class="text-[32px] mb-2">🤷‍♂️</span>
-          <p class="text-[14px] font-bold mb-1">No recovery data for {d.label}</p>
-          <p class="text-[11px] text-text2 max-w-[200px]">
-            We couldn't find any biometric records for this day. Make sure your device synced recently.
-          </p>
-        </div>
-      </Card>
-    {:else}
-      <!-- Hero Card (Sleep Page Style) -->
-      <Card style="background: var(--glass); border-color: var(--border);">
-        <div class="flex items-center gap-4">
-          <RadialProgress 
-            value={score} 
-            max={100} 
-            size={72} 
-            color={scoreColor} 
-            label={score.toString()} 
-            sub="SCORE" 
-          />
-          <div class="flex-1">
-            <div class="flex items-center gap-2 mb-1">
-              <span class="text-[18px] font-bold" class:text-text2={current.isStale && d.date === todayStr}>{quality}</span>
-              <Tag color={scoreColor}>{score >= 67 ? 'OPTIMAL' : score >= 34 ? 'MODERATE' : 'FATIGUED'}</Tag>
-            </div>
-            {#if carryOverLabel}
-              <p class="text-[10px] text-text2 font-mono mb-1">{carryOverLabel}</p>
-            {/if}
-            {#if current.isStale && d.date === todayStr}
-              <p class="text-[10px] text-text2 mb-1">
-                Last synced {current.ageHours != null ? Math.round(current.ageHours) : '—'}h ago — sync your device
-              </p>
-            {/if}
-            <p class="text-xs text-text1 leading-relaxed">
-              {score >= 67 ? 'Your nervous system is well-rested and primed for quality effort.' : 
-               score >= 34 ? 'Moderate physiological state. Listen to your body during training.' : 
-               'Significant fatigue detected. Prioritize sleep and active recovery today.'}
-            </p>
-          </div>
-        </div>
-      </Card>
-
-      <!-- Metrics Grid.
-           HRV ms / RHR bpm are raw absolutes — value text stays neutral, the
-           colored TrendIndicator next to the label carries the z-score signal
-           (RHR is inverted: higher = worse). Sleep is a 0-100 score so the
-           value itself is colored by the bounded-score rule. -->
-      <div class="grid grid-cols-3 gap-2">
-        <Card style="padding: 8px 10px;">
-          <div class="flex items-start justify-between gap-1">
-            <MetricBadge
-              label="HRV"
-              value={hrvToday ?? 0}
-              unit="ms"
-              color={hrvZ === null ? 'var(--text2)' : zScoreCssColor(hrvZ)}
-              sub="Avg"
-            />
-            <TrendIndicator z={hrvZ} size={14} />
-          </div>
-        </Card>
-        <Card style="padding: 8px 10px;">
-          <div class="flex items-start justify-between gap-1">
-            <MetricBadge
-              label="RHR"
-              value={rhrToday ?? 0}
-              unit="bpm"
-              color={rhrZ === null ? 'var(--text2)' : zScoreCssColor(rhrZ, true)}
-              sub="Avg"
-            />
-            <TrendIndicator z={rhrZ} inverted size={14} />
-          </div>
-        </Card>
-        <Card style="padding: 8px 10px;">
-            <MetricBadge
-              label="Sleep"
-              value={sleepScoreToday ?? 0}
-              unit="%"
-              color={sleepScoreToday ? boundedScoreCssColor(sleepScoreToday) : 'var(--text2)'}
-            sub="Score"
-          />
-        </Card>
+    <!-- Contributing factors -->
+    <section aria-label="Contributing factors" class="bg-bg2 border border-border rounded-[24px] px-[18px] py-4 flex flex-col gap-1">
+      <div class="flex justify-between items-baseline pb-1.5">
+        <h2 class="m-0 font-display font-normal text-[22px]">vs your baseline</h2>
+        <span class="font-mono text-[11px] text-text2">7-DAY</span>
       </div>
-
-      <!-- 7-Day Trend -->
-      <Card>
-        <div class="flex flex-wrap items-start justify-between gap-x-3 gap-y-1 mb-3">
-          <p class="text-[13px] font-semibold">7-Day Trend</p>
-          <span class="text-[10px] text-text2 font-mono text-right ml-auto max-w-full">
-            avg {avg7d === null ? '--' : `${avg7d}%`} · {score}% current
+      {#each [
+        { name: 'HRV', val: hrvToday === null ? '--' : `${hrvToday} ms`, delta: formatSignedInt(hrvDelta), z: hrvZ, inverted: false },
+        { name: 'Resting HR', val: rhrToday === null ? '--' : `${rhrToday} bpm`, delta: formatSignedInt(rhrDelta), z: rhrZ, inverted: true },
+        { name: 'Sleep', val: sleepScoreToday === null ? '--' : `${sleepScoreToday}%`, delta: formatSignedInt(sleepDelta), z: sleepDelta === null ? null : sleepDelta / 8, inverted: false }
+      ] as f (f.name)}
+        {@const c = f.z === null ? 'var(--text2)' : zScoreCssColor(f.z, f.inverted)}
+        {@const pos = f.z === null ? 50 : 50 + Math.max(-2, Math.min(2, f.z)) * 25}
+        <div class="grid grid-cols-[84px_1fr_72px] gap-3 items-center py-2 border-t border-border">
+          <span class="text-[13px] text-text1">{f.name}</span>
+          <div aria-hidden="true" class="relative h-1.5 rounded-[3px] bg-border">
+            <span class="absolute left-1/2 -top-1 w-px h-3.5 bg-text2/50"></span>
+            <span class="absolute -top-[3px] w-3 h-3 rounded-full -translate-x-1/2" style="left: {pos}%; background: {c}"></span>
+          </div>
+          <span class="text-right flex flex-col gap-px">
+            <span class="font-mono text-[13px]">{f.val}</span>
+            <span class="text-[11px]" style="color: {c}">{f.delta}</span>
           </span>
         </div>
-        <div class="flex gap-2 h-[70px] mb-1 px-1">
-          {#each days as day, i (day.date)}
-            {@const c = boundedScoreCssColor(day.score)}
-            <button
-              type="button"
-              class="flex-1 h-full flex flex-col items-center gap-1 cursor-pointer"
-              onclick={() => {
-                endPickerValue = day.date;
-                dayIndex = 6;
-              }}
-              aria-label={`Select ${day.label}: ${day.score}/100`}
-            >
-              <div class="h-[50px] w-full flex items-end">
-                <div
-                  class="w-full rounded-t-sm transition-all duration-300"
-                  style="background: {c}; opacity: {i === dayIndex ? 1 : 0.35}; height: {Math.max(4, (day.score / 100) * 50)}px;"
-                ></div>
-              </div>
-              <span class="text-[9px] font-mono leading-none {i === dayIndex ? 'text-text0' : 'text-text2'}">{day.day}</span>
-            </button>
-          {/each}
-        </div>
-      </Card>
-      
-      <!-- Contributing Factors — split by behavior.
-           Unbounded vitals (HRV, RHR, Body Temp, SpO2): raw absolute text is
-             neutral (slate-200); the colored arrow + delta + center-anchored
-             deviation dot carry the z-score signal. Track center == 7-day EWMA
-             baseline, and the highlighted band marks the ±0.5 SD "normal
-             range".
-           Bounded scores (Sleep Quality, Prior Load): raw value text is
-             neutral; the colored delta + left-to-right progress fill carry
-             the rule-of-thirds signal applied to the underlying score
-             (sleep score for Sleep Quality, prior-day strain score for
-             Prior Load — strain is inverted, high strain == bad recovery
-             contribution). -->
-      <Card style="padding: 14px;">
-        <div class="flex items-center justify-between mb-3">
-          <p class="text-[13px] font-semibold">Contributing Factors</p>
-          <span class="text-[10px] uppercase tracking-wider text-text1">vs baseline</span>
-        </div>
+      {/each}
+    </section>
 
-        <div class="w-full space-y-0">
-        <!-- ─── Vitals & Trends (unbounded, deviation tracks) ─── -->
-        <p class="mb-3 text-[10px] uppercase tracking-wider text-text1">Vitals &amp; Trends</p>
-        <div class="mb-6 flex w-full flex-col">
-          <!-- HRV -->
-          <div class="flex w-full flex-col gap-2 border-b border-white/[0.06] py-5">
-            <!-- Top row: label + arrow | Δ + neutral absolute -->
-            <div class="flex w-full items-center justify-between gap-4">
-              <div class="min-w-0 flex items-center gap-1.5">
-                <p class="text-[11px] font-semibold uppercase tracking-wide text-text0">HRV</p>
-                <TrendIndicator z={hrvZ} size={12} />
-              </div>
-              <div class="shrink-0 flex items-baseline gap-2 leading-tight">
-                <span class="text-[11px] font-mono tabular-nums" style="color: {hrvZ === null ? 'var(--text2)' : zScoreCssColor(hrvZ)}">
-                  {formatSignedInt(hrvDelta)}
-                </span>
-                <span class={`text-[12px] font-semibold tabular-nums ${hrvToday === null ? 'text-text2' : 'text-text0'}`}>
-                  {hrvToday === null ? '--' : `${hrvToday}ms`}
-                </span>
-              </div>
-            </div>
-            <!-- Full-width track -->
-            <div class="w-full">
-              <DeviationTrack z={hrvZ} />
-            </div>
-            <p class="text-[11px] leading-snug text-text1">
-              {hrvToday === null
-                ? 'Not available for this day.'
-                : hrvBaseline === null
-                  ? 'Baseline not available yet. Keep syncing to build a 30-day trend.'
-                  : hrvDelta !== null && hrvDelta >= 0
-                    ? `${Math.round(hrvDelta)}ms above your 7-day baseline of ${hrvBaseline}ms. Strong parasympathetic response.`
-                    : `${Math.abs(Math.round(hrvDelta ?? 0))}ms below your 7-day baseline of ${hrvBaseline}ms. Lower HRV can reflect accumulated stress.`}
-            </p>
-          </div>
-
-          <!-- Resting HR (inverted: higher == worse) -->
-          <div class="flex w-full flex-col gap-2 border-b border-white/[0.06] py-5">
-            <div class="flex w-full items-center justify-between gap-4">
-              <div class="min-w-0 flex items-center gap-1.5">
-                <p class="text-[11px] font-semibold uppercase tracking-wide text-text0">Resting HR</p>
-                <TrendIndicator z={rhrZ} inverted size={12} />
-              </div>
-              <div class="shrink-0 flex items-baseline gap-2 leading-tight">
-                <span class="text-[11px] font-mono tabular-nums" style="color: {rhrZ === null ? 'var(--text2)' : zScoreCssColor(rhrZ, true)}">
-                  {formatSignedInt(rhrDelta)}
-                </span>
-                <span class={`text-[12px] font-semibold tabular-nums ${rhrToday === null ? 'text-text2' : 'text-text0'}`}>
-                  {rhrToday === null ? '--' : `${rhrToday}bpm`}
-                </span>
-              </div>
-            </div>
-            <div class="w-full">
-              <DeviationTrack z={rhrZ} inverted />
-            </div>
-            <p class="text-[11px] leading-snug text-text1">
-              {rhrToday === null
-                ? 'Not available for this day.'
-                : rhrBaseline === null || rhrDelta === null
-                  ? 'Baseline not available yet. Keep syncing to build a 30-day trend.'
-                  : rhrDelta < 0
-                    ? `${Math.abs(Math.round(rhrDelta))} bpm below your 7-day baseline of ${rhrBaseline}bpm. Low RHR indicates good cardiac efficiency.`
-                    : `${Math.round(rhrDelta)} bpm above your 7-day baseline of ${rhrBaseline}bpm. Elevated RHR can reflect fatigue or stress.`}
-            </p>
-          </div>
-
-          <!-- Body Temp (inverted: deviation higher == worse) -->
-          <div class="flex w-full flex-col gap-2 border-b border-white/[0.06] py-5">
-            <div class="flex w-full items-center justify-between gap-4">
-              <div class="min-w-0 flex items-center gap-1.5">
-                <p class="text-[11px] font-semibold uppercase tracking-wide text-text0">Body Temp</p>
-                <TrendIndicator z={bodyTempZ} inverted size={12} />
-              </div>
-              <div class="shrink-0 flex items-baseline gap-2 leading-tight">
-                <span class="text-[11px] font-mono tabular-nums" style="color: {bodyTempZ === null ? 'var(--text2)' : zScoreCssColor(bodyTempZ, true)}">
-                  {bodyTempDeltaDisplay === null ? '--' : formatSigned1dp(bodyTempDeltaDisplay, isImperial ? '°F' : '°C')}
-                </span>
-                <span class={`text-[12px] font-semibold tabular-nums ${bodyTempDisplay === null ? 'text-text2' : 'text-text0'}`}>
-                  {bodyTempDisplay === null ? '--' : `${bodyTempDisplay}${isImperial ? '°F' : '°C'}`}
-                </span>
-              </div>
-            </div>
-            <div class="w-full">
-              <DeviationTrack z={bodyTempZ} inverted />
-            </div>
-            <p class="text-[11px] leading-snug text-text1">
-              {bodyTempCToday === null
-                ? 'Not available for this day.'
-                : bodyTempBaselineDisplay === null || bodyTempDeltaDisplay === null
-                  ? `Body temp recorded at ${bodyTempDisplay}${isImperial ? '°F' : '°C'}. Baseline not available yet.`
-                  : Math.abs(bodyTempDeltaDisplay) > (isImperial ? 0.9 : 0.5)
-                    ? `${formatSigned1dp(bodyTempDeltaDisplay, isImperial ? '°F' : '°C')} vs your 7-day baseline of ${bodyTempBaselineDisplay}${isImperial ? '°F' : '°C'}. Monitor for signs of illness or overheating.`
-                    : `${formatSigned1dp(bodyTempDeltaDisplay, isImperial ? '°F' : '°C')} vs your 7-day baseline of ${bodyTempBaselineDisplay}${isImperial ? '°F' : '°C'}. Body temperature is stable.`}
-            </p>
-          </div>
-
-          <!-- SpO2 -->
-          <div class="flex w-full flex-col gap-2 border-b border-white/[0.06] py-5 last:border-b-0">
-            <div class="flex w-full items-center justify-between gap-4">
-              <div class="min-w-0 flex items-center gap-1.5">
-                <p class="text-[11px] font-semibold uppercase tracking-wide text-text0">SpO2</p>
-                <TrendIndicator z={spo2Z} size={12} />
-              </div>
-              <div class="shrink-0 flex items-baseline gap-2 leading-tight">
-                <span class="text-[11px] font-mono tabular-nums" style="color: {spo2Z === null ? 'var(--text2)' : zScoreCssColor(spo2Z)}">
-                  {formatSignedInt(spo2Delta)}
-                </span>
-                <span class={`text-[12px] font-semibold tabular-nums ${spo2Pct === null ? 'text-text2' : 'text-text0'}`}>
-                  {spo2Pct === null ? '--' : `${spo2Pct}%`}
-                </span>
-              </div>
-            </div>
-            <div class="w-full">
-              <DeviationTrack z={spo2Z} />
-            </div>
-            <p class="text-[11px] leading-snug text-text1">
-              {spo2Pct === null
-                ? 'Not available for this day.'
-                : spo2Baseline === null || spo2Delta === null
-                  ? 'Baseline not available yet. Keep syncing to build a 30-day trend.'
-                  : spo2Pct < 94
-                    ? 'Blood oxygen dipped below normal overnight. Consider sleep position, altitude, or congestion.'
-                    : spo2Delta >= 0
-                      ? `${Math.round(spo2Delta)}% above your 7-day baseline of ${spo2Baseline}%. Blood oxygen within normal range all night.`
-                      : `${Math.abs(Math.round(spo2Delta))}% below your 7-day baseline of ${spo2Baseline}%. Blood oxygen slightly reduced overnight.`}
-            </p>
-          </div>
-        </div>
-
-        <!-- ─── Performance Drivers (bounded scores, progress bars) ─── -->
-        <p class="mb-3 text-[10px] uppercase tracking-wider text-text1">Performance Drivers</p>
-        <div class="flex w-full flex-col">
-          <!-- Sleep Quality (rule of thirds, not inverted) -->
-          <div class="flex w-full flex-col gap-2 border-b border-white/[0.06] py-5">
-            <div class="flex w-full items-center justify-between gap-4">
-              <p class="text-[11px] font-semibold uppercase tracking-wide text-text0">Sleep Quality</p>
-              <div class="shrink-0 flex items-baseline gap-2 leading-tight">
-                <span class="text-[11px] font-mono tabular-nums" style="color: {sleepScoreToday === null ? 'var(--text2)' : boundedScoreCssColor(sleepScoreToday)}">
-                  {formatSignedInt(sleepDelta)}
-                </span>
-                <span class={`text-[12px] font-semibold tabular-nums ${sleepScoreToday === null ? 'text-text2' : 'text-text0'}`}>
-                  {sleepScoreToday === null ? '--' : `${sleepScoreToday}%`}
-                </span>
-              </div>
-            </div>
-            <div class="h-[6px] w-full overflow-hidden rounded-full bg-bg2 ring-1 ring-inset ring-border">
-              <div
-                class="h-full rounded-full transition-[width] duration-300"
-                style="width: {sleepFillPct}%; background: {sleepScoreToday === null ? 'var(--text2)' : boundedScoreCssColor(sleepScoreToday)};"
-              ></div>
-            </div>
-            <p class="text-[11px] leading-snug text-text1">
-              {sleepScoreToday === null
-                ? 'Not available for this day.'
-                : `${sleepDurationHM === null ? '--' : sleepDurationHM} asleep with ${sleepScoreToday}% quality.${sleepDeepPct === null ? '' : ` Deep sleep at ${sleepDeepPct}%.`}`}
-            </p>
-          </div>
-
-          <!-- Prior Load (strain score, INVERTED rule of thirds — high == bad) -->
-          <div class="flex w-full flex-col gap-2 py-5">
-            <div class="flex w-full items-center justify-between gap-4">
-              <p class="text-[11px] font-semibold uppercase tracking-wide text-text0">Prior Load</p>
-              <div class="shrink-0 flex items-baseline gap-2 leading-tight">
-                <span class="text-[11px] font-mono tabular-nums" style="color: {priorStrainScore === null ? 'var(--text2)' : boundedScoreCssColor(priorStrainScore, true)}">
-                  {formatSignedInt(priorStrainDelta)}
-                </span>
-                <span class={`text-[12px] font-semibold tabular-nums ${priorLoad?.dailyTss == null ? 'text-text2' : 'text-text0'}`}>
-                  {priorLoad?.dailyTss == null ? '--' : `${priorLoad.dailyTss} TSS`}
-                </span>
-              </div>
-            </div>
-            <div class="h-[6px] w-full overflow-hidden rounded-full bg-bg2 ring-1 ring-inset ring-border">
-              <div
-                class="h-full rounded-full transition-[width] duration-300"
-                style="width: {priorFillPct}%; background: {priorStrainScore === null ? 'var(--text2)' : boundedScoreCssColor(priorStrainScore, true)};"
-              ></div>
-            </div>
-            <p class="text-[11px] leading-snug text-text1">
-              {priorLoad === null
-                ? 'Not available for this day.'
-                : priorStrainScore === null
-                  ? 'Yesterday’s strain score is not available yet.'
-                  : priorStrainBaseline === null
-                    ? `Yesterday's strain came in at ${priorStrainScore}/100. Baseline not available yet.`
-                    : priorStrainDelta !== null && priorStrainDelta > 5
-                      ? `Yesterday pushed strain ${priorStrainDelta} pts above your 30-day average. Expect some residual fatigue.`
-                      : priorStrainDelta !== null && priorStrainDelta < -5
-                        ? `Yesterday was a recovery day, ${Math.abs(priorStrainDelta)} pts below your 30-day strain average.`
-                        : `Yesterday's strain (${priorStrainScore}/100) tracked your 30-day average.`}
-            </p>
-          </div>
-        </div>
-        </div>
-      </Card>
-
-      <!-- Analysis Card -->
-      <Card
-        class="!bg-bg1 !border-dashed"
-      >
-        <p class="text-[13px] font-semibold mb-1.5">Recovery Analysis</p>
-        <p class="text-xs text-text1 leading-relaxed">
-          {analysisText ??
-            (score >= 67
-              ? 'Your recovery architecture looks balanced. Systemic fatigue is low.'
-              : score >= 34
-                ? 'Your autonomic system is recovering. Focus on maintaining parasympathetic tone.'
-                : 'High systemic load detected. Prioritize high-quality sleep to accelerate repair.')}
-        </p>
-      </Card>
-    {/if}
-
-    <!-- Timeline -->
+    <!-- 7-day trend -->
+    <section aria-label="7-day trend" class="bg-bg2 border border-border rounded-[24px] px-[18px] py-4 flex flex-col gap-2.5">
+      <h2 class="m-0 font-display font-normal text-[22px]">7-day trend</h2>
+      <div class="grid grid-cols-7 gap-2 items-end h-[70px]">
+        {#each days as day, i (day.date)}
+          <button
+            type="button"
+            aria-label={`Select ${day.label}: ${day.score}/100`}
+            class="block p-0 border-0 rounded-md cursor-pointer"
+            style="height: {Math.max(4, Math.round(day.score * 0.7))}px; background: {boundedScoreCssColor(day.score)}; opacity: {i === dayIndex ? 1 : 0.45}"
+            onclick={() => { endPickerValue = day.date; dayIndex = 6; }}
+          ></button>
+        {/each}
+      </div>
+      <div class="grid grid-cols-7 gap-2 text-center font-mono text-[10px] text-text2">
+        {#each days as day, i (day.date)}
+          <span class={i === dayIndex ? 'text-text0' : ''}>{day.day}</span>
+        {/each}
+      </div>
+    </section>
   {/if}
 </div>
