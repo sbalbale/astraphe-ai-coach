@@ -1108,8 +1108,14 @@ def process_and_save_biometrics(
     if not skip_pmc_recalc:
         recalculate_tss_history(athlete_id, db)
 
-    # Fetch current CTL for TSS target calculation (now guaranteed to exist for today)
-    ctl_res = db.table("tss_history").select("ctl").eq("athlete_id", athlete_id).eq("date", payload.date.isoformat()).maybe_single().execute()
+    # CTL for the TSS target: the most recent row on or before this date. Rest days (and days with
+    # no workout yet) have no tss_history row of their own, and an exact-date lookup would fall
+    # through to CTL 0 and the 200 default target.
+    ctl_res = (
+        db.table("tss_history").select("ctl").eq("athlete_id", athlete_id)
+        .lte("date", payload.date.isoformat()).order("date", desc=True).limit(1)
+        .maybe_single().execute()
+    )
     current_ctl = ctl_res.data["ctl"] if (ctl_res and ctl_res.data) else 0.0
     
     profile_updates = {

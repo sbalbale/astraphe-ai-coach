@@ -3,7 +3,6 @@
   import { addDays, format, startOfWeek, subDays } from 'date-fns';
   import { api } from '$lib/api';
   import type { Workout } from '$lib/types/training';
-  import { weeklyTssTarget } from '$lib/utils/weeklyTarget';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { pageHeader, resetPageHeader } from '$lib/stores/pageHeader.svelte';
@@ -63,7 +62,8 @@
   });
   const maxTss = $derived(Math.max(1, ...weeks.map((w) => Math.max(w.tss, w.planned))));
   const avgTss = $derived(Math.round(weeks.reduce((a, w) => a + w.tss, 0) / Math.max(1, weeks.filter((w) => w.tss > 0).length)));
-  const target = $derived(weeklyTssTarget(athleteStore.ctl, Number((athleteStore.profile as any)?.weekly_tss_target) || null));
+  // Calculated by the backend and stored on the athlete.
+  const target = $derived(Number((athleteStore.profile as any)?.weekly_tss_target) || null);
   let pickedWeek = $state<number | null>(null);
   const activeWeek = $derived(pickedWeek ?? weeks.length - 1);
   const activeInfo = $derived.by(() => {

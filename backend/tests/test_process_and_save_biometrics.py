@@ -26,6 +26,12 @@ class _BioQuery:
     def lt(self, *_a, **_k):
         return self
 
+    def lte(self, *_a, **_k):
+        return self
+
+    def limit(self, *_a, **_k):
+        return self
+
     def order(self, *_a, **_k):
         return self
 
