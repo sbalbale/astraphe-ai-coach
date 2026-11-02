@@ -549,9 +549,9 @@ def calculate_temp_baseline(temp_history: List[float]) -> float:
     return float(np.mean(temp_history[-42:]))
 
 def calculate_weekly_tss_target(current_ctl: float) -> int:
-    """Estimates sustainable weekly TSS target (7.5x CTL)."""
+    """Weekly TSS that holds CTL steady: CTL is the average daily TSS, so 7x CTL."""
     if not current_ctl: return 200
-    return int(round(current_ctl * 7.5))
+    return int(round(current_ctl * 7))
 
 def calculate_threshold_hr_est(max_hr: int, resting_hr: int) -> int:
     """Estimates Threshold HR (83% of HRR + RHR)."""
