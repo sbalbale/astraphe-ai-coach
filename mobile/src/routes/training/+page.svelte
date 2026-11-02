@@ -720,23 +720,28 @@
   let detailTab = $state('overview');
   let showAllSplits = $state(false);
   $effect(() => { void selectedWorkout?.id; detailTab = 'overview'; showAllSplits = false; });
-  function splitBlockLabel(sp: any): string {
-    const secs = Number(sp?.elapsed_time) || 0;
-    const dur = secs >= 120 ? `${Math.round(secs / 60)}′` : `${Math.round(secs)}s`;
-    return `${sp.split_number} · ${dur}`;
+  // Splits table cells (units live in the column, not the cell).
+  function splitTime(secs: number): string {
+    const t = Math.max(0, Math.round(Number(secs) || 0));
+    const h = Math.floor(t / 3600);
+    const m = Math.floor((t % 3600) / 60);
+    const ss = String(t % 60).padStart(2, "0");
+    return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`;
   }
-  function splitAvgLabel(sp: any, sport: string): string {
-    if (sp?.average_watts) return `${Math.round(sp.average_watts)} W`;
-    const p = Number(sp?.pace_seconds);
-    if (Number.isFinite(p) && p > 0) {
-      const mm = Math.floor(p / 60);
-      const ss = String(Math.round(p % 60)).padStart(2, "0");
-      const unit = sport === "row" ? "/500m" : measurementUnits === "imperial" ? "/mi" : "/km";
-      return `${mm}:${ss}${unit}`;
-    }
-    const v = Number(sp?.average_speed);
-    if (Number.isFinite(v) && v > 0) return measurementUnits === "imperial" ? `${(v * 2.23694).toFixed(1)} mph` : `${(v * 3.6).toFixed(1)} km/h`;
-    return "--";
+  function splitDistance(meters: number): string {
+    const m = Number(meters) || 0;
+    if (m <= 0) return "—";
+    return (measurementUnits === "imperial" ? m / 1609.344 : m / 1000).toFixed(m < 1000 ? 2 : 1);
+  }
+  function splitPace(secs: number | null): string {
+    const p = Number(secs);
+    if (!Number.isFinite(p) || p <= 0) return "—";
+    return `${Math.floor(p / 60)}:${String(Math.round(p % 60)).padStart(2, "0")}`;
+  }
+  function splitSpeed(r: any): string {
+    const v = Number(r?.average_speed) > 0 ? Number(r.average_speed) : Number(r?.distance) > 0 && Number(r?.elapsed_time) > 0 ? Number(r.distance) / Number(r.elapsed_time) : 0;
+    if (v <= 0) return "—";
+    return (measurementUnits === "imperial" ? v * 2.23694 : v * 3.6).toFixed(1);
   }
 </script>
 
@@ -945,9 +950,36 @@
                   </section>
                 {/if}
                 {#if showSplitsTable}
+                {@const usePace = sel.sport === 'row' || sel.sport === 'run'}
+                {@const showWatts = detailSplits.splits.some((r) => Number(r.average_watts) > 0)}
                   <section aria-label="Splits" class="bg-bg2 border border-border rounded-[24px] p-[18px] flex flex-col gap-3">
                     <h2 class="m-0 font-display font-normal text-[22px]">Splits</h2>
-                    <IntervalsTable bare splits={detailSplits.splits} sport={sel.sport} source={detailSplits.source} measurementUnits={measurementUnits} />
+                    <div class="w-full overflow-x-auto">
+                      <table class="w-full border-collapse text-[13px]">
+                        <thead>
+                          <tr class="text-right font-mono text-[10px] tracking-[0.06em] text-text2">
+                            <th scope="col" class="py-1.5 text-left font-normal">LAP</th>
+                            <th scope="col" class="font-normal">TIME</th>
+                            <th scope="col" class="font-normal">DIST</th>
+                            <th scope="col" class="font-normal">{usePace ? 'PACE' : 'SPEED'}</th>
+                            <th scope="col" class="font-normal">HR</th>
+                            {#if showWatts}<th scope="col" class="font-normal">WATTS</th>{/if}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {#each detailSplits.splits as r (r.split_number)}
+                            <tr class="border-t border-border text-right font-mono text-xs tabular-nums">
+                              <th scope="row" class="py-[9px] text-left font-sans font-medium">{r.split_number}</th>
+                              <td>{splitTime(r.elapsed_time)}</td>
+                              <td>{splitDistance(r.distance)}</td>
+                              <td>{usePace ? splitPace(r.pace_seconds) : splitSpeed(r)}</td>
+                              <td class="text-text1">{r.average_heartrate ? Math.round(r.average_heartrate) : '—'}</td>
+                              {#if showWatts}<td>{Number(r.average_watts) > 0 ? Math.round(Number(r.average_watts)) : '—'}</td>{/if}
+                            </tr>
+                          {/each}
+                        </tbody>
+                      </table>
+                    </div>
                   </section>
                 {/if}
               {:else}
