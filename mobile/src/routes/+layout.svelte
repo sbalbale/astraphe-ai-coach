@@ -9,6 +9,7 @@
   import Sidebar from '$lib/components/Sidebar.svelte';
   import BottomNav from '$lib/components/BottomNav.svelte';
   import { format } from 'date-fns';
+  import { pageHeader } from '$lib/stores/pageHeader.svelte';
   import { subtabsFor, titleFor } from '$lib/navTabs';
   import ConfirmHost from '$lib/components/ConfirmHost.svelte';
   import { analysisNavEpoch } from '$lib/analysisNavEpoch.svelte';
@@ -192,9 +193,30 @@
         <div class="flex flex-col gap-1">
           {#if $page.url.pathname === '/dashboard'}
             <span class="font-mono text-[11px] tracking-[0.14em] text-text2 uppercase">{format(new Date(), 'EEE dd MMM')}</span>
+          {:else if pageHeader.eyebrow}
+            <span class="font-mono text-[11px] tracking-[0.14em] text-text2 uppercase">{pageHeader.eyebrow}</span>
           {/if}
           <h1 class="font-display text-[36px] leading-none text-text0">{headerTitle}</h1>
         </div>
+        {#if pageHeader.prev || pageHeader.next || pageHeader.add}
+          <div class="flex items-center">
+            {#if pageHeader.prev}
+              <button type="button" aria-label="Previous day" class="w-11 h-11 border-0 bg-transparent text-text1 flex items-center justify-center cursor-pointer" onclick={pageHeader.prev}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m15 6-6 6 6 6"></path></svg>
+              </button>
+            {/if}
+            {#if pageHeader.next}
+              <button type="button" aria-label="Next day" disabled={!pageHeader.canNext} class="w-11 h-11 border-0 bg-transparent flex items-center justify-center {pageHeader.canNext ? 'text-text1 cursor-pointer' : 'text-text2/40 cursor-not-allowed'}" onclick={pageHeader.next}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m9 6 6 6-6 6"></path></svg>
+              </button>
+            {/if}
+            {#if pageHeader.add}
+              <button type="button" aria-label={pageHeader.addLabel} class="w-11 h-11 rounded-[14px] border border-border bg-transparent text-text0 flex items-center justify-center cursor-pointer" onclick={pageHeader.add}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+              </button>
+            {/if}
+          </div>
+        {/if}
         <!-- The design only shows the profile avatar on Today. -->
         {#if $page.url.pathname === '/dashboard'}
           <button

@@ -14,6 +14,7 @@
   import { normalizeUnits, type Units } from '$lib/utils/units';
   import { currentRecoveryState, firstPositiveFiniteNumber } from '$lib/utils/biometrics';
   import { onMount } from 'svelte';
+  import { pageHeader, resetPageHeader } from '$lib/stores/pageHeader.svelte';
   import { addDays, format, subDays } from 'date-fns';
   import { page } from '$app/stores';
 
@@ -126,6 +127,14 @@
   const windowEnd = $derived(clampedEndDay);
   const rangeLabel = $derived(`${format(windowStart, 'MMM d')} – ${format(windowEnd, 'MMM d, yyyy')}`);
   const canGoForward = $derived(format(windowEnd, 'yyyy-MM-dd') !== todayStr);
+
+  $effect(() => {
+    pageHeader.eyebrow = `${format(clampedEndDay, 'EEE dd MMM')}${d?.data?.hrv_source ? ' · ' + d.data.hrv_source : ''}`;
+    pageHeader.prev = () => { endPickerValue = format(subDays(windowEnd, 1), 'yyyy-MM-dd'); dayIndex = 6; };
+    pageHeader.next = () => { if (canGoForward) { endPickerValue = format(addDays(windowEnd, 1), 'yyyy-MM-dd'); dayIndex = 6; } };
+    pageHeader.canNext = canGoForward;
+    return resetPageHeader;
+  });
 
   const days = $derived.by(() => {
     // Build oldest→newest for display (today on the right).
@@ -417,20 +426,6 @@
 </script>
 
 <div class="flex flex-col gap-3.5">
-  <div class="flex items-center justify-between">
-    <span class="font-mono text-[11px] tracking-[0.14em] text-text2 uppercase">{format(clampedEndDay, 'EEE dd MMM')}{#if d?.data?.hrv_source} · {d.data.hrv_source}{/if}</span>
-    <div class="flex">
-      <button type="button" aria-label="Previous day" class="w-11 h-11 border-0 bg-transparent text-text1 flex items-center justify-center cursor-pointer"
-        onclick={() => { endPickerValue = format(subDays(windowEnd, 1), 'yyyy-MM-dd'); dayIndex = 6; }}>
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m15 6-6 6 6 6"></path></svg>
-      </button>
-      <button type="button" aria-label="Next day" disabled={!canGoForward} class="w-11 h-11 border-0 bg-transparent flex items-center justify-center cursor-pointer {canGoForward ? 'text-text1' : 'text-text2/40 cursor-not-allowed'}"
-        onclick={() => { if (canGoForward) { endPickerValue = format(addDays(windowEnd, 1), 'yyyy-MM-dd'); dayIndex = 6; } }}>
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m9 6 6 6-6 6"></path></svg>
-      </button>
-    </div>
-  </div>
-
   {#if !isConnected}
     <EmptyState title="No Recovery Data" message="Connect WHOOP, Garmin, or Apple Health to see your recovery analysis." />
   {:else if !hasData}

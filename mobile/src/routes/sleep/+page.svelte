@@ -22,6 +22,7 @@
   import { addDays, format, parseISO, subDays } from "date-fns";
   import { calculateSleepScore, currentRecoveryState } from "$lib/utils/biometrics";
   import { onMount } from "svelte";
+  import { pageHeader, resetPageHeader } from '$lib/stores/pageHeader.svelte';
   import { page } from "$app/stores";
   import AddSleepModal from "$lib/components/AddSleepModal.svelte";
 
@@ -71,6 +72,16 @@
   const windowEnd = $derived(clampedEndDay);
   const rangeLabel = $derived(`${format(windowStart, "MMM d")} – ${format(windowEnd, "MMM d, yyyy")}`);
   const canGoForward = $derived(format(windowEnd, "yyyy-MM-dd") !== todayStr);
+
+  $effect(() => {
+    pageHeader.eyebrow = `${format(subDays(clampedEndDay, 1), 'EEE')} → ${format(clampedEndDay, 'EEE dd MMM')}`;
+    pageHeader.prev = () => { endPickerValue = format(subDays(windowEnd, 1), 'yyyy-MM-dd'); nightIndex = 6; };
+    pageHeader.next = () => { if (canGoForward) { endPickerValue = format(addDays(windowEnd, 1), 'yyyy-MM-dd'); nightIndex = 6; } };
+    pageHeader.canNext = canGoForward;
+    pageHeader.add = () => (addSleepOpen = true);
+    pageHeader.addLabel = 'Log sleep';
+    return resetPageHeader;
+  });
 
   // Map biometrics to nights array (filling in missing dates for the last 7 days)
   type NightMissing = {
@@ -474,23 +485,6 @@
 />
 
 <div class="flex flex-col gap-3.5">
-  <div class="flex items-center justify-between">
-    <span class="font-mono text-[11px] tracking-[0.14em] text-text2 uppercase">{format(subDays(clampedEndDay, 1), 'EEE')} → {format(clampedEndDay, 'EEE dd MMM')}</span>
-    <div class="flex items-center gap-1">
-      <button type="button" aria-label="Previous night" class="w-11 h-11 border-0 bg-transparent text-text1 flex items-center justify-center cursor-pointer"
-        onclick={() => { endPickerValue = format(subDays(windowEnd, 1), 'yyyy-MM-dd'); nightIndex = 6; }}>
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m15 6-6 6 6 6"></path></svg>
-      </button>
-      <button type="button" aria-label="Next night" disabled={!canGoForward} class="w-11 h-11 border-0 bg-transparent flex items-center justify-center {canGoForward ? 'text-text1 cursor-pointer' : 'text-text2/40 cursor-not-allowed'}"
-        onclick={() => { if (canGoForward) { endPickerValue = format(addDays(windowEnd, 1), 'yyyy-MM-dd'); nightIndex = 6; } }}>
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m9 6 6 6-6 6"></path></svg>
-      </button>
-      <button type="button" aria-label="Log sleep" onclick={() => (addSleepOpen = true)} class="w-11 h-11 rounded-[14px] border border-border bg-transparent text-text0 flex items-center justify-center cursor-pointer">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
-      </button>
-    </div>
-  </div>
-
   {#if !isConnected}
     <EmptyState title="No Sleep Data" message="Connect WHOOP, Garmin, or Apple Health to track your sleep architecture and recovery." icon="🌙" secondaryLabel="Log Sleep" onSecondaryAction={() => (addSleepOpen = true)} />
   {:else if !hasData}
