@@ -6,14 +6,10 @@
 
 <script lang="ts">
   import Card from "$lib/components/Card.svelte";
-  import MetricBadge from "$lib/components/MetricBadge.svelte";
   import Tag from "$lib/components/Tag.svelte";
-  import Pill from "$lib/components/Pill.svelte";
-  import RadialProgress from "$lib/components/RadialProgress.svelte";
   import EmptyState from "$lib/components/EmptyState.svelte";
-  import DatePicker from "$lib/components/DatePicker.svelte";
   import Modal from "$lib/components/Modal.svelte";
-  import TrendIndicator from "$lib/components/TrendIndicator.svelte";
+  import RadialProgress from "$lib/components/RadialProgress.svelte";
   import {
     boundedScoreCssColor,
     sleepDebtCssColor,
@@ -477,333 +473,110 @@
   onSaved={handleSleepSaved}
 />
 
-<div class="flex flex-col gap-3">
-  <div class="flex items-start justify-between">
-    <div>
-      <p class="text-xs text-text2 font-mono uppercase tracking-[0.1em]">
-        Nightly Analysis
-      </p>
-      <h1 class="text-[22px] font-bold tracking-[-0.02em]">Sleep</h1>
+<div class="flex flex-col gap-3.5">
+  <div class="flex items-center justify-between">
+    <span class="font-mono text-[11px] tracking-[0.14em] text-text2 uppercase">{format(subDays(clampedEndDay, 1), 'EEE')} → {format(clampedEndDay, 'EEE dd MMM')}</span>
+    <div class="flex items-center gap-1">
+      <button type="button" aria-label="Previous night" class="w-11 h-11 border-0 bg-transparent text-text1 flex items-center justify-center cursor-pointer"
+        onclick={() => { endPickerValue = format(subDays(windowEnd, 1), 'yyyy-MM-dd'); nightIndex = 6; }}>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m15 6-6 6 6 6"></path></svg>
+      </button>
+      <button type="button" aria-label="Next night" disabled={!canGoForward} class="w-11 h-11 border-0 bg-transparent flex items-center justify-center {canGoForward ? 'text-text1 cursor-pointer' : 'text-text2/40 cursor-not-allowed'}"
+        onclick={() => { if (canGoForward) { endPickerValue = format(addDays(windowEnd, 1), 'yyyy-MM-dd'); nightIndex = 6; } }}>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m9 6 6 6-6 6"></path></svg>
+      </button>
+      <button type="button" aria-label="Log sleep" onclick={() => (addSleepOpen = true)} class="w-11 h-11 rounded-[14px] border border-border bg-transparent text-text0 flex items-center justify-center cursor-pointer">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+      </button>
     </div>
-    <button
-      onclick={() => (addSleepOpen = true)}
-      class="w-8 h-8 flex items-center justify-center rounded-full bg-glass border border-border text-text2 hover:text-text0 hover:border-blue/50 transition-colors text-lg leading-none mt-1"
-      aria-label="Log sleep"
-    >+</button>
   </div>
 
   {#if !isConnected}
-    <EmptyState
-      title="No Sleep Data"
-      message="Connect WHOOP, Garmin, or Apple Health to track your sleep architecture and recovery."
-      icon="🌙"
-      secondaryLabel="Log Sleep"
-      onSecondaryAction={() => (addSleepOpen = true)}
-    />
+    <EmptyState title="No Sleep Data" message="Connect WHOOP, Garmin, or Apple Health to track your sleep architecture and recovery." icon="🌙" secondaryLabel="Log Sleep" onSecondaryAction={() => (addSleepOpen = true)} />
   {:else if !hasData}
-    <EmptyState
-      title="Waiting for Sleep Sync"
-      message="We'll analyze your sleep as soon as your device syncs with our servers."
-      icon="⏳"
-    />
+    <EmptyState title="Waiting for Sleep Sync" message="We'll analyze your sleep as soon as your device syncs with our servers." icon="⏳" />
+  {:else if !nightData}
+    <section class="bg-bg2 border border-dashed border-border rounded-[24px] p-6 text-center">
+      <p class="m-0 text-[14px] font-semibold mb-1">No sleep data for {n?.date}</p>
+      <p class="m-0 text-[12px] text-text2">We couldn't find a sleep record for this night.</p>
+    </section>
   {:else}
-    <!-- 7-day window selector -->
-    <div class="flex items-center justify-between gap-2">
-      <div class="flex items-center gap-1.5 shrink-0">
-        <button
-          type="button"
-          class="h-8 w-8 rounded-md border border-border bg-glass text-text0"
-          aria-label="Previous 7 days"
-          onclick={() => (endPickerValue = format(subDays(windowEnd, 1), "yyyy-MM-dd"))}
-        >
-          ←
-        </button>
-        <div class="w-[150px]">
-          <DatePicker
-            id="sleep-end"
-            bind:value={endPickerValue}
-            max={todayStr}
-            ariaLabel="Select end day"
-            buttonClass="h-8 px-2 pr-2 rounded-md border border-border bg-glass text-[12px] text-text0"
-          />
-        </div>
-        <button
-          type="button"
-          class="h-8 px-2.5 rounded-md border border-border bg-glass text-text0 text-[12px]"
-          aria-label="Jump to today"
-          onclick={() => {
-            endPickerValue = todayStr;
-            nightIndex = 6;
-          }}
-        >
-          Today
-        </button>
-        <button
-          type="button"
-          class="h-8 w-8 rounded-md border border-border bg-glass text-text0"
-          aria-label="Next 7 days"
-          disabled={!canGoForward}
-          style={!canGoForward ? "opacity: 0.4; cursor: not-allowed;" : ""}
-          onclick={() => {
-            if (!canGoForward) return;
-            endPickerValue = format(addDays(windowEnd, 1), "yyyy-MM-dd");
-          }}
-        >
-          →
-        </button>
+    {@const effPct = nightData.inBedRaw > 0 ? Math.round((nightData.durationRaw / nightData.inBedRaw) * 100) : null}
+    <!-- Score -->
+    <section aria-label="Sleep score" class="bg-bg2 border border-border rounded-[24px] px-5 py-[18px] flex gap-[18px] items-center">
+      <div class="relative w-[112px] h-[112px] shrink-0">
+        <svg width="112" height="112" viewBox="0 0 112 112" aria-hidden="true" class="block -rotate-90">
+          <circle cx="56" cy="56" r="48" fill="none" stroke="var(--border)" stroke-width="8"></circle>
+          <circle cx="56" cy="56" r="48" fill="none" stroke={scoreColor} stroke-width="8" stroke-linecap="round" stroke-dasharray="{(Math.min(nightData.score, 100) / 100) * 301.6} 302"></circle>
+        </svg>
+        <div class="absolute inset-0 flex items-center justify-center"><span class="font-display text-[42px] leading-none">{nightData.score}</span></div>
       </div>
-      <div class="text-[11px] text-text2 font-mono text-right">
-        {rangeLabel}
+      <dl class="m-0 flex-1 grid grid-cols-2 gap-3">
+        <div><dt class="text-[11px] text-text2">Asleep</dt><dd class="m-0 text-[17px] font-medium">{nightData.duration}</dd></div>
+        <div><dt class="text-[11px] text-text2">In bed</dt><dd class="m-0 text-[17px] font-medium">{nightData.inBed}</dd></div>
+        <div><dt class="text-[11px] text-text2">Efficiency</dt><dd class="m-0 text-[17px] font-medium">{effPct === null ? '--' : `${effPct}%`}</dd></div>
+        <div><dt class="text-[11px] text-text2">Debt</dt><dd class="m-0 text-[17px] font-medium" style="color: {sleepDebtCssColor(nightData.debt)}">{formatHoursMinutesFromMinutes(nightData.debt)}</dd></div>
+      </dl>
+    </section>
+
+    <!-- Stages -->
+    <section aria-label="Sleep stages" class="bg-bg2 border border-border rounded-[24px] px-[18px] py-4 flex flex-col gap-3">
+      <div class="flex justify-between items-baseline">
+        <h2 class="m-0 font-display font-normal text-[22px]">Stages</h2>
+        <span class="font-mono text-[11px] text-text2">{nightData.bedtime} → {nightData.wakeup}</span>
       </div>
-    </div>
-
-
-    <!-- Score card -->
-    {#if nightData}
-      <Card
-        style="background: var(--glass); border-color: var(--border);"
-      >
-        <div class="flex items-center gap-4">
-          <RadialProgress
-            value={nightData.score}
-            max={100}
-            size={72}
-            color={scoreColor}
-            label={nightData.score.toString()}
-            sub="SLEEP"
-          />
-          <div class="flex-1">
-            <div class="flex items-center gap-2 mb-1">
-              <span class="text-[18px] font-bold" class:text-text2={current.isStale && n.rawDate === todayStr}>{nightData.quality}</span>
-              <Tag color={scoreColor}
-                >{nightData.score >= 67
-                  ? "OPTIMAL"
-                  : nightData.score >= 34
-                    ? "MODERATE"
-                    : "POOR"}</Tag
-              >
-            </div>
-            {#if carryOverLabel}
-              <p class="text-[10px] text-text2 font-mono mb-1">{carryOverLabel}</p>
-            {/if}
-            {#if current.isStale && n.rawDate === todayStr}
-              <p class="text-[10px] text-text2 mb-1">
-                Last synced {current.ageHours != null ? Math.round(current.ageHours) : "—"}h ago — sync your device
-              </p>
-            {/if}
-            <p class="text-xs text-text1">{nightData.bedtime} → {nightData.wakeup}</p>
-            <div class="mt-1">
-              <p class={`text-[18px] font-bold ${getBoundedScoreColor(nightData.score)}`}>
-                {nightData.duration}
-                <span class="text-[11px] font-normal text-text2 uppercase tracking-wide ml-1">asleep</span>
-              </p>
-              <p class="text-[14px] font-medium text-text1">
-                {nightData.inBed}
-                <span class="text-[10px] font-normal text-text2 uppercase tracking-wide ml-1">in bed</span>
-              </p>
-            </div>
-          </div>
-        </div>
-      </Card>
-    {:else}
-      <Card style="border-style: dashed; opacity: 0.8;">
-        <div class="flex flex-col items-center justify-center py-6 text-center">
-          <span class="text-[32px] mb-2">🤷‍♂️</span>
-          <p class="text-[14px] font-bold mb-1">No data for {n.date}</p>
-          <p class="text-[11px] text-text2 max-w-[200px]">
-            We couldn't find any sleep records for this night. Make sure your
-            device synced.
-          </p>
-        </div>
-      </Card>
-    {/if}
-
-    {#if nightData}
-      <!-- Sleep metrics row.
-           HRV ms / RHR bpm are raw absolutes -> neutral with a colored z-score
-           arrow. Sleep debt has its own threshold rule (45/90 min). -->
-      <div class="grid grid-cols-3 gap-2">
-        <Card style="padding: 8px 10px;">
-          <div class="flex items-start justify-between gap-1">
-            <MetricBadge
-              label="HRV"
-              value={nightData.hrv}
-              unit="ms"
-              color={nightData.hrvZ === null ? 'var(--text2)' : zScoreCssColor(nightData.hrvZ)}
-              sub="Avg"
-            />
-            <TrendIndicator z={nightData.hrvZ} size={14} />
-          </div>
-        </Card>
-        <Card style="padding: 8px 10px;">
-          <div class="flex items-start justify-between gap-1">
-            <MetricBadge
-              label="RHR"
-              value={nightData.hr}
-              unit="bpm"
-              color={nightData.rhrZ === null ? 'var(--text2)' : zScoreCssColor(nightData.rhrZ, true)}
-              sub="Avg"
-            />
-            <TrendIndicator z={nightData.rhrZ} inverted size={14} />
-          </div>
-        </Card>
-        <Card style="padding: 8px 10px;">
-          <MetricBadge
-            label="Debt"
-            value={formatHoursMinutesFromMinutes(nightData.debt)}
-            color={sleepDebtCssColor(nightData.debt)}
-            sub="Debt"
-          />
-        </Card>
-      </div>
-
-      <!-- 7-Day Trend -->
-      <Card>
-        <div class="flex flex-wrap items-start justify-between gap-x-3 gap-y-1 mb-3">
-          <p class="text-[13px] font-semibold">7-Day Trend</p>
-          <span class="text-[10px] text-text2 font-mono text-right ml-auto max-w-full">
-            avg {avg7d === null ? "--" : `${avg7d}%`} · {nightData.score}% current
-          </span>
-        </div>
-        <div class="flex gap-2 h-[70px] mb-1 px-1">
-          {#each nights as nt, i (nt.rawDate)}
-            {@const c = getSleepColor(nt.score)}
-            <button
-              type="button"
-              class="flex-1 h-full flex flex-col items-center gap-1 cursor-pointer"
-              onclick={() => {
-                endPickerValue = nt.rawDate;
-                nightIndex = 6;
-              }}
-              aria-label={`Select ${nt.date}: ${nt.score}%`}
-            >
-              <div class="h-[50px] w-full flex items-end">
-                <div
-                  class="w-full rounded-t-sm transition-all duration-300"
-                  style="background: {c}; opacity: {i === nightIndex ? 1 : 0.35}; height: {Math.max(4, (nt.score / 100) * 50)}px;"
-                ></div>
-              </div>
-              <span class="text-[9px] font-mono leading-none {i === nightIndex ? 'text-text0' : 'text-text2'}">{nt.day}</span>
-            </button>
+      {#if nightData.stagesAvailable}
+        <div aria-hidden="true" class="flex gap-[3px] h-2.5">
+          {#each [['deep', nightData.deep], ['rem', nightData.rem], ['light', nightData.light], ['awake', nightData.awake]] as [k, v] (k)}
+            <span class="rounded-[3px]" style="flex: {Math.max(Number(v), 1)} 1 0; background: {stageColors[k as string]}"></span>
           {/each}
         </div>
-      </Card>
-
-      <!-- Stage breakdown -->
-      <Card>
-        <div class="flex items-center justify-between mb-3">
-          <p class="text-[13px] font-semibold">Sleep Stages</p>
-          {#if !nightData.stagesAvailable}
-            <span class="rounded-full border border-amber/30 bg-amber-dim px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider text-amber">
-              Missing
-            </span>
-          {/if}
+        <div class="grid grid-cols-4 gap-2">
+          {#each [
+            { key: 'awake', name: 'Awake', pct: nightData.awake, mins: nightData.awakeMins },
+            { key: 'light', name: 'Light', pct: nightData.light, mins: Math.round((nightData.inBedRaw * nightData.light) / 100) },
+            { key: 'deep', name: 'Deep', pct: nightData.deep, mins: Math.round((nightData.inBedRaw * nightData.deep) / 100) },
+            { key: 'rem', name: 'REM', pct: nightData.rem, mins: Math.round((nightData.inBedRaw * nightData.rem) / 100) }
+          ] as s (s.key)}
+            <div class="flex flex-col gap-[3px]">
+              <span class="flex items-center gap-1.5 text-[11px] text-text2"><span aria-hidden="true" class="w-2 h-2 rounded-[2px]" style="background: {stageColors[s.key]}"></span>{s.name}</span>
+              <span class="text-[15px] font-medium">{formatHoursMinutesFromMinutes(s.mins)}</span>
+              <span class="font-mono text-[11px] text-text2">{Math.round(s.pct)}%</span>
+            </div>
+          {/each}
         </div>
-
-        {#if nightData.stagesAvailable}
-          <!-- Stacked bar -->
-          <div class="flex h-5 rounded-md overflow-hidden gap-0.5 mb-3.5">
-            {#each [["deep", nightData.deep], ["rem", nightData.rem], ["light", nightData.light], ["awake", nightData.awake]] as [k, v] (k)}
-              <div
-                style="flex: {v}; background: {stageColors[k as string]}"
-              ></div>
-            {/each}
-          </div>
-          <div class="flex flex-col gap-2">
-            {#each [{ key: "deep", label: "Deep Sleep", pct: nightData.deep, mins: Math.round((nightData.inBedRaw * nightData.deep) / 100), ideal: "15–25%", desc: "Physical restoration, immune function, memory consolidation" }, { key: "rem", label: "REM Sleep", pct: nightData.rem, mins: Math.round((nightData.inBedRaw * nightData.rem) / 100), ideal: "20–25%", desc: "Cognitive restoration, emotional processing, learning" }, { key: "light", label: "Light Sleep", pct: nightData.light, mins: Math.round((nightData.inBedRaw * nightData.light) / 100), ideal: "45–55%", desc: "Transition stage, memory consolidation support" }, { key: "awake", label: "Awake", pct: nightData.awake, mins: nightData.awakeMins, ideal: "< 10%", desc: "Brief wakings during night; normal up to 10%" }] as s (s.key)}
-              <div
-                class="flex gap-2.5 py-2 {s.key !== 'awake'
-                  ? 'border-b border-border'
-                  : ''}"
-              >
-                <div
-                  class="w-2.5 h-2.5 rounded-sm mt-0.5 shrink-0"
-                  style="background: {stageColors[s.key]}"
-                ></div>
-                <div class="flex-1">
-                  <div class="flex justify-between mb-0.5">
-                    <span class="text-[12px] font-semibold">{s.label}</span>
-                    <div class="flex gap-2.5 items-center">
-                      <span class="text-[10px] text-text2 font-mono"
-                        >goal {s.ideal}</span
-                      >
-                      <span
-                        class="text-[12px] font-bold font-mono"
-                        style="color: {stageColors[s.key]}"
-                      >
-                        {s.pct}%
-                        <span class="text-[9px] font-normal text-text2"
-                          >{formatHoursMinutesFromMinutes(s.mins)}</span
-                        >
-                      </span>
-                    </div>
-                  </div>
-                  <p class="text-[10px] text-text2 leading-tight">{s.desc}</p>
-                </div>
-              </div>
-            {/each}
-          </div>
-        {:else}
-          <div class="rounded-xl border border-amber/30 bg-amber-dim p-3">
-            <p class="text-[11px] font-mono uppercase tracking-wider text-amber">Stage data unavailable</p>
-            <p class="mt-1 text-xs leading-relaxed text-text1">
-              This source provided sleep duration and score inputs, but no REM/deep/light/awake breakdown. Astraphe is not treating missing stages as 0%.
-            </p>
-          </div>
-        {/if}
-      </Card>
-      
-      <!-- Individual Sleep Sessions (Naps) -->
-      {#if nightData.periods && nightData.periods.length > 0}
-        <Card>
-          <p class="text-[13px] font-semibold mb-3">Sleep Sessions</p>
-          <div class="flex flex-col gap-2">
-            {#each nightData.periods as period (period?.id ?? period?.started_at ?? period?.ended_at ?? period?.label)}
-              <button 
-                type="button"
-                class="flex items-center justify-between p-2.5 rounded-lg bg-glass border border-transparent hover:border-border transition-all active:scale-[0.98] text-left w-full"
-                onclick={() => openPeriodDetails(period)}
-              >
-                <div class="flex flex-col gap-0.5">
-                  <div class="flex items-center gap-1.5">
-                    <span class="text-[12px] font-bold">{period.label}</span>
-                    {#if period.score}
-                      <Tag color={getSleepColor(period.score)}>{period.score}%</Tag>
-                    {/if}
-                  </div>
-                  <span class="text-[10px] text-text2 font-mono uppercase tracking-wider">{period.timeRange}</span>
-                </div>
-                <div class="text-right">
-                  <span class="text-[13px] font-bold block">{period.duration}</span>
-                  <span class="text-[9px] text-text2 uppercase tracking-widest font-medium">Asleep</span>
-                </div>
-              </button>
-            {/each}
-          </div>
-        </Card>
+      {:else}
+        <p class="m-0 text-[13px] leading-[1.45] text-text2">This source gave duration and score but no REM/deep/light/awake breakdown.</p>
       {/if}
+    </section>
 
-      <!-- Contextual Insight -->
-      <Card
-        class="!bg-bg1 !border-dashed"
-      >
-        <p class="text-[13px] font-semibold mb-1.5">Sleep Analysis</p>
-        {#if analysisLoading && analysisText === null}
-          <p class="text-xs text-text2 animate-pulse">Analyzing...</p>
-        {:else}
-          <p class="text-xs text-text1 leading-relaxed">
-            {analysisText ??
-              (!nightData.stagesAvailable
-                ? "Sleep stage data is unavailable for this night, so analysis is based on duration, sleep debt, HRV, and resting HR instead of REM/deep/light breakdowns."
-                : nightData.deep < 15
-                  ? "Your deep sleep is below your baseline. Focus on reducing screen time and cooling your room tonight."
-                  : nightData.rem < 20
-                    ? "REM sleep is slightly low. This might affect cognitive performance today."
-                    : "Your sleep architecture looks balanced. Recovery is on track.")}
-          </p>
-        {/if}
-      </Card>
+    {#if nightData.periods && nightData.periods.length > 1}
+      <section aria-label="Sleep sessions" class="flex flex-col gap-2">
+        <span class="font-mono text-[11px] tracking-[0.14em] text-text2">SESSIONS</span>
+        {#each nightData.periods as period (period?.id ?? period?.started_at ?? period?.ended_at ?? period?.label)}
+          <button type="button" class="flex items-center justify-between px-4 py-3 rounded-[18px] bg-bg1 border border-border text-left w-full cursor-pointer" onclick={() => openPeriodDetails(period)}>
+            <span class="flex flex-col gap-0.5"><span class="text-[14px] font-medium">{period.label}</span><span class="font-mono text-[11px] text-text2">{period.timeRange}</span></span>
+            <span class="font-mono text-[12px] text-text1">{period.duration}</span>
+          </button>
+        {/each}
+      </section>
     {/if}
+
+    <div class="flex gap-3 items-start px-4 py-3.5 rounded-[18px] bg-bg1 border border-dashed border-border">
+      <span class="font-mono text-[10px] tracking-[0.12em] text-blue pt-0.5">TIP</span>
+      <span class="text-[13px] leading-[1.45] text-text1">
+        {#if analysisLoading && analysisText === null}Analyzing…{:else}
+          {analysisText ??
+            (!nightData.stagesAvailable
+              ? 'Stage data is unavailable for this night, so this is based on duration, debt, HRV and resting HR.'
+              : nightData.deep < 15
+                ? 'Deep sleep is below your baseline. Cool the room and cut screens before bed tonight.'
+                : nightData.rem < 20
+                  ? 'REM is slightly low, which can affect cognitive performance today.'
+                  : 'Your sleep architecture looks balanced. Recovery is on track.')}
+        {/if}
+      </span>
+    </div>
   {/if}
 </div>
 
