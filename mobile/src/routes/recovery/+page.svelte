@@ -307,7 +307,11 @@
     if (!isFiniteNumber(base)) return null;
     return Math.round(base * 10) / 10;
   });
+  // Garmin reports skin temp only as a deviation from the athlete's own baseline
+  // (`skin_temp_deviation_c`), never an absolute reading, so prefer it when present.
   const bodyTempCDelta = $derived.by(() => {
+    const deviation = Number(headlineRow?.skin_temp_deviation_c);
+    if (headlineRow?.skin_temp_deviation_c != null && Number.isFinite(deviation)) return deviation;
     if (!isFiniteNumber(bodyTempCToday) || !isFiniteNumber(bodyTempCBaseline)) return null;
     return bodyTempCToday - bodyTempCBaseline;
   });

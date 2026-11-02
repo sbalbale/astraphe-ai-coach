@@ -880,10 +880,15 @@ def _daily_biometrics_from_garmin(
 
     resting_hr = _round_int((heart_rates or {}).get("restingHeartRate"))
     # 0% is not a physiological SpO2 reading, so a 0 (or negative / non-numeric / absent)
-    # avgSpO2 is treated as missing rather than stored -- otherwise it would be saved as
+    # SpO2 is treated as missing rather than stored -- otherwise it would be saved as
     # real data and could win source-priority over a valid value from another source.
+    # The live get_sleep_data() payload names it averageSpO2Value; avgSpO2 is the key the
+    # garminconnect typed model uses, so keep it as a fallback.
+    spo2_source = sleep_dto.get("averageSpO2Value")
+    if spo2_source is None:
+        spo2_source = sleep_dto.get("avgSpO2")
     try:
-        spo2_raw = float(sleep_dto.get("avgSpO2"))
+        spo2_raw = float(spo2_source)
     except (TypeError, ValueError):
         spo2_raw = None
     spo2_pct = spo2_raw if spo2_raw and spo2_raw > 0 else None
