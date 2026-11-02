@@ -211,7 +211,7 @@
             {#if w.planned > 0}
               <span aria-hidden="true" class="absolute bottom-0 left-0 right-0 rounded border border-dashed border-text2" style="height: {Math.max(3, Math.round((w.planned / maxTss) * 72))}px"></span>
             {/if}
-            <span aria-hidden="true" class="absolute bottom-0 left-0 right-0 rounded" style="height: {Math.max(2, Math.round((w.tss / maxTss) * 72))}px; background: {i === activeWeek ? 'var(--blue)' : i === weeks.length - 1 ? 'var(--blue)' : 'var(--bg3)'}; opacity: {i === activeWeek || i === weeks.length - 1 ? 1 : 0.9}"></span>
+            <span aria-hidden="true" class="absolute bottom-0 left-0 right-0 rounded" style="height: {Math.max(2, Math.round((w.tss / maxTss) * 72))}px; background: {i === activeWeek ? 'var(--blue)' : 'var(--bg3)'}"></span>
           </button>
         {/each}
       </div>
