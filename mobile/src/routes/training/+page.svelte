@@ -16,8 +16,6 @@
   import DonutChart from '$lib/components/charts/DonutChart.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import { confirm } from '$lib/confirm';
-  import RouteCard from '$lib/components/workout/RouteCard.svelte';
-  import PowerHrChart from '$lib/components/workout/PowerHrChart.svelte';
   import { pageHeader, resetPageHeader } from '$lib/stores/pageHeader.svelte';
   import DatePicker from '$lib/components/DatePicker.svelte';
   import { analysisNavEpoch } from '$lib/analysisNavEpoch.svelte';
@@ -827,10 +825,19 @@
             {/if}
           </header>
 
-          {#if detailLoading || (detailHydrating && !detailStreams)}
-            <div class="h-[150px] rounded-[20px] bg-bg2 animate-pulse"></div>
+          {#if detailLoading}
+            <div class="space-y-3">
+              {#each [150, 120] as h (h)}<div class="rounded-[20px] bg-bg2 animate-pulse" style="height: {h}px;"></div>{/each}
+            </div>
           {:else if selLatlng && selLatlng.length > 1}
-            <RouteCard latlng={selLatlng} />
+            <section aria-label="Route" class="bg-bg2 border border-border rounded-[24px] p-3 min-h-[300px]">
+              <GpsTrace
+                latlng={selLatlng}
+                heartrate={detailStreams?.time_series?.heartrate}
+                time={detailStreams?.time_series?.time}
+                zones={mergedHrZoneDefs}
+              />
+            </section>
           {/if}
 
           <dl class="m-0 grid grid-cols-3 gap-2">
@@ -849,31 +856,70 @@
             {/each}
           </dl>
 
-          {#if detailStreams}
-            <PowerHrChart streams={detailStreams} durationLabel={`${Math.floor(selSecs / 3600) > 0 ? Math.floor(selSecs / 3600) + 'h ' : ''}${Math.floor((selSecs % 3600) / 60)}m`} />
-          {:else if hasActivityDetailSource(sel) && !detailLoading && !detailHydrating}
-            <p class="m-0 text-[13px] text-text2 px-1">No stream data stored for this workout.{#if showRepullDataButton} Use “Repull data” in the menu to fetch it.{/if}</p>
-          {/if}
-
-          {#if splitRows.length >= 2}
-            <section aria-label="Intervals" class="bg-bg2 border border-border rounded-[24px] px-[18px] py-4 flex flex-col gap-1">
-              <h2 class="m-0 mb-1.5 font-display font-normal text-[22px]">{sel.sport === 'bike' || sel.sport === 'run' ? 'Laps' : 'Intervals'}</h2>
-              <div class="grid grid-cols-[1.4fr_1fr_1fr] gap-2 py-1.5 font-mono text-[10px] tracking-[0.08em] text-text2 border-b border-border">
-                <span>BLOCK</span><span>AVG</span><span>HR</span>
-              </div>
-              {#each showAllSplits ? splitRows : splitRows.slice(0, 8) as sp (sp.split_number)}
-                <div class="grid grid-cols-[1.4fr_1fr_1fr] gap-2 py-2.5 text-[13px] border-b border-border/60">
-                  <span>{splitBlockLabel(sp)}</span>
-                  <span class="font-mono">{splitAvgLabel(sp, sel.sport)}</span>
-                  <span class="font-mono text-text1">{sp.average_heartrate ? Math.round(sp.average_heartrate) : '--'}</span>
-                </div>
-              {/each}
-              {#if splitRows.length > 8}
-                <button type="button" class="mt-1 h-10 border-0 bg-transparent text-blue text-[13px] text-left cursor-pointer p-0" onclick={() => (showAllSplits = !showAllSplits)}>
-                  {showAllSplits ? 'Show fewer' : `Show all ${splitRows.length}`}
-                </button>
+          {#if hasActivityDetailSource(sel)}
+            {#if detailError}
+              <p class="m-0 text-[11px] text-red font-mono">{detailError}</p>
+            {:else if !detailLoading}
+              {#if sel.strava_activity_id && sel.strava_streams_fetched === false && !detailHydrating && !detailStreams}
+                <p class="m-0 text-[13px] text-text2 leading-relaxed px-1">
+                  Strava is linked, but stream data has not been imported for this workout yet. Reconnect Strava or run the Strava backfill script to load charts and GPS.
+                </p>
+              {:else if !detailStreams && !detailHydrating}
+                <p class="m-0 text-[13px] text-text2 px-1">No stream data stored for this workout.{#if showRepullDataButton} Use “Repull data” in the menu to fetch it.{/if}</p>
               {/if}
-            </section>
+
+              {#if detailLaps.length >= 2}
+                <section aria-label="Laps" class="bg-bg2 border border-border rounded-[24px] p-[18px]">
+                  <LapStrip laps={detailLaps} sport={sel.sport} zones={mergedHrZoneDefs} measurementUnits={measurementUnits} />
+                </section>
+              {/if}
+
+              {#if detailMissingPaceStream}
+                <p class="m-0 text-[13px] text-text2 leading-relaxed px-1">
+                  Pace stream unavailable for this activity (heart rate is still shown). Try refreshing imported data if streams were imported incorrectly.
+                </p>
+              {/if}
+
+              {#if detailHydrating && !detailStreams}
+                <div class="space-y-2">
+                  <div class="rounded-[24px] bg-bg2 animate-pulse" style="height: 150px;"></div>
+                  <p class="m-0 text-[11px] text-text2 font-mono animate-pulse px-1">Loading stream data…</p>
+                </div>
+              {:else if detailStreams}
+                <section aria-label="Power and heart rate" class="bg-bg2 border border-border rounded-[24px] p-[18px] min-h-[260px]">
+                  <StreamCharts
+                    streams={detailStreams}
+                    laps={detailLaps}
+                    sport={sel.sport}
+                    zones={mergedHrZoneDefs}
+                    measurementUnits={measurementUnits}
+                  />
+                </section>
+              {/if}
+
+              {#if showLapSplitCharts}
+                <section aria-label="Split charts" class="bg-bg2 border border-border rounded-[24px] p-[18px]">
+                  <SplitCharts
+                    splits={detailSplits.splits}
+                    sport={sel.sport}
+                    zones={mergedHrZoneDefs}
+                    measurementUnits={measurementUnits}
+                    source={detailSplits.source}
+                  />
+                </section>
+              {/if}
+
+              {#if showSplitsTable}
+                <section aria-label="Intervals" class="bg-bg2 border border-border rounded-[24px] p-[18px]">
+                  <IntervalsTable
+                    splits={detailSplits.splits}
+                    sport={sel.sport}
+                    source={detailSplits.source}
+                    measurementUnits={measurementUnits}
+                  />
+                </section>
+              {/if}
+            {/if}
           {/if}
 
           <section aria-label="Heart-rate zones" class="bg-bg2 border border-border rounded-[24px] px-[18px] py-4 flex flex-col gap-2.5">
@@ -888,6 +934,19 @@
               <div class="flex justify-between font-mono text-[11px] text-text1">
                 {#each zp as p, i (i)}
                   <span>Z{i + 1} {Math.round(((selSecs * (p ?? 0)) / 100) / 60)}m</span>
+                {/each}
+              </div>
+              <div class="mt-2 flex w-full min-w-0 flex-col gap-2 border-t border-border pt-3">
+                {#each getHrZonePctsTopDown(sel) as pct, topIdx (topIdx)}
+                  {@const zone = 5 - topIdx}
+                  {@const zDef = mergedHrZoneDefs.find((d) => d.zone === zone)}
+                  {@const zn = canonicalHrZoneShortName(zone) || zDef?.name}
+                  <div class="grid grid-cols-[14px_1fr_auto_auto] items-center gap-2.5 text-[13px]">
+                    <span aria-hidden="true" class="h-2.5 w-2.5 rounded-[3px]" style="background: {HR_ZONE_HEX[zone]}"></span>
+                    <span class="min-w-0 truncate">Z{zone}{#if zn} · {zn}{/if} <span class="font-mono text-[11px] text-text2">{formatZoneBpmRange(zDef)}</span></span>
+                    <span class="font-mono text-xs text-text2 tabular-nums">{pct == null ? '--' : `${Math.round(pct)}%`}</span>
+                    <span class="w-12 text-right font-mono text-xs tabular-nums">{pct == null ? '--' : formatMMSS((selSecs * pct) / 100)}</span>
+                  </div>
                 {/each}
               </div>
             {:else}
