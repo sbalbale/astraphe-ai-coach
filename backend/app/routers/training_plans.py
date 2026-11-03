@@ -33,9 +33,9 @@ def _normalize_plan_sport(raw: object) -> str:
     return s
 
 
-class SubIntervalPayload(BaseModel):
+class SubIntervalPayload(BaseModel):  # minutes may be decimals (1:30 = 1.5)
     name: str = Field(description="'Work', 'Recovery', etc.")
-    duration_minutes: int
+    duration_minutes: float
     target_power_percent_ftp: Optional[int] = None
     target_hr_zone: Optional[int] = None
     description: Optional[str] = None
@@ -43,7 +43,7 @@ class SubIntervalPayload(BaseModel):
 
 class IntervalPayload(BaseModel):
     name: str
-    duration_minutes: int = Field(..., ge=1, le=600)
+    duration_minutes: float = Field(..., gt=0, le=600)
     target_power_percent_ftp: Optional[int] = Field(default=None, ge=0, le=300)
     target_hr_zone: Optional[int] = Field(default=None, ge=0, le=8)
     description: Optional[str] = None
