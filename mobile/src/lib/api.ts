@@ -536,6 +536,29 @@ export const api = {
     return [];
   },
 
+  /**
+   * Reads a PDF, Word (.docx), Excel or CSV file on the server and returns its text, which
+   * the chat sends back with the message. Throws with the server's reason (e.g. scanned
+   * PDF, old .doc) so the composer can show it.
+   */
+  async uploadCoachDocument(file: File): Promise<{ filename: string; content: string; chars: number }> {
+    const headers = await getAuthHeaders();
+    const form = new FormData();
+    form.append('file', file, file.name);
+    const res = await fetch(`${API_URL}/v1/coach/upload-document`, { method: 'POST', headers, body: form });
+    if (!res.ok) {
+      let detail = `Couldn't read ${file.name}.`;
+      try {
+        const body = (await res.json()) as { detail?: unknown };
+        if (typeof body.detail === 'string') detail = body.detail;
+      } catch {
+        /* keep the generic message */
+      }
+      throw new Error(detail);
+    }
+    return await res.json();
+  },
+
   async uploadCoachImage(file: File, conversationId: string) {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user?.id) throw new Error('Not signed in');
@@ -569,6 +592,8 @@ export const api = {
     conversation_id?: string | null;
     image_urls?: string[] | null;
     document_contents?: string[] | null;
+    /** Documents parsed by uploadCoachDocument(), sent back with their names. */
+    documents?: { name: string; content: string }[] | null;
   }): Promise<{ status: string; conversation_id: string }> {
     const headers = await getAuthHeaders({ 'Content-Type': 'application/json' });
     const response = await fetch(`${API_URL}/v1/coach/message/async`, {
@@ -580,6 +605,7 @@ export const api = {
         conversation_id: params.conversation_id ?? null,
         image_urls: params.image_urls ?? null,
         document_contents: params.document_contents ?? null,
+        documents: params.documents?.length ? params.documents : null,
         timezone_offset_min: getUserTimezoneOffsetMin()
       })
     });

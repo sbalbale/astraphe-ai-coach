@@ -26,7 +26,10 @@ from app.dependencies import (
     UserConfig,
 )
 
-_ALLOWED_DOC_EXTENSIONS = {".pdf", ".csv", ".xlsx", ".xls"}
+_ALLOWED_DOC_EXTENSIONS = {".pdf", ".csv", ".xlsx", ".xls", ".docx"}
+# Text kept per attached document (parsers stop at the same size), and documents per message.
+_MAX_DOC_CHARS = 30000
+_MAX_DOCS_PER_MESSAGE = 3
 _MAX_DOC_BYTES = 10 * 1024 * 1024  # 10 MB
 _stream_bg_tasks: set[asyncio.Task] = set()
 
@@ -59,11 +62,29 @@ async def _run_conversation_title(
         pass
 
 
+class ChatDocument(BaseModel):
+    """A document the client parsed via /upload-document and attaches to a message."""
+    name: str
+    content: str
+
+    @field_validator("name")
+    @classmethod
+    def clean_name(cls, v: str) -> str:
+        return (v or "document").strip()[:200] or "document"
+
+    @field_validator("content")
+    @classmethod
+    def cap_content(cls, v: str) -> str:
+        return (v or "")[:_MAX_DOC_CHARS]
+
+
 class ChatMessage(BaseModel):
     conversation_id: Optional[str] = None
     message: str
     recent_tss: Optional[float] = 0.0
     image_urls: Optional[List[str]] = None
+    documents: Optional[List[ChatDocument]] = None
+    # Legacy: text only, no file names.
     document_contents: Optional[List[str]] = None
     timezone_offset_min: Optional[int] = None
 
@@ -79,9 +100,36 @@ class ChatMessage(BaseModel):
     def validate_document_contents(cls, v: Optional[List[str]]) -> Optional[List[str]]:
         if v is None:
             return v
-        if len(v) > 3:
+        if len(v) > _MAX_DOCS_PER_MESSAGE:
             raise ValueError("Max 3 documents per message")
-        return [c[:10000] for c in v]
+        return [c[:_MAX_DOC_CHARS] for c in v]
+
+    @field_validator("documents")
+    @classmethod
+    def validate_documents(cls, v: Optional[List["ChatDocument"]]) -> Optional[List["ChatDocument"]]:
+        if v is not None and len(v) > _MAX_DOCS_PER_MESSAGE:
+            raise ValueError("Max 3 documents per message")
+        return v
+
+
+def _message_documents(payload: "ChatMessage") -> list[dict]:
+    """Attached documents as [{name, kind, content}] (new `documents` plus legacy `document_contents`)."""
+    docs: list[dict] = []
+    for d in payload.documents or []:
+        if d.content.strip():
+            docs.append({"name": d.name, "kind": Path(d.name).suffix.lower().lstrip(".") or "file", "content": d.content})
+    for i, content in enumerate(payload.document_contents or [], 1):
+        if (content or "").strip():
+            docs.append({"name": f"Document {i}", "kind": "file", "content": content})
+    return docs[:_MAX_DOCS_PER_MESSAGE]
+
+
+def _message_with_documents(message: str, docs: list[dict]) -> str:
+    """What the model sees for this turn: each document's text, then the athlete's message."""
+    if not docs:
+        return message
+    parts = [f"[ATTACHED DOCUMENT: {d['name']}]\n{d['content']}" for d in docs]
+    return "\n\n".join(parts) + "\n\n[ATHLETE MESSAGE]\n" + message
 
     @field_validator("timezone_offset_min")
     @classmethod
@@ -193,17 +241,30 @@ def _ai_message_writer(db):
     return get_admin_db()
 
 
-def _insert_message(db, athlete_id: str, conversation_id: str, role: str, content: str, image_urls: Optional[List[str]] = None):
+def _insert_message(
+    db,
+    athlete_id: str,
+    conversation_id: str,
+    role: str,
+    content: str,
+    image_urls: Optional[List[str]] = None,
+    documents: Optional[list[dict]] = None,
+):
     writer = db if role == "user" else _ai_message_writer(db)
-    writer.table("coach_messages").insert({
+    row = {
         "athlete_id": athlete_id,
         "conversation_id": conversation_id,
         "role": role,
         "content": content,
         "image_urls": image_urls or [],
-    }).execute()
+    }
+    if documents:
+        # Kept with the message so later turns (and the chat after a reload) still have them.
+        row["attachments"] = documents
+    writer.table("coach_messages").insert(row).execute()
     if role == "user":
-        _maybe_set_conversation_title(db, athlete_id, conversation_id, _generate_conversation_title(content, image_urls=image_urls))
+        title_seed = content if (content or "").strip() or not documents else documents[0]["name"]
+        _maybe_set_conversation_title(db, athlete_id, conversation_id, _generate_conversation_title(title_seed, image_urls=image_urls))
     _touch_conversation(db, athlete_id, conversation_id)
 
 from app.services.tiers import has_premium_access
@@ -326,7 +387,7 @@ def get_conversation_messages(
     )
     res = (
         db.table("coach_messages")
-        .select("id,role,content,image_urls,created_at")
+        .select("id,role,content,image_urls,attachments,created_at")
         .eq("athlete_id", athlete_id)
         .eq("conversation_id", conversation_id)
         .order("created_at")
@@ -335,6 +396,12 @@ def get_conversation_messages(
     )
     messages = res.data or []
     for m in messages:
+        # The client only shows a chip per document; the text stays server-side.
+        m["attachments"] = [
+            {"name": a.get("name") or "document", "kind": a.get("kind") or "file"}
+            for a in (m.get("attachments") or [])
+            if isinstance(a, dict)
+        ]
         if m.get("role") == "ai":
             m["content"] = _strip_internal_reasoning(str(m.get("content") or ""))
     return {"status": "success", "messages": messages}
@@ -375,14 +442,16 @@ async def upload_document(
     db = Depends(get_user_db),
 ):
     """
-    Parse an uploaded PDF, CSV, or Excel file and return the extracted text.
-    The frontend should include this text in the next message's document_contents field.
+    Parse an uploaded PDF, Word (.docx), CSV or Excel file and return the extracted text.
+    The client sends it back with the next message as `documents: [{name, content}]`.
     """
     _require_premium(config)
     filename = file.filename or "upload"
     ext = Path(filename).suffix.lower()
     if ext not in _ALLOWED_DOC_EXTENSIONS:
-        raise HTTPException(status_code=415, detail=f"Unsupported file type '{ext}'. Allowed: {', '.join(_ALLOWED_DOC_EXTENSIONS)}")
+        if ext == ".doc":
+            raise HTTPException(status_code=415, detail="Old Word (.doc) files aren't supported. Save it as .docx or PDF and try again.")
+        raise HTTPException(status_code=415, detail=f"Unsupported file type '{ext}'. Use a PDF, Word (.docx), Excel or CSV file.")
 
     # Reject oversized uploads before buffering them: check the declared length, then
     # read at most one byte past the cap.
@@ -401,10 +470,10 @@ async def upload_document(
         text = await asyncio.to_thread(parse_document, file_bytes, filename)
     except Exception as e:
         print(f"[coach.upload] parse failed file={filename!r}: {e!r}")
-        raise HTTPException(status_code=422, detail="Couldn't read this document. Try a PDF, CSV or Excel file.")
+        raise HTTPException(status_code=422, detail="Couldn't read this document. Try a PDF, Word (.docx), Excel or CSV file.")
 
     if not (text or "").strip():
-        raise HTTPException(status_code=422, detail="No text content could be extracted from this document.")
+        raise HTTPException(status_code=422, detail="No text could be read from this document. If it's a scanned PDF, try a photo of the page instead.")
 
     return {
         "status": "success",
@@ -607,18 +676,13 @@ async def submit_coach_message(
     _require_premium(config)
     _require_own_conversation(db, athlete_id, payload.conversation_id)
     conversation_id = payload.conversation_id or _create_conversation(db, athlete_id, title=None)
-    _insert_message(db, athlete_id, conversation_id, role="user", content=payload.message, image_urls=payload.image_urls)
+    docs = _message_documents(payload)
+    _insert_message(db, athlete_id, conversation_id, role="user", content=payload.message, image_urls=payload.image_urls, documents=docs)
     # Clear the previous reply's steps before returning, so the first progress poll
     # never shows them.
     await coach_progress.reset(athlete_id, conversation_id)
 
-    effective_message = payload.message
-    if payload.document_contents:
-        doc_parts = [
-            f"[ATTACHED DOCUMENT {i}]\n{content}"
-            for i, content in enumerate(payload.document_contents, 1)
-        ]
-        effective_message = "\n\n".join(doc_parts) + "\n\n[ATHLETE MESSAGE]\n" + payload.message
+    effective_message = _message_with_documents(payload.message, docs)
 
     background_tasks.add_task(
         _run_coach_response_and_notify,
@@ -651,16 +715,11 @@ async def chat_with_coach(
     _require_own_conversation(db, athlete_id, payload.conversation_id)
     try:
         conversation_id = payload.conversation_id or _create_conversation(db, athlete_id, title=None)
-        _insert_message(db, athlete_id, conversation_id, role="user", content=payload.message, image_urls=payload.image_urls)
+        docs = _message_documents(payload)
+        _insert_message(db, athlete_id, conversation_id, role="user", content=payload.message, image_urls=payload.image_urls, documents=docs)
 
         # Prepend any uploaded document content to the effective message for the AI.
-        effective_message = payload.message
-        if payload.document_contents:
-            doc_parts = [
-                f"[ATTACHED DOCUMENT {i}]\n{content}"
-                for i, content in enumerate(payload.document_contents, 1)
-            ]
-            effective_message = "\n\n".join(doc_parts) + "\n\n[ATHLETE MESSAGE]\n" + payload.message
+        effective_message = _message_with_documents(payload.message, docs)
 
         coach_reply, coach_sources = await asyncio.to_thread(
             get_coach_response,
@@ -811,6 +870,7 @@ async def stream_chat_with_coach(
 
         yield f"data: {json.dumps({'conversation_id': conversation_id, 'status': 'started'})}\n\n"
 
+        docs = _message_documents(payload)
         await asyncio.to_thread(
             _insert_message,
             db,
@@ -819,15 +879,10 @@ async def stream_chat_with_coach(
             "user",
             payload.message,
             payload.image_urls,
+            docs,
         )
 
-        effective_message = payload.message
-        if payload.document_contents:
-            doc_parts = [
-                f"[ATTACHED DOCUMENT {i}]\n{content}"
-                for i, content in enumerate(payload.document_contents, 1)
-            ]
-            effective_message = "\n\n".join(doc_parts) + "\n\n[ATHLETE MESSAGE]\n" + payload.message
+        effective_message = _message_with_documents(payload.message, docs)
 
         ai_full = ""
         ai_sources: list = []

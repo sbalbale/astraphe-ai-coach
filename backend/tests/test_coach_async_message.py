@@ -51,7 +51,7 @@ def test_submit_coach_message_with_document_contents_builds_effective_message(co
             json={"message": "Summarize this", "document_contents": ["Doc body text"]},
         )
     assert res.status_code == 200
-    assert "[ATTACHED DOCUMENT 1]" in captured["effective_message"]
+    assert "[ATTACHED DOCUMENT: Document 1]" in captured["effective_message"]
     assert "Doc body text" in captured["effective_message"]
     assert "[ATHLETE MESSAGE]\nSummarize this" in captured["effective_message"]
 
