@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 import re
 import string
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from google import genai
@@ -17,6 +17,7 @@ from supabase import Client
 from app.config import settings
 from app.services import gemini_quota
 from app.services.llm_provider import get_llm_client
+from app.services.time_utils import coerce_timezone_offset_min, local_datetime_from_timezone_offset
 
 # Embeddings have no OpenAI-compatible equivalent wired up (LLM_PROVIDER
 # only swaps chat/insights/memory-extraction text generation) — always use
@@ -26,16 +27,28 @@ _llm_client = get_llm_client()
 
 _MEMORY_EXTRACT_PROMPT = """\
 You are extracting long-term coaching facts from a conversation excerpt.
-Return ONLY a JSON array of strings. Each string is one memorable fact (max 150 chars).
+Today is {today} ({weekday}) in the athlete's timezone.
+
 Include ONLY: race goals with target dates/times, injuries or physical limitations, \
 equipment specifics, dietary restrictions, schedule constraints, or significant performance milestones.
 Do NOT include: generic advice, temporary states, or info derivable from biometrics.
-If the athlete corrects a previously stated race date (e.g. "I meant June 28th"), output only the corrected race fact (not both).
-Return [] if nothing meets the bar.
+
+Rules:
+- Never use relative dates ("Saturday", "this weekend", "next month", "in two weeks"). Resolve every
+  time reference against today's date and write it as an absolute date, e.g. "52 km row on 2026-10-24".
+- Put the date of any dated event (race, trip, planned effort) in "event_date" as YYYY-MM-DD; otherwise null.
+- If a fact is already covered by a known memory below, do not repeat it.
+- If a fact updates or supersedes known memories (a corrected date, an event that has now been completed,
+  an injury that has healed), output the new fact and list the ids it replaces in "replaces".
+
+Known memories (id · noted on · content):
+{known}
 
 Conversation:
 {transcript}
 
+Return ONLY a JSON array (or [] if nothing meets the bar) of objects:
+[{{"fact": "<max 150 chars>", "event_date": "YYYY-MM-DD" or null, "replaces": ["<id>", ...]}}]
 JSON array:"""
 
 
@@ -63,7 +76,7 @@ def _extract_embedding(text: str) -> list[float]:
         return []
 
 
-def save_coach_memory(athlete_id: str, content: str, db: Client) -> None:
+def save_coach_memory(athlete_id: str, content: str, db: Client, event_date: str | None = None) -> None:
     content = (content or "").strip()[:200]
     if not content:
         return
@@ -92,6 +105,8 @@ def save_coach_memory(athlete_id: str, content: str, db: Client) -> None:
             "memory_type": "note",
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
+        if event_date:
+            payload["event_date"] = event_date
         try:
             db.table("coach_memories").insert(payload).execute()
         except Exception as e:
@@ -100,6 +115,7 @@ def save_coach_memory(athlete_id: str, content: str, db: Client) -> None:
             if "PGRST204" in str(e) or "Could not find the 'memory_type' column" in str(e):
                 payload.pop("memory_type", None)
                 payload.pop("updated_at", None)
+                payload.pop("event_date", None)
                 db.table("coach_memories").insert(payload).execute()
             else:
                 raise
@@ -249,7 +265,23 @@ def retrieve_relevant_memories(athlete_id: str, query: str, db: Client, top_k: i
             "match_threshold": 0.50,
             "match_count": top_k,
         }).execute()
-        return result.data or []
+        rows = result.data or []
+        ids = [r.get("id") for r in rows if r.get("id")]
+        if ids:
+            try:
+                dated = (
+                    db.table("coach_memories")
+                    .select("id,event_date")
+                    .eq("athlete_id", athlete_id)
+                    .in_("id", ids)
+                    .execute()
+                )
+                by_id = {d.get("id"): d.get("event_date") for d in (dated.data or [])}
+                for r in rows:
+                    r.setdefault("event_date", by_id.get(r.get("id")))
+            except Exception:
+                pass
+        return rows
     except Exception as e:
         print(f"[memory] retrieval failed: {e}")
         return []
@@ -271,7 +303,17 @@ def extract_and_save_memories(
     if not transcript.strip():
         return
 
-    prompt = _MEMORY_EXTRACT_PROMPT.format(transcript=transcript)
+    today = _athlete_local_today(athlete_id, db)
+    known = list_coach_memories(athlete_id, db=db, limit=40)
+    known_lines = "\n".join(
+        f"{m.get('id')} · {str(m.get('created_at') or '')[:10]} · {m.get('content')}" for m in known
+    ) or "(none)"
+    prompt = _MEMORY_EXTRACT_PROMPT.format(
+        today=today.isoformat(),
+        weekday=today.strftime("%A"),
+        known=known_lines,
+        transcript=transcript,
+    )
     effective_model = model_name or settings.GEMINI_ANALYSIS_MODEL
     try:
         # This runs as a best-effort background task after every chat turn,
@@ -283,17 +325,103 @@ def extract_and_save_memories(
         response = _llm_client.models.generate_content(
             model=effective_model,
             contents=prompt,
-            config=types.GenerateContentConfig(max_output_tokens=512, temperature=0.1),
+            config=types.GenerateContentConfig(max_output_tokens=768, temperature=0.1),
         )
         text = (getattr(response, "text", None) or "").strip()
-        match = re.search(r"\[.*?\]", text, re.DOTALL)
+        match = re.search(r"\[.*\]", text, re.DOTALL)
         if not match:
             return
         facts: Any = json.loads(match.group())
         if not isinstance(facts, list):
             return
-        for fact in facts[:5]:
-            if isinstance(fact, str) and 10 < len(fact) < 200:
-                save_coach_memory(athlete_id, fact, db)
+        known_ids = {str(m.get("id")) for m in known if m.get("id")}
+        for item in facts[:5]:
+            # Older prompt versions (and some models) return plain strings.
+            if isinstance(item, str):
+                item = {"fact": item}
+            if not isinstance(item, dict):
+                continue
+            fact = item.get("fact")
+            if not (isinstance(fact, str) and 10 < len(fact) < 200):
+                continue
+            event_date = _parse_iso_date(item.get("event_date"))
+            save_coach_memory(athlete_id, fact, db, event_date=event_date)
+            replaces = item.get("replaces") or []
+            if isinstance(replaces, list):
+                _delete_memories(athlete_id, [str(r) for r in replaces if str(r) in known_ids], db)
     except Exception as e:
         print(f"[memory] extraction failed: {e}")
+
+
+def _parse_iso_date(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        return date.fromisoformat(value.strip()[:10]).isoformat()
+    except ValueError:
+        return None
+
+
+def _athlete_local_today(athlete_id: str, db: Client) -> date:
+    """Today's date in the athlete's timezone (falls back to UTC)."""
+    offset: Any = None
+    try:
+        res = (
+            db.table("athletes")
+            .select("timezone_offset_min")
+            .eq("id", athlete_id)
+            .maybe_single()
+            .execute()
+        )
+        row = getattr(res, "data", None) if res else None
+        if isinstance(row, dict):
+            offset = row.get("timezone_offset_min")
+    except Exception:
+        pass
+    return local_datetime_from_timezone_offset(coerce_timezone_offset_min(offset)).date()
+
+
+def _delete_memories(athlete_id: str, ids: list[str], db: Client) -> None:
+    for mid in ids:
+        try:
+            db.table("coach_memories").delete().eq("id", mid).eq("athlete_id", athlete_id).execute()
+        except Exception as e:
+            print(f"[memory] delete failed: {e}")
+
+
+MEMORY_CONTEXT_RULE = (
+    "memories are notes from earlier conversations. Each has noted_on (when it was saved) and, for "
+    "dated events, event_date and event_status. Relative words inside a memory ('Saturday', 'next week') "
+    "are relative to noted_on, not today. An event whose event_status is 'past', or whose relative date "
+    "has already gone by, has happened: never present it as upcoming. Prefer the most recent memory "
+    "when two conflict."
+)
+
+
+def memories_for_context(memories: list[dict], today_iso: str) -> list[dict[str, Any]]:
+    """
+    Memories for the coach's system context, newest first, each with when it was noted,
+    how long ago, and (for dated events) whether the event is past, today or upcoming.
+    """
+    try:
+        today = date.fromisoformat(today_iso)
+    except (TypeError, ValueError):
+        today = datetime.now(timezone.utc).date()
+    out: list[dict[str, Any]] = []
+    for m in memories:
+        content = m.get("content")
+        if not content:
+            continue
+        entry: dict[str, Any] = {"content": content}
+        noted = _parse_iso_date(str(m.get("created_at") or ""))
+        if noted:
+            entry["noted_on"] = noted
+            entry["noted_days_ago"] = (today - date.fromisoformat(noted)).days
+        event = _parse_iso_date(m.get("event_date")) if m.get("event_date") else None
+        if event:
+            entry["event_date"] = event
+            delta = (date.fromisoformat(event) - today).days
+            entry["event_status"] = "past" if delta < 0 else "today" if delta == 0 else "upcoming"
+        out.append(entry)
+    out.sort(key=lambda e: e.get("noted_on") or "", reverse=True)
+    return out

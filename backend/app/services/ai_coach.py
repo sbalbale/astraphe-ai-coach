@@ -5,7 +5,12 @@ from app.services import gemini_quota
 from app.services.coach_workout_data import recent_workouts_teaser
 from app.services.algorithms import compute_z_score
 from app.services.llm_provider import get_llm_client
-from app.services.memory import retrieve_relevant_memories, should_skip_rag_for_message
+from app.services.memory import (
+    MEMORY_CONTEXT_RULE,
+    memories_for_context,
+    retrieve_relevant_memories,
+    should_skip_rag_for_message,
+)
 import logging
 
 logger = logging.getLogger(__name__)
@@ -442,6 +447,7 @@ def _build_system_context(
             "tomorrow": "Resolve tomorrow from tomorrow_date in the athlete's timezone.",
             "named_weekdays": "Resolve weekday names from upcoming_weekdays.",
             "followups": "If the athlete clarifies a plan with words like this, that, it, or all, keep the previously discussed workout date unless they clearly change it.",
+            "memory_dates": MEMORY_CONTEXT_RULE,
         },
         "athlete_id": athlete_id,
         "training_load": training_load,
@@ -449,10 +455,7 @@ def _build_system_context(
         "athlete_profile": profile,
     }
     if memories:
-        ctx["memories"] = [
-            {"content": m.get("content"), "created_at": m.get("created_at")}
-            for m in memories
-        ]
+        ctx["memories"] = memories_for_context(memories, today)
     if conversation_id:
         ctx["conversation"] = {
             "id": conversation_id,
@@ -1746,6 +1749,7 @@ async def _assemble_agentic_context_async(
             "tomorrow": "Resolve tomorrow from tomorrow_date in the athlete's timezone.",
             "named_weekdays": "Resolve weekday names from upcoming_weekdays.",
             "followups": "If the athlete clarifies a plan with words like this, that, it, or all, keep the previously discussed workout date unless they clearly change it.",
+            "memory_dates": MEMORY_CONTEXT_RULE,
         },
         "athlete_id": athlete_id,
         "training_load": training,
@@ -1753,10 +1757,7 @@ async def _assemble_agentic_context_async(
         "athlete_profile": profile,
     }
     if memories:
-        ctx["memories"] = [
-            {"content": m.get("content"), "created_at": m.get("created_at")}
-            for m in memories
-        ]
+        ctx["memories"] = memories_for_context(memories, today)
     if conversation_id:
         ctx["conversation"] = {
             "id": conversation_id,
@@ -1815,6 +1816,7 @@ async def _build_system_context_string_async(
             "tomorrow": "Resolve tomorrow from tomorrow_date in the athlete's timezone.",
             "named_weekdays": "Resolve weekday names from upcoming_weekdays.",
             "followups": "If the athlete clarifies a plan with words like this, that, it, or all, keep the previously discussed workout date unless they clearly change it.",
+            "memory_dates": MEMORY_CONTEXT_RULE,
         },
         "athlete_id": athlete_id,
         "training_load": training,
@@ -1822,10 +1824,7 @@ async def _build_system_context_string_async(
         "athlete_profile": profile,
     }
     if memories:
-        ctx["memories"] = [
-            {"content": m.get("content"), "created_at": m.get("created_at")}
-            for m in memories
-        ]
+        ctx["memories"] = memories_for_context(memories, today)
     if conversation_id:
         ctx["conversation"] = {
             "id": conversation_id,
