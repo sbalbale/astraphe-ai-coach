@@ -695,23 +695,43 @@ def test_get_athlete_state_returns_cached():
     assert res.json()["athlete_id"] == "athlete-1"
 
 
-def test_delete_athlete_account_success_swallows_auth_delete_failure(capsys):
+def test_delete_athlete_account_keeps_data_when_auth_delete_fails():
+    """The auth user goes first (it cascades); if that fails nothing is deleted. (S-L3)"""
     db = _AthleteDb()
     db.table("athletes")._rows = {"user_id": "user-1"}
     admin_db = MagicMock()
-    admin_db.table.return_value.delete.return_value.eq.return_value.execute.return_value = SimpleNamespace(data=[])
     admin_db.auth.admin.delete_user.side_effect = RuntimeError("auth service down")
 
     _override(db, admin_db=admin_db)
     try:
-        with TestClient(app) as client:
-            res = client.request("DELETE", "/v1/athlete")
+        with patch("app.services.account_deletion.revoke_provider_grants", AsyncMock(return_value={})):
+            with TestClient(app) as client:
+                res = client.request("DELETE", "/v1/athlete")
+    finally:
+        _teardown()
+
+    assert res.status_code == 500
+    admin_db.table.return_value.delete.assert_not_called()
+
+
+def test_delete_athlete_account_revokes_grants_then_deletes_auth_user():
+    db = _AthleteDb()
+    db.table("athletes")._rows = {"user_id": "user-1"}
+    admin_db = MagicMock()
+    admin_db.table.return_value.delete.return_value.eq.return_value.execute.return_value = SimpleNamespace(data=[])
+    revoke = AsyncMock(return_value={"strava": True})
+
+    _override(db, admin_db=admin_db)
+    try:
+        with patch("app.services.account_deletion.revoke_provider_grants", revoke):
+            with TestClient(app) as client:
+                res = client.request("DELETE", "/v1/athlete")
     finally:
         _teardown()
 
     assert res.status_code == 200
-    assert res.json()["status"] == "success"
-    assert "Failed to delete auth user" in capsys.readouterr().out
+    revoke.assert_awaited_once()
+    admin_db.auth.admin.delete_user.assert_called_once_with("user-1")
 
 
 # ---------------------------------------------------------------------------

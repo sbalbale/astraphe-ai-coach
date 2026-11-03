@@ -630,20 +630,38 @@ async def delete_athlete_account(
     db = Depends(get_user_db),
     admin_db = Depends(get_admin_db)
 ):
-    "Permanently delete the athlete account and all associated data."
-    # Fetch user_id first to delete from auth
-    res = db.table("athletes").select("user_id").eq("id", athlete_id).single().execute()
-    if not res.data:
+    """
+    Permanently delete the account and all its data.
+
+    Order matters: deleting the auth user cascades to the athlete row and everything
+    keyed on it, so it's one step that either happens or doesn't. (Deleting the athlete
+    first left an orphaned login that got 404s whenever the auth delete failed.)
+    WHOOP and Strava grants are revoked first, best effort.
+    """
+    from app.services.account_deletion import revoke_provider_grants
+
+    res = await asyncio.to_thread(
+        db.table("athletes").select("user_id").eq("id", athlete_id).maybe_single().execute
+    )
+    if not res or not res.data:
         raise HTTPException(status_code=404, detail="Athlete not found")
-    
     user_id = res.data["user_id"]
-    
-    # Delete athlete (cascades to workouts, biometrics, etc.)
-    admin_db.table("athletes").delete().eq("id", athlete_id).execute()
-    
-    # Delete from Supabase Auth (requires service role key)
+
+    revoked = await revoke_provider_grants(admin_db, athlete_id)
+    if revoked:
+        print(f"[athlete.delete] provider revocation athlete_id={athlete_id}: {revoked}")
+
     try:
-        admin_db.auth.admin.delete_user(user_id)
+        await asyncio.to_thread(admin_db.auth.admin.delete_user, user_id)
     except Exception as e:
-        print(f"Warning: Failed to delete auth user {user_id}: {str(e)}")
+        print(f"[athlete.delete] auth delete failed user_id={user_id}: {e!r}")
+        raise HTTPException(status_code=500, detail="Couldn't delete the account. Please try again.")
+
+    # Normally already gone via ON DELETE CASCADE; make sure.
+    try:
+        await asyncio.to_thread(admin_db.table("athletes").delete().eq("id", athlete_id).execute)
+    except Exception as e:
+        print(f"[athlete.delete] athlete row cleanup failed athlete_id={athlete_id}: {e!r}")
+    for key in (f"state:{athlete_id}", f"profile:{athlete_id}"):
+        await _cache_del(key)
     return {"status": "success", "message": "Account deleted successfully"}
