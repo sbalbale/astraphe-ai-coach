@@ -15,6 +15,8 @@ class _CanonicalQuery:
     def __init__(self, db: "_CanonicalDb"):
         self.db = db
         self._filters: dict = {}
+        self._neq: dict = {}
+        self._range: dict = {}
         self._single = False
         self._update_payload: dict | None = None
         self._insert_payload: dict | None = None
@@ -26,12 +28,19 @@ class _CanonicalQuery:
         self._filters[field] = value
         return self
 
+    def neq(self, field, value):
+        self._neq[field] = value
+        return self
+
+    def limit(self, _n):
+        return self
+
     def gte(self, field, value):
-        self._filters[f"{field}__gte"] = value
+        self._range[(field, "gte")] = value
         return self
 
     def lte(self, field, value):
-        self._filters[f"{field}__lte"] = value
+        self._range[(field, "lte")] = value
         return self
 
     def maybe_single(self):
@@ -45,6 +54,27 @@ class _CanonicalQuery:
     def insert(self, payload):
         self._insert_payload = payload
         return self
+
+    @staticmethod
+    def _value(row, field):
+        if "->>" in field:
+            col, key = field.split("->>", 1)
+            v = (row.get(col) or {}).get(key)
+            return None if v is None else str(v)
+        return row.get(field)
+
+    def _matches(self, row):
+        if any(self._value(row, f) != v for f, v in self._filters.items()):
+            return False
+        if any(self._value(row, f) == v for f, v in self._neq.items()):
+            return False
+        for (field, op), v in self._range.items():
+            rv = row.get(field)
+            if rv is None:
+                continue  # rows in these tests often omit started_at
+            if (op == "gte" and str(rv) < v) or (op == "lte" and str(rv) > v):
+                return False
+        return True
 
     def execute(self):
         from types import SimpleNamespace
@@ -62,25 +92,9 @@ class _CanonicalQuery:
                     return SimpleNamespace(data=[dict(row)])
             return SimpleNamespace(data=[])
 
-        # Exact lookup: athlete_id + strava_activity_id, single row.
-        if "strava_activity_id" in self._filters:
-            matches = [
-                r
-                for r in self.db.rows
-                if r.get("athlete_id") == self._filters.get("athlete_id")
-                and r.get("strava_activity_id") == self._filters.get("strava_activity_id")
-            ]
-            data = matches[0] if matches else None
-            return SimpleNamespace(data=data)
-
-        # Fuzzy lookup: athlete_id + sport within a time window (window filtering
-        # ignored here -- the caller's own duration-ratio matching does the real work).
-        matches = [
-            r
-            for r in self.db.rows
-            if r.get("athlete_id") == self._filters.get("athlete_id")
-            and r.get("sport") == self._filters.get("sport")
-        ]
+        matches = [r for r in self.db.rows if self._matches(r)]
+        if self._single:
+            return SimpleNamespace(data=matches[0] if matches else None)
         return SimpleNamespace(data=matches)
 
 
@@ -294,3 +308,60 @@ def test_insert_new_row_without_external_id_or_strava_id():
     assert "external_id" not in row
     assert "strava_activity_id" not in row
     assert row["source_ids"] == {}
+
+
+def test_exact_external_id_match_updates_edited_whoop_workout():
+    """An edited WHOOP workout (new start, very different duration) finds its own row."""
+    existing = {
+        "id": "w1", "athlete_id": "athlete-1", "source": "whoop", "external_id": "abc",
+        "sport": "run", "primary_source": "whoop", "duration_seconds": 3600, "source_ids": {},
+    }
+    db = _CanonicalDb(rows=[existing])
+    row, created = processing._find_or_create_canonical_workout_sync(
+        db, "athlete-1", "whoop", "ride", _now(), 600, external_id="abc"
+    )
+    assert created is False
+    assert row["id"] == "w1"
+
+
+def test_external_id_merged_into_source_ids_is_found():
+    existing = {
+        "id": "w1", "athlete_id": "athlete-1", "source": "garmin", "sport": "run",
+        "primary_source": "garmin", "duration_seconds": 3600,
+        "source_ids": {"intervals_icu": "i42"},
+    }
+    db = _CanonicalDb(rows=[existing])
+    row, created = processing._find_or_create_canonical_workout_sync(
+        db, "athlete-1", "intervals_icu", "run", _now(), 100, external_id="i42"
+    )
+    assert created is False
+    assert row["id"] == "w1"
+
+
+def test_same_source_different_external_id_is_not_merged():
+    existing = {
+        "id": "w1", "athlete_id": "athlete-1", "source": "whoop", "external_id": "first",
+        "sport": "run", "primary_source": "whoop", "duration_seconds": 1800, "source_ids": {},
+    }
+    db = _CanonicalDb(rows=[existing])
+    _row, created = processing._find_or_create_canonical_workout_sync(
+        db, "athlete-1", "whoop", "run", _now(), 1800, external_id="second"
+    )
+    assert created is True
+
+
+def test_cross_sport_match_from_other_source():
+    """WHOOP calls it 'other', Garmin calls it 'run': same session, merge."""
+    existing = {
+        "id": "w1", "athlete_id": "athlete-1", "source": "garmin", "sport": "run",
+        "primary_source": "garmin", "duration_seconds": 1800, "source_ids": {},
+        "started_at": _now().isoformat(),
+    }
+    db = _CanonicalDb(rows=[existing])
+    row, created = processing._find_or_create_canonical_workout_sync(
+        db, "athlete-1", "whoop", "other", _now(), 1850, external_id="wh1"
+    )
+    assert created is False
+    assert row["id"] == "w1"
+    assert row["source_ids"]["whoop"] == "wh1"
+    assert row["primary_source"] == "garmin"

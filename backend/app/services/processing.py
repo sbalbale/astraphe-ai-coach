@@ -519,7 +519,10 @@ def _find_or_create_canonical_workout_sync(
     Match criteria:
       1. Exact: strava_activity_id matches (Strava fast path)
       2. Exact: garmin_activity_id matches (Garmin fast path)
-      3. Fuzzy: same athlete + sport + started_at within ±10min + duration within 20%
+      3. Exact: this source's external_id (as the row's own id, or merged into source_ids)
+      4. Fuzzy: same athlete + sport + started_at within ±10min + duration within 20%
+      5. Fuzzy, any sport: started_at within ±3min + duration within 10% from another
+         source (providers classify the same session differently, e.g. WHOOP "Activity")
 
     On merge: updates source_ids, elevates primary_source by SOURCE_PRIORITY order.
     Strava duplicates accumulate in ``source_ids["strava"]`` (list of ids). Primary
@@ -594,6 +597,41 @@ def _find_or_create_canonical_workout_sync(
         if exact and exact.data:
             return _merge_exact_hit(exact.data)
 
+    if external_id and source != "strava":
+        # An edited/re-sent WHOOP, Intervals or manual workout must update its row, not
+        # fall through to the fuzzy match (its new start/duration may no longer match)
+        # and then hit the unique key on insert.
+        ext = str(external_id)
+        own = (
+            db.table("workouts")
+            .select("*")
+            .eq("athlete_id", athlete_id)
+            .eq("source", source)
+            .eq("external_id", ext)
+            .limit(1)
+            .execute()
+        )
+        hit = ((own.data if own else None) or [None])[0]
+        if hit is None:
+            merged = (
+                db.table("workouts")
+                .select("*")
+                .eq("athlete_id", athlete_id)
+                .eq(f"source_ids->>{source}", ext)
+                .limit(1)
+                .execute()
+            )
+            hit = ((merged.data if merged else None) or [None])[0]
+        if hit:
+            return _merge_exact_hit(hit)
+
+    def _is_other_session_from_same_source(row: dict[str, Any]) -> bool:
+        """Same provider, different id: two distinct sessions, never merge."""
+        if not external_id or source == "strava" or row.get("source") != source:
+            return False
+        row_ext = row.get("external_id")
+        return bool(row_ext) and str(row_ext) != str(external_id)
+
     from_ts = started_at.timestamp() - DEDUP_WINDOW_SECONDS
     to_ts = started_at.timestamp() + DEDUP_WINDOW_SECONDS
     from_iso = datetime.fromtimestamp(from_ts, tz=timezone.utc).isoformat()
@@ -612,6 +650,8 @@ def _find_or_create_canonical_workout_sync(
 
     matched = None
     for row in rows:
+        if _is_other_session_from_same_source(row):
+            continue
         existing_duration = row.get("duration_seconds") or 0
         if existing_duration > 0 and dur_i > 0:
             ratio = abs(existing_duration - dur_i) / max(existing_duration, dur_i)
@@ -625,6 +665,24 @@ def _find_or_create_canonical_workout_sync(
         elif existing_duration == 0 or dur_i == 0:
             matched = row
             break
+
+    if matched is None and dur_i > 0:
+        CROSS_SPORT_WINDOW_SECONDS = 180
+        CROSS_SPORT_TOLERANCE = 0.10
+        near = (
+            db.table("workouts")
+            .select("*")
+            .eq("athlete_id", athlete_id)
+            .neq("source", source)
+            .gte("started_at", datetime.fromtimestamp(started_at.timestamp() - CROSS_SPORT_WINDOW_SECONDS, tz=timezone.utc).isoformat())
+            .lte("started_at", datetime.fromtimestamp(started_at.timestamp() + CROSS_SPORT_WINDOW_SECONDS, tz=timezone.utc).isoformat())
+            .execute()
+        )
+        for row in (near.data if near else None) or []:
+            existing_duration = row.get("duration_seconds") or 0
+            if existing_duration > 0 and abs(existing_duration - dur_i) / max(existing_duration, dur_i) <= CROSS_SPORT_TOLERANCE:
+                matched = row
+                break
 
     if matched:
         workout_id = matched["id"]
