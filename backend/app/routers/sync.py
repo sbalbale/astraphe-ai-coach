@@ -1476,7 +1476,9 @@ async def get_sync_status(athlete_id: str = Depends(get_current_athlete), db=Dep
 async def unlink_integration(
     provider: str,
     athlete_id: str = Depends(get_current_athlete),
-    db = Depends(get_user_db)
+    # Service role, scoped to the JWT's athlete below: users can no longer read token
+    # columns through RLS, and a PostgREST delete returns the deleted rows.
+    db = Depends(get_admin_db)
 ):
     """Unlinks a third-party integration by removing its OAuth tokens."""
     prov = (provider or "").strip().lower()

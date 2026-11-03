@@ -4,6 +4,7 @@ from __future__ import annotations
 import gzip
 import json
 import logging
+import zlib
 from typing import Any
 
 from app.dependencies import get_admin_db
@@ -12,6 +13,10 @@ logger = logging.getLogger(__name__)
 
 BUCKET_ID = "activity-streams"
 CONTENT_ENCODING = "gzip"
+
+# Real stream blobs are a few MB uncompressed; anything far beyond that is a
+# decompression bomb, not an activity.
+MAX_DECOMPRESSED_BYTES = 64 * 1024 * 1024
 
 
 def storage_object_path(athlete_id: str, workout_id: str) -> str:
@@ -71,25 +76,43 @@ def download_time_series_gzip(storage_path: str) -> dict[str, Any] | None:
         return None
     raw = res if isinstance(res, bytes) else bytes(res)
     try:
-        text = gzip.decompress(raw).decode("utf-8")
+        text = _gunzip_bounded(raw).decode("utf-8")
         parsed = json.loads(text)
-    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+    except (OSError, ValueError, zlib.error, UnicodeDecodeError) as exc:
         logger.warning("stream_storage parse failed path=%s: %s", storage_path, exc)
         return None
     return parsed if isinstance(parsed, dict) else None
 
 
+def _gunzip_bounded(raw: bytes, limit: int = MAX_DECOMPRESSED_BYTES) -> bytes:
+    """gzip-decompress, refusing output larger than ``limit`` (decompression bombs)."""
+    d = zlib.decompressobj(16 + zlib.MAX_WBITS)
+    out = d.decompress(raw, limit)
+    if d.unconsumed_tail or len(out) >= limit:
+        raise ValueError(f"stream blob exceeds {limit} bytes decompressed")
+    return out + d.flush()
+
+
 def resolve_time_series(row: dict[str, Any] | None) -> dict[str, Any] | None:
     """
     Read time_series from a DB row: Storage path first, else legacy JSONB column.
+
+    The blob is always read from the path derived from the row's own athlete and
+    workout ids, never from the stored ``storage_path`` value: users can write that
+    column on their own rows, and the download runs with the service role, so
+    trusting it would let one user read another user's streams.
     """
     if not row:
         return None
-    storage_path = row.get("storage_path")
-    if storage_path:
-        ts = download_time_series_gzip(str(storage_path))
-        if ts is not None:
-            return ts
+    if row.get("storage_path"):
+        athlete_id, workout_id = row.get("athlete_id"), row.get("workout_id")
+        expected = storage_object_path(str(athlete_id), str(workout_id)) if athlete_id and workout_id else None
+        if expected and str(row["storage_path"]) == expected:
+            ts = download_time_series_gzip(expected)
+            if ts is not None:
+                return ts
+        elif expected is None or str(row["storage_path"]) != expected:
+            logger.warning("stream_storage: ignoring unexpected storage_path for workout=%s", workout_id)
     legacy = row.get("time_series")
     if isinstance(legacy, dict) and legacy:
         return legacy
@@ -101,7 +124,7 @@ def fetch_stream_row_columns(db: Any, workout_id: str, athlete_id: str) -> dict[
     res = (
         db.table("activity_streams")
         .select(
-            "time_series, storage_path, byte_size, content_encoding, "
+            "athlete_id, workout_id, time_series, storage_path, byte_size, content_encoding, "
             "resolution_seconds, created_at"
         )
         .eq("workout_id", workout_id)

@@ -941,7 +941,7 @@ def process_and_save_biometrics(
             "source": payload.source,
             "external_id": getattr(payload, "external_id", None) or f"{payload.source}_{payload.sleep_bedtime.timestamp() if payload.sleep_bedtime else payload.date.isoformat()}"
         }
-        db.table("sleep_periods").upsert(session_data, on_conflict="source,external_id").execute()
+        db.table("sleep_periods").upsert(session_data, on_conflict="athlete_id,source,external_id").execute()
 
     # 2. Fetch All Sleep Periods for the biological day to aggregate
     all_periods_res = db.table("sleep_periods").select("*").eq("athlete_id", athlete_id).eq("date", payload.date.isoformat()).execute()

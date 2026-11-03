@@ -1078,7 +1078,7 @@ def save_garmin_naps(
                 "external_id": f"{PROVIDER}:nap:{athlete_id}:{int(start.timestamp())}",
             }
         )
-    db.table("sleep_periods").upsert(rows, on_conflict="source,external_id").execute()
+    db.table("sleep_periods").upsert(rows, on_conflict="athlete_id,source,external_id").execute()
     return sorted({r["date"] for r in rows})
 
 

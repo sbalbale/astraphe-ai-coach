@@ -28,8 +28,25 @@ def test_resolve_time_series_prefers_storage():
     stored = {"heartrate": [1, 2, 3]}
     body = gzip.compress(json.dumps(stored).encode())
     with patch.object(stream_storage, "download_time_series_gzip", return_value=stored):
-        row = {"storage_path": "a/w.json.gz", "time_series": {"heartrate": [9]}}
+        row = {"athlete_id": "a", "workout_id": "w", "storage_path": "a/w.json.gz", "time_series": {"heartrate": [9]}}
         assert stream_storage.resolve_time_series(row) == stored
+
+
+def test_resolve_time_series_ignores_foreign_storage_path():
+    """A user-edited storage_path pointing at another athlete's blob is never downloaded."""
+    with patch.object(stream_storage, "download_time_series_gzip") as dl:
+        row = {"athlete_id": "me", "workout_id": "w1", "storage_path": "victim/w9.json.gz", "time_series": None}
+        assert stream_storage.resolve_time_series(row) is None
+    dl.assert_not_called()
+
+
+def test_gunzip_bounded_rejects_bombs():
+    import pytest
+
+    bomb = gzip.compress(b"0" * (2 * 1024 * 1024))
+    with pytest.raises(ValueError):
+        stream_storage._gunzip_bounded(bomb, limit=1024 * 1024)
+    assert stream_storage._gunzip_bounded(gzip.compress(b"{}"), limit=1024) == b"{}"
 
 
 def test_resolve_time_series_legacy_jsonb():

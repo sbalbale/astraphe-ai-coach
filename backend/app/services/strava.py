@@ -458,7 +458,7 @@ def _load_stored_streams_dict(db: Any, workout_id: str) -> dict[str, Any]:
 
     ts_row = (
         db.table("activity_streams")
-        .select("time_series, storage_path, content_encoding")
+        .select("athlete_id, workout_id, time_series, storage_path, content_encoding")
         .eq("workout_id", workout_id)
         .maybe_single()
         .execute()
@@ -1302,7 +1302,7 @@ def reprocess_rowing_intervals_from_stored_data(db: Any, workout_id: str) -> tup
 
         ts_row = (
             db.table("activity_streams")
-            .select("time_series, storage_path, content_encoding")
+            .select("athlete_id, workout_id, time_series, storage_path, content_encoding")
             .eq("workout_id", workout_id)
             .maybe_single()
             .execute()

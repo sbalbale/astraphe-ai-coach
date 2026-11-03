@@ -62,7 +62,7 @@ def test_save_naps_writes_nap_rows_dated_by_calendar_or_local_wake_day():
     assert all(r["is_nap"] and r["source"] == "garmin" for r in rows)
     assert rows[0]["in_bed_min"] == 38 and rows[0]["duration_min"] == 36 and rows[0]["awake_pct"] == 5.3
     assert rows[0]["external_id"].startswith("garmin:nap:ath-1:")
-    assert db.table.return_value.upsert.call_args.kwargs["on_conflict"] == "source,external_id"
+    assert db.table.return_value.upsert.call_args.kwargs["on_conflict"] == "athlete_id,source,external_id"
 
 
 def test_fetch_day_saves_naps_before_the_summary():

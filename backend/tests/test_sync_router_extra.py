@@ -414,7 +414,7 @@ def test_get_sync_status_reports_connected_providers():
 
 
 def test_unlink_integration_missing_provider_400():
-    _override(user_db=MagicMock())
+    _override(admin_db=MagicMock())
     try:
         res = client.delete("/v1/sync/%20")
         assert res.status_code == 400
@@ -430,13 +430,15 @@ def test_unlink_integration_success_fully_removed():
     user_db.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value = SimpleNamespace(
         data=[]
     )
-    _override(user_db=user_db)
+    _override(admin_db=user_db)
     try:
         res = client.delete("/v1/sync/strava")
         assert res.status_code == 200
         body = res.json()
         assert body["connected"] is False
         assert "unlinked successfully" in body["message"]
+        # scoped to the caller's athlete even though it runs with the service role
+        user_db.table.return_value.delete.return_value.eq.assert_called_with("athlete_id", "athlete-1")
     finally:
         _teardown()
 
@@ -449,7 +451,7 @@ def test_unlink_integration_still_connected_after_delete():
     user_db.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value = SimpleNamespace(
         data=[{"id": "tok-1"}]
     )
-    _override(user_db=user_db)
+    _override(admin_db=user_db)
     try:
         res = client.delete("/v1/sync/strava")
         assert res.status_code == 200
