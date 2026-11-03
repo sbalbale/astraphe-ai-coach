@@ -64,7 +64,18 @@
     { label: 'Privacy', meta: '', href: '/profile/privacy' }
   ]);
 
-  const tierLabel = $derived(authStore.tier === 'premium' ? 'PREMIUM' : authStore.tier === 'trial' ? 'TRIAL' : 'FREE');
+  const trialDaysLeft = $derived(
+    authStore.trialEndsAt == null ? null : Math.max(0, Math.ceil((authStore.trialEndsAt - Date.now()) / 86_400_000))
+  );
+  const tierLabel = $derived(
+    authStore.tier === 'premium'
+      ? 'PREMIUM'
+      : authStore.tier === 'trial'
+        ? trialDaysLeft == null
+          ? 'TRIAL'
+          : `TRIAL · ${trialDaysLeft}D LEFT`
+        : 'FREE'
+  );
 
   async function handleSignOut() {
     try {

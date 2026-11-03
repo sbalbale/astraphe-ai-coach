@@ -3,7 +3,7 @@ import base64
 import json
 import logging
 from dataclasses import dataclass
-from typing import Callable, TypeVar
+from typing import Any, Callable, TypeVar
 
 from fastapi import Depends, HTTPException, Security
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -277,6 +277,38 @@ async def get_current_athlete(
 # User config — all admin-controlled fields in a single auth.get_user() call
 # ---------------------------------------------------------------------------
 
+# Users whose expired trial this process has already written back as free.
+_trial_expiry_written: set[str] = set()
+
+
+def _apply_trial_expiry(tier: str, app_meta: dict, user: Any) -> str:
+    """
+    New accounts get a 14-day trial (app_metadata.trial_ends_at). Once it passes the
+    account is free from the very next request; the downgrade is also written back to
+    app_metadata and athletes.tier in the background so the app and admin views agree.
+    """
+    from app.services.tiers import effective_tier, persist_trial_expiry
+
+    effective = effective_tier(tier, app_meta, getattr(user, "created_at", None))
+    user_id = getattr(user, "id", None)
+    if effective != tier and user_id and user_id not in _trial_expiry_written:
+        _trial_expiry_written.add(user_id)
+        from app.services.background import spawn as spawn_background
+
+        async def _persist() -> None:
+            try:
+                await asyncio.to_thread(persist_trial_expiry, get_admin_db(), user_id)
+            except Exception as e:  # noqa: BLE001 - retried by the next process/request
+                _trial_expiry_written.discard(user_id)
+                logger.warning("trial expiry write-back failed for user_id=%s: %s", user_id, e)
+
+        try:
+            spawn_background(_persist())
+        except RuntimeError:  # no running loop
+            _trial_expiry_written.discard(user_id)
+    return effective
+
+
 def _resolve_rate_limits(app_meta: dict, tier: str) -> tuple[int, int]:
     defaults = TIER_DEFAULTS.get(tier, TIER_DEFAULTS["free"])
     try:
@@ -312,6 +344,7 @@ async def get_user_config(
 
         tier_raw = str(app_meta.get("tier") or "free").strip().lower()
         tier = tier_raw if tier_raw in VALID_TIERS else "free"
+        tier = _apply_trial_expiry(tier, app_meta, u)
 
         model_raw = app_meta.get("gemini_model")
         model = model_raw.strip() if isinstance(model_raw, str) and model_raw.strip() else fallback_model

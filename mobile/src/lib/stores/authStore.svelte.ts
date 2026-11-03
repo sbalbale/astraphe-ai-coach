@@ -5,13 +5,9 @@ import type { User, Session } from '@supabase/supabase-js';
 // The expected Supabase URL for this environment
 const EXPECTED_SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL?.trim() ?? '';
 
-export type AccountTier = 'free' | 'trial' | 'premium';
+import { effectiveTier, trialEndsAtMs, type AccountTier } from '$lib/utils/tier';
 
-function normalizeTier(value: unknown): AccountTier {
-  const v = typeof value === 'string' ? value.trim().toLowerCase() : '';
-  if (v === 'premium' || v === 'trial' || v === 'free') return v;
-  return 'free';
-}
+export type { AccountTier };
 
 class AuthState {
   user = $state<User | null>(null);
@@ -19,10 +15,17 @@ class AuthState {
   loading = $state(true);
 
   get tier(): AccountTier {
-    // Source of truth: Supabase Auth app_metadata.tier
-    // (free | trial | premium). Unknown/missing => free.
+    // Source of truth: Supabase Auth app_metadata.tier (free | trial | premium);
+    // unknown/missing => free, and a trial past trial_ends_at is free.
     const meta = this.user?.app_metadata as Record<string, unknown> | undefined;
-    return normalizeTier(meta?.tier);
+    return effectiveTier(meta, this.user?.created_at);
+  }
+
+  /** When the trial ends (ms), or null when not on a trial. */
+  get trialEndsAt(): number | null {
+    if (this.tier !== 'trial') return null;
+    const meta = this.user?.app_metadata as Record<string, unknown> | undefined;
+    return trialEndsAtMs(meta, this.user?.created_at);
   }
 
   get tierLabel(): 'FREE' | 'TRIAL' | 'PREMIUM' {

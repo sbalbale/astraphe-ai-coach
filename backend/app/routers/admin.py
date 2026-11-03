@@ -91,7 +91,11 @@ async def get_admin_user(
 def _format_user(u) -> dict:
     app_meta = getattr(u, "app_metadata", None) or {}
     user_meta = getattr(u, "user_metadata", None) or {}
-    tier = str(app_meta.get("tier") or "free").strip().lower()
+    from app.services.tiers import effective_tier, trial_ends_at
+
+    stored_tier = str(app_meta.get("tier") or "free").strip().lower()
+    tier = effective_tier(stored_tier, app_meta, getattr(u, "created_at", None))
+    ends = trial_ends_at(app_meta, getattr(u, "created_at", None)) if stored_tier == "trial" else None
     defaults = TIER_DEFAULTS.get(tier, TIER_DEFAULTS["free"])
     return {
         "user_id": u.id,
@@ -100,6 +104,7 @@ def _format_user(u) -> dict:
         "display_name": user_meta.get("full_name") or user_meta.get("name"),
         "config": {
             "tier": tier,
+            "trial_ends_at": ends.isoformat() if ends else None,
             "gemini_model": app_meta.get("gemini_model"),
             "gemini_analysis_model": app_meta.get("gemini_analysis_model"),
             "rate_limit_rpm": app_meta.get("rate_limit_rpm", defaults["rpm"]),
@@ -179,6 +184,11 @@ async def update_user_config(
 
     if payload.tier is not None:
         update["tier"] = payload.tier
+        if payload.tier == "trial":
+            # Setting someone to trial starts a fresh 14 days.
+            from app.services.tiers import new_trial_ends_at
+
+            update["trial_ends_at"] = new_trial_ends_at()
     if payload.gemini_model is not None:
         # empty string -> null (removes per-user override, falls back to server default)
         update["gemini_model"] = payload.gemini_model.strip() or None
@@ -197,6 +207,11 @@ async def update_user_config(
     try:
         res = admin_db.auth.admin.update_user_by_id(user_id, {"app_metadata": update})
         u = res.user if hasattr(res, "user") else res
+        if payload.tier is not None:
+            try:  # keep the athletes.tier mirror in step
+                admin_db.table("athletes").update({"tier": payload.tier}).eq("user_id", user_id).execute()
+            except Exception as e:
+                print(f"[admin] athletes.tier sync failed for {user_id}: {e!r}")
         return {"status": "success", "user": _format_user(u)}
     except HTTPException:
         raise
