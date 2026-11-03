@@ -45,3 +45,20 @@ def test_dev_auth_fallback_only_for_local_supabase(monkeypatch):
     monkeypatch.setattr(settings, "SUPABASE_URL", "http://127.0.0.1:55321")
     monkeypatch.setattr(settings, "APP_ENV", "production")
     assert dependencies._dev_auth_fallback_allowed() is False
+
+
+def test_client_ip_prefers_cloudflare_connecting_ip():
+    """Behind Cloudflare + ingress the right-most XFF hop is a proxy (review F5)."""
+    req = SimpleNamespace(
+        headers={"CF-Connecting-IP": "198.51.100.7", "X-Forwarded-For": "6.6.6.6, 172.70.1.2, 10.42.0.9"},
+        client=SimpleNamespace(host="10.42.0.9"),
+    )
+    assert client_ip(req) == "198.51.100.7"
+
+
+def test_client_ip_ignores_a_malformed_cloudflare_header():
+    req = SimpleNamespace(
+        headers={"CF-Connecting-IP": "not-an-ip", "X-Forwarded-For": "203.0.113.9"},
+        client=SimpleNamespace(host="10.0.0.1"),
+    )
+    assert client_ip(req) == "203.0.113.9"

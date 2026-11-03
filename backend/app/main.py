@@ -166,12 +166,32 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 
+def _valid_ip(value: str | None) -> str | None:
+    import ipaddress
+
+    try:
+        return str(ipaddress.ip_address((value or "").strip()))
+    except ValueError:
+        return None
+
+
 def client_ip(request) -> str:
     """
-    The caller's IP. X-Forwarded-For is client-controlled except for the entries our
-    own proxy appends, so take the right-most entry (added by the trusted proxy in
-    front of us), never the first, which anyone can forge.
+    The caller's IP, for per-IP rate limiting.
+
+    The API is reached through Cloudflare, then the cluster ingress. Cloudflare sets
+    CF-Connecting-IP to the real client and overwrites any value the client sends,
+    so it's the trustworthy source here. (The right-most X-Forwarded-For hop, used
+    before, is whichever proxy sits closest to us, so every user shared one bucket.)
+    Only traffic that can reach the origin without Cloudflare (the LAN) could set it
+    itself.
+
+    Without the header (local dev, direct-to-origin), fall back to the right-most
+    X-Forwarded-For entry, never the first, which anyone can forge.
     """
+    cf_ip = _valid_ip(request.headers.get("CF-Connecting-IP"))
+    if cf_ip:
+        return cf_ip
     forwarded_for = request.headers.get("X-Forwarded-For") or ""
     hops = [h.strip() for h in forwarded_for.split(",") if h.strip()]
     if hops:

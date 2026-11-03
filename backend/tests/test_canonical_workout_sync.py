@@ -365,3 +365,23 @@ def test_cross_sport_match_from_other_source():
     assert row["id"] == "w1"
     assert row["source_ids"]["whoop"] == "wh1"
     assert row["primary_source"] == "garmin"
+
+
+def test_cross_sport_match_picks_the_closest_row():
+    """With two candidates the nearest start/duration wins, not query order (review F7)."""
+    far = {
+        "id": "w-far", "athlete_id": "athlete-1", "source": "garmin", "sport": "run",
+        "primary_source": "garmin", "duration_seconds": 1900, "source_ids": {},
+        "started_at": "2026-05-20T10:02:30+00:00",
+    }
+    near = {
+        "id": "w-near", "athlete_id": "athlete-1", "source": "strava", "sport": "bike",
+        "primary_source": "strava", "duration_seconds": 1840, "source_ids": {},
+        "started_at": "2026-05-20T10:00:20+00:00",
+    }
+    db = _CanonicalDb(rows=[far, near])
+    row, created = processing._find_or_create_canonical_workout_sync(
+        db, "athlete-1", "whoop", "other", _now(), 1850, external_id="wh9"
+    )
+    assert created is False
+    assert row["id"] == "w-near"

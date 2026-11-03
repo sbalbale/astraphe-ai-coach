@@ -50,6 +50,8 @@ class _BioQuery:
         return self
 
     def execute(self):
+        if isinstance(self._response, Exception):
+            raise self._response
         return self._response
 
 
@@ -412,3 +414,39 @@ def test_baselines_use_only_prior_days_plus_todays_payload_once():
         processing.process_and_save_biometrics(_payload(hrv_rmssd=55.0, resting_hr=48), "athlete-1", db, skip_pmc_recalc=True)
     assert [50.0, 51.0, 48.0] in seen   # RHR: prior days + today's payload once
     assert [60.0, 61.0, 55.0] in seen   # HRV likewise
+
+
+def test_periods_from_best_source_keeps_other_sources_main_sleep():
+    """A nap-only top source must not drop another source's full night (review F6)."""
+    garmin_nap = {"source": "garmin", "in_bed_min": 30, "is_nap": True}
+    whoop = {"source": "whoop", "in_bed_min": 480, "is_nap": False}
+    kept = processing._periods_from_best_source([whoop, garmin_nap])
+    assert whoop in kept and garmin_nap in kept
+
+
+def test_periods_from_best_source_naps_from_one_source():
+    garmin_nap = {"source": "garmin", "in_bed_min": 30, "is_nap": True}
+    whoop_nap = {"source": "whoop", "in_bed_min": 32, "is_nap": True}
+    whoop = {"source": "whoop", "in_bed_min": 480}
+    kept = processing._periods_from_best_source([whoop, garmin_nap, whoop_nap])
+    assert kept == [whoop, garmin_nap]  # one main sleep, naps from the top-ranked nap source
+
+
+def test_sleep_period_upsert_failure_doesnt_sink_the_day():
+    """A failed sleep_periods write (e.g. a unique-key clash) must not lose HRV/RHR (review F1)."""
+    db = _BioDb(
+        _default_responses(
+            sleep_periods=[
+                RuntimeError("duplicate key value violates unique constraint"),  # upsert
+                SimpleNamespace(data=[]),  # aggregation select
+            ]
+        )
+    )
+    payload = _payload(
+        sleep_bedtime=datetime(2026, 5, 19, 22, 0, tzinfo=timezone.utc),
+        sleep_wakeup=datetime(2026, 5, 20, 6, 0, tzinfo=timezone.utc),
+        hrv_rmssd=62.0,
+    )
+    processing.process_and_save_biometrics(payload, "athlete-1", db, skip_pmc_recalc=True)
+    bio_payload = db.upserts["biometrics"][0]
+    assert bio_payload["hrv_rmssd"] == 62.0
