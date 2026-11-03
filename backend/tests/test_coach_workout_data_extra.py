@@ -491,7 +491,7 @@ def test_update_workout_sync_success():
             "workouts": SimpleNamespace(data={"id": "w1", "started_at": "2026-05-20T10:00:00Z"}),
         }
     )
-    with patch.object(cwd, "recalculate_tss_history"), patch.object(cwd, "_refresh_daily_strain_for_day_sync"):
+    with patch.object(cwd, "recalculate_tss_history"), patch.object(cwd, "_refresh_daily_strain_for_instant_sync"):
         result = cwd.update_workout_sync(db, "athlete-1", {"workout_id": "w1", "avg_hr": 150})
     assert result["status"] == "updated"
 
@@ -898,7 +898,7 @@ def test_update_workout_sync_normalizes_naive_existing_started_at():
             "workouts": SimpleNamespace(data={"id": "w1", "started_at": "2026-05-20T10:00:00"}),
         }
     )
-    with patch.object(cwd, "recalculate_tss_history"), patch.object(cwd, "_refresh_daily_strain_for_day_sync"):
+    with patch.object(cwd, "recalculate_tss_history"), patch.object(cwd, "_refresh_daily_strain_for_instant_sync"):
         result = cwd.update_workout_sync(db, "athlete-1", {"workout_id": "w1", "on_date": "2026-05-25"})
     assert result["status"] == "updated"
 

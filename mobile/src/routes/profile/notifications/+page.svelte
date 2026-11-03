@@ -4,15 +4,9 @@
   import { onMount } from 'svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { requestPushPermission, initPushNotifications } from '$lib/services/pushNotifications';
+  import { NOTIFICATION_DEFAULTS, effectiveNotificationSettings } from '$lib/notificationSettings';
 
-  const defaultSettings = {
-    readiness: true,
-    coach: true,
-    workouts: false,
-    insights: true
-  };
-
-  let settings = $state({ ...defaultSettings });
+  let settings = $state({ ...NOTIFICATION_DEFAULTS } as Record<keyof typeof NOTIFICATION_DEFAULTS, boolean>);
   let initialized = $state(false);
   let saving = $state(false);
   let permissionGranted = $state<boolean | null>(null);
@@ -26,7 +20,7 @@
 
     if (initialized) return;
     const fromProfile = athleteStore.profile?.notification_settings;
-    settings = { ...defaultSettings, ...(fromProfile ?? {}) };
+    settings = effectiveNotificationSettings(fromProfile);
     initialized = true;
 
     // Check current permission state for the UI hint.
@@ -53,10 +47,12 @@
     }
 
     saving = true;
-    await athleteStore.updateProfile({
-      notification_settings: settings
+    const ok = await athleteStore.updateProfile({
+      notification_settings: { ...settings }
     });
     saving = false;
+    // Don't leave a toggle showing a state that wasn't saved.
+    if (!ok) settings[key] = !turningOn;
   }
 
   async function enableNotifications() {

@@ -62,7 +62,7 @@ def test_save_naps_writes_nap_rows_dated_by_calendar_or_local_wake_day():
     assert all(r["is_nap"] and r["source"] == "garmin" for r in rows)
     assert rows[0]["in_bed_min"] == 38 and rows[0]["duration_min"] == 36 and rows[0]["awake_pct"] == 5.3
     assert rows[0]["external_id"].startswith("garmin:nap:ath-1:")
-    assert db.table.return_value.upsert.call_args.kwargs["on_conflict"] == "source,external_id"
+    assert db.table.return_value.upsert.call_args.kwargs["on_conflict"] == "athlete_id,source,external_id"
 
 
 def test_fetch_day_saves_naps_before_the_summary():
@@ -96,3 +96,24 @@ def test_fetch_day_falls_back_to_get_naps_when_only_nap_time_is_reported():
         asyncio.run(garmin_service.fetch_and_store_biometrics_for_day("ath-1", db, client, date(2026, 10, 20)))
     client.get_naps.assert_called_once_with("2026-10-20")
     assert len(save_naps.call_args.args[2]) == 1
+
+
+def test_fit_download_skipped_when_streams_already_stored():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    payload = SimpleNamespace(duration_seconds=1800, workout_type="run")
+    with patch.object(garmin_service, "build_workout_payload", return_value=payload), patch.object(
+        garmin_service, "process_and_save_workout", new=AsyncMock(return_value="w1")
+    ), patch.object(garmin_service, "_streams_already_stored", return_value=True), patch.object(
+        garmin_service, "download_and_parse_fit"
+    ) as download:
+        saved, streams = asyncio.run(
+            garmin_service._save_one_activity(MagicMock(), {"activityId": 123}, "ath-1", MagicMock())
+        )
+    assert saved is True and streams is False
+    download.assert_not_called()
+
+
+def test_streams_already_stored_is_false_for_unknown_shapes():
+    assert garmin_service._streams_already_stored(MagicMock(), "w1") is False  # mock data isn't a list

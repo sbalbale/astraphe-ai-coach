@@ -157,7 +157,9 @@ def compute_hrss_from_zones(
                 int(threshold_hr * 1.08) if threshold_hr > resting_hr else resting_hr
             )
         else:
-            zone_midpoint_hr[z.zone] = (z.min_bpm + z.max_bpm) // 2
+            # Zone 1 starts at 0 bpm in some methods; never put its midpoint below resting HR.
+            lo = max(z.min_bpm, resting_hr)
+            zone_midpoint_hr[z.zone] = (lo + max(z.max_bpm, lo)) // 2
 
     hrr_denom = float(max_hr - resting_hr)
     if hrr_denom <= 0:
@@ -352,7 +354,7 @@ def compute_recovery_score(
     rhr_today: int,
     rhr_avg_30d: float,
     rhr_std_30d: float,
-    sleep_score: int,
+    sleep_score: int | None,
     prior_day_atl: float,
     prior_day_atl_max_30d: float,
 ) -> int:
@@ -386,11 +388,16 @@ def compute_recovery_score(
 
     # 4. Dynamic Blending (ANS trump card)
     if ans_score < 40:
-        final_score = (ans_score * 0.80) + (float(sleep_score) * 0.15) + (float(load_score) * 0.05)
+        w_ans, w_sleep, w_load = 0.80, 0.15, 0.05
     elif ans_score > 70:
-        final_score = (ans_score * 0.50) + (float(sleep_score) * 0.35) + (float(load_score) * 0.15)
+        w_ans, w_sleep, w_load = 0.50, 0.35, 0.15
     else:
-        final_score = (ans_score * 0.65) + (float(sleep_score) * 0.25) + (float(load_score) * 0.10)
+        w_ans, w_sleep, w_load = 0.65, 0.25, 0.10
+    if sleep_score is None:
+        # No night recorded: blend what we do know instead of scoring sleep as 0.
+        final_score = (ans_score * w_ans + float(load_score) * w_load) / (w_ans + w_load)
+    else:
+        final_score = (ans_score * w_ans) + (float(sleep_score) * w_sleep) + (float(load_score) * w_load)
 
     return int(round(np.clip(final_score, 0, 100)))
 

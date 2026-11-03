@@ -43,7 +43,9 @@ function rowWakeMs(row: BiometricsRow, timezoneOffsetMin: number): number | null
   const dateStr = typeof row.date === 'string' ? row.date.slice(0, 10) : null;
   if (!dateStr) return null;
   const offset = timezoneOffsetMin ?? 0;
-  const t = Date.parse(`${dateStr}T00:00:00`) - offset * 60_000;
+  // The athlete's local midnight as a UTC instant. Parsing without a zone used the
+  // device's zone and then subtracted the athlete offset again (counted twice).
+  const t = Date.parse(`${dateStr}T00:00:00Z`) - offset * 60_000;
   return Number.isFinite(t) ? t : null;
 }
 

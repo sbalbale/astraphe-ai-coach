@@ -148,7 +148,7 @@ def _workout_payload_from_strava(
 async def _finalize_strava_sync(athlete_id: str, db) -> None:
     """Recompute missing workout TSS and rebuild PMC after Strava ingest/backfill."""
     await recompute_workout_tss_for_athlete(athlete_id, db)
-    recalculate_tss_history(athlete_id, db)
+    await asyncio.to_thread(recalculate_tss_history, athlete_id, db)
     invalidate_context_cache(athlete_id)
 
 
@@ -270,12 +270,14 @@ async def get_valid_token(athlete_id: str, db: Any, delay: bool = False) -> str 
     """Return a usable access_token for Strava, refreshing and persisting when needed."""
     await _sleep_if_delay(delay)
     res = (
-        db.table("oauth_tokens")
-        .select("access_token,refresh_token,expires_at")
-        .eq("provider", "strava")
-        .eq("athlete_id", athlete_id)
-        .maybe_single()
-        .execute()
+        await asyncio.to_thread(
+            db.table("oauth_tokens")
+            .select("access_token,refresh_token,expires_at")
+            .eq("provider", "strava")
+            .eq("athlete_id", athlete_id)
+            .maybe_single()
+            .execute
+        )
     )
     row = decrypt_oauth_row(res.data)
     if not row:
@@ -312,9 +314,11 @@ async def get_valid_token(athlete_id: str, db: Any, delay: bool = False) -> str 
         update_payload["expires_at"] = expires_iso
 
     if new_access:
-        db.table("oauth_tokens").update(encrypt_oauth_fields(update_payload)).eq(
-            "athlete_id", athlete_id
-        ).eq("provider", "strava").execute()
+        await asyncio.to_thread(
+            db.table("oauth_tokens").update(encrypt_oauth_fields(update_payload)).eq(
+                "athlete_id", athlete_id
+            ).eq("provider", "strava").execute
+        )
 
     return new_access if isinstance(new_access, str) else None
 
@@ -458,7 +462,7 @@ def _load_stored_streams_dict(db: Any, workout_id: str) -> dict[str, Any]:
 
     ts_row = (
         db.table("activity_streams")
-        .select("time_series, storage_path, content_encoding")
+        .select("athlete_id, workout_id, time_series, storage_path, content_encoding")
         .eq("workout_id", workout_id)
         .maybe_single()
         .execute()
@@ -871,16 +875,18 @@ async def ingest_strava_activity(
     athlete = None
     if athlete_id:
         athlete_res = (
-            db.table("athletes").select("*").eq("id", athlete_id).maybe_single().execute()
+            await asyncio.to_thread(db.table("athletes").select("*").eq("id", athlete_id).maybe_single().execute)
         )
         athlete = athlete_res.data if athlete_res else None
     if not athlete:
         athlete_res = (
-            db.table("athletes")
-            .select("*")
-            .eq("strava_athlete_id", owner_strava_id)
-            .maybe_single()
-            .execute()
+            await asyncio.to_thread(
+                db.table("athletes")
+                .select("*")
+                .eq("strava_athlete_id", owner_strava_id)
+                .maybe_single()
+                .execute
+            )
         )
         athlete = athlete_res.data if athlete_res else None
     if not athlete:
@@ -949,13 +955,13 @@ async def ingest_strava_activity(
 
     # Fetch from Strava when no activity_streams row exists (flag alone is not reliable:
     # reprocess/merge paths may set strava_streams_fetched without persisting streams).
-    stored_streams = _load_stored_streams_dict(db, workout_id)
+    stored_streams = await asyncio.to_thread(_load_stored_streams_dict, db, workout_id)
     if is_primary_strava and not force_refresh and stored_streams:
         streams = stored_streams
     else:
         streams = await get_activity_streams(activity_id, access_token, delay=delay)
 
-    cached_laps = _load_cached_laps_for_workout(db, workout_id)
+    cached_laps = await asyncio.to_thread(_load_cached_laps_for_workout, db, workout_id)
     if is_duplicate_strava or force_refresh:
         laps = await get_activity_laps(activity_id, access_token, delay=delay)
     elif not workout.get("strava_streams_fetched"):
@@ -967,8 +973,9 @@ async def ingest_strava_activity(
         laps = await get_activity_laps(activity_id, access_token, delay=delay)
 
     hr_stream = (streams.get("heartrate") or {}).get("data", [])
+    time_stream = (streams.get("time") or {}).get("data")
     zones = get_athlete_zones(athlete)
-    zone_dist = compute_zone_distribution(hr_stream, zones) if hr_stream else {}
+    zone_dist = compute_zone_distribution(hr_stream, zones, time_stream) if hr_stream else {}
 
     embedded_list = activity.get("laps") if isinstance(activity.get("laps"), list) else []
     if is_rowing:
@@ -1009,12 +1016,24 @@ async def ingest_strava_activity(
 
     # workouts table columns must match Supabase schema (see migrations); extras live in raw_strava_payload.
     ended_at = start_time + timedelta(seconds=int(max(0, elapsed_time)))
-    update: dict[str, Any] = {
+    # Strava's own bookkeeping is always written; the shared metrics go through the
+    # same source-priority filter as every other provider (below). Strava used to
+    # overwrite them unconditionally and claim primary_source, so a Garmin workout
+    # matched by Strava lost its Garmin data.
+    from app.services.processing import SOURCE_PRIORITY, _quality_filter_workout_update
+
+    bookkeeping: dict[str, Any] = {
         "strava_activity_id": activity_id,
         # True = streams API was attempted for this activity; empty stream dict is valid (e.g. Zwift, no HR).
         "strava_streams_fetched": True,
-        "primary_source": "strava",
         "raw_strava_payload": activity,
+        "splits_metric": activity.get("splits_metric"),
+        "splits_standard": activity.get("splits_standard"),
+    }
+    current_primary = str(workout.get("primary_source") or workout.get("source") or "manual")
+    if current_primary not in SOURCE_PRIORITY or SOURCE_PRIORITY.index("strava") < SOURCE_PRIORITY.index(current_primary):
+        bookkeeping["primary_source"] = "strava"
+    update: dict[str, Any] = {
         "sport": _sport_for_db(sport_type),
         "title": activity.get("name"),
         "started_at": activity["start_date"],
@@ -1026,19 +1045,21 @@ async def ingest_strava_activity(
         "avg_power_w": _optional_smallint(activity.get("average_watts")),
         "norm_power_w": _optional_smallint(activity.get("weighted_average_watts")),
         "elevation_gain_m": activity.get("total_elevation_gain"),
-        "strain_score": _optional_smallint(activity.get("suffer_score"), max_val=1000),
-        "splits_metric": activity.get("splits_metric"),
-        "splits_standard": activity.get("splits_standard"),
+        # (No strain_score: Strava's suffer_score runs to ~1000 and isn't Astraphe's
+        # 0-100 strain, which is computed from HR zones.)
     }
     update.update(_hr_stream_zone_dist_to_workout_columns(zone_dist))
 
     if intervals is not None:
-        update["intervals"] = intervals
-        update["intervals_source"] = intervals_source
+        bookkeeping["intervals"] = intervals
+        bookkeeping["intervals_source"] = intervals_source
 
-    update = {k: v for k, v in update.items() if v is not None}
+    update = _quality_filter_workout_update(
+        workout, "strava", {k: v for k, v in update.items() if v is not None}
+    )
+    update.update({k: v for k, v in bookkeeping.items() if v is not None})
 
-    db.table("workouts").update(update).eq("id", workout_id).execute()
+    await asyncio.to_thread(db.table("workouts").update(update).eq("id", workout_id).execute)
     workout = {**workout, **update}
 
     _upsert_activity_streams(db, workout_id, athlete_id, streams)
@@ -1103,19 +1124,37 @@ async def backfill_historical_data(
 
     print(f"[strava.backfill] Starting {window_label} backfill for athlete={athlete_id}")
 
+    async def _current_token() -> str:
+        """A long backfill (rate-limit sleeps of 15 min) outlives the 6 h token: re-read
+        it, refreshing when close to expiry. Falls back to the token we already have."""
+        nonlocal access_token
+        try:
+            fresh = await get_valid_token(athlete_id, db)
+        except Exception as e:  # noqa: BLE001 - keep the backfill going on the old token
+            print(f"[strava.backfill] Token check failed for athlete={athlete_id}: {e}")
+            fresh = None
+        if fresh:
+            access_token = fresh
+        return access_token
+
     while True:
         await asyncio.sleep(STRAVA_BACKFILL_REQUEST_GAP_S)
 
         url = f"{STRAVA_API_BASE}/athlete/activities"
         # Do not pass ``after`` — Strava then returns oldest-first; ``page`` alone is newest-first.
         params = {"page": page, "per_page": per_page}
-        headers = _auth_headers(access_token)
+        headers = _auth_headers(await _current_token())
 
         activities: list[Any] = []
         list_retries = 0
+        auth_retried = False
         while list_retries < max_rate_limit_retries:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 resp = await client.get(url, params=params, headers=headers)
+            if resp.status_code == 401 and not auth_retried:
+                auth_retried = True
+                headers = _auth_headers(await _current_token())
+                continue
             if resp.status_code == 429:
                 wait = _retry_after_seconds(resp)
                 print(f"[strava.backfill] List activities 429 — sleeping {wait}s")
@@ -1123,7 +1162,11 @@ async def backfill_historical_data(
                 list_retries += 1
                 continue
             if resp.status_code != 200:
-                print(f"[strava.backfill] Error fetching page {page}: {resp.status_code}")
+                # Not "done": the backfill stopped early (e.g. revoked token). Say so.
+                print(
+                    f"[strava.backfill] Stopping early: page {page} returned {resp.status_code} "
+                    f"for athlete={athlete_id}"
+                )
                 activities = []
                 break
             raw = resp.json()
@@ -1148,13 +1191,15 @@ async def backfill_historical_data(
                 continue
 
             skip_primary = (
-                db.table("workouts")
-                .select("id")
-                .eq("athlete_id", athlete_id)
-                .eq("strava_activity_id", aid)
-                .eq("strava_streams_fetched", True)
-                .maybe_single()
-                .execute()
+                await asyncio.to_thread(
+                    db.table("workouts")
+                    .select("id")
+                    .eq("athlete_id", athlete_id)
+                    .eq("strava_activity_id", aid)
+                    .eq("strava_streams_fetched", True)
+                    .maybe_single()
+                    .execute
+                )
             )
             if skip_primary is not None and skip_primary.data is not None:
                 continue
@@ -1167,7 +1212,7 @@ async def backfill_historical_data(
                         activity_id=int(aid),
                         db=db,
                         delay=True,
-                        access_token=access_token,
+                        access_token=await _current_token(),
                         skip_pmc_recalc=True,
                     )
                     total_ingested += 1
@@ -1215,10 +1260,12 @@ async def backfill_recent(hours: int = 24) -> None:
     db = get_admin_db()
     try:
         res = (
-            db.table("oauth_tokens")
-            .select("athlete_id, external_user_id")
-            .eq("provider", "strava")
-            .execute()
+            await asyncio.to_thread(
+                db.table("oauth_tokens")
+                .select("athlete_id, external_user_id")
+                .eq("provider", "strava")
+                .execute
+            )
         )
         rows = res.data or []
     except Exception as e:
@@ -1302,7 +1349,7 @@ def reprocess_rowing_intervals_from_stored_data(db: Any, workout_id: str) -> tup
 
         ts_row = (
             db.table("activity_streams")
-            .select("time_series, storage_path, content_encoding")
+            .select("athlete_id, workout_id, time_series, storage_path, content_encoding")
             .eq("workout_id", workout_id)
             .maybe_single()
             .execute()
@@ -1323,7 +1370,11 @@ def reprocess_rowing_intervals_from_stored_data(db: Any, workout_id: str) -> tup
 
         hr_stream = (streams.get("heartrate") or {}).get("data", [])
         zones = get_athlete_zones(athlete)
-        zone_dist = compute_zone_distribution(hr_stream, zones) if hr_stream else {}
+        zone_dist = (
+            compute_zone_distribution(hr_stream, zones, (streams.get("time") or {}).get("data"))
+            if hr_stream
+            else {}
+        )
 
         update: dict[str, Any] = {
             "intervals": intervals,
@@ -1358,12 +1409,14 @@ async def refetch_workout_from_strava(
 ) -> dict[str, Any]:
     """Re-download activity detail, streams, and laps from Strava for one stored workout."""
     wres = (
-        db.table("workouts")
-        .select("id, athlete_id, strava_activity_id")
-        .eq("id", workout_id)
-        .eq("athlete_id", athlete_id)
-        .maybe_single()
-        .execute()
+        await asyncio.to_thread(
+            db.table("workouts")
+            .select("id, athlete_id, strava_activity_id")
+            .eq("id", workout_id)
+            .eq("athlete_id", athlete_id)
+            .maybe_single()
+            .execute
+        )
     )
     workout = _supabase_single_row(wres)
     if not workout:
@@ -1374,11 +1427,13 @@ async def refetch_workout_from_strava(
         raise HTTPException(status_code=400, detail="Workout has no Strava activity id")
 
     ares = (
-        db.table("athletes")
-        .select("strava_athlete_id")
-        .eq("id", athlete_id)
-        .maybe_single()
-        .execute()
+        await asyncio.to_thread(
+            db.table("athletes")
+            .select("strava_athlete_id")
+            .eq("id", athlete_id)
+            .maybe_single()
+            .execute
+        )
     )
     athlete_row = _supabase_single_row(ares)
     owner_raw = athlete_row.get("strava_athlete_id") if athlete_row else None
@@ -1414,17 +1469,19 @@ async def refetch_workout_from_strava(
     if not result:
         raise HTTPException(status_code=502, detail="Strava did not return activity data")
 
-    streams = _load_stored_streams_dict(db, workout_id)
+    streams = await asyncio.to_thread(_load_stored_streams_dict, db, workout_id)
     latlng = (streams.get("latlng") or {}).get("data", [])
     latlng_len = len(latlng) if isinstance(latlng, list) else 0
 
     fresh = (
-        db.table("workouts")
-        .select(_WORKOUT_REFETCH_COLUMNS)
-        .eq("id", workout_id)
-        .eq("athlete_id", athlete_id)
-        .maybe_single()
-        .execute()
+        await asyncio.to_thread(
+            db.table("workouts")
+            .select(_WORKOUT_REFETCH_COLUMNS)
+            .eq("id", workout_id)
+            .eq("athlete_id", athlete_id)
+            .maybe_single()
+            .execute
+        )
     )
     workout_row = _supabase_single_row(fresh) or result
 
@@ -1450,12 +1507,14 @@ async def hydrate_workout_streams(
     Idempotent when a stream row already exists.
     """
     wres = (
-        db.table("workouts")
-        .select("id, athlete_id, strava_activity_id")
-        .eq("id", workout_id)
-        .eq("athlete_id", athlete_id)
-        .maybe_single()
-        .execute()
+        await asyncio.to_thread(
+            db.table("workouts")
+            .select("id, athlete_id, strava_activity_id")
+            .eq("id", workout_id)
+            .eq("athlete_id", athlete_id)
+            .maybe_single()
+            .execute
+        )
     )
     workout = _supabase_single_row(wres)
     if not workout:
@@ -1465,7 +1524,7 @@ async def hydrate_workout_streams(
     if strava_id is None:
         raise HTTPException(status_code=400, detail="Workout has no Strava activity id")
 
-    if _load_stored_streams_dict(db, workout_id):
+    if await asyncio.to_thread(_load_stored_streams_dict, db, workout_id):
         return {"status": "already_stored"}
 
     access_token = await get_valid_token(athlete_id, db, delay=delay)
@@ -1474,24 +1533,26 @@ async def hydrate_workout_streams(
 
     streams = await get_activity_streams(int(strava_id), access_token, delay=delay)
 
-    db.table("workouts").update({"strava_streams_fetched": True}).eq("id", workout_id).execute()
+    await asyncio.to_thread(db.table("workouts").update({"strava_streams_fetched": True}).eq("id", workout_id).execute)
     _upsert_activity_streams(db, workout_id, athlete_id, streams)
 
     hr_stream = (streams.get("heartrate") or {}).get("data", [])
     if hr_stream:
         ares = (
-            db.table("athletes")
-            .select("*")
-            .eq("id", athlete_id)
-            .maybe_single()
-            .execute()
+            await asyncio.to_thread(
+                db.table("athletes")
+                .select("*")
+                .eq("id", athlete_id)
+                .maybe_single()
+                .execute
+            )
         )
         athlete = _supabase_single_row(ares) or {}
         zones = get_athlete_zones(athlete)
-        zone_dist = compute_zone_distribution(hr_stream, zones)
+        zone_dist = compute_zone_distribution(hr_stream, zones, (streams.get("time") or {}).get("data"))
         zone_cols = _hr_stream_zone_dist_to_workout_columns(zone_dist)
         if zone_cols:
-            db.table("workouts").update(zone_cols).eq("id", workout_id).execute()
+            await asyncio.to_thread(db.table("workouts").update(zone_cols).eq("id", workout_id).execute)
 
     return {
         "status": "hydrated" if streams else "empty",

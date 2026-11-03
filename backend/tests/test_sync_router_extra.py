@@ -8,9 +8,11 @@ import pytest
 
 from fastapi.testclient import TestClient
 
-from app.dependencies import get_admin_db, get_current_athlete, get_user_db
+from app.dependencies import get_admin_db, get_current_athlete, get_user_db, get_user_config, UserConfig
 from app.main import app
 from app.routers import sync as sync_router
+from app.services.oauth_state import sign_state, verify_state
+from urllib.parse import parse_qs, urlparse
 from app.services import strava as strava_service
 from app.services import whoop as whoop_service
 from app.services import intervals_icu as intervals_icu_service
@@ -20,8 +22,12 @@ def _run_async(coro):
     return asyncio.run(coro)
 
 
-def _override(athlete_id="athlete-1", user_db=None, admin_db=None):
+def _override(athlete_id="athlete-1", user_db=None, admin_db=None, is_admin=False):
     app.dependency_overrides[get_current_athlete] = lambda: athlete_id
+    app.dependency_overrides[get_user_config] = lambda: UserConfig(
+        user_id="u-1", tier="premium", gemini_model="m", gemini_analysis_model="m",
+        rate_limit_rpm=100, rate_limit_rph=100, is_admin=is_admin,
+    )
     if user_db is not None:
         app.dependency_overrides[get_user_db] = lambda: user_db
     if admin_db is not None:
@@ -72,16 +78,48 @@ def test_get_clean_strava_redirect_url():
 
 
 def test_oauth_state_without_web_return():
-    assert sync_router._oauth_state("ath-1", None) == "ath-1"
+    parsed = verify_state(sync_router._oauth_state("ath-1", None, "whoop"), "whoop")
+    assert parsed.athlete_id == "ath-1" and parsed.web_return is None
 
 
 def test_oauth_state_with_safe_web_return():
-    state = sync_router._oauth_state("ath-1", "https://app.astrapheai.com/x")
-    assert state == "ath-1|https://app.astrapheai.com/x"
+    state = sync_router._oauth_state("ath-1", "https://app.astrapheai.com/x", "strava")
+    assert verify_state(state, "strava").web_return == "https://app.astrapheai.com/x"
 
 
 def test_oauth_state_with_unsafe_web_return_omits_it():
-    assert sync_router._oauth_state("ath-1", "https://evil.com/x") == "ath-1"
+    state = sync_router._oauth_state("ath-1", "https://evil.com/x", "whoop")
+    assert verify_state(state, "whoop").web_return is None
+
+
+def test_oauth_callback_rejects_raw_athlete_id_state():
+    # The old format (raw athlete id) must no longer attach tokens to anyone.
+    admin_db = MagicMock()
+    app.dependency_overrides[get_admin_db] = lambda: admin_db
+    try:
+        with patch.object(strava_service, "exchange_oauth_code", AsyncMock()) as exch:
+            res = client.get("/v1/sync/oauth/strava/callback", params={"code": "abc", "state": "ath-1"})
+        assert res.status_code == 400
+        exch.assert_not_awaited()
+        admin_db.table.assert_not_called()
+    finally:
+        _teardown()
+
+
+def test_whoop_callback_upserts_on_athlete_and_provider():
+    admin_db = MagicMock()
+    app.dependency_overrides[get_admin_db] = lambda: admin_db
+    try:
+        with patch.object(
+            whoop_service, "exchange_oauth_code", AsyncMock(return_value={"access_token": "tok", "refresh_token": "r"})
+        ), patch.object(whoop_service, "fetch_profile", AsyncMock(return_value={"user_id": "wu-1"})), patch.object(
+            sync_router, "backfill_historical_data", AsyncMock()
+        ):
+            client.get("/v1/sync/oauth/whoop/callback", params={"code": "abc", "state": sign_state("ath-1", "whoop")})
+        upsert = admin_db.table.return_value.upsert
+        assert upsert.call_args.kwargs.get("on_conflict") == "athlete_id,provider"
+    finally:
+        _teardown()
 
 
 def test_clean_intervals_athlete_id_strips():
@@ -104,13 +142,16 @@ def test_clean_intervals_api_key_empty_raises():
 
 def test_build_whoop_oauth_authorize_url_contains_state():
     url = sync_router.build_whoop_oauth_authorize_url("ath-1", None)
-    assert "state=ath-1" in url
+    state = parse_qs(urlparse(url).query)["state"][0]
+    assert verify_state(state, "whoop").athlete_id == "ath-1"
     assert "client_id=" in url
 
 
 def test_build_strava_oauth_authorize_url_contains_state():
     url = sync_router.build_strava_oauth_authorize_url("ath-1", None)
-    assert "state=ath-1" in url
+    state = parse_qs(urlparse(url).query)["state"][0]
+    assert verify_state(state, "strava").athlete_id == "ath-1"
+    assert "approval_prompt=force" in url
     assert "strava.com/oauth/authorize" in url
 
 
@@ -377,7 +418,7 @@ def test_get_sync_status_reports_connected_providers():
 
 
 def test_unlink_integration_missing_provider_400():
-    _override(user_db=MagicMock())
+    _override(admin_db=MagicMock())
     try:
         res = client.delete("/v1/sync/%20")
         assert res.status_code == 400
@@ -393,13 +434,15 @@ def test_unlink_integration_success_fully_removed():
     user_db.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value = SimpleNamespace(
         data=[]
     )
-    _override(user_db=user_db)
+    _override(admin_db=user_db)
     try:
         res = client.delete("/v1/sync/strava")
         assert res.status_code == 200
         body = res.json()
         assert body["connected"] is False
         assert "unlinked successfully" in body["message"]
+        # scoped to the caller's athlete even though it runs with the service role
+        user_db.table.return_value.delete.return_value.eq.assert_called_with("athlete_id", "athlete-1")
     finally:
         _teardown()
 
@@ -412,7 +455,7 @@ def test_unlink_integration_still_connected_after_delete():
     user_db.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value = SimpleNamespace(
         data=[{"id": "tok-1"}]
     )
-    _override(user_db=user_db)
+    _override(admin_db=user_db)
     try:
         res = client.delete("/v1/sync/strava")
         assert res.status_code == 200
@@ -466,7 +509,7 @@ def test_reprocess_metrics_now_default_is_strain_refresh():
 
 def test_reprocess_metrics_now_full_success():
     admin_db = MagicMock()
-    _override(admin_db=admin_db)
+    _override(admin_db=admin_db, is_admin=True)
     try:
         with patch.object(
             sync_router, "reprocess_athlete_metrics", AsyncMock(return_value={"workouts": 5})
@@ -480,9 +523,21 @@ def test_reprocess_metrics_now_full_success():
         _teardown()
 
 
-def test_reprocess_metrics_now_full_failure_returns_500():
+def test_reprocess_metrics_full_is_admin_only():
     admin_db = MagicMock()
     _override(admin_db=admin_db)
+    try:
+        with patch.object(sync_router, "reprocess_athlete_metrics", AsyncMock()) as full:
+            res = client.post("/v1/sync/reprocess-metrics", params={"full": "true"})
+        assert res.status_code == 403
+        full.assert_not_awaited()
+    finally:
+        _teardown()
+
+
+def test_reprocess_metrics_now_full_failure_returns_500():
+    admin_db = MagicMock()
+    _override(admin_db=admin_db, is_admin=True)
     try:
         with patch.object(
             sync_router, "reprocess_athlete_metrics", AsyncMock(side_effect=RuntimeError("boom"))
@@ -764,8 +819,7 @@ def test_whoop_oauth_callback_missing_athlete_id_returns_error_dict():
             res = client.get(
                 "/v1/sync/oauth/whoop/callback", params={"code": "abc", "state": "undefined"}
             )
-        assert res.status_code == 200
-        assert res.json()["status"] == "error"
+        assert res.status_code == 400
     finally:
         _teardown()
 
@@ -780,7 +834,7 @@ def test_whoop_oauth_callback_success_html_response():
             whoop_service, "fetch_profile", AsyncMock(return_value={"user_id": "wu-1"})
         ), patch.object(sync_router, "backfill_historical_data", AsyncMock()):
             res = client.get(
-                "/v1/sync/oauth/whoop/callback", params={"code": "abc", "state": "ath-1"}
+                "/v1/sync/oauth/whoop/callback", params={"code": "abc", "state": sign_state("ath-1", "whoop")}
             )
         assert res.status_code == 200
         assert b"WHOOP connected" in res.content
@@ -799,7 +853,7 @@ def test_whoop_oauth_callback_success_with_web_return_redirects():
         ), patch.object(sync_router, "backfill_historical_data", AsyncMock()):
             res = client.get(
                 "/v1/sync/oauth/whoop/callback",
-                params={"code": "abc", "state": "ath-1|https://app.astrapheai.com/done"},
+                params={"code": "abc", "state": sign_state("ath-1", "whoop", "https://app.astrapheai.com/done")},
                 follow_redirects=False,
             )
         assert res.status_code in (302, 307)
@@ -816,7 +870,7 @@ def test_whoop_oauth_callback_exchange_failure_returns_error_dict():
             whoop_service, "exchange_oauth_code", AsyncMock(side_effect=RuntimeError("exchange failed"))
         ):
             res = client.get(
-                "/v1/sync/oauth/whoop/callback", params={"code": "abc", "state": "ath-1"}
+                "/v1/sync/oauth/whoop/callback", params={"code": "abc", "state": sign_state("ath-1", "whoop")}
             )
         assert res.status_code == 200
         assert res.json()["status"] == "error"
@@ -853,7 +907,7 @@ def test_strava_oauth_callback_success():
             strava_service, "strava_oauth_expires_at_iso", return_value=None
         ), patch.object(sync_router, "strava_backfill", AsyncMock()):
             res = client.get(
-                "/v1/sync/oauth/strava/callback", params={"code": "abc", "state": "ath-1"}
+                "/v1/sync/oauth/strava/callback", params={"code": "abc", "state": sign_state("ath-1", "strava")}
             )
         assert res.status_code == 200
         assert b"Strava connected" in res.content
@@ -875,7 +929,7 @@ def test_strava_oauth_callback_resolves_athlete_id_when_missing_from_token():
             strava_service, "strava_oauth_expires_at_iso", return_value=None
         ), patch.object(sync_router, "strava_backfill", AsyncMock()) as mock_backfill:
             res = client.get(
-                "/v1/sync/oauth/strava/callback", params={"code": "abc", "state": "ath-1"}
+                "/v1/sync/oauth/strava/callback", params={"code": "abc", "state": sign_state("ath-1", "strava")}
             )
         assert res.status_code == 200
         mock_backfill.assert_awaited_once()
@@ -891,7 +945,7 @@ def test_strava_oauth_callback_no_access_token_raises_400():
             strava_service, "exchange_oauth_code", AsyncMock(return_value={"access_token": None})
         ):
             res = client.get(
-                "/v1/sync/oauth/strava/callback", params={"code": "abc", "state": "ath-1"}
+                "/v1/sync/oauth/strava/callback", params={"code": "abc", "state": sign_state("ath-1", "strava")}
             )
         assert res.status_code == 400
     finally:
@@ -912,7 +966,7 @@ def test_strava_oauth_callback_unresolved_athlete_id_skips_backfill():
             strava_service, "strava_oauth_expires_at_iso", return_value=None
         ), patch.object(sync_router, "strava_backfill", AsyncMock()) as mock_backfill:
             res = client.get(
-                "/v1/sync/oauth/strava/callback", params={"code": "abc", "state": "ath-1"}
+                "/v1/sync/oauth/strava/callback", params={"code": "abc", "state": sign_state("ath-1", "strava")}
             )
         assert res.status_code == 200
         mock_backfill.assert_not_awaited()
@@ -928,7 +982,7 @@ def test_strava_oauth_callback_unexpected_error_returns_error_dict():
             strava_service, "exchange_oauth_code", AsyncMock(side_effect=RuntimeError("boom"))
         ):
             res = client.get(
-                "/v1/sync/oauth/strava/callback", params={"code": "abc", "state": "ath-1"}
+                "/v1/sync/oauth/strava/callback", params={"code": "abc", "state": sign_state("ath-1", "strava")}
             )
         assert res.status_code == 200
         assert res.json()["status"] == "error"
@@ -939,6 +993,30 @@ def test_strava_oauth_callback_unexpected_error_returns_error_dict():
 # ---------------------------------------------------------------------------
 # POST /v1/sync/garmin/webhook
 # ---------------------------------------------------------------------------
+
+
+def _garmin_signed_post(url, json=None, content=None, headers=None):
+    """POST to the Garmin webhook signed with the test secret ("shh")."""
+    import hashlib
+    import hmac as hmac_mod
+    import json as json_mod
+
+    body = content if content is not None else json_mod.dumps(json).encode("utf-8")
+    sig = hmac_mod.new(b"shh", body, hashlib.sha256).hexdigest()
+    h = {"content-type": "application/json", "X-Garmin-Signature": sig, **(headers or {})}
+    return client.post(url, content=body, headers=h)
+
+
+def test_garmin_webhook_without_secret_is_disabled():
+    admin_db = MagicMock()
+    app.dependency_overrides[get_admin_db] = lambda: admin_db
+    try:
+        with patch.object(sync_router.settings, "GARMIN_WEBHOOK_SECRET", None):
+            res = client.post("/v1/sync/garmin/webhook", json={"bodyComps": [{"userId": "x", "weightInGrams": 1}]})
+        assert res.status_code == 404
+        admin_db.table.assert_not_called()
+    finally:
+        _teardown()
 
 
 def test_garmin_webhook_invalid_signature_401():
@@ -981,8 +1059,8 @@ def test_garmin_webhook_invalid_json_400():
     admin_db = MagicMock()
     app.dependency_overrides[get_admin_db] = lambda: admin_db
     try:
-        with patch.object(sync_router.settings, "GARMIN_WEBHOOK_SECRET", None):
-            res = client.post(
+        with patch.object(sync_router.settings, "GARMIN_WEBHOOK_SECRET", "shh"):
+            res = _garmin_signed_post(
                 "/v1/sync/garmin/webhook",
                 content=b"not json",
                 headers={"content-type": "application/json"},
@@ -999,8 +1077,8 @@ def test_garmin_webhook_activity_no_athlete_found_skipped():
     )
     app.dependency_overrides[get_admin_db] = lambda: admin_db
     try:
-        with patch.object(sync_router.settings, "GARMIN_WEBHOOK_SECRET", None):
-            res = client.post(
+        with patch.object(sync_router.settings, "GARMIN_WEBHOOK_SECRET", "shh"):
+            res = _garmin_signed_post(
                 "/v1/sync/garmin/webhook",
                 json={"activities": [{"userId": "g1", "startTimeInSeconds": 1_700_000_000}]},
             )
@@ -1019,10 +1097,10 @@ def test_garmin_webhook_activity_schedules_save():
     )
     app.dependency_overrides[get_admin_db] = lambda: admin_db
     try:
-        with patch.object(sync_router.settings, "GARMIN_WEBHOOK_SECRET", None), patch.object(
+        with patch.object(sync_router.settings, "GARMIN_WEBHOOK_SECRET", "shh"), patch.object(
             sync_router, "process_and_save_workout", AsyncMock()
         ):
-            res = client.post(
+            res = _garmin_signed_post(
                 "/v1/sync/garmin/webhook",
                 json={
                     "activities": [
@@ -1049,8 +1127,8 @@ def test_garmin_webhook_activity_processing_exception_is_swallowed():
     )
     app.dependency_overrides[get_admin_db] = lambda: admin_db
     try:
-        with patch.object(sync_router.settings, "GARMIN_WEBHOOK_SECRET", None):
-            res = client.post(
+        with patch.object(sync_router.settings, "GARMIN_WEBHOOK_SECRET", "shh"):
+            res = _garmin_signed_post(
                 "/v1/sync/garmin/webhook",
                 json={"activities": [{"userId": "g1", "startTimeInSeconds": 1_700_000_000}]},
             )
@@ -1066,8 +1144,8 @@ def test_garmin_webhook_body_comp_no_athlete_found_skipped():
     )
     app.dependency_overrides[get_admin_db] = lambda: admin_db
     try:
-        with patch.object(sync_router.settings, "GARMIN_WEBHOOK_SECRET", None):
-            res = client.post(
+        with patch.object(sync_router.settings, "GARMIN_WEBHOOK_SECRET", "shh"):
+            res = _garmin_signed_post(
                 "/v1/sync/garmin/webhook",
                 json={"bodyComps": [{"userId": "g1", "weightInGrams": 70000}]},
             )
@@ -1083,8 +1161,8 @@ def test_garmin_webhook_body_comp_updates_weight():
     )
     app.dependency_overrides[get_admin_db] = lambda: admin_db
     try:
-        with patch.object(sync_router.settings, "GARMIN_WEBHOOK_SECRET", None):
-            res = client.post(
+        with patch.object(sync_router.settings, "GARMIN_WEBHOOK_SECRET", "shh"):
+            res = _garmin_signed_post(
                 "/v1/sync/garmin/webhook",
                 json={"bodyComps": [{"userId": "g1", "weightInGrams": 70000}]},
             )
@@ -1101,8 +1179,8 @@ def test_garmin_webhook_body_comp_no_weight_skips_update():
     )
     app.dependency_overrides[get_admin_db] = lambda: admin_db
     try:
-        with patch.object(sync_router.settings, "GARMIN_WEBHOOK_SECRET", None):
-            res = client.post(
+        with patch.object(sync_router.settings, "GARMIN_WEBHOOK_SECRET", "shh"):
+            res = _garmin_signed_post(
                 "/v1/sync/garmin/webhook",
                 json={"bodyComps": [{"userId": "g1"}]},
             )
@@ -1119,8 +1197,8 @@ def test_garmin_webhook_body_comp_processing_exception_is_swallowed():
     )
     app.dependency_overrides[get_admin_db] = lambda: admin_db
     try:
-        with patch.object(sync_router.settings, "GARMIN_WEBHOOK_SECRET", None):
-            res = client.post(
+        with patch.object(sync_router.settings, "GARMIN_WEBHOOK_SECRET", "shh"):
+            res = _garmin_signed_post(
                 "/v1/sync/garmin/webhook",
                 json={"bodyComps": [{"userId": "g1", "weightInGrams": 70000}]},
             )

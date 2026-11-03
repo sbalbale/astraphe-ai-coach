@@ -1,7 +1,9 @@
 import asyncio
+import base64
+import json
 import logging
 from dataclasses import dataclass
-from typing import Callable, TypeVar
+from typing import Any, Callable, TypeVar
 
 from fastapi import Depends, HTTPException, Security
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -23,10 +25,12 @@ security = HTTPBearer()
 
 # Per-tier default rate limits for AI endpoints (requests per minute / per hour).
 # Individual users can be given overrides via app_metadata.rate_limit_rpm / rate_limit_rph.
+# One coach turn makes several model calls, and the whole server shares one model
+# budget (services/gemini_quota.py), so a single account must stay well below it.
 TIER_DEFAULTS: dict[str, dict[str, int]] = {
-    "free":    {"rpm": 5,  "rph": 20},
-    "trial":   {"rpm": 15, "rph": 75},
-    "premium": {"rpm": 40, "rph": 200},
+    "free":    {"rpm": 5,  "rph": 20,  "rpd": 40},
+    "trial":   {"rpm": 6,  "rph": 60,  "rpd": 150},
+    "premium": {"rpm": 10, "rph": 150, "rpd": 400},
 }
 
 VALID_TIERS = frozenset(TIER_DEFAULTS.keys())
@@ -150,6 +154,42 @@ async def _auth_get_user(db: Client, token: str):
     return await _run_supabase_call(db.auth.get_user, token)
 
 
+def unverified_jwt_claims(token: str) -> dict:
+    """
+    Decode a JWT payload WITHOUT verifying it. Only call this after GoTrue has
+    verified the token (auth.get_user); it's for reading claims GoTrue doesn't
+    surface on the user object, such as the OAuth `client_id`.
+    """
+    try:
+        part = token.split(".")[1]
+        part += "=" * (-len(part) % 4)
+        data = json.loads(base64.urlsafe_b64decode(part))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def reject_third_party_oauth_token(token: str) -> None:
+    """
+    Tokens minted by Supabase's OAuth server for third-party (MCP) clients carry a
+    `client_id` claim and are otherwise ordinary user JWTs. They're meant for the
+    read-only MCP server, not this API, where they'd allow writes, account
+    deletion and (for admins) admin routes.
+    """
+    if unverified_jwt_claims(token).get("client_id"):
+        raise HTTPException(status_code=403, detail="Third-party app tokens can't be used with this API")
+
+
+def _dev_auth_fallback_allowed() -> bool:
+    """The TEST_ATHLETE_ID fallback only ever applies to a local Supabase in development."""
+    url = (settings.SUPABASE_URL or "").lower()
+    return (
+        settings.APP_ENV == "development"
+        and bool(settings.TEST_ATHLETE_ID)
+        and url.startswith(("http://127.0.0.1", "http://localhost"))
+    )
+
+
 async def _fetch_athlete_id_for_user(db: Client, user_id: str) -> str:
     athlete_res = await _run_supabase_call(
         lambda: db.table("athletes").select("id").eq("user_id", user_id).execute()
@@ -187,6 +227,7 @@ async def get_current_athlete(
             await asyncio.sleep(delay)
         try:
             user = await _auth_get_user(db, token)
+            reject_third_party_oauth_token(token)
             user_id = user.user.id
             if settings.APP_ENV == "development":
                 print(f"Auth DEBUG: user_id={user_id}")
@@ -211,7 +252,7 @@ async def get_current_athlete(
             status_code=503,
             detail="Database schema cache unavailable, please retry.",
         )
-    if settings.APP_ENV == "development" and settings.TEST_ATHLETE_ID:
+    if _dev_auth_fallback_allowed():
         print(f"WARNING: Falling back to TEST_ATHLETE_ID: {settings.TEST_ATHLETE_ID}")
         try:
             exists = await _run_supabase_call(
@@ -229,12 +270,44 @@ async def get_current_athlete(
             status_code=401,
             detail="Invalid or stale auth token (local Supabase was likely reset). Please sign out and sign in again.",
         )
-    raise HTTPException(status_code=401, detail=f"Invalid or missing token: {last_exc}")
+    raise HTTPException(status_code=401, detail="Invalid or missing token")
 
 
 # ---------------------------------------------------------------------------
 # User config — all admin-controlled fields in a single auth.get_user() call
 # ---------------------------------------------------------------------------
+
+# Users whose expired trial this process has already written back as free.
+_trial_expiry_written: set[str] = set()
+
+
+def _apply_trial_expiry(tier: str, app_meta: dict, user: Any) -> str:
+    """
+    New accounts get a 14-day trial (app_metadata.trial_ends_at). Once it passes the
+    account is free from the very next request; the downgrade is also written back to
+    app_metadata and athletes.tier in the background so the app and admin views agree.
+    """
+    from app.services.tiers import effective_tier, persist_trial_expiry
+
+    effective = effective_tier(tier, app_meta, getattr(user, "created_at", None))
+    user_id = getattr(user, "id", None)
+    if effective != tier and user_id and user_id not in _trial_expiry_written:
+        _trial_expiry_written.add(user_id)
+        from app.services.background import spawn as spawn_background
+
+        async def _persist() -> None:
+            try:
+                await asyncio.to_thread(persist_trial_expiry, get_admin_db(), user_id)
+            except Exception as e:  # noqa: BLE001 - retried by the next process/request
+                _trial_expiry_written.discard(user_id)
+                logger.warning("trial expiry write-back failed for user_id=%s: %s", user_id, e)
+
+        try:
+            spawn_background(_persist())
+        except RuntimeError:  # no running loop
+            _trial_expiry_written.discard(user_id)
+    return effective
+
 
 def _resolve_rate_limits(app_meta: dict, tier: str) -> tuple[int, int]:
     defaults = TIER_DEFAULTS.get(tier, TIER_DEFAULTS["free"])
@@ -265,11 +338,13 @@ async def get_user_config(
 
     try:
         user_res = await _auth_get_user(db, token)
+        reject_third_party_oauth_token(token)
         u = user_res.user
         app_meta = getattr(u, "app_metadata", None) or {}
 
         tier_raw = str(app_meta.get("tier") or "free").strip().lower()
         tier = tier_raw if tier_raw in VALID_TIERS else "free"
+        tier = _apply_trial_expiry(tier, app_meta, u)
 
         model_raw = app_meta.get("gemini_model")
         model = model_raw.strip() if isinstance(model_raw, str) and model_raw.strip() else fallback_model
@@ -335,6 +410,27 @@ async def require_ai_rate_limit(
         window_seconds=3600,
         detail=f"Rate limit exceeded: max {config.rate_limit_rph} AI requests per hour.",
     )
+    rpd = TIER_DEFAULTS.get(config.tier, TIER_DEFAULTS["free"])["rpd"]
+    await _rate_limiter.require(
+        key=f"{athlete_id}:ai:day",
+        limit=max(rpd, config.rate_limit_rph),  # an admin rph override also lifts the daily cap
+        window_seconds=86400,
+        detail="Daily AI limit reached. It resets within 24 hours.",
+    )
+
+
+def action_rate_limit(name: str, limit: int, window_seconds: int, detail: str):
+    """
+    Per-athlete limit for expensive non-AI actions (provider backfills, reprocessing,
+    third-party logins). Use as ``Depends(action_rate_limit(...))``.
+    """
+
+    async def _dep(athlete_id: str = Depends(get_current_athlete)) -> None:
+        await _rate_limiter.require(
+            key=f"{athlete_id}:{name}", limit=limit, window_seconds=window_seconds, detail=detail
+        )
+
+    return _dep
 
 
 # ---------------------------------------------------------------------------

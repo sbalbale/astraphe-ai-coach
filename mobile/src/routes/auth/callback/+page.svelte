@@ -7,7 +7,8 @@
   let sessionOk = $state<boolean | null>(null);
 
   async function handleConfirmedSession(session: Session) {
-    if (sessionOk !== null) return;
+    // A session that arrives after the timeout still wins (slow token exchange).
+    if (sessionOk === true) return;
     sessionOk = true;
     await completeAuthSession(session);
   }
@@ -16,14 +17,14 @@
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === 'SIGNED_IN' && session && sessionOk === null) {
+      if (event === 'SIGNED_IN' && session && sessionOk !== true) {
         void handleConfirmedSession(session);
       }
     });
 
     void (async () => {
       const { data } = await supabase.auth.getSession();
-      if (data.session && sessionOk === null) {
+      if (data.session && sessionOk !== true) {
         await handleConfirmedSession(data.session);
       }
     })();
@@ -32,7 +33,7 @@
       if (sessionOk === null) {
         sessionOk = false;
       }
-    }, 2000);
+    }, 10000);
 
     return () => {
       subscription.unsubscribe();

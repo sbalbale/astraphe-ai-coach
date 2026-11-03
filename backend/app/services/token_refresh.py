@@ -44,12 +44,14 @@ async def _refresh_expiring_whoop_tokens() -> None:
     cutoff = (datetime.now(timezone.utc) + timedelta(seconds=_EXPIRY_BUFFER_SEC)).isoformat()
     try:
         res = (
-            db.table("oauth_tokens")
-            .select("id,athlete_id,external_user_id,access_token,refresh_token,expires_at")
-            .eq("provider", "whoop")
-            .not_.is_("refresh_token", "null")
-            .lte("expires_at", cutoff)
-            .execute()
+            await asyncio.to_thread(
+                db.table("oauth_tokens")
+                .select("id,athlete_id,external_user_id,access_token,refresh_token,expires_at")
+                .eq("provider", "whoop")
+                .not_.is_("refresh_token", "null")
+                .lte("expires_at", cutoff)
+                .execute
+            )
         )
         rows = [decrypt_oauth_row(r) for r in (res.data or [])]
     except Exception as e:
@@ -99,12 +101,14 @@ async def claim_and_refresh_whoop_token(db, athlete_id: str, refresh_token: str)
     # row's current state at UPDATE time, so this is race-free even though
     # we never issued a SELECT ... FOR UPDATE.
     claim = (
-        db.table("oauth_tokens")
-        .update({"refresh_lock_expires_at": lock_until})
-        .eq("athlete_id", athlete_id)
-        .eq("provider", "whoop")
-        .lt("refresh_lock_expires_at", now.isoformat())
-        .execute()
+        await asyncio.to_thread(
+            db.table("oauth_tokens")
+            .update({"refresh_lock_expires_at": lock_until})
+            .eq("athlete_id", athlete_id)
+            .eq("provider", "whoop")
+            .lt("refresh_lock_expires_at", now.isoformat())
+            .execute
+        )
     )
     if not claim.data:
         return None
@@ -114,9 +118,11 @@ async def claim_and_refresh_whoop_token(db, athlete_id: str, refresh_token: str)
     except Exception:
         # Release the lock early so a retry (this or another replica) doesn't
         # have to wait out the full claim duration.
-        db.table("oauth_tokens").update(
-            {"refresh_lock_expires_at": now.isoformat()}
-        ).eq("athlete_id", athlete_id).eq("provider", "whoop").execute()
+        await asyncio.to_thread(
+            db.table("oauth_tokens").update(
+                {"refresh_lock_expires_at": now.isoformat()}
+            ).eq("athlete_id", athlete_id).eq("provider", "whoop").execute
+        )
         raise
 
     new_access = token_data.get("access_token")
@@ -130,7 +136,7 @@ async def claim_and_refresh_whoop_token(db, athlete_id: str, refresh_token: str)
     update["refresh_token"] = new_refresh
     if new_expires:
         update["expires_at"] = new_expires
-    db.table("oauth_tokens").update(encrypt_oauth_fields(update)).eq("athlete_id", athlete_id).eq("provider", "whoop").execute()
+    await asyncio.to_thread(db.table("oauth_tokens").update(encrypt_oauth_fields(update)).eq("athlete_id", athlete_id).eq("provider", "whoop").execute)
     return token_data
 
 

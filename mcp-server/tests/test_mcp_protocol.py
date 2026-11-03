@@ -56,7 +56,10 @@ async def test_required_scopes_are_a_subset_of_what_the_verifier_grants(app, mon
     with patch.object(
         AstrapheTokenVerifier, "_get_user", new=AsyncMock(return_value=SimpleNamespace(user=fake_user))
     ):
-        access_token = await verifier.verify_token("a-valid-token")
+        import base64, json
+        enc = lambda d: base64.urlsafe_b64encode(json.dumps(d).encode()).rstrip(b"=").decode()
+        oauth_token = f"{enc({'alg': 'ES256'})}.{enc({'sub': 'user-123', 'client_id': 'claude'})}.sig"
+        access_token = await verifier.verify_token(oauth_token)
 
     assert access_token is not None
     for scope in published_scopes:

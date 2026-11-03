@@ -428,3 +428,57 @@ describe('updateProfile weight', () => {
     expect(apiMock.getBiometricsPage).not.toHaveBeenCalled();
   });
 });
+
+describe('sign-out while loading (shared device)', () => {
+  it("never lets the previous user's late responses land after reset()", async () => {
+    let releaseState!: (v: unknown) => void;
+    apiMock.getAthleteState.mockReturnValue(new Promise((r) => (releaseState = r)));
+    apiMock.getAthleteProfile.mockResolvedValue({ id: 'ath-1', display_name: 'User A', timezone_offset_min: CURRENT_TZ_OFFSET_MIN });
+    apiMock.getSyncStatus.mockResolvedValue({ integrations: {} });
+    resolveAllTier2({ getCompletedWorkouts: [{ id: 'a-workout' }] });
+
+    const pending = athleteStore.fetchAll();
+    // User A signs out, user B signs in before A's responses arrive.
+    athleteStore.reset();
+    authStoreMock.user = { id: 'ath-2' };
+    releaseState({ ctl: 99 });
+    await pending;
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(athleteStore.profile).toBeNull();
+    expect(athleteStore.ctl).toBe(0);
+    expect(athleteStore.workouts).toEqual([]);
+    expect(localStorage.getItem(CACHE_KEY)).toBeNull();
+    expect(athleteStore.loading).toBe(false); // B's own fetchAll isn't blocked
+  });
+
+  it('queues a forced refresh requested while a load is running', async () => {
+    resolveAllTier1();
+    resolveAllTier2();
+    const first = athleteStore.fetchAll();
+    void athleteStore.fetchAll(true); // e.g. a workout was just added
+    await first;
+    await new Promise((r) => setTimeout(r, 0));
+    expect(apiMock.getAthleteState).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('stale responses vs saves', () => {
+  it('a refresh that started before a profile save does not undo it', async () => {
+    let releaseProfile!: (v: unknown) => void;
+    apiMock.getAthleteState.mockResolvedValue({ ctl: 1 });
+    apiMock.getAthleteProfile.mockReturnValueOnce(new Promise((r) => (releaseProfile = r)));
+    apiMock.getSyncStatus.mockResolvedValue({ integrations: {} });
+    resolveAllTier2();
+
+    const load = athleteStore.fetchAll(); // starts reading the *old* profile
+    apiMock.patchAthleteProfile.mockResolvedValue({ ok: true, data: { status: 'success' } });
+    apiMock.getAthleteProfile.mockResolvedValue({ id: 'ath-1', weight_kg: 83.91, timezone_offset_min: CURRENT_TZ_OFFSET_MIN });
+    await athleteStore.updateProfile({ weight_kg: 83.91 });
+    expect(athleteStore.profile.weight_kg).toBe(83.91);
+
+    releaseProfile({ id: 'ath-1', weight_kg: 85.05, timezone_offset_min: CURRENT_TZ_OFFSET_MIN }); // old value arrives late
+    await load;
+    expect(athleteStore.profile.weight_kg).toBe(83.91);
+  });
+});

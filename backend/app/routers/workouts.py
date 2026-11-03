@@ -1,8 +1,9 @@
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Query
+from app.core.cache_invalidation import invalidate_athlete_caches
 from app.models.workout import WorkoutPayload, WorkoutUpdatePayload
 from app.services.algorithms import compute_tss_power
 from app.services.processing import (
-    _refresh_daily_strain_for_day_sync,
+    _refresh_daily_strain_for_instant_sync,
     normalize_sport,
     process_and_save_workout,
     recalculate_tss_history,
@@ -130,12 +131,13 @@ def _workout_update_data(payload: WorkoutUpdatePayload, existing: dict) -> dict:
     return update_data
 
 def _patch_refresh_days(existing: dict, updated: dict) -> set:
-    days = set()
+    """Start instants whose (local) day needs its strain refreshed."""
+    instants = set()
     for row in (existing, updated):
         started = _parse_dt(row.get("started_at"))
         if started:
-            days.add(started.date())
-    return days
+            instants.add(started)
+    return instants
 
 @router.get("")
 def get_workouts(
@@ -172,7 +174,7 @@ async def ingest_workout(
     return {"status": "success", "message": "Workout ingestion and analysis queued."}
 
 @router.patch("/{workout_id}")
-async def update_workout(
+def update_workout(
     workout_id: str,
     payload: WorkoutUpdatePayload,
     background_tasks: BackgroundTasks,
@@ -229,17 +231,22 @@ async def update_workout(
 
         background_tasks.add_task(recalculate_tss_history, athlete_id, db)
         for day in _patch_refresh_days(existing, updated):
-            background_tasks.add_task(_refresh_daily_strain_for_day_sync, db, athlete_id, day)
+            background_tasks.add_task(_refresh_daily_strain_for_instant_sync, db, athlete_id, day)
+        # After the recomputes (background tasks run in order): drop the cached state
+        # card, coach context and this athlete's workout detail/zones.
+        background_tasks.add_task(invalidate_athlete_caches, athlete_id, workouts=True)
 
         return {"status": "success", "workout": updated}
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to update workout: {str(e)}")
+        print(f"[workouts] Failed to update workout: {e!r}")
+        raise HTTPException(status_code=500, detail="Failed to update workout")
 
 @router.delete("/{workout_id}")
-async def delete_workout(
+def delete_workout(
     workout_id: str,
+    background_tasks: BackgroundTasks,
     athlete_id: str = Depends(get_current_athlete),
     db = Depends(get_user_db),
 ):
@@ -250,7 +257,7 @@ async def delete_workout(
     try:
         existing = (
             db.table("workouts")
-            .select("id")
+            .select("id, started_at")
             .eq("id", workout_id)
             .eq("athlete_id", athlete_id)
             .maybe_single()
@@ -260,11 +267,18 @@ async def delete_workout(
             raise HTTPException(status_code=404, detail="Workout not found")
 
         db.table("workouts").delete().eq("id", workout_id).eq("athlete_id", athlete_id).execute()
+        # Like PATCH: the deleted TSS must leave CTL/ATL/TSB and that day's strain
+        # (a deleted duplicate otherwise kept counting until some later sync).
+        background_tasks.add_task(recalculate_tss_history, athlete_id, db)
+        for day in _patch_refresh_days(existing.data, existing.data):
+            background_tasks.add_task(_refresh_daily_strain_for_instant_sync, db, athlete_id, day)
+        background_tasks.add_task(invalidate_athlete_caches, athlete_id, workouts=True)
         return {"status": "success", "deleted_id": workout_id}
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to delete workout: {str(e)}")
+        print(f"[workouts] Failed to delete workout: {e!r}")
+        raise HTTPException(status_code=500, detail="Failed to delete workout")
 
 @router.post("/calculate-tss")
 async def process_workout(

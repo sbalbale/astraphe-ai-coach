@@ -1,8 +1,10 @@
 from fastapi import APIRouter, Depends, BackgroundTasks
 from typing import Optional
+import asyncio
 from datetime import date, datetime, timedelta, timezone
 import math
 
+from app.core.cache_invalidation import invalidate_athlete_caches
 from app.models.biometrics import DailyBiometrics
 from app.services.processing import process_and_save_biometrics
 from app.dependencies import get_current_athlete, get_user_db
@@ -78,6 +80,13 @@ async def get_biometrics(
     or set `all=true` to return the full series (not recommended for very large histories).
     """
     safe_limit = max(1, min(int(limit or 60), 3650))
+    if not all and not end_date:
+        # The athlete's local today, so east-of-UTC athletes see this morning's sleep.
+        from app.services.time_utils import athlete_local_date
+
+        today = await asyncio.to_thread(athlete_local_date, db, athlete_id)
+    else:
+        today = date.today()
 
     # Resolve range
     if all:
@@ -85,10 +94,10 @@ async def get_biometrics(
         resolved_end = end_date      # may be None (meaning: no upper bound)
     elif start_date or end_date:
         resolved_start = start_date
-        resolved_end = end_date or date.today()
+        resolved_end = end_date or today
     else:
         # Default: most recent `limit` days
-        resolved_end = (before - timedelta(days=1)) if before else date.today()
+        resolved_end = (before - timedelta(days=1)) if before else today
         resolved_start = resolved_end - timedelta(days=safe_limit - 1)
 
     q = db.table("biometrics").select("*").eq("athlete_id", athlete_id)
@@ -100,14 +109,14 @@ async def get_biometrics(
     # If not explicitly asking for "all", cap the response size
     if not all and not (start_date or end_date):
         # Desc + limit, then reverse to preserve oldest->newest order for charts.
-        bio_res = q.order("date", desc=True).limit(safe_limit + 1).execute()
+        bio_res = await asyncio.to_thread(q.order("date", desc=True).limit(safe_limit + 1).execute)
         bio_rows = bio_res.data or []
         has_more = len(bio_rows) > safe_limit
         bio_rows = bio_rows[:safe_limit]
         bio_rows.reverse()
         next_before = bio_rows[0]["date"] if has_more and bio_rows else None
     else:
-        bio_res = q.order("date").execute()
+        bio_res = await asyncio.to_thread(q.order("date").execute)
         bio_rows = bio_res.data or []
         has_more = False
         next_before = None
@@ -118,7 +127,7 @@ async def get_biometrics(
         periods_q = periods_q.gte("date", resolved_start.isoformat())
     if resolved_end:
         periods_q = periods_q.lte("date", resolved_end.isoformat())
-    periods_res = periods_q.order("started_at").execute()
+    periods_res = await asyncio.to_thread(periods_q.order("started_at").execute)
     periods_by_date = {}
     for p in periods_res.data:
         d = p["date"]
@@ -132,7 +141,7 @@ async def get_biometrics(
         seg_q = seg_q.gte("date", resolved_start.isoformat())
     if resolved_end:
         seg_q = seg_q.lte("date", resolved_end.isoformat())
-    seg_res = seg_q.order("start_at").execute()
+    seg_res = await asyncio.to_thread(seg_q.order("start_at").execute)
     segments_by_date: dict = {}
     for s in (seg_res.data or []):
         segments_by_date.setdefault(s["date"], []).append(
@@ -190,4 +199,5 @@ async def ingest_daily_biometrics(
 ):
     """Ingest a daily biometric summary and calculate recovery score in the background."""
     background_tasks.add_task(process_and_save_biometrics, payload, athlete_id, db)
+    background_tasks.add_task(invalidate_athlete_caches, athlete_id)
     return {"status": "success", "message": "Biometrics recorded and recovery analysis queued", "date": payload.date}

@@ -209,7 +209,7 @@ class _AthleteDb:
         return self.queries[name]
 
 
-def test_onboard_athlete_seeds_biometrics_and_plan():
+def test_onboard_athlete_writes_no_sample_data():
     db = _AthleteDb()
     _override(db)
     with patch.object(athlete_router, "get_redis", return_value=None):
@@ -221,6 +221,7 @@ def test_onboard_athlete_seeds_biometrics_and_plan():
 
     assert res.status_code == 200
     assert res.json()["status"] == "success"
+    assert "biometrics" not in db.queries and "training_plans" not in db.queries
 
 
 # ---------------------------------------------------------------------------
@@ -565,10 +566,15 @@ def test_delete_athlete_account_404_when_missing():
 class _StateQuery:
     """Chainable fake that returns different rows depending on the selected columns."""
 
-    def __init__(self, response):
+    def __init__(self, response, by_columns=None):
         self._response = response
+        self._by_columns = by_columns or {}
 
-    def select(self, *_a, **_k):
+    def select(self, columns="*", *_a, **_k):
+        # get_athlete_state runs its biometrics queries concurrently, so answer by
+        # which columns were selected, not by call order.
+        if columns in self._by_columns:
+            self._response = self._by_columns[columns]
         return self
 
     def eq(self, *_a, **_k):
@@ -601,14 +607,14 @@ class _StateDb:
             data = [self._tss_row] if self._tss_row else []
             return _StateQuery(SimpleNamespace(data=data))
         if name == "biometrics":
-            self._biometrics_call += 1
-            if self._biometrics_call == 1:
-                data = [self._bio_row] if self._bio_row else []
-            elif self._biometrics_call == 2:
-                data = self._window_rows
-            else:
-                data = self._hist_rows
-            return _StateQuery(SimpleNamespace(data=data))
+            return _StateQuery(
+                SimpleNamespace(data=[]),
+                by_columns={
+                    "*": SimpleNamespace(data=[self._bio_row] if self._bio_row else []),
+                    "date,hrv_rmssd,resting_hr": SimpleNamespace(data=self._window_rows),
+                    "date": SimpleNamespace(data=self._hist_rows),
+                },
+            )
         raise AssertionError(f"unexpected table {name}")
 
 
@@ -689,23 +695,43 @@ def test_get_athlete_state_returns_cached():
     assert res.json()["athlete_id"] == "athlete-1"
 
 
-def test_delete_athlete_account_success_swallows_auth_delete_failure(capsys):
+def test_delete_athlete_account_keeps_data_when_auth_delete_fails():
+    """The auth user goes first (it cascades); if that fails nothing is deleted. (S-L3)"""
     db = _AthleteDb()
     db.table("athletes")._rows = {"user_id": "user-1"}
     admin_db = MagicMock()
-    admin_db.table.return_value.delete.return_value.eq.return_value.execute.return_value = SimpleNamespace(data=[])
     admin_db.auth.admin.delete_user.side_effect = RuntimeError("auth service down")
 
     _override(db, admin_db=admin_db)
     try:
-        with TestClient(app) as client:
-            res = client.request("DELETE", "/v1/athlete")
+        with patch("app.services.account_deletion.revoke_provider_grants", AsyncMock(return_value={})):
+            with TestClient(app) as client:
+                res = client.request("DELETE", "/v1/athlete")
+    finally:
+        _teardown()
+
+    assert res.status_code == 500
+    admin_db.table.return_value.delete.assert_not_called()
+
+
+def test_delete_athlete_account_revokes_grants_then_deletes_auth_user():
+    db = _AthleteDb()
+    db.table("athletes")._rows = {"user_id": "user-1"}
+    admin_db = MagicMock()
+    admin_db.table.return_value.delete.return_value.eq.return_value.execute.return_value = SimpleNamespace(data=[])
+    revoke = AsyncMock(return_value={"strava": True})
+
+    _override(db, admin_db=admin_db)
+    try:
+        with patch("app.services.account_deletion.revoke_provider_grants", revoke):
+            with TestClient(app) as client:
+                res = client.request("DELETE", "/v1/athlete")
     finally:
         _teardown()
 
     assert res.status_code == 200
-    assert res.json()["status"] == "success"
-    assert "Failed to delete auth user" in capsys.readouterr().out
+    revoke.assert_awaited_once()
+    admin_db.auth.admin.delete_user.assert_called_once_with("user-1")
 
 
 # ---------------------------------------------------------------------------

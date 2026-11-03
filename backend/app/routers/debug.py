@@ -8,7 +8,7 @@ router = APIRouter(prefix="/v1/debug", tags=["Debug"])
 
 
 @router.get("/connection")
-async def debug_connection(
+def debug_connection(
     athlete_id: str = Depends(get_current_athlete),
     db: Client = Depends(get_user_db),
 ):

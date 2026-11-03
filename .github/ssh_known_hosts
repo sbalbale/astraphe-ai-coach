@@ -1,0 +1,10 @@
+# Host keys for ssh.astrapheai.com. The Cloudflare tunnel lands on the keepalived VIP
+# (10.1.1.60), held by whichever k3s node is master, so all three nodes are listed.
+# Collected with ssh-keyscan on the LAN, 2026-11-04. If a node is rebuilt or added,
+# re-run:  ssh-keyscan -t ed25519 10.1.1.<n>  and replace its line (keep the hostname).
+# k3s-r640 (10.1.1.200)
+ssh.astrapheai.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILFIHuSUjZ/DIvXrcXFA2KHzwPZcnZ4DCF92HCr9Qtq0
+# 10.1.1.201
+ssh.astrapheai.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINstPw+EaRsApaX71PMNdfci/49BCoYKa17PCFN/85lL
+# 10.1.1.202
+ssh.astrapheai.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIF8moWyOTIJ1ji7JasV2alhSL8erElIOg+sD+POymyVH

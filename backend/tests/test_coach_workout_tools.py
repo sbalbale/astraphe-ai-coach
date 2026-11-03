@@ -322,7 +322,7 @@ def test_update_workout_duration():
     db.workouts.append(_sample_workout())
 
     with patch("app.services.coach_workout_data.recalculate_tss_history"), patch(
-        "app.services.coach_workout_data._refresh_daily_strain_for_day_sync"
+        "app.services.coach_workout_data._refresh_daily_strain_for_instant_sync"
     ):
         out = coach_tools.handle_update_workout(
             {"workout_id": "w1", "duration_minutes": 55},

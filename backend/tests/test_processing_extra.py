@@ -248,6 +248,12 @@ class _StrainQuery:
         self.updated_payload = payload
         return self
 
+    def order(self, *_a, **_k):
+        return self
+
+    def range(self, *_a, **_k):
+        return self
+
     def execute(self):
         return SimpleNamespace(data=self._rows)
 
@@ -377,6 +383,9 @@ class _TssQuery:
         self.upserted = records
         return self
 
+    def range(self, *_a, **_k):
+        return self
+
     def execute(self):
         if self._table == "athletes":
             return SimpleNamespace(data=self._athlete_row)
@@ -449,7 +458,7 @@ def test_reprocess_athlete_metrics_rebuilds_workouts_and_biometrics():
     def _select_side_effect(*_a, **_k):
         return db.table.return_value
 
-    db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.side_effect = [
+    db.table.return_value.select.return_value.eq.return_value.order.return_value.range.return_value.execute.side_effect = [
         SimpleNamespace(data=[{"started_at": "2026-05-20T10:00:00Z", "sport": "run"}]),
         SimpleNamespace(data=[{"date": "2026-05-20", "hrv_rmssd": 55.0}]),
     ]
@@ -482,3 +491,33 @@ def test_find_or_create_canonical_workout_delegates_to_sync_impl():
 
     assert result == ({"id": "w1"}, True)
     mock_sync.assert_called_once()
+
+
+def test_fetch_all_rows_pages_past_the_server_row_cap():
+    """More than one page (PostgREST max_rows) is read in full, in order."""
+    rows = [{"i": i} for i in range(2500)]
+    calls = []
+
+    class _Q:
+        def range(self, start, end):
+            calls.append((start, end))
+            self._slice = rows[start:end + 1]
+            return self
+
+        def execute(self):
+            return SimpleNamespace(data=self._slice)
+
+    out = processing._fetch_all_rows(lambda: _Q())
+    assert out == rows
+    assert calls == [(0, 999), (1000, 1999), (2000, 2999)]
+
+
+def test_local_day_helpers_use_the_athlete_offset():
+    from datetime import datetime as _dt, timezone as _tz
+
+    # 21:30 on Nov 2 in New York (UTC-5) is 02:30 UTC on Nov 3.
+    evening = _dt(2026, 11, 3, 2, 30, tzinfo=_tz.utc)
+    assert processing._local_day_of(evening, -300) == date(2026, 11, 2)
+    assert processing._local_day_of(evening, 0) == date(2026, 11, 3)
+    start, end = processing._local_day_window_utc(date(2026, 11, 2), -300)
+    assert start.startswith("2026-11-02T05:00:00") and end.startswith("2026-11-03T05:00:00")

@@ -2,9 +2,13 @@ from fastapi import APIRouter, HTTPException, Depends, Security
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, field_validator
 from typing import Optional
+import logging
+
 from supabase import Client
 
-from app.dependencies import get_user_db, get_admin_db, VALID_TIERS, TIER_DEFAULTS
+from app.dependencies import get_user_db, get_admin_db, VALID_TIERS, TIER_DEFAULTS, reject_third_party_oauth_token
+
+logger = logging.getLogger(__name__)
 
 security = HTTPBearer()
 router = APIRouter(prefix="/v1/admin", tags=["Admin"])
@@ -66,6 +70,8 @@ async def get_admin_user(
     token = credentials.credentials
     try:
         user_res = db.auth.get_user(token)
+        # Third-party (MCP) OAuth tokens never get admin access, even for an admin user.
+        reject_third_party_oauth_token(token)
         u = user_res.user
         app_meta = getattr(u, "app_metadata", None) or {}
         if not app_meta.get("is_admin"):
@@ -73,8 +79,9 @@ async def get_admin_user(
         return {"user_id": u.id}
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=401, detail=f"Authentication failed: {str(e)}")
+    except Exception:
+        logger.exception("admin auth failed")
+        raise HTTPException(status_code=401, detail="Authentication failed")
 
 
 # ---------------------------------------------------------------------------
@@ -84,7 +91,11 @@ async def get_admin_user(
 def _format_user(u) -> dict:
     app_meta = getattr(u, "app_metadata", None) or {}
     user_meta = getattr(u, "user_metadata", None) or {}
-    tier = str(app_meta.get("tier") or "free").strip().lower()
+    from app.services.tiers import effective_tier, trial_ends_at
+
+    stored_tier = str(app_meta.get("tier") or "free").strip().lower()
+    tier = effective_tier(stored_tier, app_meta, getattr(u, "created_at", None))
+    ends = trial_ends_at(app_meta, getattr(u, "created_at", None)) if stored_tier == "trial" else None
     defaults = TIER_DEFAULTS.get(tier, TIER_DEFAULTS["free"])
     return {
         "user_id": u.id,
@@ -93,6 +104,7 @@ def _format_user(u) -> dict:
         "display_name": user_meta.get("full_name") or user_meta.get("name"),
         "config": {
             "tier": tier,
+            "trial_ends_at": ends.isoformat() if ends else None,
             "gemini_model": app_meta.get("gemini_model"),
             "gemini_analysis_model": app_meta.get("gemini_analysis_model"),
             "rate_limit_rpm": app_meta.get("rate_limit_rpm", defaults["rpm"]),
@@ -127,7 +139,8 @@ async def list_users(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to list users: {str(e)}")
+        print(f"[admin] Failed to list users: {e!r}")
+        raise HTTPException(status_code=500, detail="Failed to list users")
 
 
 @router.get("/users/{user_id}")
@@ -146,7 +159,8 @@ async def get_user(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get user: {str(e)}")
+        print(f"[admin] Failed to get user: {e!r}")
+        raise HTTPException(status_code=500, detail="Failed to get user")
 
 
 @router.patch("/users/{user_id}")
@@ -170,6 +184,11 @@ async def update_user_config(
 
     if payload.tier is not None:
         update["tier"] = payload.tier
+        if payload.tier == "trial":
+            # Setting someone to trial starts a fresh 14 days.
+            from app.services.tiers import new_trial_ends_at
+
+            update["trial_ends_at"] = new_trial_ends_at()
     if payload.gemini_model is not None:
         # empty string -> null (removes per-user override, falls back to server default)
         update["gemini_model"] = payload.gemini_model.strip() or None
@@ -188,11 +207,17 @@ async def update_user_config(
     try:
         res = admin_db.auth.admin.update_user_by_id(user_id, {"app_metadata": update})
         u = res.user if hasattr(res, "user") else res
+        if payload.tier is not None:
+            try:  # keep the athletes.tier mirror in step
+                admin_db.table("athletes").update({"tier": payload.tier}).eq("user_id", user_id).execute()
+            except Exception as e:
+                print(f"[admin] athletes.tier sync failed for {user_id}: {e!r}")
         return {"status": "success", "user": _format_user(u)}
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to update user: {str(e)}")
+        print(f"[admin] Failed to update user: {e!r}")
+        raise HTTPException(status_code=500, detail="Failed to update user")
 
 
 @router.delete("/users/{user_id}/config/{field}")
@@ -216,7 +241,8 @@ async def clear_user_config_field(
         admin_db.auth.admin.update_user_by_id(user_id, {"app_metadata": {field: None}})
         return {"status": "success", "cleared": field, "user_id": user_id}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to clear field: {str(e)}")
+        print(f"[admin] Failed to clear field: {e!r}")
+        raise HTTPException(status_code=500, detail="Failed to clear field")
 
 
 def _normalize_memory_content_for_dedupe(text: str | None) -> str:
@@ -329,7 +355,8 @@ def merge_coach_memory_duplicates(
                 admin_db.table("coach_memories").delete().in_("id", chunk).execute()
                 deleted += len(chunk)
             except Exception as e:
-                raise HTTPException(status_code=500, detail=f"Delete failed after deleting {deleted}: {str(e)}")
+                print(f"[admin] delete failed after deleting {deleted}: {e!r}")
+                raise HTTPException(status_code=500, detail=f"Delete failed after deleting {deleted}")
 
     return {
         "status": "success",

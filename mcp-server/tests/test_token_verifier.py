@@ -3,6 +3,8 @@ token is accepted, independent of any HTTP transport. Same style as backend/test
 direct dependency tests (e.g. test_dependencies_direct.py tests get_current_athlete)."""
 from __future__ import annotations
 
+import base64
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -11,33 +13,39 @@ import pytest
 from astraphe_mcp.auth.token_verifier import AstrapheTokenVerifier
 
 
+def _jwt(claims: dict) -> str:
+    enc = lambda d: base64.urlsafe_b64encode(json.dumps(d).encode()).rstrip(b"=").decode()
+    return f"{enc({'alg': 'ES256'})}.{enc(claims)}.sig"
+
+
 @pytest.mark.asyncio
 async def test_verify_token_valid_returns_access_token():
     verifier = AstrapheTokenVerifier()
-    fake_user = SimpleNamespace(id="user-123", app_metadata={"client_id": "claude-desktop"})
+    token = _jwt({"sub": "user-123", "client_id": "claude-desktop"})
+    fake_user = SimpleNamespace(id="user-123", app_metadata={})
     with patch.object(
         AstrapheTokenVerifier, "_get_user", new=AsyncMock(return_value=SimpleNamespace(user=fake_user))
     ):
-        result = await verifier.verify_token("a-valid-token")
+        result = await verifier.verify_token(token)
 
     assert result is not None
-    assert result.token == "a-valid-token"
+    assert result.token == token
     assert result.subject == "user-123"
     assert result.client_id == "claude-desktop"
     assert "astraphe:read" in result.scopes
 
 
 @pytest.mark.asyncio
-async def test_verify_token_missing_client_id_defaults_empty():
+async def test_verify_token_without_client_id_claim_is_rejected():
+    """An ordinary app session token (no client_id claim) must not be accepted by MCP."""
     verifier = AstrapheTokenVerifier()
-    fake_user = SimpleNamespace(id="user-123", app_metadata={})
+    fake_user = SimpleNamespace(id="user-123", app_metadata={"client_id": "spoofed-in-metadata"})
     with patch.object(
         AstrapheTokenVerifier, "_get_user", new=AsyncMock(return_value=SimpleNamespace(user=fake_user))
     ):
-        result = await verifier.verify_token("a-valid-token")
+        result = await verifier.verify_token(_jwt({"sub": "user-123", "role": "authenticated"}))
 
-    assert result is not None
-    assert result.client_id == ""
+    assert result is None
 
 
 @pytest.mark.asyncio

@@ -271,7 +271,7 @@ def test_fetch_athlete_id_for_user_returns_id():
 
 def test_resolve_rate_limits_uses_tier_defaults_when_unset():
     rpm, rph = deps._resolve_rate_limits({}, "trial")
-    assert (rpm, rph) == (15, 75)
+    assert (rpm, rph) == (6, 60)
 
 
 def test_resolve_rate_limits_uses_overrides_when_present():
@@ -281,7 +281,7 @@ def test_resolve_rate_limits_uses_overrides_when_present():
 
 def test_resolve_rate_limits_falls_back_on_invalid_override():
     rpm, rph = deps._resolve_rate_limits({"rate_limit_rpm": "not-a-number"}, "premium")
-    assert rpm == 40  # premium default
+    assert rpm == 10  # premium default
 
 
 def test_resolve_rate_limits_never_returns_below_one():
@@ -310,7 +310,7 @@ def test_get_user_config_reads_app_metadata():
     assert result.tier == "premium"
     assert result.gemini_model == "gemini-pro"
     assert result.is_admin is True
-    assert result.rate_limit_rpm == 40
+    assert result.rate_limit_rpm == 10
 
 
 def test_get_user_config_defaults_invalid_tier_to_free():
@@ -361,7 +361,7 @@ def test_require_ai_rate_limit_enforces_minute_and_hour_windows():
     with patch.object(deps, "_rate_limiter", fake_limiter):
         _run_async(deps.require_ai_rate_limit(athlete_id="athlete-1", config=config))
 
-    assert fake_limiter.require.await_count == 2
+    assert fake_limiter.require.await_count == 3  # minute, hour, day
 
 
 def test_backward_compat_helpers_read_from_config():

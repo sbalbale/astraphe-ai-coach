@@ -120,6 +120,26 @@ def _generate_conversation_title(message: str | None, image_urls: Optional[List[
         title += "…"
     return title[:60]
 
+def _require_own_conversation(db, athlete_id: str, conversation_id: Optional[str]) -> None:
+    """
+    404 unless the conversation belongs to this athlete. RLS on coach_messages only
+    checks athlete_id, so without this a user could attach messages to someone else's
+    conversation id (and the FK error would reveal whether an id exists).
+    """
+    if not conversation_id:
+        return
+    res = (
+        db.table("coach_conversations")
+        .select("id")
+        .eq("id", conversation_id)
+        .eq("athlete_id", athlete_id)
+        .limit(1)
+        .execute()
+    )
+    if not (getattr(res, "data", None) or []):
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+
 def _create_conversation(db, athlete_id: str, title: Optional[str]) -> str:
     res = db.table("coach_conversations").insert({
         "athlete_id": athlete_id,
@@ -162,8 +182,20 @@ def _force_set_conversation_title(db, athlete_id: str, conversation_id: str, tit
     except Exception:
         return
 
+def _ai_message_writer(db):
+    """
+    Client for coach/system turns: the service role. User sessions will only be
+    allowed to insert role='user', so nobody can plant fake coach or system turns in
+    their own prompt history. (Audit X-L9; the RLS check is a post-deploy migration.)
+    """
+    from app.dependencies import get_admin_db
+
+    return get_admin_db()
+
+
 def _insert_message(db, athlete_id: str, conversation_id: str, role: str, content: str, image_urls: Optional[List[str]] = None):
-    db.table("coach_messages").insert({
+    writer = db if role == "user" else _ai_message_writer(db)
+    writer.table("coach_messages").insert({
         "athlete_id": athlete_id,
         "conversation_id": conversation_id,
         "role": role,
@@ -182,7 +214,7 @@ def _require_premium(config: UserConfig):
 
 
 @router.get("/conversations")
-async def list_conversations(
+def list_conversations(
     athlete_id: str = Depends(get_current_athlete),
     config: UserConfig = Depends(get_user_config),
     db = Depends(get_user_db),
@@ -275,7 +307,7 @@ async def create_conversation(
     return {"status": "success", "conversation": {"id": cid, "title": payload.title}}
 
 @router.get("/conversations/{conversation_id}/messages")
-async def get_conversation_messages(
+def get_conversation_messages(
     conversation_id: str,
     athlete_id: str = Depends(get_current_athlete),
     config: UserConfig = Depends(get_user_config),
@@ -321,7 +353,7 @@ async def get_conversation_progress(
 
 
 @router.delete("/conversations/{conversation_id}")
-async def delete_conversation(
+def delete_conversation(
     conversation_id: str,
     athlete_id: str = Depends(get_current_athlete),
     config: UserConfig = Depends(get_user_config),
@@ -333,9 +365,11 @@ async def delete_conversation(
 
 @router.post("/upload-document")
 async def upload_document(
+    request: Request,
     file: UploadFile,
     athlete_id: str = Depends(get_current_athlete),
     config: UserConfig = Depends(get_user_config),
+    _rl: None = Depends(require_ai_rate_limit),
     db = Depends(get_user_db),
 ):
     """
@@ -348,7 +382,15 @@ async def upload_document(
     if ext not in _ALLOWED_DOC_EXTENSIONS:
         raise HTTPException(status_code=415, detail=f"Unsupported file type '{ext}'. Allowed: {', '.join(_ALLOWED_DOC_EXTENSIONS)}")
 
-    file_bytes = await file.read()
+    # Reject oversized uploads before buffering them: check the declared length, then
+    # read at most one byte past the cap.
+    try:
+        declared = int(request.headers.get("content-length") or 0)
+    except ValueError:
+        declared = 0
+    if declared > _MAX_DOC_BYTES + 64 * 1024:  # multipart overhead
+        raise HTTPException(status_code=413, detail="File too large (max 10 MB)")
+    file_bytes = await file.read(_MAX_DOC_BYTES + 1)
     if len(file_bytes) > _MAX_DOC_BYTES:
         raise HTTPException(status_code=413, detail="File too large (max 10 MB)")
 
@@ -356,7 +398,8 @@ async def upload_document(
         from app.services.file_parser import parse_document
         text = await asyncio.to_thread(parse_document, file_bytes, filename)
     except Exception as e:
-        raise HTTPException(status_code=422, detail=f"Failed to parse document: {e}")
+        print(f"[coach.upload] parse failed file={filename!r}: {e!r}")
+        raise HTTPException(status_code=422, detail="Couldn't read this document. Try a PDF, CSV or Excel file.")
 
     if not (text or "").strip():
         raise HTTPException(status_code=422, detail="No text content could be extracted from this document.")
@@ -560,6 +603,7 @@ async def submit_coach_message(
     wait for the push) rather than block on this request.
     """
     _require_premium(config)
+    _require_own_conversation(db, athlete_id, payload.conversation_id)
     conversation_id = payload.conversation_id or _create_conversation(db, athlete_id, title=None)
     _insert_message(db, athlete_id, conversation_id, role="user", content=payload.message, image_urls=payload.image_urls)
     # Clear the previous reply's steps before returning, so the first progress poll
@@ -602,6 +646,7 @@ async def chat_with_coach(
     db = Depends(get_user_db),
 ):
     _require_premium(config)
+    _require_own_conversation(db, athlete_id, payload.conversation_id)
     try:
         conversation_id = payload.conversation_id or _create_conversation(db, athlete_id, title=None)
         _insert_message(db, athlete_id, conversation_id, role="user", content=payload.message, image_urls=payload.image_urls)
@@ -677,7 +722,7 @@ async def chat_with_coach(
         print("--- AI COACH CRASH LOG ---")
         traceback.print_exc()
         print("--------------------------")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="The coach couldn't reply. Please try again.") from e
 
 
 _SSE_HEADERS = {
@@ -755,6 +800,7 @@ async def stream_chat_with_coach(
     db = Depends(get_user_db),
 ):
     _require_premium(config)
+    await asyncio.to_thread(_require_own_conversation, db, athlete_id, payload.conversation_id)
 
     async def event_generator():
         conversation_id = payload.conversation_id
@@ -826,7 +872,7 @@ async def stream_chat_with_coach(
                     chunk = ai_full[i : i + chunk_size]
                     yield f"data: {json.dumps({'text': chunk})}\n\n"
                 yield f"data: {json.dumps({'sources': ai_sources or []})}\n\n"
-                recent_history = _load_conversation_history(db, athlete_id, conversation_id, limit=10)
+                recent_history = await asyncio.to_thread(_load_conversation_history, db, athlete_id, conversation_id, limit=10)
                 mem_task = asyncio.create_task(
                     _run_memory_extraction(
                         athlete_id,
@@ -847,7 +893,8 @@ async def stream_chat_with_coach(
                 mem_task.add_done_callback(_stream_bg_tasks.discard)
                 title_task.add_done_callback(_stream_bg_tasks.discard)
         except Exception as e:
-            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            print(f"[coach.stream] failed: {e!r}")
+            yield f"data: {json.dumps({'error': 'The coach could not reply. Please try again.'})}\n\n"
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(

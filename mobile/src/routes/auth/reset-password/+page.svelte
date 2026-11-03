@@ -94,23 +94,32 @@
     // Fire-and-forget: awaiting USER_UPDATED (or fallback). Do not await — avoids lock deadlock
     // when authStore's global listener runs getUser() concurrently.
     void supabase.auth.updateUser({ password }).then(({ error }) => {
-      if (error && awaitingUserUpdated) {
+      if (!awaitingUserUpdated) return;
+      if (finishFallbackTimer) {
+        clearTimeout(finishFallbackTimer);
+        finishFallbackTimer = null;
+      }
+      if (error) {
         awaitingUserUpdated = false;
         loading = false;
         errorMsg = error.message;
-        if (finishFallbackTimer) {
-          clearTimeout(finishFallbackTimer);
-          finishFallbackTimer = null;
-        }
+      } else {
+        // The server confirmed the new password.
+        completeReset();
       }
     });
 
-    // If USER_UPDATED never fires (or lock stalls), proceed anyway after password likely saved
+    // Never report success without confirmation: on a slow network or a rejected
+    // password the old flow said "Password updated" after 2.5s and signed the user
+    // out with their old password still the valid one.
     finishFallbackTimer = setTimeout(() => {
       if (awaitingUserUpdated) {
-        completeReset();
+        awaitingUserUpdated = false;
+        loading = false;
+        errorMsg =
+          "We couldn't confirm the change. Try signing in with your new password; if that doesn't work, request a new reset link.";
       }
-    }, 2500);
+    }, 20000);
   }
 </script>
 

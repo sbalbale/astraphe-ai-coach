@@ -9,6 +9,9 @@ import numpy as np
 from fastapi import APIRouter, Depends, HTTPException, Query
 from supabase import Client
 
+from app.services.background import spawn as spawn_background
+from app.core.rate_limiter import RateLimiter
+
 from app.dependencies import (
     get_current_athlete,
     get_current_gemini_analysis_model,
@@ -37,10 +40,61 @@ _ANALYSIS_PROMPT_POLICY_VERSION: dict[str, str] = {
 _TIME_OF_DAY_GREETING_RE = re.compile(r"^\s*good\s+(morning|afternoon|evening)\b[\s,!.:-]*", re.IGNORECASE)
 
 
-def _parse_day(day: Optional[str]) -> date:
+# Analysis days are bounded so the (user-controlled) cache key space, and with it the
+# number of distinct LLM generations one account can trigger, stays small.
+_MAX_DAYS_BACK = 400
+_MAX_ZONES_WINDOW_DAYS = 120
+_ZONE_SPORTS = frozenset({"all", "run", "bike", "swim", "row", "strength", "mobility", "triathlon", "other"})
+
+# Per-athlete budget for *generated* analyses (cache hits are free).
+ANALYSIS_LLM_PER_HOUR = 30
+ANALYSIS_LLM_PER_DAY = 120
+_analysis_limiter = RateLimiter()
+
+
+def _parse_day(day: Optional[str], db: Any = None, athlete_id: Optional[str] = None) -> date:
+    """The requested day, or the athlete's *local* today (not the server's UTC date)."""
     if not day:
+        if db is not None and athlete_id:
+            from app.services.time_utils import athlete_local_date
+
+            return athlete_local_date(db, athlete_id)
         return date.today()
-    return date.fromisoformat(str(day)[:10])
+    try:
+        d = date.fromisoformat(str(day)[:10])
+    except ValueError:
+        raise HTTPException(status_code=422, detail="day must be YYYY-MM-DD")
+    today = date.today()
+    if d > today + timedelta(days=1) or d < today - timedelta(days=_MAX_DAYS_BACK):
+        raise HTTPException(status_code=422, detail="day is out of range")
+    return d
+
+
+class _LlmBudget:
+    """
+    Charged only when an analysis is actually generated (cache miss). Called from the
+    worker thread that runs _get_or_compute, so it hops back to the event loop for the
+    async limiter. Fails open if the limiter itself is unavailable.
+    """
+
+    def __init__(self, athlete_id: str, loop: asyncio.AbstractEventLoop):
+        self.athlete_id = athlete_id
+        self.loop = loop
+
+    def take(self) -> bool:
+        async def _check() -> bool:
+            hour = await _analysis_limiter.check(f"{self.athlete_id}:analysis_llm:hour", ANALYSIS_LLM_PER_HOUR, 3600)
+            day = await _analysis_limiter.check(f"{self.athlete_id}:analysis_llm:day", ANALYSIS_LLM_PER_DAY, 86400)
+            return hour and day
+
+        try:
+            return bool(asyncio.run_coroutine_threadsafe(_check(), self.loop).result(timeout=5))
+        except Exception:
+            return True
+
+
+def _budget(athlete_id: str) -> _LlmBudget:
+    return _LlmBudget(athlete_id, asyncio.get_running_loop())
 
 
 def _baseline_30d(rows: list[dict], field: str) -> Optional[float]:
@@ -135,7 +189,8 @@ def _row_wake_epoch_s(row: dict, timezone_offset_min: int) -> Optional[float]:
     if not date_str:
         return None
     try:
-        return datetime.fromisoformat(f"{date_str}T00:00:00").timestamp() - (timezone_offset_min * 60)
+        midnight_utc = datetime.fromisoformat(f"{date_str}T00:00:00").replace(tzinfo=timezone.utc)
+        return midnight_utc.timestamp() - (timezone_offset_min * 60)
     except Exception:
         return None
 
@@ -962,6 +1017,7 @@ def _get_or_compute(
     scope_key: str,
     context: Dict[str, Any],
     model_name: str,
+    budget: Optional[_LlmBudget] = None,
 ) -> Dict[str, Any]:
     fp = _analysis_fingerprint(analysis_type, context)
     cached = get_cached_analysis(db, athlete_id, analysis_type, scope_key)
@@ -985,6 +1041,17 @@ def _get_or_compute(
             "fingerprint": fp,
             "cached": False,
             "note": "tier_not_eligible",
+            "model": "fallback",
+        }
+
+    if budget is not None and not budget.take():
+        # Over the generation budget: serve the rule-based text, uncached, so a real
+        # analysis is generated once the budget frees up.
+        return {
+            "content": _fallback_content(analysis_type, context),
+            "fingerprint": fp,
+            "cached": False,
+            "note": "rate_limited",
             "model": "fallback",
         }
 
@@ -1059,9 +1126,9 @@ async def recovery_analysis(
     model_name: str = Depends(get_current_gemini_analysis_model),
     db: Client = Depends(get_user_db),
 ):
-    d = _parse_day(day)
-    ctx = _load_biometrics_context(db, athlete_id, d)
-    analysis = await asyncio.to_thread(_get_or_compute, db, athlete_id, tier, "recovery", d.isoformat(), ctx, model_name=model_name)
+    d = await asyncio.to_thread(_parse_day, day, db, athlete_id)
+    ctx = await asyncio.to_thread(_load_biometrics_context, db, athlete_id, d)
+    analysis = await asyncio.to_thread(_get_or_compute, db, athlete_id, tier, "recovery", d.isoformat(), ctx, model_name=model_name, budget=_budget(athlete_id))
     return {"status": "success", "analysis": analysis}
 
 
@@ -1073,9 +1140,9 @@ async def sleep_analysis(
     model_name: str = Depends(get_current_gemini_analysis_model),
     db: Client = Depends(get_user_db),
 ):
-    d = _parse_day(day)
-    ctx = _load_biometrics_context(db, athlete_id, d)
-    analysis = await asyncio.to_thread(_get_or_compute, db, athlete_id, tier, "sleep", d.isoformat(), ctx, model_name=model_name)
+    d = await asyncio.to_thread(_parse_day, day, db, athlete_id)
+    ctx = await asyncio.to_thread(_load_biometrics_context, db, athlete_id, d)
+    analysis = await asyncio.to_thread(_get_or_compute, db, athlete_id, tier, "sleep", d.isoformat(), ctx, model_name=model_name, budget=_budget(athlete_id))
     return {"status": "success", "analysis": analysis}
 
 
@@ -1087,9 +1154,9 @@ async def strain_analysis(
     model_name: str = Depends(get_current_gemini_analysis_model),
     db: Client = Depends(get_user_db),
 ):
-    d = _parse_day(day)
-    ctx = _load_strain_context(db, athlete_id, d)
-    analysis = await asyncio.to_thread(_get_or_compute, db, athlete_id, tier, "strain", d.isoformat(), ctx, model_name=model_name)
+    d = await asyncio.to_thread(_parse_day, day, db, athlete_id)
+    ctx = await asyncio.to_thread(_load_strain_context, db, athlete_id, d)
+    analysis = await asyncio.to_thread(_get_or_compute, db, athlete_id, tier, "strain", d.isoformat(), ctx, model_name=model_name, budget=_budget(athlete_id))
     return {"status": "success", "analysis": analysis}
 
 
@@ -1101,9 +1168,9 @@ async def training_load_analysis(
     model_name: str = Depends(get_current_gemini_analysis_model),
     db: Client = Depends(get_user_db),
 ):
-    d = _parse_day(end_day)
-    ctx = _load_training_load_context(db, athlete_id, d)
-    analysis = await asyncio.to_thread(_get_or_compute, db, athlete_id, tier, "training_load", d.isoformat(), ctx, model_name=model_name)
+    d = await asyncio.to_thread(_parse_day, end_day, db, athlete_id)
+    ctx = await asyncio.to_thread(_load_training_load_context, db, athlete_id, d)
+    analysis = await asyncio.to_thread(_get_or_compute, db, athlete_id, tier, "training_load", d.isoformat(), ctx, model_name=model_name, budget=_budget(athlete_id))
     return {"status": "success", "analysis": analysis}
 
 
@@ -1115,10 +1182,11 @@ def _compute_and_store(
     scope_key: str,
     context: Dict[str, Any],
     model_name: str,
+    budget: Optional[_LlmBudget] = None,
 ) -> None:
     """Synchronous worker for background regeneration. Errors are swallowed."""
     try:
-        _get_or_compute(db, athlete_id, tier, analysis_type, scope_key, context, model_name=model_name)
+        _get_or_compute(db, athlete_id, tier, analysis_type, scope_key, context, model_name=model_name, budget=budget)
     except Exception as e:
         try:
             print(f"[analysis] background_regen_error type={analysis_type} scope={scope_key} err={e}")
@@ -1140,12 +1208,13 @@ async def dashboard_summary_analysis(
     background regeneration. Worst case the user sees yesterday's wording for
     one extra page load.
     """
-    d = _parse_day(day)
+    d = await asyncio.to_thread(_parse_day, day, db, athlete_id)
     scope_key = d.isoformat()
-    ctx = _load_dashboard_context(db, athlete_id, d)
+    ctx = await asyncio.to_thread(_load_dashboard_context, db, athlete_id, d)
+    budget = _budget(athlete_id)
     fp = _analysis_fingerprint("dashboard_summary", ctx)
 
-    cached = get_cached_analysis(db, athlete_id, "dashboard_summary", scope_key)
+    cached = await asyncio.to_thread(get_cached_analysis, db, athlete_id, "dashboard_summary", scope_key)
     flight_key = f"{athlete_id}:{scope_key}"
     if cached and cached.get("content"):
         stale = cached.get("fingerprint") != fp or is_retryable_failed_analysis(cached.get("model"))
@@ -1153,10 +1222,10 @@ async def dashboard_summary_analysis(
             _regen_in_flight.add(flight_key)
             async def _run_stale():
                 try:
-                    await asyncio.to_thread(_compute_and_store, db, athlete_id, tier, "dashboard_summary", scope_key, ctx, model_name)
+                    await asyncio.to_thread(_compute_and_store, db, athlete_id, tier, "dashboard_summary", scope_key, ctx, model_name, budget)
                 finally:
                     _regen_in_flight.discard(flight_key)
-            asyncio.ensure_future(_run_stale())
+            spawn_background(_run_stale())
         return {
             "status": "success",
             "analysis": {
@@ -1174,10 +1243,10 @@ async def dashboard_summary_analysis(
         _regen_in_flight.add(flight_key)
         async def _run_cold():
             try:
-                await asyncio.to_thread(_compute_and_store, db, athlete_id, tier, "dashboard_summary", scope_key, ctx, model_name)
+                await asyncio.to_thread(_compute_and_store, db, athlete_id, tier, "dashboard_summary", scope_key, ctx, model_name, budget)
             finally:
                 _regen_in_flight.discard(flight_key)
-        asyncio.ensure_future(_run_cold())
+        spawn_background(_run_cold())
 
     fb = _fallback_content("dashboard_summary", ctx)
     return {
@@ -1200,12 +1269,14 @@ async def workout_analysis(
     db: Client = Depends(get_user_db),
 ):
     res = (
-        db.table("workouts")
-        .select("*")
-        .eq("id", workout_id)
-        .eq("athlete_id", athlete_id)
-        .maybe_single()
-        .execute()
+        await asyncio.to_thread(
+            db.table("workouts")
+            .select("*")
+            .eq("id", workout_id)
+            .eq("athlete_id", athlete_id)
+            .maybe_single()
+            .execute
+        )
     )
     row = res.data if res else None
     if not row:
@@ -1235,7 +1306,7 @@ async def workout_analysis(
     _put("elevation_gain_meters", row.get("elevation_gain_meters") or row.get("elevation_gain"))
     _put("notes", row.get("notes"))
 
-    analysis = await asyncio.to_thread(_get_or_compute, db, athlete_id, tier, "workout", workout_id, ctx, model_name=model_name)
+    analysis = await asyncio.to_thread(_get_or_compute, db, athlete_id, tier, "workout", workout_id, ctx, model_name=model_name, budget=_budget(athlete_id))
     return {"status": "success", "analysis": analysis}
 
 
@@ -1249,10 +1320,15 @@ async def time_in_zones_analysis(
     model_name: str = Depends(get_current_gemini_analysis_model),
     db: Client = Depends(get_user_db),
 ):
-    end_d = _parse_day(window_end)
-    start_d = _parse_day(window_start) if window_start else (end_d - timedelta(days=7))
+    end_d = await asyncio.to_thread(_parse_day, window_end, db, athlete_id)
+    start_d = await asyncio.to_thread(_parse_day, window_start) if window_start else (end_d - timedelta(days=7))
+    sport = (sport or "all").strip().lower()
+    if sport not in _ZONE_SPORTS:
+        raise HTTPException(status_code=422, detail="unknown sport")
+    if start_d > end_d or (end_d - start_d).days > _MAX_ZONES_WINDOW_DAYS:
+        raise HTTPException(status_code=422, detail="window is out of range")
     scope_key = f"{start_d.isoformat()}:{end_d.isoformat()}:{sport}"
-    ctx = _load_zones_context(db, athlete_id, start_d.isoformat(), end_d.isoformat(), sport)
-    analysis = await asyncio.to_thread(_get_or_compute, db, athlete_id, tier, "time_in_zones", scope_key, ctx, model_name=model_name)
+    ctx = await asyncio.to_thread(_load_zones_context, db, athlete_id, start_d.isoformat(), end_d.isoformat(), sport)
+    analysis = await asyncio.to_thread(_get_or_compute, db, athlete_id, tier, "time_in_zones", scope_key, ctx, model_name=model_name, budget=_budget(athlete_id))
     return {"status": "success", "analysis": analysis}
 

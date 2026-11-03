@@ -149,10 +149,10 @@ def test_patch_workout_updates_only_editable_scalar_fields(monkeypatch):
         refresh_calls.append(("tss", athlete_id))
 
     def _fake_refresh_daily_strain(_db, athlete_id: str, day):
-        refresh_calls.append(("strain", f"{athlete_id}:{day.isoformat()}"))
+        refresh_calls.append(("strain", f"{athlete_id}:{day.date().isoformat()}"))  # a start instant
 
     monkeypatch.setattr(workouts_router, "recalculate_tss_history", _fake_recalculate_tss_history)
-    monkeypatch.setattr(workouts_router, "_refresh_daily_strain_for_day_sync", _fake_refresh_daily_strain)
+    monkeypatch.setattr(workouts_router, "_refresh_daily_strain_for_instant_sync", _fake_refresh_daily_strain)
 
     app.dependency_overrides[get_current_athlete] = lambda: "athlete-1"
     app.dependency_overrides[get_user_db] = lambda: fake_db

@@ -76,10 +76,11 @@ def _extract_embedding(text: str) -> list[float]:
         return []
 
 
-def save_coach_memory(athlete_id: str, content: str, db: Client, event_date: str | None = None) -> None:
+def save_coach_memory(athlete_id: str, content: str, db: Client, event_date: str | None = None) -> bool:
+    """Store a memory. Returns True when the fact is now stored (newly or already)."""
     content = (content or "").strip()[:200]
     if not content:
-        return
+        return False
     try:
         # Prevent obvious duplicates (same trimmed content) from piling up.
         try:
@@ -92,7 +93,7 @@ def save_coach_memory(athlete_id: str, content: str, db: Client, event_date: str
                 .execute()
             )
             if (existing.data or []):
-                return
+                return True
         except Exception:
             # Best-effort only; still attempt insert below.
             pass
@@ -119,8 +120,10 @@ def save_coach_memory(athlete_id: str, content: str, db: Client, event_date: str
                 db.table("coach_memories").insert(payload).execute()
             else:
                 raise
+        return True
     except Exception as e:
         print(f"[memory] save failed: {e}")
+        return False
 
 
 def _normalize_entity_key(text: str) -> str:
@@ -345,9 +348,11 @@ def extract_and_save_memories(
             if not (isinstance(fact, str) and 10 < len(fact) < 200):
                 continue
             event_date = _parse_iso_date(item.get("event_date"))
-            save_coach_memory(athlete_id, fact, db, event_date=event_date)
+            saved = save_coach_memory(athlete_id, fact, db, event_date=event_date)
             replaces = item.get("replaces") or []
-            if isinstance(replaces, list):
+            # Only drop the superseded memories once the replacement is really stored;
+            # otherwise an embedding/quota error would delete the fact with nothing in its place.
+            if saved and isinstance(replaces, list):
                 _delete_memories(athlete_id, [str(r) for r in replaces if str(r) in known_ids], db)
     except Exception as e:
         print(f"[memory] extraction failed: {e}")

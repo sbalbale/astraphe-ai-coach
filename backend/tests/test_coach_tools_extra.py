@@ -475,27 +475,52 @@ def test_handle_clear_training_plans_end_before_start():
     assert "end_date must be >= start_date" in result["error"]
 
 
+def _clear_chain(db):
+    return db.table.return_value.delete.return_value.eq.return_value.in_.return_value.gte.return_value.lte.return_value
+
+
 def test_handle_clear_training_plans_success():
     db = MagicMock()
-    db.table.return_value.delete.return_value.eq.return_value.gte.return_value.lte.return_value.execute.return_value = SimpleNamespace(
-        data=[{"id": "p1"}, {"id": "p2"}]
-    )
+    _clear_chain(db).execute.return_value = SimpleNamespace(data=[{"id": "p1"}, {"id": "p2"}])
     result = coach_tools.handle_clear_training_plans(
-        {"start_date": "2026-05-01", "end_date": "2026-05-20"}, athlete_id="athlete-1", db=db
+        {"start_date": "2026-05-01", "end_date": "2026-05-14"}, athlete_id="athlete-1", db=db
     )
     assert result["status"] == "success"
     assert result["deleted"] == 2
+    # only sessions that haven't happened
+    db.table.return_value.delete.return_value.eq.return_value.in_.assert_called_with("status", ["planned", "modified"])
+
+
+def test_handle_clear_training_plans_rejects_more_than_two_weeks():
+    db = MagicMock()
+    result = coach_tools.handle_clear_training_plans(
+        {"start_date": "2026-05-01", "end_date": "2026-05-20"}, athlete_id="athlete-1", db=db
+    )
+    assert "error" in result
+    db.table.assert_not_called()
 
 
 def test_handle_clear_training_plans_delete_failure():
     db = MagicMock()
-    db.table.return_value.delete.return_value.eq.return_value.gte.return_value.lte.return_value.execute.side_effect = (
-        RuntimeError("db down")
-    )
+    _clear_chain(db).execute.side_effect = RuntimeError("db down")
     result = coach_tools.handle_clear_training_plans(
-        {"start_date": "2026-05-01", "end_date": "2026-05-20"}, athlete_id="athlete-1", db=db
+        {"start_date": "2026-05-01", "end_date": "2026-05-07"}, athlete_id="athlete-1", db=db
     )
     assert "training_plans_delete_failed" in result["error"]
+
+
+def test_web_search_rejects_long_queries():
+    out = coach_tools.handle_web_search({"query": "x" * 500}, athlete_id="a", db=MagicMock())
+    assert "error" in out
+
+
+def test_update_memory_caps_and_validates():
+    db = MagicMock()
+    out = coach_tools.handle_update_memory({"memory_id": "m1", "event_date": "next tuesday"}, athlete_id="a", db=db)
+    assert "error" in out
+    coach_tools.handle_update_memory({"memory_id": "m1", "content": "y" * 900}, athlete_id="a", db=db)
+    sent = db.table.return_value.update.call_args.args[0]
+    assert len(sent["content"]) == 200
 
 
 # ---------------------------------------------------------------------------
@@ -898,3 +923,38 @@ def test_tools_on_a_paid_key_keep_native_search_but_still_drop_scratchpad(monkey
     tools = coach_tools.tools_for_models(["gemini-3.5-flash-lite"])
     assert _has_search(tools)
     assert "internal_scratchpad" not in _fn_names(tools) and "list_workouts" in _fn_names(tools)
+
+
+def test_require_own_conversation_404s_for_foreign_ids():
+    import pytest
+    from fastapi import HTTPException
+    from app.routers import coach as coach_router
+
+    db = MagicMock()
+    db.table.return_value.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value = (
+        SimpleNamespace(data=[])
+    )
+    with pytest.raises(HTTPException) as exc:
+        coach_router._require_own_conversation(db, "athlete-1", "someone-elses-conversation")
+    assert exc.value.status_code == 404
+    coach_router._require_own_conversation(db, "athlete-1", None)  # new conversation: no check
+
+
+def test_memory_replacements_kept_when_new_fact_fails_to_save():
+    """extract_and_save_memories must not delete superseded memories if the new one wasn't stored."""
+    from datetime import date as _date
+    from app.services import memory
+
+    reply = SimpleNamespace(text='[{"fact": "Race moved to 2026-12-05 in Boston", "replaces": ["m-old"]}]')
+    common = dict(
+        _athlete_local_today=lambda *_a: _date(2026, 11, 2),
+        list_coach_memories=lambda *_a, **_k: [{"id": "m-old", "content": "Race on 2026-11-20"}],
+    )
+    for saved, expect_delete in ((False, False), (True, True)):
+        with patch.multiple(memory, **common), patch.object(memory.gemini_quota, "wait_for_slot"), patch.object(
+            memory._llm_client.models, "generate_content", return_value=reply
+        ), patch.object(memory, "save_coach_memory", return_value=saved), patch.object(
+            memory, "_delete_memories"
+        ) as delete:
+            memory.extract_and_save_memories("a", [{"role": "user", "content": "my race moved"}], MagicMock())
+        assert delete.called is expect_delete

@@ -4,15 +4,13 @@
 </script>
 
 <script lang="ts">
-  import Card from '$lib/components/Card.svelte';
+  import { workoutDurationSecs } from '$lib/utils/workoutDuration';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import { pageHeader, resetPageHeader } from '$lib/stores/pageHeader.svelte';
   import MonthNavigator from '$lib/components/MonthNavigator.svelte';
   import WeekNavigator from '$lib/components/WeekNavigator.svelte';
   import { analysisNavEpoch } from '$lib/analysisNavEpoch.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
-  import { authStore } from '$lib/stores/authStore.svelte';
-  import { goto } from '$app/navigation';
   import { api } from '$lib/api';
   import { HR_ZONE_HEX, HR_ZONE_LABELS } from '$lib/hrZoneDisplay';
   import {
@@ -30,7 +28,6 @@
   } from 'date-fns';
 
   let sport = $state('all');
-  let editZone: number | null = $state(null);
 
   type WindowMode = 'week' | 'month';
   let windowMode = $state<WindowMode>('week');
@@ -54,12 +51,6 @@
   let selectedMonth = $state(toMonthInputValue(new Date()));
   let dayPickerValue = $state('');
   let monthPickerValue = $state('');
-
-  function jumpToToday() {
-    const now = new Date();
-    if (windowMode === 'week') selectedDay = toDateInputValue(now);
-    else selectedMonth = toMonthInputValue(now);
-  }
 
   $effect(() => {
     dayPickerValue = selectedDay;
@@ -85,20 +76,6 @@
     if (selectedMonth > todayMonthMax) selectedMonth = todayMonthMax;
   });
 
-  const canGoForwardWeek = $derived(
-    toDateInputValue(startOfWeek(addDays(parseDateInputLocal(selectedDay), 7), { weekStartsOn: 1 })) <= todayDayMax
-  );
-  const canGoForwardMonth = $derived(
-    toMonthInputValue(addMonths(parseDateInputLocal(`${selectedMonth}-01`), 1)) <= todayMonthMax
-  );
-  const canGoForward = $derived(windowMode === 'week' ? canGoForwardWeek : canGoForwardMonth);
-
-  const METHOD_LABEL: Record<string, string> = {
-    lthr: 'Coggan LTHR',
-    hrr: 'Karvonen HRR',
-    max_hr: 'Max HR %'
-  };
-
   /** Descriptions by zone number — API returns exactly five HR zones for every method */
   const ZONE_DESCRIPTIONS: Record<number, string> = {
     1: 'Recovery and very easy aerobic work.',
@@ -108,13 +85,7 @@
     5: 'VO2max+. Hard intervals and short maximal efforts.'
   };
 
-  /** Time-in-zones stacked bar labels (always Z1-Z5 — no WHOOP-only Z0 bucket) */
-  const TIME_IN_ZONES_LABELS = [1, 2, 3, 4, 5].map((z) => `Z${z} · ${HR_ZONE_LABELS[z]}`);
-
   const hasProfile = $derived(!!athleteStore.profile);
-
-  const zoneMethod = $derived(athleteStore.profile?.hr_zones?.method ?? null);
-  const zoneAnchorLabel = $derived(athleteStore.profile?.hr_zones?.anchor_label ?? '');
 
   const hrZones = $derived(
     (athleteStore.profile?.hr_zones?.zones ?? []).map((z: { zone: number; name: string; min: number; max: number }) => ({
@@ -129,43 +100,10 @@
 
   const hasZoneDefinitions = $derived(hrZones.length > 0);
 
-  /** Scale zone bars (open-ended Z5 uses max 999 sentinel) */
-  const displayCeiling = $derived.by(() => {
-    const profileMax = athleteStore.profile?.max_hr;
-    let cap = typeof profileMax === 'number' ? profileMax : 0;
-    for (const z of hrZones) {
-      if (z.hi < 500) cap = Math.max(cap, z.hi);
-      if (z.lo < 500) cap = Math.max(cap, z.lo);
-    }
-    return cap > 0 ? cap : 1;
-  });
-
-  const maxHRKnown = $derived(
-    typeof athleteStore.profile?.max_hr === 'number' ? athleteStore.profile.max_hr : null
-  );
-  const restingHRKnown = $derived(
-    typeof athleteStore.profile?.resting_hr === 'number' ? athleteStore.profile.resting_hr : null
-  );
-  const hrrKnown = $derived(
-    maxHRKnown != null && restingHRKnown != null ? maxHRKnown - restingHRKnown : null
-  );
-
   /** Zone Definitions card: high intensity first (Z5 → Z1). */
   let zones = $derived([...hrZones].sort((a, b) => b.zone - a.zone));
 
   
-  // Filter activities
-  const sportOptions = [
-    { id: 'all', label: '🌍 Overview' },
-    { id: 'run', label: '🏃 Run' },
-    { id: 'bike', label: '🚴 Bike' },
-    { id: 'swim', label: '🏊 Swim' },
-    { id: 'strength', label: '💪 Strength' },
-    { id: 'mobility', label: '🧘 Mobility' },
-    { id: 'row', label: '🚣 Row' },
-    { id: 'other', label: '🏁 Other' }
-  ];
-
   const sportAliases: Record<string, string[]> = {
     run: ['run', 'running'],
     bike: ['bike', 'cycling'],
@@ -202,13 +140,6 @@
     }
     const monthDate = new Date(`${selectedMonth}-01T00:00:00`);
     return endOfMonth(monthDate);
-  });
-
-  const windowLabel = $derived.by(() => {
-    if (windowMode === 'week') {
-      return `${format(windowStart, 'MMM d')} – ${format(windowEnd, 'MMM d, yyyy')}`;
-    }
-    return format(windowStart, 'MMM yyyy');
   });
 
   const timeAndSportFilteredWorkouts = $derived.by(() => {
@@ -326,7 +257,7 @@
     const totals = [0, 0, 0, 0, 0];
     for (const w of timeAndSportFilteredWorkouts as any[]) {
       if (w.hr_zone_1_pct === null || w.hr_zone_1_pct === undefined) continue;
-      const secs = Number(w.duration_seconds) || 0;
+      const secs = workoutDurationSecs(w) ?? 0;
       for (let z = 0; z < 5; z++) totals[z] += (secs * (Number(w[`hr_zone_${z + 1}_pct`]) || 0)) / 100;
     }
     return totals;
@@ -346,26 +277,6 @@
         return { zone: z.zone, name: z.name, color: z.color, hr, watts, secs, time: fmtDuration(secs), pct: total > 0 ? Math.round((secs / total) * 100) : 0 };
       });
   });
-  const isCurrentWindow = $derived(
-    windowMode === "week"
-      ? toDateInputValue(startOfWeek(parseDateInputLocal(selectedDay), { weekStartsOn: 1 })) === toDateInputValue(startOfWeek(new Date(), { weekStartsOn: 1 }))
-      : selectedMonth === todayMonthMax
-  );
-  const windowTitle = $derived(
-    windowMode === "month"
-      ? format(windowStart, "MMMM")
-      : `${format(windowStart, "d MMM")} – ${format(windowEnd, "d MMM")}`
-  );
-  const windowSubtitle = $derived(
-    isCurrentWindow
-      ? windowMode === "month" ? "This month · so far" : "Last 7 days"
-      : windowMode === "month" ? format(windowStart, "yyyy") : format(windowEnd, "yyyy")
-  );
-  const stepWindow = (dir: 1 | -1) => () => {
-    if (dir === 1 && !canGoForward) return;
-    if (windowMode === "week") selectedDay = toDateInputValue(addDays(parseDateInputLocal(selectedDay), 7 * dir));
-    else selectedMonth = toMonthInputValue(addMonths(parseDateInputLocal(`${selectedMonth}-01`), dir));
-  };
   const zoneSummary = $derived.by(() => {
     const total = zoneSeconds.reduce((a, b) => a + b, 0);
     if (total === 0) return "Log a few heart-rate workouts and your zone split will show up here.";

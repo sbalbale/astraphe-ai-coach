@@ -107,6 +107,7 @@ def test_unregister_token_deletes_row():
 
 def test_send_test_notification_disabled_in_production(monkeypatch):
     monkeypatch.setattr(settings, "APP_ENV", "production")
+    _production_encryption_key(monkeypatch)
     _override(_TokenDb())
     try:
         with TestClient(app) as client:
@@ -134,3 +135,12 @@ def test_send_test_notification_calls_push_service(monkeypatch):
     _, kwargs = mock_send.call_args
     assert kwargs["athlete_id"] == "athlete-1"
     assert kwargs["title"] == "ASTRAPHE"
+
+
+def _production_encryption_key(monkeypatch):
+    """Production refuses to start without a valid token-encryption key."""
+    from cryptography.fernet import Fernet
+    from app.services import token_crypto
+
+    monkeypatch.setattr(settings, "OAUTH_TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode())
+    token_crypto._fernet.cache_clear()

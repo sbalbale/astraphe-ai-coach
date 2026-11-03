@@ -31,6 +31,7 @@ from garminconnect.exceptions import (
     GarminConnectTooManyRequestsError,
 )
 
+from app.services.background import spawn as spawn_background
 from app.config import settings
 from app.dependencies import get_admin_db
 from app.models.biometrics import DailyBiometrics
@@ -615,6 +616,23 @@ def download_and_parse_fit(
     return streams, laps
 
 
+def _streams_already_stored(db: Any, workout_id: str) -> bool:
+    """True when this workout already has a stored stream blob."""
+    try:
+        res = (
+            db.table("activity_streams")
+            .select("workout_id")
+            .eq("workout_id", workout_id)
+            .not_.is_("storage_path", "null")
+            .limit(1)
+            .execute()
+        )
+    except Exception:
+        return False
+    data = getattr(res, "data", None)
+    return isinstance(data, list) and len(data) > 0
+
+
 def _upsert_activity_streams(
     db: Any, workout_id: str, athlete_id: str, time_series: dict[str, Any]
 ) -> bool:
@@ -750,6 +768,10 @@ async def _save_one_activity(
     activity_id = activity.get("activityId")
     streams: dict[str, Any] = {}
     laps: list[dict[str, Any]] = []
+    # The hourly poll sees the same recent activities every time; re-downloading each
+    # FIT file burned Garmin quota (and risks its multi-day lockouts) for no new data.
+    if activity_id is not None and await asyncio.to_thread(_streams_already_stored, db, workout_id):
+        return True, False
     if activity_id is not None:
         # `garminconnect` is a synchronous (requests/curl_cffi) client — run its
         # blocking network calls off the event loop.
@@ -757,15 +779,19 @@ async def _save_one_activity(
             download_and_parse_fit, client, str(activity_id)
         )
 
-    streams_saved = _upsert_activity_streams(db, workout_id, athlete_id, streams)
+    # Blocking supabase-py writes: off the event loop (this poll runs inside the API
+    # process, so on-loop DB work stalled every HTTP request on the replica).
+    streams_saved = await asyncio.to_thread(_upsert_activity_streams, db, workout_id, athlete_id, streams)
     if streams_saved:
-        _update_workout_hr_zones_from_streams(
-            db, workout_id, athlete_id, streams,
-            duration_seconds=payload.duration_seconds,
-            sport=payload.workout_type,
+        await asyncio.to_thread(
+            lambda: _update_workout_hr_zones_from_streams(
+                db, workout_id, athlete_id, streams,
+                duration_seconds=payload.duration_seconds,
+                sport=payload.workout_type,
+            )
         )
     if laps:
-        _persist_activity_laps(db, workout_id, athlete_id, laps)
+        await asyncio.to_thread(_persist_activity_laps, db, workout_id, athlete_id, laps)
 
     # Post-workout Photon text. It fires here rather than inside process_and_save_workout
     # (which Garmin calls with skip_tss_recalc=True, and before HR zones/TSS/laps exist)
@@ -773,7 +799,7 @@ async def _save_one_activity(
     # notified_at itself, so history backfills and re-syncs never text.
     from app.services.messaging import maybe_text_workout
 
-    asyncio.ensure_future(maybe_text_workout(db, athlete_id, str(workout_id)))
+    spawn_background(maybe_text_workout(db, athlete_id, str(workout_id)))
 
     return True, streams_saved
 
@@ -828,7 +854,7 @@ async def sync_activities_for_athlete(
     # Recompute for whatever we did save, whether or not we finished the pass.
     if workout_count:
         await recompute_workout_tss_for_athlete(athlete_id, db)
-        recalculate_tss_history(athlete_id, db)
+        await asyncio.to_thread(recalculate_tss_history, athlete_id, db)
         invalidate_context_cache(athlete_id)
 
     if rate_limited:
@@ -1033,6 +1059,17 @@ def parse_garmin_naps(payload: Any) -> list[dict[str, Any]]:
     return naps
 
 
+def _sync_end_date(db: Any, athlete_id: str) -> date:
+    """
+    Last day to sync: the later of UTC today and the athlete's local today. Garmin keys
+    days by the athlete's local calendar, so a UTC-only end date missed this morning's
+    sleep for athletes east of UTC until UTC midnight.
+    """
+    utc_today = datetime.now(timezone.utc).date()
+    local_today = (datetime.now(timezone.utc) + timedelta(minutes=_athlete_offset_min(db, athlete_id))).date()
+    return max(utc_today, local_today)
+
+
 def _athlete_offset_min(db: Any, athlete_id: str) -> int:
     try:
         res = db.table("athletes").select("timezone_offset_min").eq("id", athlete_id).maybe_single().execute()
@@ -1078,7 +1115,7 @@ def save_garmin_naps(
                 "external_id": f"{PROVIDER}:nap:{athlete_id}:{int(start.timestamp())}",
             }
         )
-    db.table("sleep_periods").upsert(rows, on_conflict="source,external_id").execute()
+    db.table("sleep_periods").upsert(rows, on_conflict="athlete_id,source,external_id").execute()
     return sorted({r["date"] for r in rows})
 
 
@@ -1172,7 +1209,8 @@ async def fetch_and_store_biometrics_for_day(
     payload = _daily_biometrics_from_garmin(day, sleep, hrv, heart_rates)
     if payload is None:
         return False
-    process_and_save_biometrics(payload, athlete_id, db, skip_pmc_recalc=True)
+    # ~10 blocking queries plus a thread pool: keep them off the event loop.
+    await asyncio.to_thread(lambda: process_and_save_biometrics(payload, athlete_id, db, skip_pmc_recalc=True))
     return True
 
 
@@ -1219,7 +1257,7 @@ async def backfill_historical_data(athlete_id: str, db: Any, days: int = 90) -> 
     poll loop (once its cooldown elapses) picks up the rest.
     """
     days = max(1, min(int(days), 365))
-    end_date = datetime.now(timezone.utc).date()
+    end_date = await asyncio.to_thread(_sync_end_date, db, athlete_id)
     start_date = end_date - timedelta(days=days - 1)
 
     workouts = {"workouts": 0, "streams": 0}
@@ -1267,12 +1305,12 @@ POLL_WINDOW_DAYS = 2
 
 
 async def _poll_one_athlete(athlete_id: str, db: Any) -> None:
-    if not _claim_sync_lock(db, athlete_id):
+    if not await asyncio.to_thread(_claim_sync_lock, db, athlete_id):
         logger.debug("garmin poll: athlete_id=%s locked by another replica; skipping", athlete_id)
         return
     rate_limited = False
     try:
-        end_date = datetime.now(timezone.utc).date()
+        end_date = await asyncio.to_thread(_sync_end_date, db, athlete_id)
         start_date = end_date - timedelta(days=POLL_WINDOW_DAYS - 1)
         await sync_activities_for_athlete(athlete_id, db, start_date, end_date)
         await sync_biometrics_for_athlete(athlete_id, db, start_date, end_date)
@@ -1290,18 +1328,18 @@ async def _poll_one_athlete(athlete_id: str, db: Any) -> None:
             # (an hour later, by default) still sees this athlete as
             # "locked" and skips it, rather than immediately retrying into
             # the same rate limit.
-            _cooldown_sync_lock(db, athlete_id, GARMIN_RATE_LIMIT_COOLDOWN_SEC)
+            await asyncio.to_thread(_cooldown_sync_lock, db, athlete_id, GARMIN_RATE_LIMIT_COOLDOWN_SEC)
         else:
-            _release_sync_lock(db, athlete_id)
+            await asyncio.to_thread(_release_sync_lock, db, athlete_id)
 
 
 async def poll_tick(db: Any) -> int:
     """One pass over every connected Garmin athlete. Returns the count processed."""
-    res = (
+    res = await asyncio.to_thread(
         db.table("oauth_tokens")
         .select("athlete_id")
         .eq("provider", PROVIDER)
-        .execute()
+        .execute
     )
     athlete_ids = [row["athlete_id"] for row in (getattr(res, "data", None) or [])]
     for athlete_id in athlete_ids:

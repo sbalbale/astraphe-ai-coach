@@ -26,9 +26,11 @@ on:
     branches:
       - main
 
+# Least privilege: only the image-build jobs get packages: write (below). pull_request
+# runs execute PR code (pnpm install, pytest), so they shouldn't hold a token that can
+# push images to GHCR.
 permissions:
   contents: read
-  packages: write
 
 jobs:
   # backend, mobile, and build are independent of each other (build doesn't
@@ -46,10 +48,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
           cache: pip
@@ -72,10 +74,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
           cache: pip
@@ -94,20 +96,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
         with:
-          version: latest
+          version: 10.32.1  # pinned; bump deliberately (matches local dev)
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          # No pinned version: track the runner's current default (matches
-          # firebase-hosting-pull-request.yml's convention). Pinning to 20
-          # broke this job outright once pnpm/action-setup's "latest" moved
-          # to a pnpm release requiring Node >=22.13 (node:sqlite import).
+          # Pinned with pnpm above. (Node 20 once broke when an unpinned pnpm
+          # "latest" started requiring Node >=22.13.)
+          node-version: 24
           cache: pnpm
           cache-dependency-path: mobile/pnpm-lock.yaml
 
@@ -120,13 +121,16 @@ jobs:
         working-directory: mobile
 
   build:
+    permissions:
+      contents: read
+      packages: write
     runs-on: ubuntu-latest
     outputs:
       image_tag: ${{ github.sha }}
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # Skipped for pull_request: nothing is published in that case (see
       # push: below), so registry credentials aren't needed — and PRs from
@@ -135,14 +139,14 @@ jobs:
       # be a no-op.
       - name: Log in to GitHub Container Registry
         if: github.event_name == 'push'
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build (and push on merge to main)
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5.4.0
         with:
           context: ./backend
           # A PR build only has to prove the image compiles — it must never
@@ -154,6 +158,9 @@ jobs:
             ghcr.io/sbalbale/astraphe-api:${{ github.sha }}
 
   build-mcp:
+    permissions:
+      contents: read
+      packages: write
     # Independent of `build` (astraphe-api) and of the `mcp-server` test job — same
     # "build doesn't wait on tests, deploy does" split as `build`/`backend`/`deploy`
     # above. `deploy-mcp` below is what actually requires `mcp-server` to have passed.
@@ -163,18 +170,18 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Log in to GitHub Container Registry
         if: github.event_name == 'push'
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build (and push on merge to main)
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5.4.0
         with:
           # Build context is the repo root, not mcp-server/ — the image needs both
           # backend/app and mcp-server/astraphe_mcp (see mcp-server/Dockerfile).
@@ -201,12 +208,16 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Install cloudflared
         run: |
-          curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
+          # Fixed version + checksum (not 'latest'): this binary carries the deploy credentials.
+          CLOUDFLARED_VERSION=2026.10.7
+          CLOUDFLARED_SHA256=1f99fb518b83dec2ba8d870a7cc991d82a77e6196295a3d2754ba17ab9f91872
+          curl -fsSL "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64" \
             -o cloudflared
+          echo "${CLOUDFLARED_SHA256}  cloudflared" | sha256sum -c -
           chmod +x cloudflared
           sudo mv cloudflared /usr/local/bin/
           cloudflared --version
@@ -232,6 +243,8 @@ jobs:
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
           mkdir -p ~/.ssh
+          # Pinned host keys (see .github/ssh_known_hosts); never trust-on-first-use as root.
+          install -m 644 .github/ssh_known_hosts ~/.ssh/known_hosts_astraphe
           echo "${{ secrets.PROXMOX_SSH_KEY }}" > ~/.ssh/id_ed25519_deploy
           chmod 600 ~/.ssh/id_ed25519_deploy
 
@@ -250,7 +263,9 @@ jobs:
             User root
             IdentityFile ~/.ssh/id_ed25519_deploy
             ProxyCommand /tmp/cf-proxy.sh %h
-            StrictHostKeyChecking no
+            StrictHostKeyChecking yes
+            HostKeyAlgorithms ssh-ed25519
+            UserKnownHostsFile ~/.ssh/known_hosts_astraphe
             BatchMode yes
           EOF
 
@@ -295,12 +310,16 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Install cloudflared
         run: |
-          curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
+          # Fixed version + checksum (not 'latest'): this binary carries the deploy credentials.
+          CLOUDFLARED_VERSION=2026.10.7
+          CLOUDFLARED_SHA256=1f99fb518b83dec2ba8d870a7cc991d82a77e6196295a3d2754ba17ab9f91872
+          curl -fsSL "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64" \
             -o cloudflared
+          echo "${CLOUDFLARED_SHA256}  cloudflared" | sha256sum -c -
           chmod +x cloudflared
           sudo mv cloudflared /usr/local/bin/
           cloudflared --version
@@ -311,6 +330,8 @@ jobs:
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
           mkdir -p ~/.ssh
+          # Pinned host keys (see .github/ssh_known_hosts); never trust-on-first-use as root.
+          install -m 644 .github/ssh_known_hosts ~/.ssh/known_hosts_astraphe
           echo "${{ secrets.PROXMOX_SSH_KEY }}" > ~/.ssh/id_ed25519_deploy
           chmod 600 ~/.ssh/id_ed25519_deploy
 
@@ -324,7 +345,9 @@ jobs:
             User root
             IdentityFile ~/.ssh/id_ed25519_deploy
             ProxyCommand /tmp/cf-proxy.sh %h
-            StrictHostKeyChecking no
+            StrictHostKeyChecking yes
+            HostKeyAlgorithms ssh-ed25519
+            UserKnownHostsFile ~/.ssh/known_hosts_astraphe
             BatchMode yes
           EOF
 
@@ -344,10 +367,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "20"
           cache: npm
@@ -360,24 +383,27 @@ jobs:
         working-directory: photon-bridge
 
   build-photon-bridge:
+    permissions:
+      contents: read
+      packages: write
     runs-on: ubuntu-latest
     outputs:
       image_tag: ${{ github.sha }}
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Log in to GitHub Container Registry
         if: github.event_name == 'push'
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build (and push on merge to main)
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5.4.0
         with:
           context: photon-bridge
           push: ${{ github.event_name == 'push' }}
@@ -395,12 +421,16 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Install cloudflared
         run: |
-          curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
+          # Fixed version + checksum (not 'latest'): this binary carries the deploy credentials.
+          CLOUDFLARED_VERSION=2026.10.7
+          CLOUDFLARED_SHA256=1f99fb518b83dec2ba8d870a7cc991d82a77e6196295a3d2754ba17ab9f91872
+          curl -fsSL "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64" \
             -o cloudflared
+          echo "${CLOUDFLARED_SHA256}  cloudflared" | sha256sum -c -
           chmod +x cloudflared
           sudo mv cloudflared /usr/local/bin/
 
@@ -410,6 +440,8 @@ jobs:
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
           mkdir -p ~/.ssh
+          # Pinned host keys (see .github/ssh_known_hosts); never trust-on-first-use as root.
+          install -m 644 .github/ssh_known_hosts ~/.ssh/known_hosts_astraphe
           echo "${{ secrets.PROXMOX_SSH_KEY }}" > ~/.ssh/id_ed25519_deploy
           chmod 600 ~/.ssh/id_ed25519_deploy
 
@@ -423,7 +455,9 @@ jobs:
             User root
             IdentityFile ~/.ssh/id_ed25519_deploy
             ProxyCommand /tmp/cf-proxy.sh %h
-            StrictHostKeyChecking no
+            StrictHostKeyChecking yes
+            HostKeyAlgorithms ssh-ed25519
+            UserKnownHostsFile ~/.ssh/known_hosts_astraphe
             BatchMode yes
           EOF
 
@@ -448,12 +482,16 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Install cloudflared
         run: |
-          curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
+          # Fixed version + checksum (not 'latest'): this binary carries the deploy credentials.
+          CLOUDFLARED_VERSION=2026.10.7
+          CLOUDFLARED_SHA256=1f99fb518b83dec2ba8d870a7cc991d82a77e6196295a3d2754ba17ab9f91872
+          curl -fsSL "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64" \
             -o cloudflared
+          echo "${CLOUDFLARED_SHA256}  cloudflared" | sha256sum -c -
           chmod +x cloudflared
           sudo mv cloudflared /usr/local/bin/
 
@@ -463,6 +501,8 @@ jobs:
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
           mkdir -p ~/.ssh
+          # Pinned host keys (see .github/ssh_known_hosts); never trust-on-first-use as root.
+          install -m 644 .github/ssh_known_hosts ~/.ssh/known_hosts_astraphe
           echo "${{ secrets.PROXMOX_SSH_KEY }}" > ~/.ssh/id_ed25519_deploy
           chmod 600 ~/.ssh/id_ed25519_deploy
 
@@ -481,7 +521,9 @@ jobs:
             User root
             IdentityFile ~/.ssh/id_ed25519_deploy
             ProxyCommand /tmp/cf-proxy.sh %h
-            StrictHostKeyChecking no
+            StrictHostKeyChecking yes
+            HostKeyAlgorithms ssh-ed25519
+            UserKnownHostsFile ~/.ssh/known_hosts_astraphe
             BatchMode yes
           EOF
 
@@ -519,13 +561,24 @@ jobs:
             # The supabase CLI ships as a `supabase` shim binary that forwards
             # to a co-located `supabase-go` binary — both must land in the
             # same directory, not just `supabase` copied out on its own.
-            if ! command -v supabase >/dev/null 2>&1; then
-              echo "Installing supabase CLI"
-              mkdir -p "${HOME}/.local/share/supabase"
-              curl -fsSL https://github.com/supabase/cli/releases/latest/download/supabase_linux_amd64.tar.gz \
-                | tar -xz -C "${HOME}/.local/share/supabase"
+            #
+            # Pinned version + checksum, not releases/latest: v3.0.0 (2026-11-02)
+            # rejects our config.toml's [inbucket] section and broke every deploy.
+            # Installed into a per-version directory so a bump re-downloads.
+            SUPABASE_CLI_VERSION=2.122.1
+            SUPABASE_CLI_SHA256=3e54b98e5ead7be0a3b0753526833d4cc9a55304e4d57da0d72f1efc342738ea
+            SUPABASE_CLI_DIR="${HOME}/.local/share/supabase-${SUPABASE_CLI_VERSION}"
+            if [ ! -x "${SUPABASE_CLI_DIR}/supabase" ]; then
+              echo "Installing supabase CLI ${SUPABASE_CLI_VERSION}"
+              mkdir -p "${SUPABASE_CLI_DIR}"
+              curl -fsSL -o /tmp/supabase-cli.tar.gz \
+                "https://github.com/supabase/cli/releases/download/v${SUPABASE_CLI_VERSION}/supabase_${SUPABASE_CLI_VERSION}_linux_amd64.tar.gz"
+              echo "${SUPABASE_CLI_SHA256}  /tmp/supabase-cli.tar.gz" | sha256sum -c -
+              tar -xzf /tmp/supabase-cli.tar.gz -C "${SUPABASE_CLI_DIR}"
+              rm -f /tmp/supabase-cli.tar.gz
             fi
-            export PATH="${HOME}/.local/share/supabase:${PATH}"
+            export PATH="${SUPABASE_CLI_DIR}:${PATH}"
+            supabase --version
 
             cd /root/ci-migrate
 

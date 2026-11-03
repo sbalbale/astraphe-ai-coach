@@ -93,7 +93,7 @@ def _to_workout_row(row: dict[str, Any]) -> dict[str, Any]:
 
 
 @router.get("")
-async def get_training_plans(
+def get_training_plans(
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
     athlete_id: str = Depends(get_current_athlete),
@@ -114,11 +114,12 @@ async def get_training_plans(
         rows = res.data or []
         return [_to_workout_row(r) for r in rows]
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch training plans: {str(e)}")
+        print(f"[training_plans] Failed to fetch training plans: {e!r}")
+        raise HTTPException(status_code=500, detail="Failed to fetch training plans")
 
 
 @router.post("")
-async def create_training_plan(
+def create_training_plan(
     payload: WorkoutPayload,
     athlete_id: str = Depends(get_current_athlete),
     db=Depends(get_user_db),
@@ -149,11 +150,12 @@ async def create_training_plan(
         row = (ins.data or [{}])[0]
         return _to_workout_row(row)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to create training plan: {str(e)}")
+        print(f"[training_plans] Failed to create training plan: {e!r}")
+        raise HTTPException(status_code=500, detail="Failed to create training plan")
 
 
 @router.put("/{training_plan_id}")
-async def update_training_plan(
+def update_training_plan(
     training_plan_id: str,
     payload: WorkoutPayload,
     athlete_id: str = Depends(get_current_athlete),
@@ -189,11 +191,12 @@ async def update_training_plan(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to update training plan: {str(e)}")
+        print(f"[training_plans] Failed to update training plan: {e!r}")
+        raise HTTPException(status_code=500, detail="Failed to update training plan")
 
 
 @router.delete("/{training_plan_id}")
-async def delete_training_plan(
+def delete_training_plan(
     training_plan_id: str,
     athlete_id: str = Depends(get_current_athlete),
     db=Depends(get_user_db),
@@ -216,11 +219,12 @@ async def delete_training_plan(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to delete training plan: {str(e)}")
+        print(f"[training_plans] Failed to delete training plan: {e!r}")
+        raise HTTPException(status_code=500, detail="Failed to delete training plan")
 
 
 @router.delete("")
-async def delete_training_plans(
+def delete_training_plans(
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
     athlete_id: str = Depends(get_current_athlete),
@@ -244,5 +248,6 @@ async def delete_training_plans(
         deleted = len(res.data or [])
         return {"status": "success", "deleted": deleted}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to delete training plans: {str(e)}")
+        print(f"[training_plans] Failed to delete training plans: {e!r}")
+        raise HTTPException(status_code=500, detail="Failed to delete training plans")
 

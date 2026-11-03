@@ -10,6 +10,8 @@ from fastapi.testclient import TestClient
 from app.config import settings
 from app.main import app
 from app.routers import sync
+from app.services.oauth_state import OAuthStateError, sign_state, verify_state
+import pytest
 
 
 # ---------------------------------------------------------------------------
@@ -17,11 +19,24 @@ from app.routers import sync
 # ---------------------------------------------------------------------------
 
 
-def test_safe_web_return_allows_allowlisted_hosts():
-    assert sync._safe_web_return("https://app.astrapheai.com/dashboard") is not None
+def test_safe_web_return_allows_allowlisted_hosts(monkeypatch):
+    monkeypatch.setattr(settings, "APP_ENV", "development")
+    assert sync._safe_web_return("https://app.astrapheai.com/dashboard") == "https://app.astrapheai.com/dashboard"
     assert sync._safe_web_return("https://astrapheai.com/x") is not None
     assert sync._safe_web_return("https://localhost:3000/x") is not None
+    assert sync._safe_web_return("http://localhost:5173/x") is not None
     assert sync._safe_web_return("https://sub.astrapheai.com/x") is not None  # wildcard suffix
+
+
+def test_safe_web_return_blocks_backslash_and_scheme_tricks(monkeypatch):
+    monkeypatch.setattr(settings, "APP_ENV", "production")
+    # urlparse sees app.astrapheai.com, browsers go to evil.com
+    assert sync._safe_web_return("https://evil.com\\@app.astrapheai.com/") is None
+    assert sync._safe_web_return("javascript://app.astrapheai.com/%0aalert(1)") is None
+    assert sync._safe_web_return("http://app.astrapheai.com/x") is None
+    assert sync._safe_web_return("https://user:pw@app.astrapheai.com/x") is None
+    assert sync._safe_web_return("https://localhost:3000/x") is None  # dev hosts off in prod
+    assert sync._safe_web_return("https://app.astrapheai.com/x\nSet-Cookie:a") is None
 
 
 def test_safe_web_return_rejects_unlisted_host():
@@ -40,14 +55,29 @@ def test_get_clean_redirect_url_and_strava_variant(monkeypatch):
     assert sync.get_clean_strava_redirect_url() == "https://api.astrapheai.com/v1/sync/oauth/strava/callback"
 
 
-def test_oauth_state_appends_valid_web_return():
-    state = sync._oauth_state("athlete-1", "https://app.astrapheai.com/x")
-    assert state == "athlete-1|https://app.astrapheai.com/x"
+def test_oauth_state_carries_valid_web_return():
+    state = sync._oauth_state("athlete-1", "https://app.astrapheai.com/x", "whoop")
+    parsed = verify_state(state, "whoop")
+    assert parsed.athlete_id == "athlete-1"
+    assert parsed.web_return == "https://app.astrapheai.com/x"
 
 
-def test_oauth_state_ignores_invalid_web_return():
-    assert sync._oauth_state("athlete-1", "https://evil.com/x") == "athlete-1"
-    assert sync._oauth_state("athlete-1", None) == "athlete-1"
+def test_oauth_state_drops_invalid_web_return():
+    assert verify_state(sync._oauth_state("athlete-1", "https://evil.com/x", "whoop"), "whoop").web_return is None
+    assert verify_state(sync._oauth_state("athlete-1", None, "strava"), "strava").web_return is None
+
+
+def test_oauth_state_rejects_forged_expired_and_cross_provider():
+    good = sign_state("athlete-1", "whoop")
+    body, sig = good.rsplit(".", 1)
+    for bad in (None, "", "athlete-1", "athlete-1|https://app.astrapheai.com", body + ".AAAA", good + "x"):
+        with pytest.raises(OAuthStateError):
+            verify_state(bad, "whoop")
+    with pytest.raises(OAuthStateError):
+        verify_state(good, "strava")
+    old = sign_state("athlete-1", "whoop", now=1_000)
+    with pytest.raises(OAuthStateError):
+        verify_state(old, "whoop", now=1_000 + 601)
 
 
 # ---------------------------------------------------------------------------
@@ -102,14 +132,14 @@ def test_build_whoop_oauth_authorize_url_includes_state_and_client_id(monkeypatc
     monkeypatch.setattr(settings, "WHOOP_CLIENT_ID", "whoop-client")
     url = sync.build_whoop_oauth_authorize_url("athlete-1")
     assert "client_id=whoop-client" in url
-    assert "state=athlete-1" in url
+    assert "state=" in url and "state=athlete-1" not in url
 
 
 def test_build_strava_oauth_authorize_url_includes_state_and_client_id(monkeypatch):
     monkeypatch.setattr(settings, "STRAVA_CLIENT_ID", "strava-client")
     url = sync.build_strava_oauth_authorize_url("athlete-1", "https://app.astrapheai.com/x")
     assert "client_id=strava-client" in url
-    assert "state=athlete-1" in url
+    assert "state=" in url and "state=athlete-1" not in url
     assert "www.strava.com/oauth/authorize" in url
 
 

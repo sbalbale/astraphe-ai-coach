@@ -20,6 +20,22 @@ const COACH_UPLOAD_SIGNED_URL_TTL_SECONDS = 60 * 60 * 24 * 365;
 let _initCache: { result: unknown; expiresAt: number; period: TimeOfDayPeriod; timezoneOffsetMin: number } | null = null;
 
 export const api = {
+  /** Drop per-user in-memory caches (sign-out / user switch). */
+  clearUserCaches() {
+    _initCache = null;
+  },
+
+  async deleteJson(path: string, payload: any): Promise<boolean> {
+    try {
+      const headers = await getAuthHeaders({ 'Content-Type': 'application/json' });
+      const res = await fetch(`${API_URL}${path}`, { method: 'DELETE', headers, body: JSON.stringify(payload) });
+      return res.ok;
+    } catch (e) {
+      console.warn(`Failed to DELETE ${path}.`, e);
+      return false;
+    }
+  },
+
   async getDashboardSummary(day?: string) {
     try {
       const headers = await getAuthHeaders();
@@ -631,6 +647,9 @@ export const api = {
       params.onStarted?.();
     };
 
+    // Released in finally: an error event or parse throw used to leave the stream
+    // (and its connection) open.
+    try {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -669,6 +688,14 @@ export const api = {
             throw new Error(data.error);
           }
         }
+      }
+    }
+    } finally {
+      // Best-effort release; never let cleanup mask the real error.
+      try {
+        void Promise.resolve(reader.cancel?.()).catch(() => {});
+      } catch {
+        // ignore
       }
     }
 

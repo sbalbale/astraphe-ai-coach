@@ -85,7 +85,7 @@ export function formTone(tsb: unknown): ScoreTone {
 // Canvas / SVG identity colors for CTL (fitness line) vs ATL (fatigue bars).
 // Matches the `chartCtl` (sky accent) and `chartAtl` (neutral grey) Tailwind tokens.
 export const CHART_CTL_STROKE = '#7FB4FF';
-/** chartAtl token hex — canvas, LayerChart, MetricBadge color prop only */
+/** chartAtl token hex — canvas and LayerChart only */
 export const CHART_ATL_STROKE = '#6A6A72';
 export const CHART_ATL_FILL_REST = 'rgba(106, 106, 114, 0.45)';
 export const CHART_ATL_FILL_ACTIVE = 'rgba(106, 106, 114, 0.7)';

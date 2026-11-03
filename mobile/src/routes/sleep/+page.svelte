@@ -31,6 +31,10 @@
     ),
   );
   const hasData = $derived(athleteStore.biometrics?.series?.length > 0);
+  // "Connect an app" only when we *know* nothing is connected and there's no data:
+  // manual-only athletes (logged sleep/workouts) see their data, and connected users
+  // don't flash this while the sync status is still loading.
+  const showConnectPrompt = $derived(athleteStore.syncStatus != null && !isConnected && !hasData);
 
   function formatHoursMinutesFromMinutes(mins: number | null | undefined): string {
     const n = typeof mins === "number" ? mins : Number(mins);
@@ -111,12 +115,13 @@
     label: string;
     day: string;
     missing: false;
-    score: number;
+    /** null = no score for this night (e.g. a manual entry): shown as "--", not a red 0. */
+    score: number | null;
     duration: string;
     durationRaw: number;
     inBed: string;
     inBedRaw: number;
-    quality: "Optimal" | "Moderate" | "Poor";
+    quality: "Optimal" | "Moderate" | "Poor" | null;
     bedtime: string;
     wakeup: string;
     deep: number;
@@ -129,13 +134,19 @@
     hrv: number;
     hrvZ: number | null;
     rhrZ: number | null;
-    debt: number;
-    need: number;
+    debt: number | null;
+    need: number | null;
     periods: any[];
     stageSegments: { stage: string; start_at: string; end_at: string }[];
   };
 
   type Night = NightMissing | NightData;
+
+  function sleepQuality(score: unknown): NightData["quality"] {
+    const v = Number(score);
+    if (!(v > 0)) return null;
+    return v >= 67 ? "Optimal" : v >= 34 ? "Moderate" : "Poor";
+  }
 
   function isNightData(x: Night): x is NightData {
     return x.missing === false;
@@ -173,17 +184,12 @@
       label: shortLabel,
       day: dayLabel,
       missing: false,
-      score: b.sleep_score || 0,
+      score: Number(b.sleep_score) > 0 ? Number(b.sleep_score) : null,
       duration: b.sleep_duration_min ? `${h}h ${m}m` : "0h 0m",
       durationRaw: b.sleep_duration_min || 0,
       inBed: timeInBedMin > 0 ? `${inBedH}h ${inBedM}m` : "0h 0m",
       inBedRaw: timeInBedMin,
-      quality:
-        (b.sleep_score || 0) >= 67
-          ? "Optimal"
-          : (b.sleep_score || 0) >= 34
-            ? "Moderate"
-            : "Poor",
+      quality: sleepQuality(b.sleep_score),
       bedtime: bedtime
         ? bedtime.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", hour12 })
         : "N/A",
@@ -200,8 +206,8 @@
       hrv: b.hrv_rmssd || 0,
       hrvZ: typeof b.hrv_z === "number" && Number.isFinite(b.hrv_z) ? Number(b.hrv_z) : null,
       rhrZ: typeof b.rhr_z === "number" && Number.isFinite(b.rhr_z) ? Number(b.rhr_z) : null,
-      debt: b.sleep_debt_min || 0,
-      need: b.sleep_need_min || 480,
+      debt: Number.isFinite(Number(b.sleep_debt_min)) && b.sleep_debt_min != null ? Number(b.sleep_debt_min) : null,
+      need: Number(b.sleep_need_min) > 0 ? Number(b.sleep_need_min) : null,
       stageSegments: b.stage_segments || [],
         periods: (b.periods || []).map((p: any) => {
         const pStart = new Date(p.started_at);
@@ -283,17 +289,12 @@
         label: shortLabel,
         day: dayLabel,
         rawDate: displayDateStr,
-        score: b.sleep_score || 0,
+        score: Number(b.sleep_score) > 0 ? Number(b.sleep_score) : null,
         duration: b.sleep_duration_min ? `${h}h ${m}m` : "0h 0m",
         durationRaw: b.sleep_duration_min || 0,
         inBed: timeInBedMin > 0 ? `${inBedH}h ${inBedM}m` : "0h 0m",
         inBedRaw: timeInBedMin,
-        quality:
-          (b.sleep_score || 0) >= 67
-            ? "Optimal"
-            : (b.sleep_score || 0) >= 34
-              ? "Moderate"
-              : "Poor",
+        quality: sleepQuality(b.sleep_score),
         bedtime: bedtime
           ? bedtime.toLocaleTimeString([], {
               hour: "numeric",
@@ -318,8 +319,8 @@
         hrv: b.hrv_rmssd || 0,
         hrvZ: typeof b.hrv_z === 'number' && Number.isFinite(b.hrv_z) ? Number(b.hrv_z) : null,
         rhrZ: typeof b.rhr_z === 'number' && Number.isFinite(b.rhr_z) ? Number(b.rhr_z) : null,
-        debt: b.sleep_debt_min || 0,
-        need: b.sleep_need_min || 480,
+        debt: Number.isFinite(Number(b.sleep_debt_min)) && b.sleep_debt_min != null ? Number(b.sleep_debt_min) : null,
+        need: Number(b.sleep_need_min) > 0 ? Number(b.sleep_need_min) : null,
         stageSegments: b.stage_segments || [],
         periods: (b.periods || []).map((p: any) => {
           const pStart = new Date(p.started_at);
@@ -439,7 +440,9 @@
   let scoreColor = $derived(
     current.isStale && n?.rawDate === todayStr
       ? "var(--text2)"
-      : boundedScoreCssColor(nightData?.score ?? n.score)
+      : (nightData ? nightData.score : n.score) == null
+        ? "var(--text2)"
+        : boundedScoreCssColor((nightData ? nightData.score : n.score) as number)
   );
   const getSleepColor = (score: number) => boundedScoreCssColor(score);
 
@@ -512,7 +515,7 @@
 />
 
 <div class="flex flex-col gap-3.5">
-  {#if !isConnected}
+  {#if showConnectPrompt}
     <EmptyState title="No Sleep Data" message="Connect WHOOP, Garmin, or Apple Health to track your sleep architecture and recovery." icon="🌙" secondaryLabel="Log Sleep" onSecondaryAction={() => (addSleepOpen = true)} />
   {:else if !hasData}
     <EmptyState title="Waiting for Sleep Sync" message="We'll analyze your sleep as soon as your device syncs with our servers." icon="⏳" />
@@ -528,15 +531,15 @@
       <div class="relative w-[112px] h-[112px] shrink-0">
         <svg width="112" height="112" viewBox="0 0 112 112" aria-hidden="true" class="block -rotate-90">
           <circle cx="56" cy="56" r="48" fill="none" stroke="var(--border)" stroke-width="8"></circle>
-          <circle cx="56" cy="56" r="48" fill="none" stroke={scoreColor} stroke-width="8" stroke-linecap="round" stroke-dasharray="{(Math.min(nightData.score, 100) / 100) * 301.6} 302"></circle>
+          <circle cx="56" cy="56" r="48" fill="none" stroke={scoreColor} stroke-width="8" stroke-linecap="round" stroke-dasharray="{(Math.min(nightData.score ?? 0, 100) / 100) * 301.6} 302"></circle>
         </svg>
-        <div class="absolute inset-0 flex items-center justify-center"><span class="font-display text-[42px] leading-none">{nightData.score}</span></div>
+        <div class="absolute inset-0 flex items-center justify-center"><span class="font-display text-[42px] leading-none">{nightData.score ?? '--'}</span></div>
       </div>
       <dl class="m-0 flex-1 grid grid-cols-2 gap-3">
         <div><dt class="text-[11px] text-text2">Asleep</dt><dd class="m-0 text-[17px] font-medium">{nightData.duration}</dd></div>
         <div><dt class="text-[11px] text-text2">In bed</dt><dd class="m-0 text-[17px] font-medium">{nightData.inBed}</dd></div>
         <div><dt class="text-[11px] text-text2">Efficiency</dt><dd class="m-0 text-[17px] font-medium">{effPct === null ? '--' : `${effPct}%`}</dd></div>
-        <div><dt class="text-[11px] text-text2">Debt</dt><dd class="m-0 text-[17px] font-medium" style="color: {sleepDebtCssColor(nightData.debt)}">{formatHoursMinutesFromMinutes(nightData.debt)}</dd></div>
+        <div><dt class="text-[11px] text-text2">Debt</dt><dd class="m-0 text-[17px] font-medium" style="color: {nightData.debt == null ? 'var(--text2)' : sleepDebtCssColor(nightData.debt)}">{nightData.debt == null ? '--' : formatHoursMinutesFromMinutes(nightData.debt)}</dd></div>
       </dl>
     </section>
 

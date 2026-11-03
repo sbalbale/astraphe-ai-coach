@@ -253,19 +253,51 @@ def get_athlete_zones(athlete: dict) -> list[HRZone]:
     return zr.zones if zr else _lthr_zones(170)
 
 
-def compute_zone_distribution(hr_stream: list[int], zones: list[HRZone]) -> dict:
+# A gap longer than this between samples is a pause (auto-pause, dropped strap), not
+# time spent at the last heart rate.
+_MAX_SAMPLE_GAP_S = 30.0
+
+
+def _sample_weights(n: int, time_stream: list | None) -> list[float]:
+    """Seconds each HR sample stands for. 1 s each without a usable time stream."""
+    if not time_stream or len(time_stream) != n:
+        return [1.0] * n
+    try:
+        t = [float(x) for x in time_stream]
+    except (TypeError, ValueError):
+        return [1.0] * n
+    weights = []
+    for i in range(n):
+        dt = (t[i + 1] - t[i]) if i + 1 < n else (t[i] - t[i - 1] if i > 0 else 1.0)
+        weights.append(min(max(dt, 0.0), _MAX_SAMPLE_GAP_S))
+    return weights
+
+
+def compute_zone_distribution(
+    hr_stream: list[int], zones: list[HRZone], time_stream: list | None = None
+) -> dict:
     """
-    Returns percent time spent in each zone from a raw 1-second HR array.
+    Returns percent time spent in each zone.
     e.g. {"Z1": 12.5, "Z2": 45.0, "Z3": 30.0, "Z4": 10.0, "Z5": 2.5}
-    Uses z.zone (int) and z.min_bpm / z.max_bpm from the HRZone dataclass.
+
+    With ``time_stream`` (seconds from start, one per HR sample) each sample counts
+    for the time until the next one, so irregular "smart recording" streams aren't
+    skewed toward whatever the device sampled most often. Without it, samples are
+    assumed to be 1 s apart.
     """
     if not hr_stream:
         return {f"Z{z.zone}": 0.0 for z in zones}
-    total = len(hr_stream)
-    counts = {z.zone: 0 for z in zones}
-    for hr in hr_stream:
+    weights = _sample_weights(len(hr_stream), time_stream)
+    total = sum(weights)
+    if total <= 0:
+        weights = [1.0] * len(hr_stream)
+        total = float(len(hr_stream))
+    secs = {z.zone: 0.0 for z in zones}
+    for hr, w in zip(hr_stream, weights):
+        if hr is None:
+            continue
         for zone in zones:
             if zone.min_bpm <= hr < zone.max_bpm:
-                counts[zone.zone] += 1
+                secs[zone.zone] += w
                 break
-    return {f"Z{num}": round(count / total * 100, 1) for num, count in counts.items()}
+    return {f"Z{num}": round(s / total * 100, 1) for num, s in secs.items()}

@@ -40,6 +40,7 @@ class _DebugDb:
 
 def test_debug_connection_404s_outside_development(monkeypatch):
     monkeypatch.setattr(settings, "APP_ENV", "production")
+    _production_encryption_key(monkeypatch)
     app.dependency_overrides[get_current_athlete] = lambda: "athlete-1"
     app.dependency_overrides[get_user_db] = lambda: _DebugDb()
     try:
@@ -90,3 +91,12 @@ def test_debug_connection_athlete_null_when_no_row(monkeypatch):
 
     assert res.status_code == 200
     assert res.json()["athlete"] is None
+
+
+def _production_encryption_key(monkeypatch):
+    """Production refuses to start without a valid token-encryption key."""
+    from cryptography.fernet import Fernet
+    from app.services import token_crypto
+
+    monkeypatch.setattr(settings, "OAUTH_TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode())
+    token_crypto._fernet.cache_clear()

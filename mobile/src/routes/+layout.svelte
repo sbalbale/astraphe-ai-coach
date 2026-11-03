@@ -16,6 +16,8 @@
   import { analysisNavEpoch } from '$lib/analysisNavEpoch.svelte';
   import { authStore } from '$lib/stores/authStore.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
+  import { clearUserScopedState } from '$lib/stores/userSession';
+  import { authLinkTarget, sessionFromAuthLink } from '$lib/authDeepLink';
 
   afterNavigate(() => {
     analysisNavEpoch.bump();
@@ -37,6 +39,8 @@
   let innerWidth = $state(0);
   let wide = $derived(innerWidth >= 768);
   let pushInitialized = false;
+  // Plain (non-reactive) so writing it never re-runs the effect that reads it.
+  let lastUserId: string | null = null;
   
   let isAuthRoute = $derived($page.url.pathname.startsWith('/auth'));
   let isAuthFlowRoute = $derived(
@@ -80,19 +84,16 @@
     let cleanup: (() => void) | null = null;
     import('@capacitor/app')
       .then(({ App }) =>
-        App.addListener('appUrlOpen', ({ url }) => {
+        App.addListener('appUrlOpen', async ({ url }) => {
           try {
             const parsed = new URL(url);
-            const hash = parsed.hash ?? '';
-            if (parsed.host === 'auth' && parsed.pathname === '/callback') {
-              goto('/auth/callback' + hash);
-            } else if (parsed.host === 'auth' && parsed.pathname === '/reset-password') {
-              goto('/auth/reset-password' + hash);
-            } else if (parsed.pathname.startsWith('/auth/callback')) {
-              goto('/auth/callback' + hash);
-            } else if (parsed.pathname.startsWith('/auth/reset-password')) {
-              goto('/auth/reset-password' + hash);
-            }
+            const target = authLinkTarget(parsed);
+            if (!target) return;
+            // Create the session from the link here: supabase-js only reads the URL
+            // when it starts, so a link that opens the running app never signed in
+            // (the callback said "Link expired", reset sat on "Verifying link…").
+            await sessionFromAuthLink(parsed).catch(() => false);
+            await goto(target, { replaceState: true });
           } catch {
             // Malformed URL — ignore
           }
@@ -135,8 +136,16 @@
     // Signed out: everything except /auth/* and /oauth/* requires signin. /oauth/consent
     // handles its own sign-in prompt (preserving ?authorization_id=) rather than being
     // bounced to /auth/signin here, which would drop it.
+    const uid = authStore.user?.id ?? null;
+    if (uid !== lastUserId) {
+      // Sign-out or a different account on this device: forget the previous user's
+      // data and register push for the new one.
+      if (lastUserId !== null) clearUserScopedState();
+      lastUserId = uid;
+      pushInitialized = false;
+    }
+
     if (!authStore.user) {
-      if (athleteStore.initialLoadDone) athleteStore.reset();
       if (!isAuthRoute && !isOAuthRoute) goto('/auth/signin', { replaceState: true });
       return;
     }

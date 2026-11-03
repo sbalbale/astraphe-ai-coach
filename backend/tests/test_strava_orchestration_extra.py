@@ -634,3 +634,28 @@ def test_backfill_recent_skips_athlete_without_valid_token():
         _run_async(strava_service.backfill_recent(hours=12))
 
     mock_backfill.assert_not_called()
+
+
+def test_backfill_historical_data_refreshes_token_after_401():
+    """A long backfill outlives the access token: refresh and keep going (D-L2)."""
+    from datetime import datetime, timedelta, timezone
+
+    recent = {"id": 2, "start_date": (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")}
+    pages = [_BackfillListResponse(status_code=401), _BackfillListResponse(json_data=[recent])]
+    db = MagicMock()
+    db.table.return_value.select.return_value.eq.return_value.eq.return_value.eq.return_value.maybe_single.return_value.execute.return_value = SimpleNamespace(
+        data=None
+    )
+    tokens = AsyncMock(side_effect=["old", "new", "new"])
+    counter = [0]
+    with patch.object(
+        strava_service.httpx, "AsyncClient", lambda *a, **k: _BackfillAsyncClient(*a, pages=pages, counter=counter, **k)
+    ), patch.object(strava_service, "get_valid_token", tokens), patch.object(
+        strava_service, "ingest_strava_activity", AsyncMock()
+    ) as mock_ingest, patch.object(strava_service, "_finalize_strava_sync", AsyncMock()), patch.object(
+        strava_service.asyncio, "sleep", AsyncMock()
+    ):
+        total = _run_async(strava_service.backfill_historical_data("athlete-1", 999, "old", db, days=30))
+
+    assert total == 1
+    assert mock_ingest.await_args.kwargs["access_token"] == "new"

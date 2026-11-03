@@ -33,12 +33,14 @@
 
 
   async function toggleSetting(key: keyof typeof settings) {
-    settings[key] = !settings[key];
+    const next = !settings[key];
+    settings[key] = next;
     saving = true;
-    await athleteStore.updateProfile({
-      privacy_settings: settings
+    const ok = await athleteStore.updateProfile({
+      privacy_settings: { ...settings }
     });
     saving = false;
+    if (!ok) settings[key] = !next; // revert: the change wasn't saved
   }
 
   async function handleDeleteAccount() {

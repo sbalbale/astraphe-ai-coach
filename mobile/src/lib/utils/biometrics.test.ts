@@ -61,3 +61,17 @@ describe('currentRecoveryState', () => {
     expect(state.ageHours).toBeGreaterThan(36);
   });
 });
+
+describe('currentRecoveryState age without a wake time', () => {
+  it("measures age from the athlete's local midnight, counting the offset once", () => {
+    // Athlete at UTC-5: local midnight of 2026-05-29 is 05:00Z; two days later is 48 h.
+    const state = currentRecoveryState(
+      [{ date: '2026-05-29', recovery_score: 70 }],
+      -300,
+      new Date('2026-05-31T05:00:00Z')
+    );
+    expect(state.hasTodayRow).toBe(false);
+    expect(state.ageHours).toBe(48);
+    expect(state.isStale).toBe(true);
+  });
+});

@@ -79,7 +79,10 @@ export function normalizeMarkdownBlockStructure(markdown: string): string {
 function liftTablePostscripts(html: string): string {
   if (typeof document === 'undefined') return html; // SSR guard
 
-  const tmp = document.createElement('div');
+  // Inert document: parsing here never runs handlers or fetches resources, unlike a
+  // div created from the live `document` (where <img onerror> fires even detached).
+  const doc = document.implementation.createHTMLDocument('');
+  const tmp = doc.createElement('div');
   tmp.innerHTML = html;
 
   for (const table of Array.from(tmp.querySelectorAll('table'))) {
@@ -126,13 +129,13 @@ function liftTablePostscripts(html: string): string {
 
     // Insert "before" nodes before the table
     if (before.length > 0) {
-      const frag = document.createRange().createContextualFragment(before.join(''));
+      const frag = doc.createRange().createContextualFragment(before.join(''));
       table.parentNode?.insertBefore(frag, table);
     }
 
     // Insert "after" nodes after the table
     if (after.length > 0) {
-      const frag = document.createRange().createContextualFragment(after.join(''));
+      const frag = doc.createRange().createContextualFragment(after.join(''));
       table.parentNode?.insertBefore(frag, table.nextSibling);
     }
   }
@@ -310,17 +313,50 @@ const PURIFY_MATH: Parameters<typeof DOMPurify.sanitize>[1] = {
   ]
 };
 
+const PURIFY_COACH: Parameters<typeof DOMPurify.sanitize>[1] = {
+  ...PURIFY_MATH,
+  ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel):|\/)/i
+};
+
+/**
+ * KaTeX needs inline `style`, but LLM output must not be able to lay a fixed,
+ * full-screen element over the app (phishing) or pull remote resources.
+ */
+const UNSAFE_STYLE_RE = /position\s*:|z-index|url\s*\(|expression\s*\(|@import|inset\s*:/i;
+
+let hooksInstalled = false;
+function installPurifyHooks() {
+  if (hooksInstalled) return;
+  hooksInstalled = true;
+  DOMPurify.addHook('uponSanitizeAttribute', (_node, data) => {
+    if (data.attrName === 'style' && UNSAFE_STYLE_RE.test(String(data.attrValue ?? ''))) {
+      data.keepAttr = false;
+    }
+  });
+  // DOMPurify strips `target` by default, so re-add it to external links here.
+  DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+    if (node.tagName !== 'A') return;
+    const href = node.getAttribute('href') ?? '';
+    if (/^https?:/i.test(href)) {
+      if (externalLinkTargetAttr()) node.setAttribute('target', '_blank');
+      node.setAttribute('rel', 'noopener noreferrer');
+    }
+  });
+}
+
 /**
  * Coach reply markdown → sanitized HTML (GFM + line breaks + KaTeX + safe links).
+ * Untrusted text (LLM output can echo workout titles, documents, search results)
+ * is sanitised before it is ever parsed into a DOM, and again after the
+ * table post-processing.
  */
 export function renderCoachMarkdownToSafeHtml(text: string): string {
+  installPurifyHooks();
   const wrapped = normalizeTypographyForWrap(text ?? '');
   const structured = normalizeMarkdownBlockStructure(wrapped);
   const src = normalizeTightInlineDollarMath(structured);
   const html = coachMd.parse(src, { async: false }) as string;
-  const lifted = liftTablePostscripts(html);
-  return normalizeTypographyForWrap(DOMPurify.sanitize(lifted, {
-    ...PURIFY_MATH,
-    ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel):|\/)/i
-  }));
+  const clean = DOMPurify.sanitize(html, PURIFY_COACH) as string;
+  const lifted = liftTablePostscripts(clean);
+  return normalizeTypographyForWrap(DOMPurify.sanitize(lifted, PURIFY_COACH) as string);
 }

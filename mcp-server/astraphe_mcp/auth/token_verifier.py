@@ -34,12 +34,19 @@ class AstrapheTokenVerifier(TokenVerifier):
         if user is None:
             return None
 
-        app_metadata = getattr(user, "app_metadata", None) or {}
-        client_id = app_metadata.get("client_id") if isinstance(app_metadata, dict) else None
+        # Supabase's OAuth server puts the client in a top-level `client_id` claim (null for
+        # ordinary app sessions; never in app_metadata). Require it, so a normal app session
+        # token can't be passed through to MCP.
+        from app.dependencies import unverified_jwt_claims  # signature verified above by get_user
+
+        client_id = unverified_jwt_claims(token).get("client_id")
+        if not isinstance(client_id, str) or not client_id:
+            logger.info("MCP token rejected: not issued by the OAuth server (no client_id claim)")
+            return None
 
         return AccessToken(
             token=token,
-            client_id=client_id or "",
+            client_id=client_id,
             # "openid" is the real GoTrue-granted scope this must match (see server.py's
             # required_scopes — GoTrue's OAuth Server only supports openid/profile/email/
             # phone). "astraphe:read" is an app-level marker only, not enforced by

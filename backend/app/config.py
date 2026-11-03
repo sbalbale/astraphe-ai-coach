@@ -13,7 +13,12 @@ class Settings(BaseSettings):
     # --- General App Configuration ---
     APP_NAME: str = "ASTRAPHE-Backend"
     APP_VERSION: str = "1.0.0"
-    APP_ENV: str = "development" 
+    # Fail closed: a deployment that forgets APP_ENV runs as production (docs, debug
+    # routes and the TEST_ATHLETE_ID auth fallback off). Local dev opts in via backend/.env.
+    APP_ENV: str = "production"
+    # Background loops (WHOOP token refresh, Garmin poll, startup backfills). Tests turn
+    # these off so importing the app never syncs against a real database.
+    BACKGROUND_LOOPS_ENABLED: bool = True
     PORT: int = 8000
     APP_BASE_URL: str = "http://localhost:8000"
     API_PREFIX: str = "/v1"
@@ -116,6 +121,9 @@ class Settings(BaseSettings):
     # Existing plaintext rows keep working after the key is introduced (read
     # path accepts plaintext); new writes are encrypted immediately.
     OAUTH_TOKEN_ENCRYPTION_KEY: Optional[str] = None
+    # HMAC secret for the signed OAuth `state` (app/services/oauth_state.py). Falls back to
+    # OAUTH_TOKEN_ENCRYPTION_KEY, then SUPABASE_SERVICE_ROLE_KEY, when unset.
+    OAUTH_STATE_SECRET: Optional[str] = None
 
     # --- Strava API ---
     STRAVA_CLIENT_ID: str = ""

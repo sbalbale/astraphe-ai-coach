@@ -1,16 +1,13 @@
 import { supabase } from '../supabase';
+import { decodeJwtPayload } from '$lib/utils/jwt';
 import type { User, Session } from '@supabase/supabase-js';
 
 // The expected Supabase URL for this environment
 const EXPECTED_SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL?.trim() ?? '';
 
-export type AccountTier = 'free' | 'trial' | 'premium';
+import { effectiveTier, trialEndsAtMs, type AccountTier } from '$lib/utils/tier';
 
-function normalizeTier(value: unknown): AccountTier {
-  const v = typeof value === 'string' ? value.trim().toLowerCase() : '';
-  if (v === 'premium' || v === 'trial' || v === 'free') return v;
-  return 'free';
-}
+export type { AccountTier };
 
 class AuthState {
   user = $state<User | null>(null);
@@ -18,10 +15,17 @@ class AuthState {
   loading = $state(true);
 
   get tier(): AccountTier {
-    // Source of truth: Supabase Auth app_metadata.tier
-    // (free | trial | premium). Unknown/missing => free.
+    // Source of truth: Supabase Auth app_metadata.tier (free | trial | premium);
+    // unknown/missing => free, and a trial past trial_ends_at is free.
     const meta = this.user?.app_metadata as Record<string, unknown> | undefined;
-    return normalizeTier(meta?.tier);
+    return effectiveTier(meta, this.user?.created_at);
+  }
+
+  /** When the trial ends (ms), or null when not on a trial. */
+  get trialEndsAt(): number | null {
+    if (this.tier !== 'trial') return null;
+    const meta = this.user?.app_metadata as Record<string, unknown> | undefined;
+    return trialEndsAtMs(meta, this.user?.created_at);
   }
 
   get tierLabel(): 'FREE' | 'TRIAL' | 'PREMIUM' {
@@ -87,8 +91,11 @@ class AuthState {
         ),
       ]);
       const { data, error } = result;
-      if (!error && data?.user) this.user = data.user;
-      else if (error) console.warn('[auth] hydrateUserFromServer:', error.message);
+      // Only refresh the user we still have: this can resolve up to 8s later, after a
+      // sign-out (which would bring the old user back with no session) or a switch.
+      if (!error && data?.user) {
+        if (this.session && this.user?.id === data.user.id) this.user = data.user;
+      } else if (error) console.warn('[auth] hydrateUserFromServer:', error.message);
     } catch (e) {
       console.warn('[auth] Failed to hydrate user from server', e);
     }
@@ -139,15 +146,20 @@ class AuthState {
   }
 
   private parseJwt(token: string): Record<string, unknown> | null {
-    try {
-      return JSON.parse(atob(token.split('.')[1]));
-    } catch {
-      return null;
-    }
+    return decodeJwtPayload(token);
   }
 
   async signOut(opts?: { timeoutMs?: number }) {
     const timeoutMs = typeof opts?.timeoutMs === 'number' && opts.timeoutMs > 0 ? opts.timeoutMs : 4000;
+
+    // While the session is still valid, stop this device receiving the account's
+    // notifications. Bounded so a slow network never blocks sign-out.
+    try {
+      const { unregisterPushToken } = await import('$lib/services/pushNotifications');
+      await Promise.race([unregisterPushToken(), new Promise((r) => setTimeout(r, 1500))]);
+    } catch {
+      // best-effort
+    }
 
     // Fail-open: clear local auth state immediately so UI/guards can transition
     // even if Supabase signOut hangs or the network is flaky.

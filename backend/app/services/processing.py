@@ -1,9 +1,11 @@
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta, datetime, timezone
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
+from app.services.background import spawn as spawn_background
 from app.models.workout import WorkoutPayload
 from app.models.biometrics import DailyBiometrics
 
@@ -251,11 +253,70 @@ def _choose_biometric_metric(
     return existing_value, str(existing_source) if existing_source else None
 
 
+def _periods_from_best_source(periods: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    Keep only the sleep periods (main sleep and naps) of the highest-priority source
+    that has any for this night, per _BIOMETRIC_FIELD_SOURCES["sleep_duration_min"].
+    """
+    by_source: dict[str, list[dict[str, Any]]] = {}
+    for p in periods or []:
+        by_source.setdefault(str(p.get("source") or "manual"), []).append(p)
+    if len(by_source) <= 1:
+        return list(periods or [])
+    best = min(by_source, key=lambda src: _biometric_source_quality_rank("sleep_duration_min", src))
+    return by_source[best]
+
+
 def _set_metric_source(metric_sources: dict[str, Any], field: str, source: str | None, value: Any) -> None:
     if _has_existing_metric_value(value) and source:
         metric_sources[field] = source
     else:
         metric_sources.pop(field, None)
+
+def write_body_metrics(
+    db: Any,
+    athlete_id: str,
+    day: date,
+    source: str,
+    *,
+    weight_kg: float | None = None,
+    height_cm: float | None = None,
+) -> list[str]:
+    """
+    Write weight/height for one day without overriding a higher-priority source
+    (manual entries outrank every device, see _BIOMETRIC_FIELD_SOURCES). Returns the
+    fields written. Provider body syncs used to upsert weight_kg directly, so a WHOOP
+    sync overwrote the weight the athlete had just typed in.
+    """
+    res = (
+        db.table("biometrics")
+        .select("weight_kg, height_cm, metric_sources")
+        .eq("athlete_id", athlete_id)
+        .eq("date", day.isoformat())
+        .limit(1)
+        .execute()
+    )
+    existing = ((res.data if res else None) or [{}])[0] or {}
+    sources = dict(existing.get("metric_sources") or {})
+    update: dict[str, Any] = {}
+    for field, value in (("weight_kg", weight_kg), ("height_cm", height_cm)):
+        if value is None:
+            continue
+        current_src = sources.get(field)
+        if (
+            existing.get(field) is not None
+            and current_src
+            and _biometric_source_quality_rank(field, source) > _biometric_source_quality_rank(field, current_src)
+        ):
+            continue
+        update[field] = round(float(value), 2 if field == "weight_kg" else 1)
+        sources[field] = source
+    if update:
+        _upsert_biometrics_sync(
+            db, {"athlete_id": athlete_id, "date": day.isoformat(), **update, "metric_sources": sources}
+        )
+    return list(update)
+
 
 def _upsert_biometrics_sync(db: Any, payload: dict[str, Any]) -> None:
     try:
@@ -340,10 +401,42 @@ def _compute_sleep_score_without_architecture(actual_sleep_min: float, sleep_nee
 
 
 
-def _refresh_daily_strain_for_day_sync(db: Any, athlete_id: str, day: date) -> int:
-    """Recompute biometrics.strain_score for one calendar day from stored workout zones. Returns strain 0-100."""
-    day_start = day.isoformat()
-    day_end = (day + timedelta(days=1)).isoformat()
+def _local_day_window_utc(day: date, offset_min: int) -> tuple[str, str]:
+    """UTC ISO bounds [start, end) of the athlete's local calendar day."""
+    tz = timezone(timedelta(minutes=offset_min or 0))
+    start = datetime(day.year, day.month, day.day, tzinfo=tz).astimezone(timezone.utc)
+    return start.isoformat(), (start + timedelta(days=1)).isoformat()
+
+
+def _local_day_of(instant: datetime, offset_min: int) -> date:
+    """The athlete's local calendar day of a timestamp (naive timestamps are UTC)."""
+    if instant.tzinfo is None:
+        instant = instant.replace(tzinfo=timezone.utc)
+    return (instant.astimezone(timezone.utc) + timedelta(minutes=offset_min or 0)).date()
+
+
+def _refresh_daily_strain_for_instant_sync(db: Any, athlete_id: str, instant: datetime) -> int:
+    """Refresh strain for the local day a workout started on."""
+    from app.services.time_utils import fetch_athlete_timezone_offset_min
+
+    offset = fetch_athlete_timezone_offset_min(db, athlete_id)
+    return _refresh_daily_strain_for_day_sync(db, athlete_id, _local_day_of(instant, offset), offset_min=offset)
+
+
+def _refresh_daily_strain_for_day_sync(
+    db: Any, athlete_id: str, day: date, *, offset_min: int | None = None
+) -> int:
+    """
+    Recompute biometrics.strain_score for one of the athlete's *local* calendar days
+    from stored workout zones. Returns strain 0-100. (It used the UTC day, so an
+    evening workout west of UTC counted toward tomorrow, and biometrics rows are
+    keyed by local date.)
+    """
+    if offset_min is None:
+        from app.services.time_utils import fetch_athlete_timezone_offset_min
+
+        offset_min = fetch_athlete_timezone_offset_min(db, athlete_id)
+    day_start, day_end = _local_day_window_utc(day, offset_min)
     res = (
         db.table("workouts")
         .select(
@@ -363,26 +456,48 @@ def _refresh_daily_strain_for_day_sync(db: Any, athlete_id: str, day: date) -> i
     return strain
 
 
-def _workout_dates_for_athlete(rows: list[dict]) -> list[date]:
+def _workout_dates_for_athlete(rows: list[dict], offset_min: int = 0) -> list[date]:
+    """Local calendar days that have a workout."""
     dates: set[date] = set()
     for row in rows:
         started = _parse_workout_dt(row.get("started_at"))
         if started is not None:
-            dates.add(started.date())
+            dates.add(_local_day_of(started, offset_min))
     return sorted(dates)
+
+
+# PostgREST returns at most this many rows per request (supabase/config.toml max_rows).
+_PAGE_SIZE = 1000
+
+
+def _fetch_all_rows(build_query: Any, page_size: int = _PAGE_SIZE) -> list[dict[str, Any]]:
+    """
+    Read every row of an (ordered) query, a page at a time. Without paging, PostgREST
+    silently caps a select at max_rows, so an athlete with more than 1000 workouts lost
+    their newest ones from CTL/ATL. ``build_query`` returns a fresh query builder.
+    """
+    rows: list[dict[str, Any]] = []
+    start = 0
+    while True:
+        res = build_query().range(start, start + page_size - 1).execute()
+        batch = (res.data if res else None) or []
+        rows.extend(batch)
+        if len(batch) < page_size:
+            return rows
+        start += page_size
 
 
 def refresh_all_daily_strain_sync(db: Any, athlete_id: str) -> dict[str, int]:
     """Fast path: refresh biometrics.strain_score for every day that has a workout."""
-    res = (
-        db.table("workouts")
-        .select("started_at")
-        .eq("athlete_id", athlete_id)
-        .execute()
+    rows = _fetch_all_rows(
+        lambda: db.table("workouts").select("started_at").eq("athlete_id", athlete_id).order("started_at")
     )
-    days = _workout_dates_for_athlete((res.data if res else None) or [])
+    from app.services.time_utils import fetch_athlete_timezone_offset_min
+
+    offset = fetch_athlete_timezone_offset_min(db, athlete_id)
+    days = _workout_dates_for_athlete(rows, offset)
     for d in days:
-        _refresh_daily_strain_for_day_sync(db, athlete_id, d)
+        _refresh_daily_strain_for_day_sync(db, athlete_id, d, offset_min=offset)
     return {"days": len(days)}
 
 
@@ -405,7 +520,10 @@ def _find_or_create_canonical_workout_sync(
     Match criteria:
       1. Exact: strava_activity_id matches (Strava fast path)
       2. Exact: garmin_activity_id matches (Garmin fast path)
-      3. Fuzzy: same athlete + sport + started_at within ±10min + duration within 20%
+      3. Exact: this source's external_id (as the row's own id, or merged into source_ids)
+      4. Fuzzy: same athlete + sport + started_at within ±10min + duration within 20%
+      5. Fuzzy, any sport: started_at within ±3min + duration within 10% from another
+         source (providers classify the same session differently, e.g. WHOOP "Activity")
 
     On merge: updates source_ids, elevates primary_source by SOURCE_PRIORITY order.
     Strava duplicates accumulate in ``source_ids["strava"]`` (list of ids). Primary
@@ -480,6 +598,41 @@ def _find_or_create_canonical_workout_sync(
         if exact and exact.data:
             return _merge_exact_hit(exact.data)
 
+    if external_id and source != "strava":
+        # An edited/re-sent WHOOP, Intervals or manual workout must update its row, not
+        # fall through to the fuzzy match (its new start/duration may no longer match)
+        # and then hit the unique key on insert.
+        ext = str(external_id)
+        own = (
+            db.table("workouts")
+            .select("*")
+            .eq("athlete_id", athlete_id)
+            .eq("source", source)
+            .eq("external_id", ext)
+            .limit(1)
+            .execute()
+        )
+        hit = ((own.data if own else None) or [None])[0]
+        if hit is None:
+            merged = (
+                db.table("workouts")
+                .select("*")
+                .eq("athlete_id", athlete_id)
+                .eq(f"source_ids->>{source}", ext)
+                .limit(1)
+                .execute()
+            )
+            hit = ((merged.data if merged else None) or [None])[0]
+        if hit:
+            return _merge_exact_hit(hit)
+
+    def _is_other_session_from_same_source(row: dict[str, Any]) -> bool:
+        """Same provider, different id: two distinct sessions, never merge."""
+        if not external_id or source == "strava" or row.get("source") != source:
+            return False
+        row_ext = row.get("external_id")
+        return bool(row_ext) and str(row_ext) != str(external_id)
+
     from_ts = started_at.timestamp() - DEDUP_WINDOW_SECONDS
     to_ts = started_at.timestamp() + DEDUP_WINDOW_SECONDS
     from_iso = datetime.fromtimestamp(from_ts, tz=timezone.utc).isoformat()
@@ -498,6 +651,8 @@ def _find_or_create_canonical_workout_sync(
 
     matched = None
     for row in rows:
+        if _is_other_session_from_same_source(row):
+            continue
         existing_duration = row.get("duration_seconds") or 0
         if existing_duration > 0 and dur_i > 0:
             ratio = abs(existing_duration - dur_i) / max(existing_duration, dur_i)
@@ -511,6 +666,24 @@ def _find_or_create_canonical_workout_sync(
         elif existing_duration == 0 or dur_i == 0:
             matched = row
             break
+
+    if matched is None and dur_i > 0:
+        CROSS_SPORT_WINDOW_SECONDS = 180
+        CROSS_SPORT_TOLERANCE = 0.10
+        near = (
+            db.table("workouts")
+            .select("*")
+            .eq("athlete_id", athlete_id)
+            .neq("source", source)
+            .gte("started_at", datetime.fromtimestamp(started_at.timestamp() - CROSS_SPORT_WINDOW_SECONDS, tz=timezone.utc).isoformat())
+            .lte("started_at", datetime.fromtimestamp(started_at.timestamp() + CROSS_SPORT_WINDOW_SECONDS, tz=timezone.utc).isoformat())
+            .execute()
+        )
+        for row in (near.data if near else None) or []:
+            existing_duration = row.get("duration_seconds") or 0
+            if existing_duration > 0 and abs(existing_duration - dur_i) / max(existing_duration, dur_i) <= CROSS_SPORT_TOLERANCE:
+                matched = row
+                break
 
     if matched:
         workout_id = matched["id"]
@@ -666,8 +839,10 @@ def recalculate_tss_history(athlete_id: str, db):
     date (avoiding bogus CTL = 0 and collapsed readiness scores on rest days).
     """
     # 1. Fetch all workouts with TSS
-    res = db.table("workouts").select("started_at, tss").eq("athlete_id", athlete_id).order("started_at").execute()
-    if not res or not res.data:
+    workout_rows = _fetch_all_rows(
+        lambda: db.table("workouts").select("started_at, tss").eq("athlete_id", athlete_id).order("started_at")
+    )
+    if not workout_rows:
         return
 
     # 1.5 Fetch athlete timezone for correct date mapping
@@ -676,7 +851,7 @@ def recalculate_tss_history(athlete_id: str, db):
 
     # 2. Aggregate TSS by date
     daily_tss = {}
-    for w in res.data:
+    for w in workout_rows:
         # Parse ISO string and adjust for athlete's local offset
         utc_start = datetime.fromisoformat(w["started_at"].replace("Z", "+00:00"))
         local_start = utc_start + timedelta(minutes=offset)
@@ -884,14 +1059,13 @@ async def process_and_save_workout(
     if not skip_tss_recalc:
         from app.services.messaging import maybe_text_workout
 
-        asyncio.ensure_future(maybe_text_workout(db, athlete_id, str(workout_id)))
+        spawn_background(maybe_text_workout(db, athlete_id, str(workout_id)))
     # In batch contexts (Strava/WHOOP backfill) the caller recalculates TSS once at the end.
     if not skip_tss_recalc:
-        asyncio.ensure_future(asyncio.to_thread(recalculate_tss_history, athlete_id, db))
+        spawn_background(asyncio.to_thread(recalculate_tss_history, athlete_id, db))
     if not skip_daily_strain_refresh:
-        workout_day = start_utc.date()
-        asyncio.ensure_future(
-            asyncio.to_thread(_refresh_daily_strain_for_day_sync, db, athlete_id, workout_day)
+        spawn_background(
+            asyncio.to_thread(_refresh_daily_strain_for_instant_sync, db, athlete_id, start_utc)
         )
     return str(workout_id)
 
@@ -941,13 +1115,16 @@ def process_and_save_biometrics(
             "source": payload.source,
             "external_id": getattr(payload, "external_id", None) or f"{payload.source}_{payload.sleep_bedtime.timestamp() if payload.sleep_bedtime else payload.date.isoformat()}"
         }
-        db.table("sleep_periods").upsert(session_data, on_conflict="source,external_id").execute()
+        db.table("sleep_periods").upsert(session_data, on_conflict="athlete_id,source,external_id").execute()
 
     # 2. Fetch All Sleep Periods for the biological day to aggregate
     all_periods_res = db.table("sleep_periods").select("*").eq("athlete_id", athlete_id).eq("date", payload.date.isoformat()).execute()
     all_periods = []
     if all_periods_res and all_periods_res.data:
         all_periods = all_periods_res.data
+    # One source per night. With Garmin and WHOOP both connected each writes its own
+    # period for the same sleep, and summing them doubled time asleep / in bed.
+    all_periods = _periods_from_best_source(all_periods)
     
     total_sleep_min = 0
     total_in_bed_min = 0
@@ -987,6 +1164,12 @@ def process_and_save_biometrics(
 
     # Time Asleep MUST equal Time in Bed minus Awake Time
     total_sleep_min = int(round(total_in_bed_min - total_awake_min))
+    if not all_periods and payload.sleep_duration_min is None:
+        # No sleep input at all (e.g. an HRV-only or weight-only payload): leave the
+        # sleep fields unset so they can't overwrite a real night with 0.
+        total_sleep_min = None
+        total_in_bed_min = None
+        total_awake_min = 0.0
     if not all_periods and payload.sleep_duration_min is not None:
         total_sleep_min = int(max(0, payload.sleep_duration_min))
         total_in_bed_min = int(max(0, payload.sleep_in_bed_min or total_sleep_min))
@@ -1000,16 +1183,6 @@ def process_and_save_biometrics(
         agg_light = payload.sleep_light_pct
         agg_awake = payload.sleep_awake_pct
 
-    rem_sleep_min = (
-        (float(agg_rem) / 100.0) * total_in_bed_min
-        if agg_rem is not None and total_in_bed_min > 0
-        else 0.0
-    )
-    deep_sleep_min = (
-        (float(agg_deep) / 100.0) * total_in_bed_min
-        if agg_deep is not None and total_in_bed_min > 0
-        else 0.0
-    )
 
     # 3 + 4. Fetch prev day's biometrics, 42d history, and athlete profile in parallel.
     # These three reads are fully independent, so we fan them out across a small
@@ -1057,8 +1230,13 @@ def process_and_save_biometrics(
     athlete_data = athlete_res.data if athlete_res else {}
     
     if history_res and history_res.data:
-        rhrs = [row["resting_hr"] for row in history_res.data if row["resting_hr"] is not None]
-        hrvs = [float(row["hrv_rmssd"]) for row in history_res.data if row["hrv_rmssd"] is not None]
+        # Only days *before* this one: the query has no upper bound, so reprocessing an
+        # old date used to build its baseline from later days, and the stored copy of
+        # today was counted on top of the payload appended below (shrinking z-scores).
+        payload_iso = payload.date.isoformat()
+        prior_rows = [row for row in history_res.data if str(row.get("date") or "")[:10] < payload_iso]
+        rhrs = [row["resting_hr"] for row in prior_rows if row["resting_hr"] is not None]
+        hrvs = [float(row["hrv_rmssd"]) for row in prior_rows if row["hrv_rmssd"] is not None]
         
         # Include today's data in the baseline calculation
         if payload.resting_hr is not None: rhrs.append(payload.resting_hr)
@@ -1163,27 +1341,8 @@ def process_and_save_biometrics(
         current_debt_min=carried_debt,
     )
     
-    has_sleep_architecture = agg_rem is not None or agg_deep is not None
-    if not has_sleep_architecture:
-        # Backup score for providers like Intervals.icu that expose duration but no stage
-        # architecture. Do not copy the provider score; use a duration curve anchored to the
-        # baseline nightly need rather than accumulated sleep debt, so the backup approximates
-        # the observed wearable score while sleep debt is tracked separately.
-        sleep_score = _compute_sleep_score_without_architecture(
-            total_sleep_min,
-            DEFAULT_BASELINE_SLEEP_MIN,
-            total_awake_min,
-        )
-    else:
-        sleep_score = compute_sleep_score(
-            actual_sleep_min=total_sleep_min,
-            sleep_need_min=sleep_need,
-            rem_min=rem_sleep_min,
-            deep_min=deep_sleep_min,
-            awake_min=total_awake_min,
-        )
-
-    next_night_debt = float(np.clip(float(sleep_need) - float(total_sleep_min), 0.0, MAX_SLEEP_DEBT_MIN))
+    # (The sleep score and debt are computed below from the *merged* values, so the
+    # stored score/debt always describe the night that is actually stored.)
 
     # 7. Merge with existing Biometrics row (HRV/RHR/Strain)
     existing_res = db.table("biometrics").select("*").eq("athlete_id", athlete_id).eq("date", payload.date.isoformat()).maybe_single().execute()
@@ -1191,7 +1350,10 @@ def process_and_save_biometrics(
     if existing_res and existing_res.data:
         existing = existing_res.data
 
-    # 7.5 Calculate Daily Astraphe Strain from Workouts
+    # 7.5 Calculate Daily Astraphe Strain from Workouts (the athlete's local day)
+    _day_start_utc, _day_end_utc = _local_day_window_utc(
+        payload.date, int((athlete_data or {}).get("timezone_offset_min") or 0)
+    )
     day_workouts_res = (
         db.table("workouts")
         .select(
@@ -1199,8 +1361,8 @@ def process_and_save_biometrics(
             "duration_seconds,started_at,ended_at"
         )
         .eq("athlete_id", athlete_id)
-        .gte("started_at", payload.date.isoformat())
-        .lt("started_at", (payload.date + timedelta(days=1)).isoformat())
+        .gte("started_at", _day_start_utc)
+        .lt("started_at", _day_end_utc)
         .execute()
     )
     day_rows = (day_workouts_res.data if day_workouts_res else None) or []
@@ -1273,20 +1435,29 @@ def process_and_save_biometrics(
         if final_deep is not None and final_in_bed_for_score > 0
         else 0.0
     )
-    if final_rem is not None or final_deep is not None:
-        sleep_score = compute_sleep_score(
-            actual_sleep_min=final_sleep_for_score,
-            sleep_need_min=sleep_need,
-            rem_min=final_rem_min,
-            deep_min=final_deep_min,
-            awake_min=final_awake_min,
-        )
+    if final_sleep_duration is None:
+        # No night stored for this date (yet): don't score it as 0, which dragged
+        # recovery down; keep whatever the row already had.
+        sleep_score = existing.get("sleep_score")
+        next_night_debt = existing.get("sleep_debt_min")
     else:
-        sleep_score = _compute_sleep_score_without_architecture(
-            final_sleep_for_score,
-            DEFAULT_BASELINE_SLEEP_MIN,
-            final_awake_min,
-        )
+        if final_rem is not None or final_deep is not None:
+            sleep_score = compute_sleep_score(
+                actual_sleep_min=final_sleep_for_score,
+                sleep_need_min=sleep_need,
+                rem_min=final_rem_min,
+                deep_min=final_deep_min,
+                awake_min=final_awake_min,
+            )
+        else:
+            # Backup score for providers like Intervals.icu that expose duration but no
+            # stage architecture: a duration curve anchored to the baseline nightly need.
+            sleep_score = _compute_sleep_score_without_architecture(
+                final_sleep_for_score,
+                DEFAULT_BASELINE_SLEEP_MIN,
+                final_awake_min,
+            )
+        next_night_debt = float(np.clip(float(sleep_need) - float(final_sleep_for_score), 0.0, MAX_SLEEP_DEBT_MIN))
 
     for field, src, value in (
         ("hrv_rmssd", hrv_source, final_hrv),
@@ -1348,7 +1519,7 @@ def process_and_save_biometrics(
         "sleep_score": sleep_score, # Astraphe Score
         "recovery_score": recovery_score, # Astraphe Score
         "sleep_need_min": int(round(sleep_need)),
-        "sleep_debt_min": int(round(next_night_debt)),
+        "sleep_debt_min": int(round(next_night_debt)) if next_night_debt is not None else None,
         "readiness_score": readiness_score,
         "strain_score": astraphe_strain_score,
         "hrv_source": final_source,
@@ -1395,7 +1566,7 @@ def _workout_row_to_payload(row: dict) -> WorkoutPayload:
 
 async def recompute_workout_tss_for_athlete(athlete_id: str, db) -> int:
     """Recompute TSS/strain for workouts missing tss. Returns count updated."""
-    res = db.table("workouts").select("*").eq("athlete_id", athlete_id).order("started_at").execute()
+    res = await asyncio.to_thread(db.table("workouts").select("*").eq("athlete_id", athlete_id).order("started_at").execute)
     updated = 0
     for row in res.data or []:
         # process_and_save_workout() always writes a numeric "tss" (defaulting
@@ -1413,7 +1584,9 @@ async def recompute_workout_tss_for_athlete(athlete_id: str, db) -> int:
 
 async def reprocess_athlete_metrics(athlete_id: str, db) -> dict[str, int]:
     """Rebuild workout TSS, biometrics aggregates, and PMC (CTL/ATL/TSB) for one athlete."""
-    workouts_res = db.table("workouts").select("*").eq("athlete_id", athlete_id).order("started_at").execute()
+    workouts_res = SimpleNamespace(data=_fetch_all_rows(
+        lambda: db.table("workouts").select("*").eq("athlete_id", athlete_id).order("started_at")
+    ))
     workout_count = 0
     for row in workouts_res.data or []:
         await process_and_save_workout(
@@ -1425,7 +1598,9 @@ async def reprocess_athlete_metrics(athlete_id: str, db) -> dict[str, int]:
         )
         workout_count += 1
 
-    biometrics_res = db.table("biometrics").select("*").eq("athlete_id", athlete_id).order("date").execute()
+    biometrics_res = SimpleNamespace(data=_fetch_all_rows(
+        lambda: db.table("biometrics").select("*").eq("athlete_id", athlete_id).order("date")
+    ))
     bio_count = 0
     for b in biometrics_res.data or []:
         payload = DailyBiometrics(
@@ -1453,6 +1628,6 @@ async def reprocess_athlete_metrics(athlete_id: str, db) -> dict[str, int]:
         process_and_save_biometrics(payload, athlete_id, db, skip_pmc_recalc=True)
         bio_count += 1
 
-    recalculate_tss_history(athlete_id, db)
+    await asyncio.to_thread(recalculate_tss_history, athlete_id, db)
     return {"workouts": workout_count, "biometrics": bio_count}
 

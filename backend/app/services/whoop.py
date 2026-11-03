@@ -1,6 +1,8 @@
+import asyncio
 import base64
 import hmac
 import hashlib
+import time
 import httpx
 from fastapi import HTTPException
 from app.config import settings
@@ -20,6 +22,10 @@ def _whoop_oauth_credentials() -> tuple[str, str]:
         print("[whoop.oauth] WHOOP_CLIENT_ID or WHOOP_CLIENT_SECRET is missing/empty")
         raise HTTPException(status_code=500, detail="WHOOP OAuth is not configured on the server")
     return client_id, client_secret
+
+
+# Accept webhook signatures up to this old (either direction, for clock skew).
+WEBHOOK_MAX_AGE_SEC = 10 * 60
 
 
 def _whoop_hmac_key() -> bytes | None:
@@ -48,17 +54,23 @@ def verify_webhook_signature(
     if not timestamp_header:
         print("[whoop.sig] Missing X-WHOOP-Signature-Timestamp — rejecting")
         return False
+    # Replay protection: the timestamp is signed, so a captured event can't be
+    # re-sent later with a fresh one.
+    try:
+        ts_ms = int(timestamp_header.strip())
+    except ValueError:
+        print("[whoop.sig] Non-numeric signature timestamp — rejecting")
+        return False
+    if abs(time.time() * 1000 - ts_ms) > WEBHOOK_MAX_AGE_SEC * 1000:
+        print("[whoop.sig] Stale signature timestamp — rejecting")
+        return False
     msg = timestamp_header.encode("utf-8") + payload_body
     expected_signature = base64.b64encode(
         hmac.new(key=key, msg=msg, digestmod=hashlib.sha256).digest()
     ).decode("utf-8")
-    match = hmac.compare_digest(expected_signature, signature_header)
+    match = hmac.compare_digest(expected_signature, signature_header or "")
     if not match:
-        print(
-            f"[whoop.sig] MISMATCH — received={signature_header[:16]}... "
-            f"expected={expected_signature[:16]}... "
-            f"body_len={len(payload_body)} ts={timestamp_header[:13]}..."
-        )
+        print(f"[whoop.sig] MISMATCH — body_len={len(payload_body)}")
     return match
 
 async def exchange_oauth_code(code: str, redirect_url: str) -> dict:
@@ -274,6 +286,19 @@ def _v2_base() -> str:
     return "https://api.prod.whoop.com/developer/v2"
 
 
+_COLLECTION_429_RETRIES = 4
+
+
+def _retry_after_seconds(res: Any, default: float) -> float:
+    try:
+        v = float(res.headers.get("Retry-After"))
+        if v > 0:
+            return min(v, 300.0)
+    except (TypeError, ValueError, AttributeError):
+        pass
+    return default
+
+
 async def fetch_collection(
     access_token: str,
     path: str,
@@ -302,6 +327,13 @@ async def fetch_collection(
                 params["nextToken"] = next_token
 
             res = await client.get(url, headers=headers, params=params)
+            attempts = 0
+            while res.status_code == 429 and attempts < _COLLECTION_429_RETRIES:
+                # A long backfill hits WHOOP's per-minute limit; wait and retry the same
+                # page instead of failing the whole collection.
+                attempts += 1
+                await asyncio.sleep(_retry_after_seconds(res, default=30 * attempts))
+                res = await client.get(url, headers=headers, params=params)
             if res.status_code != 200:
                 raise HTTPException(status_code=res.status_code, detail=f"WHOOP collection fetch failed: {res.text}")
 

@@ -1,3 +1,12 @@
+import os
+
+# Before the app is imported: never start real background loops (WHOOP token refresh,
+# Garmin poll, startup backfills) from tests; they'd run against whatever database
+# backend/.env points at and could rotate real provider tokens. Tests also run as
+# development unless the environment says otherwise (the app default is production).
+os.environ["BACKGROUND_LOOPS_ENABLED"] = "false"
+os.environ.setdefault("APP_ENV", "development")
+
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -46,6 +55,23 @@ async def override_require_ai_rate_limit():
 
 
 @pytest.fixture(autouse=True)
+def ai_messages_use_test_db(monkeypatch):
+    """Coach replies are written with the service-role client in production; in tests
+    write them to whatever fake db the test passed, never a real Supabase."""
+    from app.routers import coach as coach_router
+
+    monkeypatch.setattr(coach_router, "_ai_message_writer", lambda db: db)
+
+
+@pytest.fixture(autouse=True)
+def oauth_state_secret(monkeypatch):
+    """OAuth state is HMAC-signed. Locally the signer falls back to the service-role
+    key from backend/.env, but CI has no secrets, so give every test a fixed one.
+    Tests about a missing secret clear it themselves."""
+    monkeypatch.setattr(settings, "OAUTH_STATE_SECRET", "test-oauth-state-secret")
+
+
+@pytest.fixture(autouse=True)
 def disable_startup_backfills(monkeypatch):
     """Prevent TestClient startup from scheduling real Strava/WHOOP API backfills."""
     monkeypatch.setattr(settings, "STRAVA_STARTUP_BACKFILL_ENABLED", False)
@@ -81,10 +107,15 @@ def reset_ip_rate_limiter():
     after each test so tests stay independent of run order/volume.
     """
     from app.main import _ip_rate_limiter
+    from app import dependencies
+    from app.routers import analysis
 
-    _ip_rate_limiter._memory.clear()
+    limiters = (_ip_rate_limiter, dependencies._rate_limiter, analysis._analysis_limiter)
+    for lim in limiters:
+        lim._memory.clear()
     yield
-    _ip_rate_limiter._memory.clear()
+    for lim in limiters:
+        lim._memory.clear()
 
 
 @pytest.fixture(autouse=True)

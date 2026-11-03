@@ -16,8 +16,9 @@ import logging
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from app.services.background import spawn as spawn_background
 from app.config import settings
-from app.dependencies import get_current_athlete, get_admin_db
+from app.dependencies import get_current_athlete, get_admin_db, action_rate_limit
 from app.services import garmin as garmin_service
 
 logger = logging.getLogger(__name__)
@@ -45,7 +46,7 @@ def _schedule_backfill(
             garmin_service.backfill_historical_data, athlete_id, db, days
         )
     else:
-        asyncio.create_task(garmin_service.backfill_historical_data(athlete_id, db, days))
+        spawn_background(garmin_service.backfill_historical_data(athlete_id, db, days))
 
 
 def _persist_and_schedule(
@@ -67,7 +68,7 @@ def _persist_and_schedule(
     }
 
 
-@router.post("/garmin/connect")
+@router.post("/garmin/connect", dependencies=[Depends(action_rate_limit("garmin_login", 5, 3600, "Too many Garmin login attempts. Try again in an hour."))])
 async def garmin_connect(
     payload: GarminConnectPayload,
     background_tasks: BackgroundTasks,
@@ -109,7 +110,7 @@ async def garmin_connect(
     return _persist_and_schedule(client, athlete_id, admin_db, background_tasks, payload.days)
 
 
-@router.post("/garmin/connect/mfa")
+@router.post("/garmin/connect/mfa", dependencies=[Depends(action_rate_limit("garmin_mfa", 10, 3600, "Too many verification attempts. Try again later."))])
 async def garmin_connect_mfa(
     payload: GarminMfaPayload,
     background_tasks: BackgroundTasks,
@@ -142,7 +143,7 @@ async def garmin_connect_mfa(
     return _persist_and_schedule(client, athlete_id, admin_db, background_tasks, payload.days)
 
 
-@router.post("/garmin/backfill")
+@router.post("/garmin/backfill", dependencies=[Depends(action_rate_limit("backfill:garmin", 3, 3600, "Backfill already requested recently. Try again later."))])
 async def garmin_backfill_now(
     days: int = 90,
     athlete_id: str = Depends(get_current_athlete),
@@ -158,5 +159,5 @@ async def garmin_backfill_now(
             status_code=400, detail="Garmin not connected — try reconnecting Garmin"
         )
 
-    asyncio.create_task(garmin_service.backfill_historical_data(athlete_id, admin_db, d))
+    spawn_background(garmin_service.backfill_historical_data(athlete_id, admin_db, d))
     return {"status": "success", "scheduled": True, "days": d}

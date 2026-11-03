@@ -1,16 +1,11 @@
 <script module lang="ts">
-  import { SvelteMap } from 'svelte/reactivity';
 
-  const recoveryAnalysisMemo = new SvelteMap<string, string | null>();
 </script>
 
 <script lang="ts">
-  import Card from '$lib/components/Card.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import { boundedScoreCssColor, zScoreCssColor } from '$lib/scoreColors';
-  import { analysisNavEpoch } from '$lib/analysisNavEpoch.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
-  import { api } from '$lib/api';
   import { normalizeUnits, type Units } from '$lib/utils/units';
   import { currentRecoveryState, firstPositiveFiniteNumber } from '$lib/utils/biometrics';
   import { onMount } from 'svelte';
@@ -41,19 +36,6 @@
     if (Math.abs(r) < 0.05) return `~0.0${unit}`;
     const sign = r > 0 ? '+' : '';
     return `${sign}${r.toFixed(1)}${unit}`;
-  }
-
-  function formatHoursMinutesFromMinutes(mins: number | null | undefined): string {
-    const n = typeof mins === 'number' ? mins : Number(mins);
-    if (!Number.isFinite(n)) return '--';
-    const m = Math.max(0, Math.round(n));
-    const h = Math.floor(m / 60);
-    const r = m % 60;
-    return `${h}h ${r}m`;
-  }
-
-  function cToF(c: number): number {
-    return (c * 9) / 5 + 32;
   }
 
   function deltaCToF(dc: number): number {
@@ -95,21 +77,6 @@
     return todayValue - base;
   }
 
-  // Local z-score helper for fields the backend doesn't ship `*_z` for
-  // (body temp, SpO2). Uses a 7-day baseline + sample stddev — same window
-  // the backend's HRV/RHR EWMA uses, so the deviation track's center is
-  // semantically equivalent across all four vitals.
-  function zScoreFromSeries(series: BiometricsRecord[] | undefined, endDateStr: string, field: string, todayValue: number | null, days = 7): number | null {
-    if (!isFiniteNumber(todayValue)) return null;
-    const vals = baselineWindowVals(series, endDateStr, field, days);
-    if (vals.length < 3) return null;
-    const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
-    const variance = vals.reduce((a, b) => a + (b - mean) ** 2, 0) / Math.max(1, vals.length - 1);
-    const sd = Math.sqrt(variance);
-    if (!Number.isFinite(sd) || sd <= 1e-6) return null;
-    return (todayValue - mean) / sd;
-  }
-  
   // Rolling 7-day window (cannot go into the future).
   // Source of truth for the picker is a YYYY-MM-DD string.
   let endPickerValue = $state(bodyDate.value ?? format(new Date(), 'yyyy-MM-dd')); // YYYY-MM-DD
@@ -126,7 +93,6 @@
 
   const windowStart = $derived(subDays(clampedEndDay, 6));
   const windowEnd = $derived(clampedEndDay);
-  const rangeLabel = $derived(`${format(windowStart, 'MMM d')} – ${format(windowEnd, 'MMM d, yyyy')}`);
   const canGoForward = $derived(format(windowEnd, 'yyyy-MM-dd') !== todayStr);
 
   $effect(() => {
@@ -212,14 +178,14 @@
   const hasData = $derived(
     days.some((day) => !day.missing) || current.row != null || athleteStore.readiness > 0
   );
+  // "Connect an app" only when we *know* nothing is connected and there's no data:
+  // manual-only athletes (logged sleep/workouts) see their data, and connected users
+  // don't flash this while the sync status is still loading.
+  const showConnectPrompt = $derived(athleteStore.syncStatus != null && !isConnected && !hasData);
 
-  const score = $derived(
-    firstPositiveFiniteNumber(
-      headlineRow?.recovery_score,
-      headlineRow?.readiness_score,
-      athleteStore.readiness
-    ) ?? 0
-  );
+  // Recovery only: readiness mixes in training form, so it isn't a recovery score.
+  // The hero only renders when headlineRow carries a recovery_score.
+  const score = $derived(firstPositiveFiniteNumber(headlineRow?.recovery_score) ?? 0);
   const scoreColor = $derived(
     current.isStale && d?.date === todayStr
       ? 'var(--text2)'
@@ -238,12 +204,6 @@
       : null
   );
 
-  const avg7d = $derived.by(() => {
-    const vals = days.map((x) => Number(x.score)).filter((v) => Number.isFinite(v) && v > 0);
-    if (vals.length === 0) return null;
-    return Math.round(vals.reduce((a, b) => a + b, 0) / vals.length);
-  });
-
   const units = $derived<Units>(normalizeUnits((athleteStore.profile as any)?.measurement_units));
   const isImperial = $derived(units === 'imperial');
   
@@ -252,66 +212,17 @@
   const hrvToday = $derived(
     isFiniteNumber(headlineRow?.hrv_rmssd) ? Math.round(Number(headlineRow.hrv_rmssd)) : null
   );
-  const hrvBaseline = $derived.by(() => {
-    const base = baselineAvg7d(biometricsSeries, d.date, 'hrv_rmssd');
-    return isFiniteNumber(base) ? Math.round(base) : null;
-  });
   const hrvDelta = $derived(signedDeltaVsBaseline(biometricsSeries, d.date, 'hrv_rmssd', hrvToday, 7));
 
   const rhrToday = $derived(
     isFiniteNumber(headlineRow?.resting_hr) ? Math.round(Number(headlineRow.resting_hr)) : null
   );
-  const rhrBaseline = $derived.by(() => {
-    const base = baselineAvg7d(biometricsSeries, d.date, 'resting_hr');
-    return isFiniteNumber(base) ? Math.round(base) : null;
-  });
   const rhrDelta = $derived(signedDeltaVsBaseline(biometricsSeries, d.date, 'resting_hr', rhrToday, 7));
 
   const sleepScoreToday = $derived(
     isFiniteNumber(headlineRow?.sleep_score) ? Math.round(Number(headlineRow.sleep_score)) : null
   );
   const sleepDelta = $derived(signedDeltaVsBaseline(biometricsSeries, d.date, 'sleep_score', sleepScoreToday, 7));
-  
-  const sleepDurationMin = $derived.by(() =>
-    isFiniteNumber(headlineRow?.sleep_duration_min)
-      ? Math.round(Number(headlineRow.sleep_duration_min))
-      : null
-  );
-  const sleepDurationHM = $derived.by(() => (sleepDurationMin === null ? null : formatHoursMinutesFromMinutes(sleepDurationMin)));
-  const sleepDeepPct = $derived.by(() =>
-    isFiniteNumber(headlineRow?.sleep_deep_pct) ? Math.round(Number(headlineRow.sleep_deep_pct)) : null
-  );
-  
-  const priorLoad = $derived.by(() => {
-    const series = athleteStore.metrics?.trainingLoadData as TrainingLoadRecord[] | undefined;
-    if (!series?.length || !d?.date) return null;
-    const priorDate = format(subDays(new Date(d.date + 'T00:00:00'), 1), 'yyyy-MM-dd');
-    const priorDay = series.find((x) => x.date === priorDate);
-    if (!priorDay) return null;
-    
-    const end = new Date(priorDate + 'T00:00:00');
-    const start = subDays(end, 29);
-    const inRange = series.filter((x) => {
-      const dt = new Date(x.date + 'T00:00:00');
-      if (Number.isNaN(dt.getTime())) return false;
-      return dt >= start && dt <= end && isFiniteNumber(x.atl);
-    });
-    const peakAtl30d = inRange.length ? Math.max(...inRange.map((x) => Number(x.atl))) : null;
-    const deltaDrop = isFiniteNumber(priorDay.atl) && isFiniteNumber(peakAtl30d) ? Math.round(Number(priorDay.atl) - Number(peakAtl30d)) : null;
-    
-    let trend = '--';
-    if (isFiniteNumber(deltaDrop)) {
-      if (Math.abs(deltaDrop) < 5) trend = '~';
-      else trend = deltaDrop < 0 ? `↓${Math.abs(deltaDrop)}` : `↑${deltaDrop}`;
-    }
-    
-    return {
-      priorDate,
-      dailyTss: isFiniteNumber(priorDay.daily_tss) ? Math.round(Number(priorDay.daily_tss)) : null,
-      deltaDrop,
-      trend
-    };
-  });
   
   // NOTE: `skin_temp` stores *skin/body temperature in °C*.
   // We treat it as an actual temperature measurement and show deviation vs baseline.
@@ -332,18 +243,6 @@
     return bodyTempCToday - bodyTempCBaseline;
   });
 
-  const bodyTempDisplay = $derived.by(() => {
-    if (!isFiniteNumber(bodyTempCToday)) return null;
-    const val = isImperial ? cToF(bodyTempCToday) : bodyTempCToday;
-    return Math.round(val * 10) / 10;
-  });
-
-  const bodyTempBaselineDisplay = $derived.by(() => {
-    if (!isFiniteNumber(bodyTempCBaseline)) return null;
-    const val = isImperial ? cToF(bodyTempCBaseline) : bodyTempCBaseline;
-    return Math.round(val * 10) / 10;
-  });
-
   const bodyTempDeltaDisplay = $derived.by(() => {
     if (!isFiniteNumber(bodyTempCDelta)) return null;
     const val = isImperial ? deltaCToF(bodyTempCDelta) : bodyTempCDelta;
@@ -353,46 +252,6 @@
   const spo2Pct = $derived(
     isFiniteNumber(headlineRow?.spo2_pct) ? Math.round(Number(headlineRow.spo2_pct)) : null
   );
-  const spo2Baseline = $derived.by(() => {
-    const base = baselineAvg7d(biometricsSeries, d.date, 'spo2_pct');
-    return isFiniteNumber(base) ? Math.round(base) : null;
-  });
-  const spo2Delta = $derived(signedDeltaVsBaseline(biometricsSeries, d.date, 'spo2_pct', spo2Pct, 7));
-
-  // Locally-computed z-scores for vitals the backend doesn't ship explicit
-  // `*_z` fields for. Used to drive the colored deviation track + delta
-  // coloring on the Contributing Factors panel.
-  const bodyTempZ = $derived(zScoreFromSeries(biometricsSeries, d.date, 'skin_temp', bodyTempCToday));
-  const spo2Z = $derived(zScoreFromSeries(biometricsSeries, d.date, 'spo2_pct', spo2Pct));
-
-  // Prior day's strain score (0-100) drives the bar fill + delta color for
-  // the "Prior Load" row. We still display the raw TSS as the value text,
-  // because TSS is the unit athletes recognise — strain just gives us a
-  // bounded score we can apply the rule of thirds to.
-  const priorStrainScore = $derived.by(() => {
-    if (!biometricsSeries?.length || !d?.date) return null;
-    const priorDate = format(subDays(new Date(d.date + 'T00:00:00'), 1), 'yyyy-MM-dd');
-    const priorRow = biometricsSeries.find((s) => s?.date === priorDate);
-    const v = priorRow ? Number((priorRow as any).strain_score) : NaN;
-    return Number.isFinite(v) ? Math.round(v) : null;
-  });
-
-  const priorStrainBaseline = $derived.by(() => {
-    if (!biometricsSeries?.length || !d?.date) return null;
-    const priorDate = format(subDays(new Date(d.date + 'T00:00:00'), 1), 'yyyy-MM-dd');
-    const vals = baselineWindowVals(biometricsSeries, priorDate, 'strain_score', 30);
-    if (vals.length < 4) return null;
-    return Math.round(vals.reduce((a, b) => a + b, 0) / vals.length);
-  });
-
-  const priorStrainDelta = $derived(
-    isFiniteNumber(priorStrainScore) && isFiniteNumber(priorStrainBaseline)
-      ? priorStrainScore - priorStrainBaseline
-      : null
-  );
-
-  const sleepFillPct = $derived(sleepScoreToday === null ? 0 : Math.max(0, Math.min(100, sleepScoreToday)));
-  const priorFillPct = $derived(priorStrainScore === null ? 0 : Math.max(0, Math.min(100, priorStrainScore)));
 
   // Allow deep-linking to a specific day, e.g. /recovery?day=2026-04-22
   let lastAppliedDay = $state<string | null>(null);
@@ -408,45 +267,12 @@
     return unsub;
   });
 
-  let analysisText = $state<string | null>(null);
-  let activeAnalysisKey: string | null = null;
-  $effect(() => {
-    void analysisNavEpoch.epoch;
-    void athleteStore.initialLoadDone;
-    void athleteStore.loading;
-    void d?.score;
-
-    const day = d?.date;
-    if (!day) {
-      analysisText = null;
-      return;
-    }
-
-    const cached = recoveryAnalysisMemo.get(day);
-    if (cached !== undefined && cached !== null) {
-      analysisText = cached;
-      return;
-    }
-
-    analysisText = null;
-
-    const requestKey = `recovery:${day}`;
-    activeAnalysisKey = requestKey;
-
-    (async () => {
-      const res = await api.getRecoveryAnalysis(day);
-      const content = typeof res?.analysis?.content === 'string' ? res.analysis.content.trim() : '';
-      const next = content ? content : null;
-      if (next) recoveryAnalysisMemo.set(day, next);
-
-      if (activeAnalysisKey !== requestKey) return;
-      analysisText = next;
-    })();
-  });
+  // (An AI analysis used to be requested here on every day change and never shown,
+  // costing an LLM generation per view. Removed; the dashboard summary covers it.)
 </script>
 
 <div class="flex flex-col gap-3.5">
-  {#if !isConnected}
+  {#if showConnectPrompt}
     <EmptyState title="No Recovery Data" message="Connect WHOOP, Garmin, or Apple Health to see your recovery analysis." />
   {:else if !hasData}
     <EmptyState title="Waiting for Sync" message="We're waiting for your biometric data to compute your recovery score." icon="⏳" />
@@ -515,13 +341,20 @@
       <h2 class="m-0 font-display font-normal text-[22px]">7-day trend</h2>
       <div class="grid grid-cols-7 gap-2 items-end h-[70px]">
         {#each days as day, i (day.date)}
+          <!-- The whole column is the tap target (a 4px bar was too small to hit). -->
           <button
             type="button"
-            aria-label={`Select ${day.label}: ${day.score}/100`}
-            class="block p-0 border-0 rounded-md cursor-pointer"
-            style="height: {Math.max(4, Math.round(day.score * 0.7))}px; background: {boundedScoreCssColor(day.score)}; opacity: {i === dayIndex ? 1 : 0.45}"
+            aria-label={day.missing ? `Select ${day.label}: no recovery score` : `Select ${day.label}: ${day.score}/100`}
+            aria-pressed={i === dayIndex}
+            class="flex items-end h-full p-0 border-0 bg-transparent cursor-pointer"
             onclick={() => { endPickerValue = day.date; dayIndex = 6; }}
-          ></button>
+          >
+            <span
+              aria-hidden="true"
+              class="block w-full rounded-md"
+              style="height: {Math.max(4, Math.round(day.score * 0.7))}px; background: {boundedScoreCssColor(day.score)}; opacity: {i === dayIndex ? 1 : 0.45}"
+            ></span>
+          </button>
         {/each}
       </div>
       <div class="grid grid-cols-7 gap-2 text-center font-mono text-[10px] text-text2">

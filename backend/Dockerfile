@@ -18,6 +18,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the rest of the application code
 COPY . .
 
+# Run as an unprivileged user (a compromise of the app no longer means root in the
+# container).
+RUN useradd --system --uid 10001 --no-create-home app && chown -R app /app
+USER app
+
 # Expose the port FastAPI will run on
 EXPOSE 8000
 
