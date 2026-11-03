@@ -17,6 +17,7 @@
   import { authStore } from '$lib/stores/authStore.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { clearUserScopedState } from '$lib/stores/userSession';
+  import { authLinkTarget, sessionFromAuthLink } from '$lib/authDeepLink';
 
   afterNavigate(() => {
     analysisNavEpoch.bump();
@@ -83,19 +84,16 @@
     let cleanup: (() => void) | null = null;
     import('@capacitor/app')
       .then(({ App }) =>
-        App.addListener('appUrlOpen', ({ url }) => {
+        App.addListener('appUrlOpen', async ({ url }) => {
           try {
             const parsed = new URL(url);
-            const hash = parsed.hash ?? '';
-            if (parsed.host === 'auth' && parsed.pathname === '/callback') {
-              goto('/auth/callback' + hash);
-            } else if (parsed.host === 'auth' && parsed.pathname === '/reset-password') {
-              goto('/auth/reset-password' + hash);
-            } else if (parsed.pathname.startsWith('/auth/callback')) {
-              goto('/auth/callback' + hash);
-            } else if (parsed.pathname.startsWith('/auth/reset-password')) {
-              goto('/auth/reset-password' + hash);
-            }
+            const target = authLinkTarget(parsed);
+            if (!target) return;
+            // Create the session from the link here: supabase-js only reads the URL
+            // when it starts, so a link that opens the running app never signed in
+            // (the callback said "Link expired", reset sat on "Verifying link…").
+            await sessionFromAuthLink(parsed).catch(() => false);
+            await goto(target, { replaceState: true });
           } catch {
             // Malformed URL — ignore
           }
