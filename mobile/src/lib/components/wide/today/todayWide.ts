@@ -1,0 +1,120 @@
+/** Pure helpers for the wide (tablet / desktop) Today layout. */
+import type { Interval, Workout, WorkoutZone } from '$lib/types/training';
+
+const ZONE_NUMBER: Record<WorkoutZone, number> = {
+  Recovery: 1,
+  Endurance: 2,
+  Tempo: 3,
+  Threshold: 4,
+  VO2Max: 5,
+  Anaerobic: 5
+};
+
+export const ZONE_RANGE_LABEL: Record<WorkoutZone, string> = {
+  Recovery: 'Z1',
+  Endurance: 'Z2',
+  Tempo: 'Z3–Z4',
+  Threshold: 'Z4',
+  VO2Max: 'Z5',
+  Anaerobic: 'Z6'
+};
+
+const SPORT_LABEL: Record<Workout['sport'], string> = {
+  run: 'RUN',
+  bike: 'BIKE',
+  swim: 'SWIM',
+  row: 'ROW',
+  strength: 'STRENGTH',
+  mobility: 'MOBILITY',
+  other: 'WORKOUT'
+};
+
+/** Rough %FTP per zone, for intervals that only carry an HR zone. */
+const ZONE_PCT: Record<number, number> = { 1: 52, 2: 68, 3: 82, 4: 92, 5: 100 };
+
+export function zoneNumber(zone: WorkoutZone | undefined | null): number {
+  return zone ? (ZONE_NUMBER[zone] ?? 0) : 0;
+}
+
+export function sportLabel(sport: Workout['sport'] | undefined): string {
+  return sport ? (SPORT_LABEL[sport] ?? 'WORKOUT') : 'WORKOUT';
+}
+
+export type ProfileBar = { grow: number; pct: number; ramp: boolean; tone: 'hard' | 'mid' | 'easy'; name: string };
+
+function intervalPct(i: Interval): number {
+  if (typeof i.target_power_percent_ftp === 'number' && i.target_power_percent_ftp > 0) return i.target_power_percent_ftp;
+  if (typeof i.target_hr_zone === 'number' && i.target_hr_zone > 0) return ZONE_PCT[Math.min(5, i.target_hr_zone)] ?? 60;
+  return 50;
+}
+
+/** One bar per interval: width ∝ duration, height ∝ intensity, warm-up / cool-down drawn as ramps. */
+export function profileBars(w: Pick<Workout, 'structure' | 'duration_minutes' | 'primary_zone'> | null): ProfileBar[] {
+  if (!w) return [];
+  const steps = w.structure ?? [];
+  const raw =
+    steps.length > 0
+      ? steps.map((i) => ({ grow: Math.max(i.duration_minutes || 0, 1), pct: intervalPct(i), name: i.name || '', ramp: /warm|cool/i.test(i.name || '') }))
+      : w.duration_minutes > 0
+        ? [{ grow: w.duration_minutes, pct: ZONE_PCT[zoneNumber(w.primary_zone)] ?? 60, name: '', ramp: false }]
+        : [];
+  return raw.map((b) => {
+    const pct = Math.max(20, Math.min(100, Math.round(b.pct)));
+    return { ...b, pct, tone: pct > 85 ? 'hard' : pct > 75 ? 'mid' : 'easy' };
+  });
+}
+
+/** "45′", "1h", "1h 25m" (design: week strip / menus). */
+export function shortDuration(minutes: number): string {
+  const m = Math.max(0, Math.round(minutes || 0));
+  if (m < 60) return `${m}′`;
+  const h = Math.floor(m / 60);
+  return `${h}h${m % 60 ? ` ${m % 60}m` : ''}`;
+}
+
+/** Session card stat: "85 min" or "4 h". */
+export function statDuration(minutes: number): string {
+  const m = Math.max(0, Math.round(minutes || 0));
+  return m >= 60 && m % 60 === 0 ? `${m / 60} h` : `${m} min`;
+}
+
+/** Target for the session card: a watt range for bike sessions with FTP, else the zone. */
+export function sessionTarget(w: Pick<Workout, 'sport' | 'structure' | 'primary_zone'>, ftp: number): string {
+  const work = (w.structure ?? []).reduce((max, i) => Math.max(max, i.target_power_percent_ftp ?? 0), 0);
+  if (w.sport === 'bike' && ftp > 0 && work > 0) {
+    return `${Math.round((ftp * work) / 100)}–${Math.round((ftp * (work + 5)) / 100)} W`;
+  }
+  const label = ZONE_RANGE_LABEL[w.primary_zone];
+  return label ? `${label} HR` : '—';
+}
+
+/** "412 TSS · 9H 5M PLANNED" for the week strip header. */
+export function weekSummary(workouts: Pick<Workout, 'projected_tss' | 'duration_minutes'>[]): string {
+  const tss = workouts.reduce((a, w) => a + (Number(w.projected_tss) || 0), 0);
+  const mins = workouts.reduce((a, w) => a + (Number(w.duration_minutes) || 0), 0);
+  return `${Math.round(tss)} TSS · ${Math.floor(mins / 60)}H ${Math.round(mins % 60)}M PLANNED`;
+}
+
+/**
+ * Date changes for moving `source` to `targetIso`: a plain move, or a swap when the
+ * target day has a session (its first session takes the source's day).
+ */
+export function moveChanges(
+  source: Pick<Workout, 'id' | 'date'>,
+  targetIso: string,
+  week: Pick<Workout, 'id' | 'date' | 'completed'>[]
+): { id: string; date: string }[] {
+  if (!targetIso || targetIso === source.date) return [];
+  const other = week.find((w) => w.date === targetIso && w.id !== source.id && !w.completed);
+  const out = [{ id: source.id, date: targetIso }];
+  if (other) out.push({ id: other.id, date: source.date });
+  return out;
+}
+
+/** Readiness status line (same thresholds as the phone card). */
+export function readinessStatus(score: number | null): { label: string; tone: 'green' | 'amber' | 'red' | 'muted' } {
+  if (score === null) return { label: 'No data', tone: 'muted' };
+  if (score >= 67) return { label: 'Good to train', tone: 'green' };
+  if (score >= 34) return { label: 'Train as planned', tone: 'amber' };
+  return { label: 'Recovery day', tone: 'red' };
+}
