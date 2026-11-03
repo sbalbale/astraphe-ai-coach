@@ -9,6 +9,7 @@
   import DashedNote from '$lib/components/ui/DashedNote.svelte';
   import { goto } from '$app/navigation';
   import { pageHeader, resetPageHeader } from '$lib/stores/pageHeader.svelte';
+  import { viewport } from '$lib/stores/viewport.svelte';
   import MonthNavigator from '$lib/components/MonthNavigator.svelte';
   import WeekNavigator from '$lib/components/WeekNavigator.svelte';
   import { analysisNavEpoch } from '$lib/analysisNavEpoch.svelte';
@@ -286,6 +287,11 @@
     const hard = 100 - easy;
     const verdict = easy >= 75 ? "close to a polarized split" : easy >= 60 ? "a moderate-leaning split" : "heavy on intensity";
     return `${easy}% easy, ${hard}% at tempo or above — ${verdict}. ${fmtDuration(total)} recorded.`;
+  });
+
+  // Wide layouts show zones on the combined Trends & zones page.
+  $effect(() => {
+    if (viewport.wide) void goto('/trends', { replaceState: true, keepFocus: true, noScroll: true });
   });
 
   $effect(() => {

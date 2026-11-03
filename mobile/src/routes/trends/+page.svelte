@@ -7,6 +7,9 @@
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { pageHeader, resetPageHeader } from '$lib/stores/pageHeader.svelte';
   import { formCssColor } from '$lib/scoreColors';
+  import { viewport } from '$lib/stores/viewport.svelte';
+  import WideTrends from '$lib/components/wide/trends/WideTrends.svelte';
+  import { rangeStart, sportsLabel } from '$lib/components/wide/trends/trendsWide';
 
   let planned = $state<Workout[]>([]);
   const weeksStart = () => startOfWeek(subDays(new Date(), 11 * 7), { weekStartsOn: 1 });
@@ -18,8 +21,24 @@
     planned = await api.getWorkouts(start, end);
   });
 
+  /** Wide layout: weeks shown (header range tabs). */
+  let wideRange = $state(12);
+  const WIDE_RANGES = [
+    { value: '6', label: '6 wk' },
+    { value: '12', label: '12 wk' },
+    { value: '26', label: '6 mo' }
+  ];
+  const wideSports = $derived(sportsLabel(athleteStore.workouts ?? [], rangeStart(new Date(), wideRange)));
+
   $effect(() => {
     pageHeader.eyebrow = 'Last 12 weeks';
+    if (viewport.wide) {
+      pageHeader.wideTitle = 'Trends & zones';
+      pageHeader.wideEyebrow = `Last ${wideRange === 26 ? '6 months' : `${wideRange} weeks`}${wideSports ? ` · ${wideSports}` : ''}`;
+      pageHeader.segments = WIDE_RANGES;
+      pageHeader.segment = String(wideRange);
+      pageHeader.onSegment = (v) => (wideRange = Number(v) || 12);
+    }
     return resetPageHeader;
   });
 
@@ -122,6 +141,9 @@
   }
 </script>
 
+{#if viewport.wide}
+  <WideTrends range={wideRange} />
+{:else}
 <div class="flex flex-col gap-3.5">
   {#if athleteStore.initialLoadDone && rows.length === 0}
     <EmptyStateCard icon="pulse" eyebrow="Nothing yet" title="No trends yet" message="Fitness and fatigue trends appear once a few weeks of workouts have synced or been logged." />
@@ -227,3 +249,4 @@
     </section>
   {/if}
 </div>
+{/if}
