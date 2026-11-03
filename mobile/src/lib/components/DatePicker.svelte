@@ -9,6 +9,7 @@
     isSameDay,
     isSameMonth,
     parseISO,
+    startOfDay,
     startOfMonth,
     startOfWeek,
     subMonths
@@ -79,7 +80,8 @@
 
   const canPick = (d: Date) => {
     if (disabled) return false;
-    if (maxDate && isAfter(d, maxDate)) return false;
+    // Compare calendar days: 'now' (with a time) must not count as after a max of today.
+    if (maxDate && isAfter(startOfDay(d), maxDate)) return false;
     return true;
   };
 
