@@ -13,6 +13,9 @@
   import { page } from '$app/stores';
   import { replaceState } from '$app/navigation';
   import UiIcon from '$lib/components/ui/UiIcon.svelte';
+  import { viewport } from '$lib/stores/viewport.svelte';
+  import ConversationList from '$lib/components/wide/coach/ConversationList.svelte';
+  import CoachContextPane from '$lib/components/wide/coach/CoachContextPane.svelte';
   import { buildCoachSteps, coachStatusText, type CoachStep } from '$lib/coachProgress';
   import { COACH_REPLY_WAIT_MS, remainingReplyWaitMs } from '$lib/utils/coachReply';
 
@@ -62,6 +65,9 @@
     }
     return 'Thinking…';
   }
+
+  /** Tablet / desktop: conversations | chat | context (design: Coach 3-pane). */
+  const wide = $derived(viewport.wide);
 
   const CHAT_INPUT_MAX_PX = 200;
 
@@ -557,6 +563,26 @@
   });
 </script>
 
+{#if wide}
+  <div class="flex h-full min-h-0 w-full">
+    <ConversationList
+      {conversations}
+      activeId={conversationId}
+      onSelect={(id) => selectConversation(id)}
+      onNew={() => newChat()}
+      onDelete={(id) => deleteConversation(id)}
+    />
+    <main class="flex-1 min-w-0 h-full flex flex-col">
+      {@render chatColumn()}
+    </main>
+    <!-- 768–1199 px (iPad portrait): no room for a third pane; the conversations stay. -->
+    {#if viewport.landscape}<CoachContextPane />{/if}
+  </div>
+{:else}
+  {@render chatColumn()}
+{/if}
+
+{#snippet chatColumn()}
 <div class="relative flex flex-col h-full min-h-0 w-full box-border">
   {#if convoMenuOpen}
     <!-- Past conversations -->
@@ -589,9 +615,10 @@
     </div>
   {/if}
 
-  <div class="flex-1 overflow-y-auto flex flex-col gap-3.5 px-5 pt-2 pb-4 min-h-0" bind:this={chatContainer}>
+  <div class="flex-1 overflow-y-auto flex flex-col min-h-0 {wide ? 'px-12 pt-10 pb-5' : 'px-5 pt-2 pb-4'}" bind:this={chatContainer} aria-live={wide ? 'polite' : undefined}>
+    <div class="flex flex-col {wide ? 'w-full max-w-[680px] mx-auto gap-[18px]' : 'gap-3.5'}">
     {#if isFreshChat && !historyLoading}
-      <section aria-labelledby="coach-intro-title" class="flex flex-col pt-4">
+      <section aria-labelledby="coach-intro-title" class="flex flex-col {wide ? 'pt-[60px]' : 'pt-4'}">
         <div class="w-14 h-14 rounded-2xl border border-blue/20 bg-blue-dim text-blue flex items-center justify-center mb-6">
           <UiIcon name="chat" size={24} />
         </div>
@@ -626,7 +653,7 @@
             {/each}
           </ol>
         {/if}
-        <div class="flex flex-col gap-2.5 p-4 rounded-[20px] bg-bg2 border border-border text-sm leading-[1.55] text-text0 break-words min-w-0">
+        <div class="flex flex-col gap-2.5 bg-bg2 border border-border text-text0 break-words min-w-0 {wide ? 'p-5 rounded-[22px] text-[15px] leading-[1.6]' : 'p-4 rounded-[20px] text-sm leading-[1.55]'}">
           {#if msg.image_urls && msg.image_urls.length > 0}
             <div class="flex gap-2 flex-wrap">
               {#each msg.image_urls as u (u)}
@@ -650,7 +677,7 @@
           {/if}
         </div>
       {:else}
-        <div class="self-end max-w-[78%] min-w-0 px-3.5 py-3 rounded-[18px_18px_6px_18px] bg-border text-sm leading-[1.45] text-text0 break-words whitespace-pre-wrap">
+        <div class="self-end max-w-[78%] min-w-0 rounded-[18px_18px_6px_18px] bg-border text-text0 break-words whitespace-pre-wrap {wide ? 'px-4 py-3 text-[15px] leading-normal' : 'px-3.5 py-3 text-sm leading-[1.45]'}">
           {#if msg.image_urls && msg.image_urls.length > 0}
             <div class="flex gap-2 flex-wrap mb-2 justify-end">
               {#each msg.image_urls as u (u)}
@@ -665,20 +692,12 @@
       {/if}
     {/each}
 
-    {#if !loading && !isFreshChat && promptSuggestions.length > 0}
-      <div aria-label="Suggested questions" class="flex flex-wrap gap-2">
-        {#each promptSuggestions as s, i (s + String(i))}
-          <button
-            type="button"
-            class="h-9 px-3 rounded-[18px] border border-border bg-bg1 text-[13px] text-text1 cursor-pointer text-left max-w-full truncate"
-            onclick={() => { input = s; tick().then(() => { resizeChatInput(); chatInputEl?.focus(); }); }}
-          >{s}</button>
-        {/each}
-      </div>
-    {/if}
+    {#if !wide}{@render suggestions()}{/if}
+    </div>
   </div>
 
-  <div class="shrink-0 px-4 pt-1" style="padding-bottom: 12px;">
+  <div class="shrink-0 {wide ? 'w-[calc(100%-96px)] max-w-[680px] self-center flex flex-col gap-2.5 mb-8' : 'px-4 pt-1'}" style={wide ? undefined : 'padding-bottom: 12px;'}>
+    {#if wide}{@render suggestions()}{/if}
     {#if pendingImageUrls.length > 0}
       <div class="flex gap-2 flex-wrap pb-2">
         {#each pendingImageUrls as u (u)}
@@ -695,7 +714,7 @@
       </div>
     {/if}
 
-    <form class="flex gap-2 items-end p-1.5 rounded-[20px] bg-bg2 border border-border" onsubmit={(e) => { e.preventDefault(); if (!loading) void send(); }}>
+    <form class="flex gap-2 items-end rounded-[20px] bg-bg2 border border-border {wide ? 'p-2' : 'p-1.5'}" onsubmit={(e) => { e.preventDefault(); if (!loading) void send(); }}>
       <input bind:this={fileInput} type="file" accept="image/*" multiple class="hidden" onchange={onFilesSelected} />
       <button
         type="button"
@@ -720,12 +739,12 @@
             if (!loading) void send();
           }
         }}
-        placeholder="Ask about your training…"
+        placeholder={wide ? 'Ask your coach…  (Enter to send, Shift + Enter for a new line)' : 'Ask about your training…'}
         class="flex-1 min-w-0 min-h-11 max-h-[200px] py-3 bg-transparent border-0 text-sm leading-snug text-text0 placeholder:text-text2 outline-none resize-none overflow-hidden"
       ></textarea>
       <button
         type="submit"
-        class="w-11 h-11 shrink-0 rounded-[14px] border-0 bg-blue text-[#0B1420] flex items-center justify-center cursor-pointer disabled:opacity-35 disabled:pointer-events-none"
+        class="w-11 h-11 shrink-0 rounded-[14px] border-0 bg-blue text-on-accent flex items-center justify-center cursor-pointer disabled:opacity-35 disabled:pointer-events-none"
         disabled={loading || (!input.trim() && pendingImageUrls.length === 0)}
         aria-label="Send"
       >
@@ -734,6 +753,21 @@
     </form>
   </div>
 </div>
+{/snippet}
+
+{#snippet suggestions()}
+  {#if !loading && !isFreshChat && promptSuggestions.length > 0}
+    <div aria-label="Suggested questions" class="flex flex-wrap gap-2">
+      {#each promptSuggestions as s, i (s + String(i))}
+        <button
+          type="button"
+          class="px-3 border text-[13px] cursor-pointer text-left max-w-full truncate bg-bg1 text-text1 {wide ? 'h-[34px] rounded-[17px] border-popover-border hover:border-text3 hover:text-text0' : 'h-9 rounded-[18px] border-border'}"
+          onclick={() => { input = s; tick().then(() => { resizeChatInput(); chatInputEl?.focus(); }); }}
+        >{s}</button>
+      {/each}
+    </div>
+  {/if}
+{/snippet}
 
 <style>
   /* Markdown styles scoped to AI message bubbles */
