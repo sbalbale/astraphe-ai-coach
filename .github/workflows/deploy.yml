@@ -26,9 +26,11 @@ on:
     branches:
       - main
 
+# Least privilege: only the image-build jobs get packages: write (below). pull_request
+# runs execute PR code (pnpm install, pytest), so they shouldn't hold a token that can
+# push images to GHCR.
 permissions:
   contents: read
-  packages: write
 
 jobs:
   # backend, mobile, and build are independent of each other (build doesn't
@@ -120,6 +122,9 @@ jobs:
         working-directory: mobile
 
   build:
+    permissions:
+      contents: read
+      packages: write
     runs-on: ubuntu-latest
     outputs:
       image_tag: ${{ github.sha }}
@@ -154,6 +159,9 @@ jobs:
             ghcr.io/sbalbale/astraphe-api:${{ github.sha }}
 
   build-mcp:
+    permissions:
+      contents: read
+      packages: write
     # Independent of `build` (astraphe-api) and of the `mcp-server` test job — same
     # "build doesn't wait on tests, deploy does" split as `build`/`backend`/`deploy`
     # above. `deploy-mcp` below is what actually requires `mcp-server` to have passed.
@@ -360,6 +368,9 @@ jobs:
         working-directory: photon-bridge
 
   build-photon-bridge:
+    permissions:
+      contents: read
+      packages: write
     runs-on: ubuntu-latest
     outputs:
       image_tag: ${{ github.sha }}

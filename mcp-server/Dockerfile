@@ -22,6 +22,11 @@ COPY mcp-server/astraphe_mcp ./mcp-server/astraphe_mcp
 
 ENV PYTHONPATH=/app/backend:/app/mcp-server
 
+# Run as an unprivileged user (a compromise of the app no longer means root in the
+# container).
+RUN useradd --system --uid 10001 --no-create-home app && chown -R app /app
+USER app
+
 EXPOSE 8090
 
 CMD ["uvicorn", "astraphe_mcp.asgi:app", "--host", "0.0.0.0", "--port", "8090"]
