@@ -998,19 +998,10 @@ async def whoop_webhook(request: Request, background_tasks: BackgroundTasks, db=
                 if recovery_data:
                     _apply_whoop_recovery_vitals(bio_payload, recovery_data)
                     recovery_merged = True
-                else:
-                    sleep_id = str(sleep_data.get("id") or event_id)
-                    background_tasks.add_task(
-                        _whoop_retry_recovery_vitals,
-                        athlete_id,
-                        sleep_id,
-                        local_wake_dt.date(),
-                        access_token,
-                        refresh_token,
-                        str(user_id),
-                        db,
-                    )
 
+            # Order matters: BackgroundTasks run one after another, and the vitals retry
+            # sleeps 2 then 10 minutes. Queued first, it held the night's save back that
+            # long (or lost it if the instance was recycled). Save first, retry last.
             background_tasks.add_task(process_and_save_biometrics, bio_payload, athlete_id, db)
             if athlete_id and access_token and user_id is not None:
                 background_tasks.add_task(
@@ -1021,6 +1012,17 @@ async def whoop_webhook(request: Request, background_tasks: BackgroundTasks, db=
                     refresh_token=refresh_token,
                     external_user_id=str(user_id),
                     db=db,
+                )
+            if not is_nap and not recovery_merged:
+                background_tasks.add_task(
+                    _whoop_retry_recovery_vitals,
+                    athlete_id,
+                    str(sleep_data.get("id") or event_id),
+                    local_wake_dt.date(),
+                    access_token,
+                    refresh_token,
+                    str(user_id),
+                    db,
                 )
             if not is_nap and not recovery_merged:
                 print(

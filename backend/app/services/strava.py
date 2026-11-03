@@ -1009,12 +1009,24 @@ async def ingest_strava_activity(
 
     # workouts table columns must match Supabase schema (see migrations); extras live in raw_strava_payload.
     ended_at = start_time + timedelta(seconds=int(max(0, elapsed_time)))
-    update: dict[str, Any] = {
+    # Strava's own bookkeeping is always written; the shared metrics go through the
+    # same source-priority filter as every other provider (below). Strava used to
+    # overwrite them unconditionally and claim primary_source, so a Garmin workout
+    # matched by Strava lost its Garmin data.
+    from app.services.processing import SOURCE_PRIORITY, _quality_filter_workout_update
+
+    bookkeeping: dict[str, Any] = {
         "strava_activity_id": activity_id,
         # True = streams API was attempted for this activity; empty stream dict is valid (e.g. Zwift, no HR).
         "strava_streams_fetched": True,
-        "primary_source": "strava",
         "raw_strava_payload": activity,
+        "splits_metric": activity.get("splits_metric"),
+        "splits_standard": activity.get("splits_standard"),
+    }
+    current_primary = str(workout.get("primary_source") or workout.get("source") or "manual")
+    if current_primary not in SOURCE_PRIORITY or SOURCE_PRIORITY.index("strava") < SOURCE_PRIORITY.index(current_primary):
+        bookkeeping["primary_source"] = "strava"
+    update: dict[str, Any] = {
         "sport": _sport_for_db(sport_type),
         "title": activity.get("name"),
         "started_at": activity["start_date"],
@@ -1026,17 +1038,19 @@ async def ingest_strava_activity(
         "avg_power_w": _optional_smallint(activity.get("average_watts")),
         "norm_power_w": _optional_smallint(activity.get("weighted_average_watts")),
         "elevation_gain_m": activity.get("total_elevation_gain"),
-        "strain_score": _optional_smallint(activity.get("suffer_score"), max_val=1000),
-        "splits_metric": activity.get("splits_metric"),
-        "splits_standard": activity.get("splits_standard"),
+        # (No strain_score: Strava's suffer_score runs to ~1000 and isn't Astraphe's
+        # 0-100 strain, which is computed from HR zones.)
     }
     update.update(_hr_stream_zone_dist_to_workout_columns(zone_dist))
 
     if intervals is not None:
-        update["intervals"] = intervals
-        update["intervals_source"] = intervals_source
+        bookkeeping["intervals"] = intervals
+        bookkeeping["intervals_source"] = intervals_source
 
-    update = {k: v for k, v in update.items() if v is not None}
+    update = _quality_filter_workout_update(
+        workout, "strava", {k: v for k, v in update.items() if v is not None}
+    )
+    update.update({k: v for k, v in bookkeeping.items() if v is not None})
 
     db.table("workouts").update(update).eq("id", workout_id).execute()
     workout = {**workout, **update}

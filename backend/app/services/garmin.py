@@ -757,15 +757,19 @@ async def _save_one_activity(
             download_and_parse_fit, client, str(activity_id)
         )
 
-    streams_saved = _upsert_activity_streams(db, workout_id, athlete_id, streams)
+    # Blocking supabase-py writes: off the event loop (this poll runs inside the API
+    # process, so on-loop DB work stalled every HTTP request on the replica).
+    streams_saved = await asyncio.to_thread(_upsert_activity_streams, db, workout_id, athlete_id, streams)
     if streams_saved:
-        _update_workout_hr_zones_from_streams(
-            db, workout_id, athlete_id, streams,
-            duration_seconds=payload.duration_seconds,
-            sport=payload.workout_type,
+        await asyncio.to_thread(
+            lambda: _update_workout_hr_zones_from_streams(
+                db, workout_id, athlete_id, streams,
+                duration_seconds=payload.duration_seconds,
+                sport=payload.workout_type,
+            )
         )
     if laps:
-        _persist_activity_laps(db, workout_id, athlete_id, laps)
+        await asyncio.to_thread(_persist_activity_laps, db, workout_id, athlete_id, laps)
 
     # Post-workout Photon text. It fires here rather than inside process_and_save_workout
     # (which Garmin calls with skip_tss_recalc=True, and before HR zones/TSS/laps exist)
@@ -828,7 +832,7 @@ async def sync_activities_for_athlete(
     # Recompute for whatever we did save, whether or not we finished the pass.
     if workout_count:
         await recompute_workout_tss_for_athlete(athlete_id, db)
-        recalculate_tss_history(athlete_id, db)
+        await asyncio.to_thread(recalculate_tss_history, athlete_id, db)
         invalidate_context_cache(athlete_id)
 
     if rate_limited:
@@ -1172,7 +1176,8 @@ async def fetch_and_store_biometrics_for_day(
     payload = _daily_biometrics_from_garmin(day, sleep, hrv, heart_rates)
     if payload is None:
         return False
-    process_and_save_biometrics(payload, athlete_id, db, skip_pmc_recalc=True)
+    # ~10 blocking queries plus a thread pool: keep them off the event loop.
+    await asyncio.to_thread(lambda: process_and_save_biometrics(payload, athlete_id, db, skip_pmc_recalc=True))
     return True
 
 
@@ -1267,7 +1272,7 @@ POLL_WINDOW_DAYS = 2
 
 
 async def _poll_one_athlete(athlete_id: str, db: Any) -> None:
-    if not _claim_sync_lock(db, athlete_id):
+    if not await asyncio.to_thread(_claim_sync_lock, db, athlete_id):
         logger.debug("garmin poll: athlete_id=%s locked by another replica; skipping", athlete_id)
         return
     rate_limited = False
@@ -1290,18 +1295,18 @@ async def _poll_one_athlete(athlete_id: str, db: Any) -> None:
             # (an hour later, by default) still sees this athlete as
             # "locked" and skips it, rather than immediately retrying into
             # the same rate limit.
-            _cooldown_sync_lock(db, athlete_id, GARMIN_RATE_LIMIT_COOLDOWN_SEC)
+            await asyncio.to_thread(_cooldown_sync_lock, db, athlete_id, GARMIN_RATE_LIMIT_COOLDOWN_SEC)
         else:
-            _release_sync_lock(db, athlete_id)
+            await asyncio.to_thread(_release_sync_lock, db, athlete_id)
 
 
 async def poll_tick(db: Any) -> int:
     """One pass over every connected Garmin athlete. Returns the count processed."""
-    res = (
+    res = await asyncio.to_thread(
         db.table("oauth_tokens")
         .select("athlete_id")
         .eq("provider", PROVIDER)
-        .execute()
+        .execute
     )
     athlete_ids = [row["athlete_id"] for row in (getattr(res, "data", None) or [])]
     for athlete_id in athlete_ids:
