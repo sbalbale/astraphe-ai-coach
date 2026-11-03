@@ -647,6 +647,9 @@ export const api = {
       params.onStarted?.();
     };
 
+    // Released in finally: an error event or parse throw used to leave the stream
+    // (and its connection) open.
+    try {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -686,6 +689,9 @@ export const api = {
           }
         }
       }
+    }
+    } finally {
+      reader.cancel().catch(() => {});
     }
 
     if (!conversationId) {

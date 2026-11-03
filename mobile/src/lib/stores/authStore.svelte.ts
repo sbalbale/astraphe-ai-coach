@@ -88,8 +88,11 @@ class AuthState {
         ),
       ]);
       const { data, error } = result;
-      if (!error && data?.user) this.user = data.user;
-      else if (error) console.warn('[auth] hydrateUserFromServer:', error.message);
+      // Only refresh the user we still have: this can resolve up to 8s later, after a
+      // sign-out (which would bring the old user back with no session) or a switch.
+      if (!error && data?.user) {
+        if (this.session && this.user?.id === data.user.id) this.user = data.user;
+      } else if (error) console.warn('[auth] hydrateUserFromServer:', error.message);
     } catch (e) {
       console.warn('[auth] Failed to hydrate user from server', e);
     }

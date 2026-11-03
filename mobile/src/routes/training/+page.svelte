@@ -675,11 +675,15 @@
     if (np > 0) parts.push(`${np} W NP`);
     return parts.join(" · ");
   }
+  // A trailing 7-day window ending now, so it's labelled as such and only shown on the
+  // current week (it read "This week is X TSS" next to a different week total, and
+  // described the current week while browsing past ones).
   const loadInsight = $derived.by(() => {
+    if (!isCurrentWeek) return null;
     const ctx = weeklyRollingContext;
     if (!ctx || ctx.baseline == null || ctx.pct == null) return null;
     const pct = Math.round(Math.abs(ctx.pct) * 100);
-    return `This week is ${ctx.weekSum} TSS so far, ${pct}% ${ctx.pct >= 0 ? "above" : "below"} your recent average of ${ctx.baseline}.`;
+    return `The last 7 days total ${ctx.weekSum} TSS, ${pct}% ${ctx.pct >= 0 ? "above" : "below"} your recent average of ${ctx.baseline}.`;
   });
 
   $effect(() => {
