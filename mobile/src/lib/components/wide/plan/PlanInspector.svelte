@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { formatStepDuration } from '$lib/utils/stepDuration';
   /**
    * Wide Plan inspector (right column): the selected day's session, its stats and steps,
    * plus Move (to another day this week; swaps when that day has a session), Swap (ask the
@@ -137,7 +138,7 @@
             <span aria-hidden="true" class="w-1 h-[22px] rounded-sm" style="background: {zoneColor(st.zone)}"></span>
             <span class="min-w-0 truncate">{st.name}</span>
             <span class="font-mono text-[11px] text-text1">{st.target ?? ''}</span>
-            <span class="text-right font-mono text-[11px] text-text2">{st.minutes ? fmtDur(st.minutes) : ''}</span>
+            <span class="text-right font-mono text-[11px] text-text2">{st.minutes ? formatStepDuration(st.minutes) : ''}</span>
           </li>
         {/each}
       </ol>

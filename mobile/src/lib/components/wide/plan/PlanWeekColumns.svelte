@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { formatStepDuration } from '$lib/utils/stepDuration';
   /** Wide Plan week: seven tall day columns with each session's profile and first steps. */
   import { format } from 'date-fns';
   import { fmtDur, fmtHoursMinutes, totals, type WideSession } from './planWide';
@@ -87,7 +88,7 @@
             {#each s.steps.slice(0, 3) as st, i (i)}
               <span class="flex justify-between gap-1.5 text-[11px] text-text1 border-t border-rail-border pt-1.5">
                 <span class="truncate">{st.name}</span>
-                <span class="font-mono text-text2 shrink-0">{st.minutes ? fmtDur(st.minutes) : ''}</span>
+                <span class="font-mono text-text2 shrink-0">{st.minutes ? formatStepDuration(st.minutes) : ''}</span>
               </span>
             {/each}
           </span>
