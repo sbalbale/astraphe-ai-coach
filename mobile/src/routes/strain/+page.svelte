@@ -10,6 +10,7 @@
   import RadialProgress from '$lib/components/RadialProgress.svelte';
   import Tag from '$lib/components/Tag.svelte';
   import EmptyStateCard from '$lib/components/ui/EmptyStateCard.svelte';
+  import DashedNote from '$lib/components/ui/DashedNote.svelte';
   import DatePicker from '$lib/components/DatePicker.svelte';
   import Modal from '$lib/components/Modal.svelte';
   import { pageHeader, resetPageHeader } from '$lib/stores/pageHeader.svelte';
@@ -153,13 +154,29 @@
   });
 
   const d = $derived(days[dayIndex]);
-  const hasData = $derived(days.some(day => !day.missing) || athleteStore.atl > 0);
+  // Any workout ever (not just this week), stored strain, or training load. The old
+  // check (days.some(!missing)) was always true, so empty accounts saw a 0 score.
+  const hasData = $derived(
+    (athleteStore.workouts?.length ?? 0) > 0 ||
+      days.some((day) => day.score > 0 || day.workouts.length > 0) ||
+      athleteStore.atl > 0
+  );
   // "Connect an app" only when we *know* nothing is connected and there's no data:
   // manual-only athletes (logged sleep/workouts) see their data, and connected users
   // don't flash this while the sync status is still loading.
   const showConnectPrompt = $derived(athleteStore.syncStatus != null && !isConnected && !hasData);
   
   const score = $derived(d.score || 0);
+
+  let checking = $state(false);
+  async function checkSync() {
+    checking = true;
+    try {
+      await athleteStore.fetchAll(true);
+    } finally {
+      checking = false;
+    }
+  }
   // Strain is INVERTED relative to the other 0-100 scores: low strain is a
   // recovery day (teal), high strain is overreaching territory (red). The
   // unified bounded-score helper gets the same rule of thirds, just flipped.
@@ -308,9 +325,32 @@
 
 <div class="flex flex-col gap-3.5">
   {#if showConnectPrompt}
-    <EmptyStateCard icon="link" tone="blue" eyebrow="Not set up" title="Track your strain" message="Strain is built from your workouts' heart rate. Connect Garmin, WHOOP or Strava, or log sessions by hand." actionLabel="Connect an app" onAction={() => goto('/profile/connections')} />
+    <EmptyStateCard
+      icon="pulse"
+      tone="blue"
+      eyebrow="Not set up"
+      title="Track your strain"
+      message="Strain is how hard your day was, built from your workouts' heart-rate zones. Connect Garmin, WHOOP or Strava, or log sessions by hand."
+      actionLabel="Connect an app"
+      onAction={() => goto('/profile/connections')}
+      secondaryLabel="Log an activity"
+      onSecondary={() => goto('/training?log=1')}
+    />
+    <DashedNote label="Good to know" layout="inline">
+      Hand-logged sessions count too: without heart rate, strain comes from their duration and training load.
+    </DashedNote>
   {:else if !hasData}
-    <EmptyStateCard icon="refresh" tone="amber" eyebrow="Waiting for sync" title="No strain yet" message="Strain appears after your first workout syncs, usually within a few minutes of finishing." />
+    <EmptyStateCard
+      icon="pulse"
+      tone="amber"
+      eyebrow="Waiting for sync"
+      title="No strain yet"
+      message="Your apps are connected. Strain appears after your first workout syncs, usually within a few minutes of finishing."
+      actionLabel={checking ? 'Checking…' : 'Check sync now'}
+      onAction={checkSync}
+      secondaryLabel="Log an activity"
+      onSecondary={() => goto('/training?log=1')}
+    />
   {:else}
     <!-- Score -->
     <section aria-label="Strain score" class="bg-bg2 border border-border rounded-[24px] px-5 py-[18px] flex gap-[18px] items-center">

@@ -51,6 +51,14 @@
   import AddActivityModal from '$lib/components/AddActivityModal.svelte';
 
   let addActivityOpen = $state(false);
+  // Deep link from other tabs' empty states: /training?log=1 opens the log form once.
+  $effect(() => {
+    if ($page.url.searchParams.get('log') !== '1') return;
+    addActivityOpen = true;
+    const url = new URL($page.url);
+    url.searchParams.delete('log');
+    history.replaceState(history.state, '', url.pathname + url.search + url.hash);
+  });
   let editActivityOpen = $state(false);
   let editingWorkout = $state<any>(null);
 
