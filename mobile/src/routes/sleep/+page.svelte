@@ -7,7 +7,8 @@
 <script lang="ts">
   import Card from "$lib/components/Card.svelte";
   import Tag from "$lib/components/Tag.svelte";
-  import EmptyState from "$lib/components/EmptyState.svelte";
+  import EmptyStateCard from "$lib/components/ui/EmptyStateCard.svelte";
+  import { goto } from "$app/navigation";
   import {
     boundedScoreCssColor,
     sleepDebtCssColor,
@@ -460,6 +461,33 @@
   });
 
   let addSleepOpen = $state(false);
+  // Deep link from Today's "Log sleep myself": /sleep?log=1 opens the form once.
+  onMount(() => {
+    if ($page.url.searchParams.get('log') === '1') addSleepOpen = true;
+  });
+
+  /** "Sun → Mon" for the night ending on the given wake day. */
+  function nightLabel(rawDate: string | undefined): string {
+    if (!rawDate) return 'this night';
+    const wake = parseISO(rawDate);
+    return `${format(subDays(wake, 1), 'EEE')} → ${format(wake, 'EEE')}`;
+  }
+  const avgSleepMin7d = $derived.by(() => {
+    const vals = nights.filter(isNightData).map((x) => x.durationRaw).filter((v) => v > 0);
+    return vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : null;
+  });
+  const maxNightMin = $derived(Math.max(540, ...nights.filter(isNightData).map((x) => x.durationRaw)));
+
+  let checking = $state(false);
+  /** Re-read from our server: shows synced sleep if it has arrived. */
+  async function checkSync() {
+    checking = true;
+    try {
+      await athleteStore.fetchAll(true);
+    } finally {
+      checking = false;
+    }
+  }
 
   async function handleSleepSaved(payload: object) {
     await athleteStore.addSleep(payload);
@@ -516,13 +544,71 @@
 
 <div class="flex flex-col gap-3.5">
   {#if showConnectPrompt}
-    <EmptyState title="No Sleep Data" message="Connect WHOOP, Garmin, or Apple Health to track your sleep architecture and recovery." icon="🌙" secondaryLabel="Log Sleep" onSecondaryAction={() => (addSleepOpen = true)} />
+    <EmptyStateCard
+      icon="link"
+      tone="blue"
+      eyebrow="Not set up"
+      title="Track your sleep"
+      message="Sleep comes from a wearable worn to bed — WHOOP or a Garmin watch. You can also log nights by hand."
+      actionLabel="Connect a wearable"
+      onAction={() => goto('/profile/connections')}
+      secondaryLabel="Log sleep"
+      onSecondary={() => (addSleepOpen = true)}
+    />
   {:else if !hasData}
-    <EmptyState title="Waiting for Sleep Sync" message="We'll analyze your sleep as soon as your device syncs with our servers." icon="⏳" />
+    <EmptyStateCard
+      icon="moon"
+      tone="amber"
+      eyebrow="Waiting for sync"
+      title="No sleep yet"
+      message="Your wearable is connected. Nights appear here after its first sync, usually within 30 minutes of waking."
+      actionLabel="Log sleep"
+      onAction={() => (addSleepOpen = true)}
+      secondaryLabel={checking ? 'Checking…' : 'Check sync now'}
+      onSecondary={checkSync}
+    />
   {:else if !nightData}
-    <section class="bg-bg2 border border-dashed border-border rounded-[24px] p-6 text-center">
-      <p class="m-0 text-[14px] font-semibold mb-1">No sleep data for {n?.date}</p>
-      <p class="m-0 text-[12px] text-text2">We couldn't find a sleep record for this night.</p>
+    <EmptyStateCard
+      icon="moon"
+      tone="amber"
+      eyebrow="Waiting for sync"
+      title="No sleep for {nightLabel(n?.rawDate)} yet"
+      message="Your watch may not have synced, or it wasn't worn that night. Synced sleep replaces anything you log by hand."
+      actionLabel="Log sleep"
+      onAction={() => (addSleepOpen = true)}
+      secondaryLabel={checking ? 'Checking…' : 'Check sync now'}
+      onSecondary={checkSync}
+    />
+    <section aria-label="Last 7 nights" class="bg-bg2 border border-border rounded-card px-6 py-6">
+      <div class="flex items-baseline justify-between mb-5">
+        <h2 class="m-0 font-display font-normal text-[28px] text-text0">Last 7 nights</h2>
+        {#if avgSleepMin7d !== null}
+          <span class="font-mono text-[12px] tracking-[0.12em] text-text2">AVG {Math.floor(avgSleepMin7d / 60)}H {avgSleepMin7d % 60}M</span>
+        {/if}
+      </div>
+      <div class="flex items-end gap-2 h-[120px]">
+        {#each nights as night, i (night.rawDate)}
+          {@const mins = isNightData(night) ? night.durationRaw : 0}
+          <button
+            type="button"
+            class="flex-1 h-full flex items-end bg-transparent border-0 p-0 cursor-pointer"
+            aria-label="{night.label}: {mins > 0 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : 'no sleep recorded'}"
+            aria-pressed={i === nightIndex}
+            onclick={() => (nightIndex = i)}
+          >
+            {#if mins > 0}
+              <span class="block w-full rounded-[10px] bg-blue/40" style="height: {Math.max(18, Math.min(100, (mins / maxNightMin) * 100))}%"></span>
+            {:else}
+              <span class="block w-full h-full rounded-[10px] border border-dashed {i === nightIndex ? 'border-amber/50' : 'border-border'}"></span>
+            {/if}
+          </button>
+        {/each}
+      </div>
+      <div class="flex gap-2 mt-3">
+        {#each nights as night, i (night.rawDate)}
+          <span class="flex-1 text-center font-mono text-[12px] {i === nightIndex && !isNightData(night) ? 'text-amber' : 'text-text2'}">{night.day}</span>
+        {/each}
+      </div>
     </section>
   {:else}
     {@const effPct = nightData.inBedRaw > 0 ? Math.round((nightData.durationRaw / nightData.inBedRaw) * 100) : null}

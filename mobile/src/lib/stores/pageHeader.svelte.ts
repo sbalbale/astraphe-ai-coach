@@ -5,6 +5,8 @@
  * returns `reset` as the cleanup so the next page starts blank.
  */
 export const pageHeader = $state<{
+  /** Replaces the route's title when set (e.g. "Welcome, Sean" on a new account). */
+  title: string;
   eyebrow: string;
   prev: (() => void) | null;
   next: (() => void) | null;
@@ -21,9 +23,10 @@ export const pageHeader = $state<{
   onSegment: ((value: string) => void) | null;
   /** Outlined icon buttons on the right of the title (e.g. Coach history / new chat). */
   actions: { key: string; label: string; icon: 'history' | 'plus'; onclick: () => void }[];
-}>({ eyebrow: '', prev: null, next: null, canNext: true, add: null, addLabel: '', today: null, dateValue: '', dateMax: '', dateLabel: '', dateMarks: [], segments: [], segment: '', onSegment: null, actions: [] });
+}>({ title: '', eyebrow: '', prev: null, next: null, canNext: true, add: null, addLabel: '', today: null, dateValue: '', dateMax: '', dateLabel: '', dateMarks: [], segments: [], segment: '', onSegment: null, actions: [] });
 
 export function resetPageHeader() {
+  pageHeader.title = '';
   pageHeader.eyebrow = '';
   pageHeader.prev = null;
   pageHeader.next = null;
