@@ -1058,6 +1058,17 @@ def parse_garmin_naps(payload: Any) -> list[dict[str, Any]]:
     return naps
 
 
+def _sync_end_date(db: Any, athlete_id: str) -> date:
+    """
+    Last day to sync: the later of UTC today and the athlete's local today. Garmin keys
+    days by the athlete's local calendar, so a UTC-only end date missed this morning's
+    sleep for athletes east of UTC until UTC midnight.
+    """
+    utc_today = datetime.now(timezone.utc).date()
+    local_today = (datetime.now(timezone.utc) + timedelta(minutes=_athlete_offset_min(db, athlete_id))).date()
+    return max(utc_today, local_today)
+
+
 def _athlete_offset_min(db: Any, athlete_id: str) -> int:
     try:
         res = db.table("athletes").select("timezone_offset_min").eq("id", athlete_id).maybe_single().execute()
@@ -1245,7 +1256,7 @@ async def backfill_historical_data(athlete_id: str, db: Any, days: int = 90) -> 
     poll loop (once its cooldown elapses) picks up the rest.
     """
     days = max(1, min(int(days), 365))
-    end_date = datetime.now(timezone.utc).date()
+    end_date = await asyncio.to_thread(_sync_end_date, db, athlete_id)
     start_date = end_date - timedelta(days=days - 1)
 
     workouts = {"workouts": 0, "streams": 0}
@@ -1298,7 +1309,7 @@ async def _poll_one_athlete(athlete_id: str, db: Any) -> None:
         return
     rate_limited = False
     try:
-        end_date = datetime.now(timezone.utc).date()
+        end_date = await asyncio.to_thread(_sync_end_date, db, athlete_id)
         start_date = end_date - timedelta(days=POLL_WINDOW_DAYS - 1)
         await sync_activities_for_athlete(athlete_id, db, start_date, end_date)
         await sync_biometrics_for_athlete(athlete_id, db, start_date, end_date)

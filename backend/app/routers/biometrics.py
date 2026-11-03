@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, BackgroundTasks
 from typing import Optional
+import asyncio
 from datetime import date, datetime, timedelta, timezone
 import math
 
@@ -78,6 +79,13 @@ async def get_biometrics(
     or set `all=true` to return the full series (not recommended for very large histories).
     """
     safe_limit = max(1, min(int(limit or 60), 3650))
+    if not all and not end_date:
+        # The athlete's local today, so east-of-UTC athletes see this morning's sleep.
+        from app.services.time_utils import athlete_local_date
+
+        today = await asyncio.to_thread(athlete_local_date, db, athlete_id)
+    else:
+        today = date.today()
 
     # Resolve range
     if all:
@@ -85,10 +93,10 @@ async def get_biometrics(
         resolved_end = end_date      # may be None (meaning: no upper bound)
     elif start_date or end_date:
         resolved_start = start_date
-        resolved_end = end_date or date.today()
+        resolved_end = end_date or today
     else:
         # Default: most recent `limit` days
-        resolved_end = (before - timedelta(days=1)) if before else date.today()
+        resolved_end = (before - timedelta(days=1)) if before else today
         resolved_start = resolved_end - timedelta(days=safe_limit - 1)
 
     q = db.table("biometrics").select("*").eq("athlete_id", athlete_id)

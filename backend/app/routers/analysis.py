@@ -51,8 +51,13 @@ ANALYSIS_LLM_PER_DAY = 120
 _analysis_limiter = RateLimiter()
 
 
-def _parse_day(day: Optional[str]) -> date:
+def _parse_day(day: Optional[str], db: Any = None, athlete_id: Optional[str] = None) -> date:
+    """The requested day, or the athlete's *local* today (not the server's UTC date)."""
     if not day:
+        if db is not None and athlete_id:
+            from app.services.time_utils import athlete_local_date
+
+            return athlete_local_date(db, athlete_id)
         return date.today()
     try:
         d = date.fromisoformat(str(day)[:10])
@@ -183,7 +188,8 @@ def _row_wake_epoch_s(row: dict, timezone_offset_min: int) -> Optional[float]:
     if not date_str:
         return None
     try:
-        return datetime.fromisoformat(f"{date_str}T00:00:00").timestamp() - (timezone_offset_min * 60)
+        midnight_utc = datetime.fromisoformat(f"{date_str}T00:00:00").replace(tzinfo=timezone.utc)
+        return midnight_utc.timestamp() - (timezone_offset_min * 60)
     except Exception:
         return None
 
@@ -1119,7 +1125,7 @@ async def recovery_analysis(
     model_name: str = Depends(get_current_gemini_analysis_model),
     db: Client = Depends(get_user_db),
 ):
-    d = _parse_day(day)
+    d = _parse_day(day, db, athlete_id)
     ctx = _load_biometrics_context(db, athlete_id, d)
     analysis = await asyncio.to_thread(_get_or_compute, db, athlete_id, tier, "recovery", d.isoformat(), ctx, model_name=model_name, budget=_budget(athlete_id))
     return {"status": "success", "analysis": analysis}
@@ -1133,7 +1139,7 @@ async def sleep_analysis(
     model_name: str = Depends(get_current_gemini_analysis_model),
     db: Client = Depends(get_user_db),
 ):
-    d = _parse_day(day)
+    d = _parse_day(day, db, athlete_id)
     ctx = _load_biometrics_context(db, athlete_id, d)
     analysis = await asyncio.to_thread(_get_or_compute, db, athlete_id, tier, "sleep", d.isoformat(), ctx, model_name=model_name, budget=_budget(athlete_id))
     return {"status": "success", "analysis": analysis}
@@ -1147,7 +1153,7 @@ async def strain_analysis(
     model_name: str = Depends(get_current_gemini_analysis_model),
     db: Client = Depends(get_user_db),
 ):
-    d = _parse_day(day)
+    d = _parse_day(day, db, athlete_id)
     ctx = _load_strain_context(db, athlete_id, d)
     analysis = await asyncio.to_thread(_get_or_compute, db, athlete_id, tier, "strain", d.isoformat(), ctx, model_name=model_name, budget=_budget(athlete_id))
     return {"status": "success", "analysis": analysis}
@@ -1161,7 +1167,7 @@ async def training_load_analysis(
     model_name: str = Depends(get_current_gemini_analysis_model),
     db: Client = Depends(get_user_db),
 ):
-    d = _parse_day(end_day)
+    d = _parse_day(end_day, db, athlete_id)
     ctx = _load_training_load_context(db, athlete_id, d)
     analysis = await asyncio.to_thread(_get_or_compute, db, athlete_id, tier, "training_load", d.isoformat(), ctx, model_name=model_name, budget=_budget(athlete_id))
     return {"status": "success", "analysis": analysis}
@@ -1201,7 +1207,7 @@ async def dashboard_summary_analysis(
     background regeneration. Worst case the user sees yesterday's wording for
     one extra page load.
     """
-    d = _parse_day(day)
+    d = _parse_day(day, db, athlete_id)
     scope_key = d.isoformat()
     ctx = _load_dashboard_context(db, athlete_id, d)
     budget = _budget(athlete_id)
@@ -1311,7 +1317,7 @@ async def time_in_zones_analysis(
     model_name: str = Depends(get_current_gemini_analysis_model),
     db: Client = Depends(get_user_db),
 ):
-    end_d = _parse_day(window_end)
+    end_d = _parse_day(window_end, db, athlete_id)
     start_d = _parse_day(window_start) if window_start else (end_d - timedelta(days=7))
     sport = (sport or "all").strip().lower()
     if sport not in _ZONE_SPORTS:

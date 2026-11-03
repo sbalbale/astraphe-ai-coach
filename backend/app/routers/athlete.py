@@ -235,12 +235,15 @@ async def get_athlete_state(athlete_id: str = Depends(get_current_athlete), db =
     if cached is not None:
         return cached
 
-    display_name, tss_row, bio, window_rows, bio_hist_data = await asyncio.gather(
+    from app.services.time_utils import athlete_local_date
+
+    display_name, tss_row, bio, window_rows, bio_hist_data, local_today = await asyncio.gather(
         run_supabase_call(lambda: _fetch_athlete_name_sync(db, athlete_id)),
         run_supabase_call(lambda: _fetch_latest_tss_sync(db, athlete_id)),
         run_supabase_call(lambda: _fetch_latest_bio_sync(db, athlete_id)),
         run_supabase_call(lambda: _fetch_bio_window_sync(db, athlete_id)),
         run_supabase_call(lambda: _fetch_bio_hist_sync(db, athlete_id)),
+        run_supabase_call(lambda: athlete_local_date(db, athlete_id)),
     )
 
     if display_name is None:
@@ -287,7 +290,7 @@ async def get_athlete_state(athlete_id: str = Depends(get_current_athlete), db =
     state_response = {
         "athlete_id": athlete_id,
         "display_name": display_name,
-        "date": date.today(),
+        "date": local_today,
         "days_on_platform": int(days_on_platform),
         "ctl": ctl,
         "atl": atl,
@@ -321,8 +324,12 @@ async def get_athlete_metrics(
     db = Depends(get_user_db)
 ):
     """Returns computed metrics over a date range."""
-    start_date = start_date or (date.today() - timedelta(days=42))
-    end_date = end_date or date.today()
+    if not start_date or not end_date:
+        from app.services.time_utils import athlete_local_date
+
+        today = await asyncio.to_thread(athlete_local_date, db, athlete_id)
+        start_date = start_date or (today - timedelta(days=42))
+        end_date = end_date or today
 
     tss_res = await asyncio.to_thread(
         db.table("tss_history")

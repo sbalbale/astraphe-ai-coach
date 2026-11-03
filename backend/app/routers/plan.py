@@ -1,3 +1,5 @@
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException
 from typing import Optional
 from datetime import date, timedelta
@@ -16,8 +18,12 @@ async def get_training_plan(
     """Returns the athlete's training plan for a date range."""
     if tier != "premium":
         raise HTTPException(status_code=403, detail="Premium membership required for Training Plan.")
-    start_date = start_date or date.today()
-    end_date = end_date or (date.today() + timedelta(days=7))
+    if not start_date or not end_date:
+        from app.services.time_utils import athlete_local_date
+
+        today = await asyncio.to_thread(athlete_local_date, db, athlete_id)
+        start_date = start_date or today
+        end_date = end_date or (today + timedelta(days=7))
     
     plan_res = db.table("training_plans").select("*").eq("athlete_id", athlete_id).gte("planned_date", start_date.isoformat()).lte("planned_date", end_date.isoformat()).order("planned_date").execute()
 
