@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { localDay } from '$lib/utils/localDay';
   import { onMount } from 'svelte';
   import { format, subDays } from 'date-fns';
   import { api } from '$lib/api';
@@ -45,11 +46,16 @@
     return Number.isFinite(ctl) && Number.isFinite(atl) ? ctl - atl : null;
   }
   const scoreDate = $derived(row?.date ?? todayIso);
-  const tsb = $derived(formFor(scoreDate) ?? Number(athleteStore.tsb ?? 0));
+  // The store's current form only stands in for *today's* score, never an older day's.
+  const tsb = $derived(formFor(scoreDate) ?? (scoreDate === todayIso ? Number(athleteStore.tsb) : NaN));
   const breakdown = $derived(readinessBreakdown(recovery, tsb));
   const band = $derived<ReadinessBand>(readinessBand(score ?? breakdown.total));
 
-  const yesterday = $derived(readinessScoreFromRow(byDate.get(format(subDays(now, 1), 'yyyy-MM-dd'))));
+  // The day before the score's own day: when today's row hasn't synced and yesterday's
+  // score is shown, comparing with "yesterday" compared the row with itself (±0).
+  const yesterday = $derived(
+    readinessScoreFromRow(byDate.get(format(subDays(new Date(scoreDate + 'T12:00:00'), 1), 'yyyy-MM-dd')))
+  );
   const delta = $derived(score != null && yesterday != null ? score - yesterday : null);
 
   const SUMMARY: Record<ReadinessBand, string> = {
@@ -122,7 +128,7 @@
         recovery: firstPositiveFiniteNumber(r?.recovery_score),
         form: formFor(d),
         workouts: (athleteStore.workouts ?? [])
-          .filter((w: any) => String(w?.started_at ?? '').slice(0, 10) === d)
+          .filter((w: any) => localDay(w?.started_at) === d)
           .map((w: any) => w?.title || w?.sport || 'Workout') as string[]
       };
     })
@@ -154,7 +160,7 @@
         <span class="font-display text-[96px] leading-[0.85]">{score}</span>
         <span class="flex flex-col gap-1 pb-1.5">
           <span class="font-mono text-[11px] tracking-[0.14em] uppercase" style="color: {BAND_COPY[band].color}">{BAND_COPY[band].verdict}</span>
-          {#if delta !== null}<span class="text-[13px] text-text2">{delta > 0 ? '+' : delta < 0 ? '−' : '±'}{Math.abs(delta)} vs yesterday</span>{/if}
+          {#if delta !== null}<span class="text-[13px] text-text2">{delta > 0 ? '+' : delta < 0 ? '−' : '±'}{Math.abs(delta)} {scoreDate === todayIso ? 'vs yesterday' : 'vs the day before'}</span>{/if}
         </span>
       </div>
       <p class="m-0 text-[15px] leading-normal text-text1">{SUMMARY[band]}</p>
@@ -180,7 +186,7 @@
         {/if}
         <div class="grid grid-cols-[10px_1fr_auto] gap-2.5 items-center py-2.5 border-t border-border">
           <span aria-hidden="true" class="w-2.5 h-2.5 rounded-[3px] bg-text2"></span>
-          <span class="flex flex-col gap-0.5"><span class="text-sm font-medium">Form · {tsb > 0 ? '+' : ''}{tsb.toFixed(1)} → {Math.round(breakdown.formScore)}</span><span class="text-xs text-text2">Fitness minus fatigue, scaled 0–100{breakdown.recovery != null ? ` · weighted ${FORM_WEIGHT * 100}%` : ''}</span></span>
+          <span class="flex flex-col gap-0.5"><span class="text-sm font-medium">Form · {Number.isFinite(tsb) ? `${tsb > 0 ? '+' : ''}${tsb.toFixed(1)}` : '--'} → {Math.round(breakdown.formScore)}</span><span class="text-xs text-text2">Fitness minus fatigue, scaled 0–100{breakdown.recovery != null ? ` · weighted ${FORM_WEIGHT * 100}%` : ''}</span></span>
           <span class="font-mono text-sm">{breakdown.formPart.toFixed(1)}</span>
         </div>
         <div class="flex justify-between pt-2.5 border-t border-border text-[13px]">

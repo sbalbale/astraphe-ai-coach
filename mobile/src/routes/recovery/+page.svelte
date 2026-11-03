@@ -212,6 +212,10 @@
   const hasData = $derived(
     days.some((day) => !day.missing) || current.row != null || athleteStore.readiness > 0
   );
+  // "Connect an app" only when we *know* nothing is connected and there's no data:
+  // manual-only athletes (logged sleep/workouts) see their data, and connected users
+  // don't flash this while the sync status is still loading.
+  const showConnectPrompt = $derived(athleteStore.syncStatus != null && !isConnected && !hasData);
 
   const score = $derived(
     firstPositiveFiniteNumber(
@@ -446,7 +450,7 @@
 </script>
 
 <div class="flex flex-col gap-3.5">
-  {#if !isConnected}
+  {#if showConnectPrompt}
     <EmptyState title="No Recovery Data" message="Connect WHOOP, Garmin, or Apple Health to see your recovery analysis." />
   {:else if !hasData}
     <EmptyState title="Waiting for Sync" message="We're waiting for your biometric data to compute your recovery score." icon="⏳" />

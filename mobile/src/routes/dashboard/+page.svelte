@@ -143,6 +143,10 @@
 
   const hasData = $derived(athleteStore.workouts?.length > 0 || athleteStore.readiness > 0);
   const isConnected = $derived(Object.values(athleteStore.syncStatus?.integrations || {}).some((i: any) => i.connected));
+  // "Connect an app" only when we *know* nothing is connected and there's no data:
+  // manual-only athletes (logged sleep/workouts) see their data, and connected users
+  // don't flash this while the sync status is still loading.
+  const showConnectPrompt = $derived(athleteStore.syncStatus != null && !isConnected && !hasData);
 
   const todayStr = $derived(format(new Date(), 'yyyy-MM-dd'));
   const isoDate = (v: unknown) => (typeof v === 'string' ? v.slice(0, 10) : '');
@@ -380,16 +384,17 @@
       <h1 class="text-[22px] font-bold tracking-[-0.02em]">{currentGreeting}, {authStore.user?.user_metadata?.full_name || 'Athlete'}</h1>
     </div>
     <div class="flex items-center gap-2">
-      <div class="w-2 h-2 rounded-full bg-teal shadow-[0_0_8px_var(--teal)]"></div>
+      <div class="w-2 h-2 rounded-full {isConnected ? 'bg-teal shadow-[0_0_8px_var(--teal)]' : 'bg-text2'}"></div>
       <span class="text-[11px] text-text1 font-mono">{isConnected ? 'LIVE' : 'OFFLINE'}</span>
     </div>
   </div>
 
-  {#if !isConnected}
+  {#if showConnectPrompt}
     <EmptyState 
       title="No Apps Connected" 
       message="Link Garmin, WHOOP, or Apple Health to see your training metrics and AI coaching."
       actionLabel="Connect Now"
+      onAction={() => goto('/profile/connections')}
       icon="⚡"
     />
   {:else if !hasData}
@@ -397,6 +402,7 @@
       title="Waiting for Data" 
       message="Your apps are connected. We're waiting for your first activity or biometric sync."
       actionLabel="Check Sync Status"
+      onAction={() => goto('/profile/connections')}
       icon="⏳"
     />
   {:else}

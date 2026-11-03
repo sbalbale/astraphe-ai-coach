@@ -6,6 +6,7 @@
 </script>
 
 <script lang="ts">
+  import { localDay } from '$lib/utils/localDay';
   import Card from '$lib/components/Card.svelte';
   import MetricBadge from '$lib/components/MetricBadge.svelte';
   import RadialProgress from '$lib/components/RadialProgress.svelte';
@@ -48,6 +49,11 @@
   let endPickerValue = $state(bodyDate.value ?? '');
   let dayIndex = $state(6); // most recent on the right
   const isoDate = (value: unknown) => (typeof value === 'string' ? value.slice(0, 10) : '');
+  /** A real number (0 included) from the day's row, else the fallback, else null. */
+  const loadValue = (v: unknown, fallback: unknown): number | null => {
+    for (const x of [v, fallback]) if (x != null && Number.isFinite(Number(x))) return Number(x);
+    return null;
+  };
 
   const today = $derived(new Date());
   const todayStr = $derived(format(today, 'yyyy-MM-dd'));
@@ -77,7 +83,7 @@
     pageHeader.today = () => { endPickerValue = todayStr; dayIndex = 6; };
     pageHeader.dateMax = todayStr;
     pageHeader.dateLabel = canGoForward ? format(clampedEndDay, 'EEE d MMM') : 'Today';
-    pageHeader.dateMarks = Array.from(new Set([...(athleteStore.workouts ?? []).map((w: any) => String(w?.started_at ?? '').slice(0, 10)), ...(athleteStore.biometrics?.series ?? []).filter((r: any) => Number(r?.strain_score) > 0).map((r: any) => r.date)].filter(Boolean)));
+    pageHeader.dateMarks = Array.from(new Set([...(athleteStore.workouts ?? []).map((w: any) => localDay(w?.started_at)), ...(athleteStore.biometrics?.series ?? []).filter((r: any) => Number(r?.strain_score) > 0).map((r: any) => r.date)].filter(Boolean)));
     pageHeader.dateValue = format(clampedEndDay, "yyyy-MM-dd");
     return resetPageHeader;
   });
@@ -107,7 +113,7 @@
       const hasBioStrain = Number.isFinite(bioStrain) && bioStrain > 0;
 
       // Workout-derived strain when biometrics strain is missing or stale (0 before zones synced).
-      const workoutsForDay = athleteStore.workouts?.filter((w: any) => isoDate(w?.started_at) === dateStr) || [];
+      const workoutsForDay = athleteStore.workouts?.filter((w: any) => localDay(w?.started_at) === dateStr) || [];
       const hasWorkout = workoutsForDay.length > 0;
       const workoutStrainScore = Math.min(
         100,
@@ -131,9 +137,11 @@
         label: dateStr === todayStr ? 'Today' : format(d, 'MMM d'),
         day: dayLabel,
         score: computedScore,
-        ctl: history?.ctl || athleteStore.ctl || 0,
-        atl: history?.atl || athleteStore.atl || 0,
-        tsb: history?.tsb || athleteStore.tsb || 0,
+        // That day's values only; today's are a fallback for today alone (past days
+        // used to show today's fitness/fatigue/form whenever their row was missing).
+        ctl: loadValue(history?.ctl, dateStr === todayStr ? athleteStore.ctl : null),
+        atl: loadValue(history?.atl, dateStr === todayStr ? athleteStore.atl : null),
+        tsb: loadValue(history?.tsb, dateStr === todayStr ? athleteStore.tsb : null),
         workouts: workoutsForDay,
         // Only show "no strain data" when a workout exists but we still can't compute strain.
         missing: hasWorkout && computedScore === 0,
@@ -149,6 +157,10 @@
 
   const d = $derived(days[dayIndex]);
   const hasData = $derived(days.some(day => !day.missing) || athleteStore.atl > 0);
+  // "Connect an app" only when we *know* nothing is connected and there's no data:
+  // manual-only athletes (logged sleep/workouts) see their data, and connected users
+  // don't flash this while the sync status is still loading.
+  const showConnectPrompt = $derived(athleteStore.syncStatus != null && !isConnected && !hasData);
   
   const score = $derived(d.score || 0);
   // Strain is INVERTED relative to the other 0-100 scores: low strain is a
@@ -337,7 +349,7 @@
 </script>
 
 <div class="flex flex-col gap-3.5">
-  {#if !isConnected}
+  {#if showConnectPrompt}
     <EmptyState title="No Strain Data" message="Connect WHOOP, Garmin, or Apple Health to track your daily strain." />
   {:else if !hasData}
     <EmptyState title="Waiting for Data" message="We're waiting for your first activity to compute strain." icon="⏳" />
@@ -366,9 +378,9 @@
 
     <!-- Fitness / Fatigue / Form -->
     <dl class="m-0 grid grid-cols-3 gap-2">
-      <div class="bg-bg2 border border-border rounded-2xl p-3 flex flex-col-reverse gap-0.5"><dt class="text-[11px] text-text2">Fitness</dt><dd class="m-0 text-[19px] font-medium">{d.ctl ? d.ctl.toFixed(1) : '--'}</dd></div>
-      <div class="bg-bg2 border border-border rounded-2xl p-3 flex flex-col-reverse gap-0.5"><dt class="text-[11px] text-text2">Fatigue</dt><dd class="m-0 text-[19px] font-medium">{d.atl ? d.atl.toFixed(1) : '--'}</dd></div>
-      <div class="bg-bg2 border border-border rounded-2xl p-3 flex flex-col-reverse gap-0.5"><dt class="text-[11px] text-text2">Form</dt><dd class="m-0 text-[19px] font-medium" style="color: {formCssColor(d.tsb)}">{d.tsb > 0 ? '+' : ''}{d.tsb ? d.tsb.toFixed(1) : '--'}</dd></div>
+      <div class="bg-bg2 border border-border rounded-2xl p-3 flex flex-col-reverse gap-0.5"><dt class="text-[11px] text-text2">Fitness</dt><dd class="m-0 text-[19px] font-medium">{d.ctl != null ? d.ctl.toFixed(1) : '--'}</dd></div>
+      <div class="bg-bg2 border border-border rounded-2xl p-3 flex flex-col-reverse gap-0.5"><dt class="text-[11px] text-text2">Fatigue</dt><dd class="m-0 text-[19px] font-medium">{d.atl != null ? d.atl.toFixed(1) : '--'}</dd></div>
+      <div class="bg-bg2 border border-border rounded-2xl p-3 flex flex-col-reverse gap-0.5"><dt class="text-[11px] text-text2">Form</dt><dd class="m-0 text-[19px] font-medium" style="color: {d.tsb != null ? formCssColor(d.tsb) : 'var(--text2)'}">{d.tsb != null && d.tsb > 0 ? '+' : ''}{d.tsb != null ? d.tsb.toFixed(1) : '--'}</dd></div>
     </dl>
 
     <!-- Contributing activities -->

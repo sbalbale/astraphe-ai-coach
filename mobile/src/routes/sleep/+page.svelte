@@ -31,6 +31,10 @@
     ),
   );
   const hasData = $derived(athleteStore.biometrics?.series?.length > 0);
+  // "Connect an app" only when we *know* nothing is connected and there's no data:
+  // manual-only athletes (logged sleep/workouts) see their data, and connected users
+  // don't flash this while the sync status is still loading.
+  const showConnectPrompt = $derived(athleteStore.syncStatus != null && !isConnected && !hasData);
 
   function formatHoursMinutesFromMinutes(mins: number | null | undefined): string {
     const n = typeof mins === "number" ? mins : Number(mins);
@@ -511,7 +515,7 @@
 />
 
 <div class="flex flex-col gap-3.5">
-  {#if !isConnected}
+  {#if showConnectPrompt}
     <EmptyState title="No Sleep Data" message="Connect WHOOP, Garmin, or Apple Health to track your sleep architecture and recovery." icon="🌙" secondaryLabel="Log Sleep" onSecondaryAction={() => (addSleepOpen = true)} />
   {:else if !hasData}
     <EmptyState title="Waiting for Sleep Sync" message="We'll analyze your sleep as soon as your device syncs with our servers." icon="⏳" />
