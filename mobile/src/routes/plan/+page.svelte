@@ -5,6 +5,7 @@
   import { authStore } from '$lib/stores/authStore.svelte';
   import { trainingStore } from '$lib/stores/trainingStore.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
+  import DatePicker from '$lib/components/DatePicker.svelte';
   import { pageHeader, resetPageHeader } from '$lib/stores/pageHeader.svelte';
   import MonthNavigator from '$lib/components/MonthNavigator.svelte';
   import {
@@ -448,10 +449,64 @@
 
   // --- Session sheet: interactive profile + per-step detail ---
   let stepIdx = $state(0);
+  let sheetExpanded = $state(false);
+  let sheetMode = $state<'none' | 'move' | 'swap'>('none');
+  let moveDate = $state('');
+  let savingPlan = $state(false);
+  let planActionError = $state<string | null>(null);
   $effect(() => {
     void selectedWorkout?.id;
     stepIdx = 0;
+    sheetExpanded = false;
+    sheetMode = 'none';
+    planActionError = null;
   });
+
+  /** Other sessions in the same Monday–Sunday week, for Swap. */
+  function swapCandidates(w: PlannedWorkout): PlannedWorkout[] {
+    const start = startOfWeek(w.date, { weekStartsOn: 1 });
+    const out: PlannedWorkout[] = [];
+    for (let i = 0; i < 7; i++) {
+      const iso = format(addDays(start, i), 'yyyy-MM-dd');
+      for (const o of workoutsByIso[iso] ?? []) if (o.id !== w.id && backendTrainingPlanId(o)) out.push(o);
+    }
+    return out;
+  }
+
+  async function applySchedule(changes: { id: string; date: string }[], focusIso: string) {
+    savingPlan = true;
+    planActionError = null;
+    try {
+      const ok = await trainingStore.rescheduleWorkouts(changes, viewMonthRange.startIso, viewMonthRange.endIso);
+      if (!ok) {
+        planActionError = "Couldn't update the plan. Try again.";
+        return;
+      }
+      closeWorkout();
+      selectDate(parseIsoLocal(focusIso));
+    } finally {
+      savingPlan = false;
+    }
+  }
+
+  function moveSession(w: PlannedWorkout, iso: string) {
+    const id = backendTrainingPlanId(w);
+    if (!id || !iso || iso === w.isoDate) return;
+    return applySchedule([{ id, date: iso }], iso);
+  }
+
+  function swapSessions(a: PlannedWorkout, b: PlannedWorkout) {
+    const idA = backendTrainingPlanId(a);
+    const idB = backendTrainingPlanId(b);
+    if (!idA || !idB) return;
+    return applySchedule(
+      [
+        { id: idA, date: b.isoDate },
+        { id: idB, date: a.isoDate }
+      ],
+      b.isoDate
+    );
+  }
   const planFtp = $derived(Number(athleteStore.profile?.ftp_watts) || 0);
   const ZONE_NAMES: Record<number, string> = { 1: 'Recovery', 2: 'Endurance', 3: 'Tempo', 4: 'Threshold', 5: 'VO2max' };
   const RPE: Record<number, string> = { 1: '1–2 / 10', 2: '3–4 / 10', 3: '5–6 / 10', 4: '7–8 / 10', 5: '9–10 / 10' };
@@ -681,7 +736,11 @@
   {@const cur = steps[Math.min(stepIdx, Math.max(steps.length - 1, 0))]}
   <div class="fixed inset-0 z-50 flex flex-col justify-end" role="dialog" aria-modal="true" aria-labelledby="sess-title">
     <button type="button" class="absolute inset-0 bg-black/60" aria-label="Close" onclick={closeWorkout}></button>
-    <div class="relative max-h-[92dvh] overflow-y-auto bg-bg1 border-t border-border rounded-t-[28px] px-5 pt-2.5 flex flex-col gap-4" style="padding-bottom: max(28px, env(safe-area-inset-bottom, 0px));">
+    <div
+      class="relative overflow-y-auto bg-bg1 border-t border-border px-5 pt-2.5 flex flex-col gap-4 transition-[max-height,border-radius] duration-300 ease-out {sheetExpanded ? 'rounded-none' : 'rounded-t-[28px]'}"
+      style="max-height: {sheetExpanded ? '100dvh' : '88dvh'}; height: {sheetExpanded ? '100dvh' : 'auto'}; padding-bottom: max(28px, env(safe-area-inset-bottom, 0px)); padding-top: {sheetExpanded ? 'max(10px, env(safe-area-inset-top, 0px))' : '10px'};"
+      onscroll={(e) => { if (!sheetExpanded && (e.currentTarget as HTMLElement).scrollTop > 8) sheetExpanded = true; }}
+    >
       <span aria-hidden="true" class="self-center w-10 h-1 rounded-sm bg-bg3"></span>
 
       <div class="flex justify-between items-start gap-3">
@@ -814,13 +873,50 @@
       {/if}
 
       {#if backendTrainingPlanId(sw)}
+        {#if sheetMode === 'move'}
+          <section aria-label="Move session" class="flex flex-col gap-3 p-4 rounded-[20px] bg-bg3/60 border border-border">
+            <span class="font-mono text-[10px] tracking-[0.12em] text-text2">MOVE TO</span>
+            <DatePicker bind:value={moveDate} ariaLabel="New date for this session" buttonClass="h-11 px-3 rounded-xl border border-border bg-bg1 text-sm text-text0" />
+            <div class="flex gap-2">
+              <button type="button" class="flex-1 h-11 rounded-xl border border-border bg-transparent text-text0 text-sm font-medium cursor-pointer" onclick={() => (sheetMode = 'none')}>Cancel</button>
+              <button type="button" class="flex-1 h-11 rounded-xl border-0 bg-blue text-[#0B1420] text-sm font-semibold cursor-pointer disabled:opacity-40 disabled:cursor-default" disabled={savingPlan || !moveDate || moveDate === sw.isoDate} onclick={() => moveSession(sw, moveDate)}>{savingPlan ? 'Moving…' : 'Move here'}</button>
+            </div>
+          </section>
+        {:else if sheetMode === 'swap'}
+          {@const others = swapCandidates(sw)}
+          <section aria-label="Swap session" class="flex flex-col gap-2 p-4 rounded-[20px] bg-bg3/60 border border-border">
+            <span class="font-mono text-[10px] tracking-[0.12em] text-text2">SWAP DAYS WITH</span>
+            {#if others.length === 0}
+              <p class="m-0 text-[13px] text-text2">No other sessions this week.</p>
+            {/if}
+            {#each others as o (o.id)}
+              <button type="button" class="flex items-center gap-3 px-3 py-2.5 rounded-xl border border-border bg-bg1 text-left cursor-pointer disabled:opacity-40" disabled={savingPlan} onclick={() => swapSessions(sw, o)}>
+                <span aria-hidden="true" class="shrink-0 w-1 h-8 rounded-sm" style="background: {sessionColor(o)}"></span>
+                <span class="flex-1 min-w-0 flex flex-col">
+                  <span class="font-mono text-[10px] tracking-[0.1em] text-text2 uppercase">{format(o.date, 'EEE d MMM')}</span>
+                  <span class="text-sm font-medium truncate">{o.title ?? o.type ?? 'Session'}</span>
+                </span>
+                <span class="shrink-0 text-xs text-text2">{o.duration ?? ''}</span>
+              </button>
+            {/each}
+            <button type="button" class="mt-1 h-11 rounded-xl border border-border bg-transparent text-text0 text-sm font-medium cursor-pointer" onclick={() => (sheetMode = 'none')}>Cancel</button>
+          </section>
+        {/if}
+        {#if planActionError}
+          <p class="m-0 text-[13px] text-red">{planActionError}</p>
+        {/if}
         <div class="mt-auto flex gap-2">
+          <button type="button" class="flex-1 h-12 rounded-[14px] border border-border bg-transparent text-text0 text-sm font-medium cursor-pointer {sheetMode === 'move' ? 'bg-bg3' : ''}" onclick={() => { moveDate = sw.isoDate; sheetMode = sheetMode === 'move' ? 'none' : 'move'; }}>Move</button>
+          <button type="button" class="flex-1 h-12 rounded-[14px] border border-border bg-transparent text-text0 text-sm font-medium cursor-pointer {sheetMode === 'swap' ? 'bg-bg3' : ''}" onclick={() => (sheetMode = sheetMode === 'swap' ? 'none' : 'swap')}>Swap</button>
           <button
             type="button"
-            class="flex-1 h-12 rounded-[14px] border border-red/50 bg-transparent text-red text-sm font-medium cursor-pointer disabled:opacity-50 disabled:pointer-events-none"
+            aria-label="Remove from plan"
+            class="w-12 h-12 shrink-0 rounded-[14px] border border-red/50 bg-transparent text-red flex items-center justify-center cursor-pointer disabled:opacity-50 disabled:pointer-events-none"
             disabled={removingPlanWorkout}
             onclick={removeSelectedTrainingPlan}
-          >{removingPlanWorkout ? 'Removing…' : 'Remove from plan'}</button>
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"></path></svg>
+          </button>
         </div>
       {/if}
     </div>

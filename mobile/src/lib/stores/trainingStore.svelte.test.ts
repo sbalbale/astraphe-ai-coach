@@ -172,3 +172,52 @@ describe('deleteTrainingPlan', () => {
     expect(getWorkoutsMock).not.toHaveBeenCalled();
   });
 });
+
+
+describe('rescheduleWorkouts', () => {
+  it('saves each session with its new date and refreshes the range', async () => {
+    trainingStore.workouts = [
+      workout({ id: 'a', date: '2026-05-20', title: 'A' }),
+      workout({ id: 'b', date: '2026-05-22', title: 'B' })
+    ];
+    saveWorkoutMock.mockImplementation(async (w: Workout) => w);
+    getWorkoutsMock.mockResolvedValue([
+      workout({ id: 'a', date: '2026-05-22', title: 'A' }),
+      workout({ id: 'b', date: '2026-05-20', title: 'B' })
+    ]);
+    const ok = await trainingStore.rescheduleWorkouts(
+      [
+        { id: 'a', date: '2026-05-22' },
+        { id: 'b', date: '2026-05-20' }
+      ],
+      '2026-05-18',
+      '2026-05-24'
+    );
+    expect(ok).toBe(true);
+    expect(saveWorkoutMock).toHaveBeenCalledTimes(2);
+    expect(saveWorkoutMock.mock.calls[0][0]).toMatchObject({ id: 'a', date: '2026-05-22' });
+    expect(saveWorkoutMock.mock.calls[1][0]).toMatchObject({ id: 'b', date: '2026-05-20' });
+    expect(getWorkoutsMock).toHaveBeenCalledWith('2026-05-18', '2026-05-24');
+    expect(trainingStore.workouts.map((w) => [w.id, w.date])).toEqual([
+      ['b', '2026-05-20'],
+      ['a', '2026-05-22']
+    ]);
+  });
+
+  it('reports failure for unknown sessions or failed saves but still refreshes', async () => {
+    trainingStore.workouts = [workout({ id: 'a', date: '2026-05-20' })];
+    saveWorkoutMock.mockResolvedValue(null);
+    getWorkoutsMock.mockResolvedValue([]);
+    const ok = await trainingStore.rescheduleWorkouts(
+      [
+        { id: 'missing', date: '2026-05-21' },
+        { id: 'a', date: '2026-05-23' }
+      ],
+      '2026-05-18',
+      '2026-05-24'
+    );
+    expect(ok).toBe(false);
+    expect(saveWorkoutMock).toHaveBeenCalledTimes(1);
+    expect(getWorkoutsMock).toHaveBeenCalledTimes(1);
+  });
+});

@@ -100,6 +100,30 @@ export class TrainingState {
     }
   }
 
+  /**
+   * Moves planned sessions to new dates (Move = one change, Swap = two that trade days),
+   * saving each through the training-plans API, then refreshes the given range.
+   * Returns false if any session is unknown or a save fails.
+   */
+  async rescheduleWorkouts(
+    changes: { id: string; date: string }[],
+    rangeStartIso: string,
+    rangeEndIso: string
+  ): Promise<boolean> {
+    let ok = true;
+    for (const change of changes) {
+      const current = this.workouts.find((w) => w.id === change.id);
+      if (!current) {
+        ok = false;
+        continue;
+      }
+      const saved = await api.saveWorkout({ ...current, date: change.date });
+      if (!saved) ok = false;
+    }
+    await this.fetchWorkouts(rangeStartIso, rangeEndIso);
+    return ok;
+  }
+
   /** Removes a planned session from `training_plans`; refreshes the given date range view. */
   async deleteTrainingPlan(planId: string, rangeStartIso: string, rangeEndIso: string): Promise<boolean> {
     const ok = await api.deleteTrainingPlan(planId);
