@@ -10,6 +10,9 @@
   import { isStandaloneDisplayMode } from '$lib/utils/pwa';
   import { normalizeLeadingTimeOfDayGreeting } from '$lib/utils/greeting';
   import { pageHeader, resetPageHeader } from '$lib/stores/pageHeader.svelte';
+  import { page } from '$app/stores';
+  import { replaceState } from '$app/navigation';
+  import UiIcon from '$lib/components/ui/UiIcon.svelte';
   import { buildCoachSteps, coachStatusText, type CoachStep } from '$lib/coachProgress';
   import { COACH_REPLY_WAIT_MS, remainingReplyWaitMs } from '$lib/utils/coachReply';
 
@@ -510,8 +513,42 @@
     return format(d, d.getFullYear() === new Date().getFullYear() ? 'EEE d MMM · HH:mm' : 'd MMM yyyy');
   }
 
+  // --- New conversation, nothing sent yet (design: empty states, page 8) ---
+  const STARTER_PROMPTS = [
+    'Should I train hard today?',
+    'Build me a plan to raise my FTP',
+    'How was my last week of training?'
+  ];
+  /** The local greeting is a placeholder; the intro card stands in for it until the first send. */
+  const isFreshChat = $derived(messages.every((m) => m.id === 'local-greeting'));
+  const visibleMessages = $derived(messages.filter((m) => m.id !== 'local-greeting'));
+
+  function useStarter(text: string) {
+    input = text;
+    tick().then(() => {
+      resizeChatInput();
+      chatInputEl?.focus();
+    });
+  }
+
+  // /chat?prompt=… (from Plan and Today): open a new conversation with the text in
+  // the composer, unsent, then drop the param so a reload doesn't repeat it.
+  let promptApplied = false;
   $effect(() => {
-    pageHeader.eyebrow = 'Knows your last 90 days';
+    const prompt = $page.url.searchParams.get('prompt');
+    if (!prompt || promptApplied || !historyLoaded || historyLoading) return;
+    promptApplied = true;
+    (async () => {
+      if (conversationId) await newChat();
+      useStarter(prompt.slice(0, 2000));
+      const url = new URL($page.url);
+      url.searchParams.delete('prompt');
+      replaceState(url, $page.state);
+    })();
+  });
+
+  $effect(() => {
+    pageHeader.eyebrow = 'Knows your training history';
     pageHeader.actions = [
       { key: 'history', label: 'Past conversations', icon: 'history', onclick: () => (convoMenuOpen = !convoMenuOpen) },
       { key: 'new', label: 'New conversation', icon: 'plus', onclick: () => { convoMenuOpen = false; newChat(); } }
@@ -553,7 +590,27 @@
   {/if}
 
   <div class="flex-1 overflow-y-auto flex flex-col gap-3.5 px-5 pt-2 pb-4 min-h-0" bind:this={chatContainer}>
-    {#each messages as msg (msg.id)}
+    {#if isFreshChat && !historyLoading}
+      <section aria-labelledby="coach-intro-title" class="flex flex-col pt-4">
+        <div class="w-14 h-14 rounded-2xl border border-blue/20 bg-blue-dim text-blue flex items-center justify-center mb-6">
+          <UiIcon name="chat" size={24} />
+        </div>
+        <h2 id="coach-intro-title" class="m-0 font-display font-normal text-[34px] leading-[1.1] text-text0">Ask me anything about your training.</h2>
+        <p class="m-0 mt-3 text-[16px] leading-relaxed text-text1">
+          I can see your workouts, plan, recovery and sleep, so you don't need to paste numbers in. I'll show you what I checked before I answer.
+        </p>
+        <div aria-label="Suggested questions" class="flex flex-col gap-2.5 mt-6">
+          {#each STARTER_PROMPTS as s (s)}
+            <button
+              type="button"
+              class="w-full text-left px-5 py-4 rounded-[18px] border border-border bg-bg2 text-[16px] text-text0 cursor-pointer hover:border-text2/60 transition-colors"
+              onclick={() => useStarter(s)}
+            >{s}</button>
+          {/each}
+        </div>
+      </section>
+    {/if}
+    {#each visibleMessages as msg (msg.id)}
       {#if msg.role === 'ai'}
         {#if msg.steps && msg.steps.length > 0}
           <ol aria-label="What the coach checked" class="list-none m-0 p-0 flex flex-col gap-1.5">
@@ -608,7 +665,7 @@
       {/if}
     {/each}
 
-    {#if !loading && promptSuggestions.length > 0}
+    {#if !loading && !isFreshChat && promptSuggestions.length > 0}
       <div aria-label="Suggested questions" class="flex flex-wrap gap-2">
         {#each promptSuggestions as s, i (s + String(i))}
           <button

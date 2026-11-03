@@ -6,6 +6,8 @@
 
 <script lang="ts">
   import EmptyStateCard from '$lib/components/ui/EmptyStateCard.svelte';
+  import ManualWorkoutDetail from '$lib/components/workout/ManualWorkoutDetail.svelte';
+  import { isManualWorkout } from '$lib/utils/manualWorkout';
   import { confirm } from '$lib/confirm';
   import WeekNavigator from '$lib/components/WeekNavigator.svelte';
   import { pageHeader, resetPageHeader } from '$lib/stores/pageHeader.svelte';
@@ -722,6 +724,16 @@
   {:else}
     {#if metric === 'history'}
       {#if selectedWorkout}
+        {#if isManualWorkout(selectedWorkout)}
+          <!-- Logged by hand: no streams, map, laps or HR (design: empty states, page 9) -->
+          <ManualWorkoutDetail
+            workout={selectedWorkout}
+            sportLabel={getWorkoutLabel(selectedWorkout.sport)}
+            onBack={closeWorkout}
+            onEdit={openEditActivity}
+            onDelete={deleteSelectedWorkout}
+          />
+        {:else}
         <!-- Detailed Workout View (map hero + tabs) -->
         {@const sel = selectedWorkout}
         {@const selTss = Number.isFinite(Number(sel?.tss)) && Number(sel.tss) > 0 ? Math.round(Number(sel.tss)) : null}
@@ -947,6 +959,7 @@
             {/if}
           </div>
         </div>
+        {/if}
       {:else}
         <div class="flex flex-col gap-3.5">
           <!-- This week -->

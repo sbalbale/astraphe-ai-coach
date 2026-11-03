@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Action } from 'svelte/action';
-  import EmptyState from '$lib/components/EmptyState.svelte';
+  import EmptyStateCard from '$lib/components/ui/EmptyStateCard.svelte';
+  import { api } from '$lib/api';
   import { confirm } from '$lib/confirm';
   import { authStore } from '$lib/stores/authStore.svelte';
   import { trainingStore } from '$lib/stores/trainingStore.svelte';
@@ -447,7 +448,46 @@
     return `${items.length} session${items.length === 1 ? '' : 's'} · ${time}`;
   });
 
+  // --- No plan at all (design: empty states, page 7) ---
+  /** Anything planned from today over the next 8 weeks (null until checked). */
+  let hasUpcoming = $state<boolean | null>(null);
   $effect(() => {
+    if (authStore.tier !== 'premium') return;
+    void trainingStore.workouts; // re-check after the store reloads (e.g. a plan was just built)
+    let cancelled = false;
+    const to = format(addDays(new Date(), 56), 'yyyy-MM-dd');
+    api.getWorkouts(todayIso, to).then(
+      (rows) => {
+        if (!cancelled) hasUpcoming = rows.length > 0;
+      },
+      () => {
+        if (!cancelled) hasUpcoming = true; // unknown: keep the normal calendar
+      }
+    );
+    return () => {
+      cancelled = true;
+    };
+  });
+  /** Only for athletes with no plan at all, never for an ordinary empty week. */
+  const noPlanYet = $derived(
+    !trainingStore.isLoading && plannedWorkouts.length === 0 && hasUpcoming === false
+  );
+
+  const PLAN_GOALS = [
+    { title: 'Raise my FTP', sub: '8–12 week build', prompt: 'Build me an 8–12 week plan to raise my FTP.' },
+    { title: 'Ride a century', sub: 'Event date', prompt: 'Build me a plan to ride a century. My event date is ' },
+    { title: 'Triathlon', sub: 'Swim · bike · run', prompt: 'Build me a triathlon plan covering swim, bike and run.' },
+    { title: 'Stay fit', sub: 'Flexible weeks', prompt: 'Build me a flexible plan to stay fit around a busy schedule.' }
+  ];
+  function askCoach(prompt: string) {
+    goto(`/chat?prompt=${encodeURIComponent(prompt)}`);
+  }
+
+  $effect(() => {
+    if (noPlanYet) {
+      resetPageHeader();
+      return resetPageHeader;
+    }
     pageHeader.eyebrow = periodSummary;
     pageHeader.segments = [
       { value: 'week', label: 'Week' },
@@ -619,7 +659,32 @@
 
 <div class="flex flex-col gap-4">
   {#if authStore.tier !== 'premium'}
-    <EmptyState title="Premium required" message="You must be a premium member to access the Training Plan feature." icon="🔒" />
+    <EmptyStateCard icon="calendar-plus" tone="blue" eyebrow="Premium" title="Training plans are a premium feature" message="Your coach builds and adjusts a week-by-week plan around your goal and recovery. Upgrade to premium to use it." />
+  {:else if noPlanYet}
+    <EmptyStateCard
+      icon="calendar-plus"
+      tone="neutral"
+      eyebrow="Nothing yet"
+      title="No plan yet"
+      message="Pick a goal and your coach builds your first four weeks around the days you can train. You can change anything after."
+      actionLabel="Build my plan"
+      onAction={() => askCoach("Build me a training plan. Here's my goal: ")}
+      secondaryLabel="Add a single workout"
+      onSecondary={() => askCoach('Add a single workout to my plan: ')}
+    />
+    <p class="font-mono text-[12px] tracking-[0.2em] text-text2 uppercase mt-2 mb-0 px-1">Or start from a goal</p>
+    <div class="grid grid-cols-2 gap-3">
+      {#each PLAN_GOALS as g (g.title)}
+        <button
+          type="button"
+          class="text-left bg-bg2 border border-border rounded-[20px] px-5 py-4 cursor-pointer hover:border-text2/60 transition-colors"
+          onclick={() => askCoach(g.prompt)}
+        >
+          <span class="block text-[17px] font-medium text-text0">{g.title}</span>
+          <span class="block text-[14px] text-text2 mt-0.5">{g.sub}</span>
+        </button>
+      {/each}
+    </div>
   {:else if planView === 'week'}
     <!-- Week strip (this week only) -->
     <div role="tablist" aria-label="Week" class="grid grid-cols-7 gap-1.5">
