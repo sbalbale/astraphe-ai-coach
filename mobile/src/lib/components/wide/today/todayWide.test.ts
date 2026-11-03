@@ -45,7 +45,7 @@ describe('formatting', () => {
 
   it('shows a watt range for bike sessions with FTP, else the zone', () => {
     const w = { sport: 'bike' as const, primary_zone: 'Threshold' as const, structure: [{ name: 'b', duration_minutes: 12, target_power_percent_ftp: 90 }] };
-    expect(sessionTarget(w, 262)).toBe('236–249 W');
+    expect(sessionTarget(w, 262)).toBe('229–242 W'); // 90% ±2.5, as on the Plan sheet
     expect(sessionTarget(w, 0)).toBe('Z4 HR');
     expect(sessionTarget({ ...w, sport: 'run' }, 262)).toBe('Z4 HR');
   });

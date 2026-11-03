@@ -94,12 +94,22 @@ export function statDuration(minutes: number): string {
   return m >= 60 && m % 60 === 0 ? `${m / 60} h` : `${m} min`;
 }
 
+/** Hardest interval's %FTP (0 when the session has no power targets). */
+export function workPctFtp(w: Pick<Workout, 'structure'>): number {
+  return (w.structure ?? []).reduce((max, i) => Math.max(max, i.target_power_percent_ftp ?? 0), 0);
+}
+
+/** "265–279" for a bike session: the hardest step's %FTP ±2.5%, the band the Plan sheet shows. */
+export function workWattRange(w: Pick<Workout, 'sport' | 'structure'>, ftp: number): string | null {
+  const work = workPctFtp(w);
+  if (w.sport !== 'bike' || ftp <= 0 || work <= 0) return null;
+  return `${Math.round((ftp * (work - 2.5)) / 100)}–${Math.round((ftp * (work + 2.5)) / 100)}`;
+}
+
 /** Target for the session card: a watt range for bike sessions with FTP, else the zone. */
 export function sessionTarget(w: Pick<Workout, 'sport' | 'structure' | 'primary_zone'>, ftp: number): string {
-  const work = (w.structure ?? []).reduce((max, i) => Math.max(max, i.target_power_percent_ftp ?? 0), 0);
-  if (w.sport === 'bike' && ftp > 0 && work > 0) {
-    return `${Math.round((ftp * work) / 100)}–${Math.round((ftp * (work + 5)) / 100)} W`;
-  }
+  const range = workWattRange(w, ftp);
+  if (range) return `${range} W`;
   const label = ZONE_RANGE_LABEL[w.primary_zone];
   return label ? `${label} HR` : '—';
 }

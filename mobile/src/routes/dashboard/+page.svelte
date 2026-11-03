@@ -60,6 +60,7 @@
   import { pageHeader } from '$lib/stores/pageHeader.svelte';
   import { viewport } from '$lib/stores/viewport.svelte';
   import WideToday from '$lib/components/wide/today/WideToday.svelte';
+  import { profileBars as sessionProfileBars, workPctFtp, workWattRange } from '$lib/components/wide/today/todayWide';
   import { firstName, isProfileComplete } from '$lib/utils/profile';
   import { addDays } from 'date-fns';
   import CalibrationBadge from '$lib/components/CalibrationBadge.svelte';
@@ -147,29 +148,17 @@
   const sessionRange = $derived.by(() => {
     const w = keySession;
     if (!w) return null;
-    const round5 = (n: number) => Math.round(n / 5) * 5;
-    const duration = `${round5(w.duration_minutes * 0.95)}–${round5(w.duration_minutes * 1.05)}`;
-    const work = (w.structure ?? []).reduce<number>(
-      (max, i) => Math.max(max, i.target_power_percent_ftp ?? 0),
-      0
-    );
-    if (w.sport === 'bike' && ftp > 0 && work > 0) {
-      return {
-        duration,
-        valueLabel: `${Math.round((ftp * work) / 100)}–${Math.round((ftp * (work + 5)) / 100)}`,
-        unit: 'W',
-        caption: `Target · ${work}–${work + 5}% FTP`
-      };
+    // Same figures as the Plan session sheet: planned minutes, and the hardest step's
+    // %FTP ±2.5% in watts.
+    const duration = String(w.duration_minutes);
+    const watts = workWattRange(w, ftp);
+    if (watts) {
+      return { duration, valueLabel: watts, unit: 'W', caption: `Target · ${workPctFtp(w)}% FTP` };
     }
     return { duration, valueLabel: String(w.projected_tss), unit: 'TSS', caption: 'Projected load' };
   });
-  /** One bar per interval, width ∝ duration, tall + accent when it is hard work. */
-  const profileBars = $derived(
-    (keySession?.structure ?? []).map((i) => {
-      const hard = (i.target_power_percent_ftp ?? 0) >= 85 || (i.target_hr_zone ?? 0) >= 4;
-      return { grow: Math.max(i.duration_minutes, 1), hard, name: i.name };
-    })
-  );
+  /** Same blocks as the Plan session sheet: width by duration, height by %FTP, zone colour. */
+  const profileBars = $derived(keySession?.structure?.length ? sessionProfileBars(keySession) : []);
 
   const hasData = $derived(athleteStore.workouts?.length > 0 || athleteStore.readiness > 0);
   const isConnected = $derived(Object.values(athleteStore.syncStatus?.integrations || {}).some((i: any) => i.connected));
@@ -635,8 +624,8 @@
           <div role="img" aria-label="Workout profile" class="flex items-end gap-[3px] h-16">
             {#each profileBars as b, idx (idx)}
               <div
-                class="rounded-[3px] {b.hard ? 'bg-blue h-14' : 'bg-text2/40 h-5'}"
-                style="flex: {b.grow} 1 0"
+                class="rounded-[3px]"
+                style="flex: {b.grow} 1 0; height: {b.pct}%; background: {b.zone > 0 ? `var(--zone-${b.zone})` : 'var(--text2)'}"
               ></div>
             {/each}
           </div>
