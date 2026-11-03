@@ -691,9 +691,20 @@ def handle_update_memory(
         return {"error": "memory_id is required"}
 
     update: dict[str, Any] = {}
-    for k in ("content", "memory_type", "entity_key", "event_date"):
-        if k in args and args.get(k) is not None:
-            update[k] = args.get(k)
+    if args.get("content") is not None:
+        content = str(args["content"]).strip()[:200]  # same cap as save_memory
+        if not content:
+            return {"error": "content cannot be empty"}
+        update["content"] = content
+    if args.get("memory_type") is not None:
+        update["memory_type"] = str(args["memory_type"]).strip()[:40]
+    if args.get("entity_key") is not None:
+        update["entity_key"] = str(args["entity_key"]).strip()[:80]
+    if args.get("event_date") is not None:
+        try:
+            update["event_date"] = _parse_iso_date(str(args["event_date"])).isoformat()
+        except ValueError:
+            return {"error": "event_date must be YYYY-MM-DD"}
     if not update:
         return {"error": "No fields to update"}
 
@@ -730,6 +741,9 @@ def handle_update_memory(
         return {"error": err}
 
 
+WEB_SEARCH_MAX_QUERY_CHARS = 160
+
+
 def handle_web_search(
     args: dict[str, Any],
     *,
@@ -741,6 +755,10 @@ def handle_web_search(
     query = str(args.get("query") or "").strip()
     if not query:
         return {"error": "query is required"}
+    # The query leaves our system for third-party search engines. Keep it short so
+    # injected instructions can't smuggle out the athlete's data inside it.
+    if len(query) > WEB_SEARCH_MAX_QUERY_CHARS:
+        return {"error": f"query too long (max {WEB_SEARCH_MAX_QUERY_CHARS} characters); search for a short topic"}
     base = (settings.SEARXNG_URL or "").strip().rstrip("/")
     if not base:
         return {"error": "web search is not configured"}
@@ -802,6 +820,9 @@ def handle_list_memories(
     return {"status": "success", "memories": rows}
 
 
+CLEAR_PLANS_MAX_DAYS = 14
+
+
 def handle_clear_training_plans(
     args: dict[str, Any],
     *,
@@ -822,12 +843,18 @@ def handle_clear_training_plans(
         return {"error": f"invalid end_date: {e}"}
     if end_date < start_date:
         return {"error": "end_date must be >= start_date"}
+    # A destructive tool the model can be steered into calling (web search results,
+    # documents): bound the blast radius to two weeks and to sessions that haven't
+    # happened, so completed/skipped history is never wiped.
+    if (end_date - start_date).days > CLEAR_PLANS_MAX_DAYS - 1:
+        return {"error": f"Can only clear up to {CLEAR_PLANS_MAX_DAYS} days at a time."}
 
     try:
         res = (
             db.table("training_plans")
             .delete()
             .eq("athlete_id", athlete_id)
+            .in_("status", ["planned", "modified"])
             .gte("planned_date", start_date.isoformat())
             .lte("planned_date", end_date.isoformat())
             .execute()
@@ -939,6 +966,14 @@ def handle_update_planned_workout(
     athlete_id: str,
     db: Client,
 ) -> dict[str, Any]:
+    # The model's structure goes through the same sanitiser as schedule_workout
+    # instead of being stored verbatim.
+    if "structure" in args:
+        args = {**args, "structure": _sanitize_workout_structure(args.get("structure"))}
+        if not args["structure"]:
+            args.pop("structure")
+    if args.get("title") is not None:
+        args = {**args, "title": str(args["title"])[:120]}
     return workout_data.update_planned_workout_sync(db, athlete_id, args)
 
 

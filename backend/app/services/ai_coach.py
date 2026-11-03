@@ -1383,43 +1383,10 @@ def get_coach_response_agentic(
     contents.append(types.Content(role="user", parts=[types.Part.from_text(text=_calendar_preface(message, calendar))]))
     # If there was no history, `contents` is now a 1-item list with the current message.
 
-    # Deterministic backstop: if the user requests clearing a plan, do it even if the model doesn't call tools.
-    msg_l = (message or "").lower()
-    wants_clear = any(k in msg_l for k in ("delete", "remove", "clear")) and ("plan" in msg_l or "calendar" in msg_l)
-    if wants_clear:
-        try:
-            today = date.fromisoformat(calendar["current_local_date"])
-        except Exception:
-            today = local_datetime_from_timezone_offset(0).date()
-        monday = today - timedelta(days=today.weekday())
-        if "next week" in msg_l:
-            start = monday + timedelta(days=7)
-            end = monday + timedelta(days=13)
-        elif "this week" in msg_l:
-            start = monday
-            end = monday + timedelta(days=6)
-        else:
-            start = None
-            end = None
-
-        if start and end:
-            res = coach_tools.handle_clear_training_plans(
-                {"start_date": start.isoformat(), "end_date": end.isoformat()},
-                athlete_id=athlete_id,
-                db=db,
-            )
-            # Feed tool output into the conversation so the model can acknowledge it.
-            contents.append(
-                types.Content(
-                    role="user",
-                    parts=[
-                        types.Part.from_function_response(
-                            name="clear_training_plans",
-                            response=res,
-                        )
-                    ],
-                )
-            )
+    # (There used to be a keyword "backstop" here that deleted a whole week of plans
+    # whenever a message mentioned delete/remove/clear + plan + this/next week, before
+    # the model saw it, so "don't remove anything from my plan next week" wiped it.
+    # Clearing is now only ever the model's explicit, bounded clear_training_plans call.)
 
     primary_model = model_name or settings.GEMINI_MODEL
     fallback_model = (getattr(settings, "GEMINI_FALLBACK_MODEL", "") or "").strip()

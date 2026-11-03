@@ -237,33 +237,19 @@ def test_agentic_max_hops_exhausted_returns_fallback():
 # ---------------------------------------------------------------------------
 
 
-def test_agentic_clear_this_week_backstop_calls_handler_directly():
-    db = MagicMock()
-    with _db_patches(), patch.object(
-        ai_coach._client.models,
-        "generate_content",
-        return_value=_response([_text_part("<response>Cleared your plan for this week.</response>")]),
-    ), patch.object(
-        ai_coach.coach_tools, "handle_clear_training_plans", return_value={"status": "success", "deleted": 3}
-    ) as mock_clear:
-        text, _ = ai_coach.get_coach_response_agentic(
-            "ath-1", "please clear my plan this week", db=db
-        )
-    mock_clear.assert_called_once()
-    assert text == "Cleared your plan for this week."
-
-
-def test_agentic_clear_next_week_backstop():
-    db = MagicMock()
-    with _db_patches(), patch.object(
-        ai_coach._client.models,
-        "generate_content",
-        return_value=_response([_text_part("<response>Cleared next week.</response>")]),
-    ), patch.object(
-        ai_coach.coach_tools, "handle_clear_training_plans", return_value={"status": "success"}
-    ) as mock_clear:
-        ai_coach.get_coach_response_agentic("ath-1", "delete my calendar next week", db=db)
-    mock_clear.assert_called_once()
+def test_agentic_never_deletes_plans_on_keywords_alone():
+    """No keyword backstop: a message is never turned into a deletion without the model
+    choosing the tool, including one that says *not* to remove anything."""
+    for msg in ("please clear my plan this week", "don't remove anything from my plan next week",
+                "delete my calendar next week"):
+        db = MagicMock()
+        with _db_patches(), patch.object(
+            ai_coach._client.models,
+            "generate_content",
+            return_value=_response([_text_part("<response>Okay.</response>")]),
+        ), patch.object(ai_coach.coach_tools, "handle_clear_training_plans") as mock_clear:
+            ai_coach.get_coach_response_agentic("ath-1", msg, db=db)
+        mock_clear.assert_not_called()
 
 
 def test_agentic_clear_without_week_qualifier_skips_backstop():

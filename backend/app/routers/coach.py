@@ -120,6 +120,26 @@ def _generate_conversation_title(message: str | None, image_urls: Optional[List[
         title += "…"
     return title[:60]
 
+def _require_own_conversation(db, athlete_id: str, conversation_id: Optional[str]) -> None:
+    """
+    404 unless the conversation belongs to this athlete. RLS on coach_messages only
+    checks athlete_id, so without this a user could attach messages to someone else's
+    conversation id (and the FK error would reveal whether an id exists).
+    """
+    if not conversation_id:
+        return
+    res = (
+        db.table("coach_conversations")
+        .select("id")
+        .eq("id", conversation_id)
+        .eq("athlete_id", athlete_id)
+        .limit(1)
+        .execute()
+    )
+    if not (getattr(res, "data", None) or []):
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+
 def _create_conversation(db, athlete_id: str, title: Optional[str]) -> str:
     res = db.table("coach_conversations").insert({
         "athlete_id": athlete_id,
@@ -560,6 +580,7 @@ async def submit_coach_message(
     wait for the push) rather than block on this request.
     """
     _require_premium(config)
+    _require_own_conversation(db, athlete_id, payload.conversation_id)
     conversation_id = payload.conversation_id or _create_conversation(db, athlete_id, title=None)
     _insert_message(db, athlete_id, conversation_id, role="user", content=payload.message, image_urls=payload.image_urls)
     # Clear the previous reply's steps before returning, so the first progress poll
@@ -602,6 +623,7 @@ async def chat_with_coach(
     db = Depends(get_user_db),
 ):
     _require_premium(config)
+    _require_own_conversation(db, athlete_id, payload.conversation_id)
     try:
         conversation_id = payload.conversation_id or _create_conversation(db, athlete_id, title=None)
         _insert_message(db, athlete_id, conversation_id, role="user", content=payload.message, image_urls=payload.image_urls)
@@ -755,6 +777,7 @@ async def stream_chat_with_coach(
     db = Depends(get_user_db),
 ):
     _require_premium(config)
+    await asyncio.to_thread(_require_own_conversation, db, athlete_id, payload.conversation_id)
 
     async def event_generator():
         conversation_id = payload.conversation_id
