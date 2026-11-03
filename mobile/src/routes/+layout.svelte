@@ -50,8 +50,10 @@
   // and docs/MCP_SERVER.md.
   let isOAuthRoute = $derived($page.url.pathname.startsWith('/oauth/'));
   let isNoShellRoute = $derived(isAuthRoute || isOnboardingRoute || isOAuthRoute);
-  /** A workout opened from the Log shows its own map-hero header, so the page header steps aside. */
-  let isWorkoutDetail = $derived($page.url.pathname === '/training' && $page.url.searchParams.has('workout_id'));
+  /** Workout detail (map hero) and Me pages draw their own header, so the page header steps aside. */
+  let hidePageHeader = $derived(
+    ($page.url.pathname === '/training' && $page.url.searchParams.has('workout_id')) || $page.url.pathname.startsWith('/profile')
+  );
   let mobileSubtabs = $derived(subtabsFor($page.url.pathname));
   let headerTitle = $derived(titleFor($page.url.pathname));
   let avatarInitials = $derived.by(() => {
@@ -190,7 +192,7 @@
     {/if}
     
     <div class="flex-1 flex flex-col overflow-hidden relative bg-bg0">
-      {#if !wide && !isWorkoutDetail}
+      {#if !wide && !hidePageHeader}
       <!-- Mobile Header: serif page title + avatar (Me) -->
       <div class="px-5 pt-4 {mobileSubtabs ? 'pb-3' : 'pb-2'} flex {pageHeader.dateMax ? 'items-center' : 'items-end'} justify-between shrink-0">
         <div class="flex flex-col gap-1">
@@ -295,7 +297,7 @@
         ? 'overflow-hidden p-0'
         : wide
           ? 'overflow-y-auto p-6 px-7'
-          : hasMobileTightContentTop || isWorkoutDetail
+          : hasMobileTightContentTop || hidePageHeader
             ? 'overflow-y-auto px-4 pb-3 pt-0'
             : 'overflow-y-auto p-3 px-4'}"
     >
