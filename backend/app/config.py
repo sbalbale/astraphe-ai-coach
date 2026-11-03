@@ -69,6 +69,13 @@ class Settings(BaseSettings):
     # Fallback chat model when the primary model is overloaded (e.g. 503 UNAVAILABLE).
     GEMINI_FALLBACK_MODEL: str = "gemini-3.1-flash-lite"
     GEMINI_ANALYSIS_MODEL: str = "gemini-3.1-flash-lite"
+    # Plan import (coach tool import_plan): one structured request reads the whole plan.
+    # Tried in order; GEMINI_MODEL is the last resort. The free tier allows these ~5 RPM and
+    # ~20 requests a day each, shared by all athletes, hence the per-athlete daily cap.
+    GEMINI_IMPORT_MODELS: str = "gemini-3.8-flash,gemini-3.6-flash"
+    PLAN_IMPORT_TIMEOUT_SEC: int = 240
+    PLAN_IMPORT_THINKING_LEVEL: str = "LOW"
+    PLAN_IMPORTS_PER_DAY: int = 5
     GEMINI_EMBEDDING_MODEL: str = "gemini-embedding-2"
 
     # --- Google Cloud ---
