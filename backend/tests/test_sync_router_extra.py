@@ -8,7 +8,7 @@ import pytest
 
 from fastapi.testclient import TestClient
 
-from app.dependencies import get_admin_db, get_current_athlete, get_user_db
+from app.dependencies import get_admin_db, get_current_athlete, get_user_db, get_user_config, UserConfig
 from app.main import app
 from app.routers import sync as sync_router
 from app.services.oauth_state import sign_state, verify_state
@@ -22,8 +22,12 @@ def _run_async(coro):
     return asyncio.run(coro)
 
 
-def _override(athlete_id="athlete-1", user_db=None, admin_db=None):
+def _override(athlete_id="athlete-1", user_db=None, admin_db=None, is_admin=False):
     app.dependency_overrides[get_current_athlete] = lambda: athlete_id
+    app.dependency_overrides[get_user_config] = lambda: UserConfig(
+        user_id="u-1", tier="premium", gemini_model="m", gemini_analysis_model="m",
+        rate_limit_rpm=100, rate_limit_rph=100, is_admin=is_admin,
+    )
     if user_db is not None:
         app.dependency_overrides[get_user_db] = lambda: user_db
     if admin_db is not None:
@@ -505,7 +509,7 @@ def test_reprocess_metrics_now_default_is_strain_refresh():
 
 def test_reprocess_metrics_now_full_success():
     admin_db = MagicMock()
-    _override(admin_db=admin_db)
+    _override(admin_db=admin_db, is_admin=True)
     try:
         with patch.object(
             sync_router, "reprocess_athlete_metrics", AsyncMock(return_value={"workouts": 5})
@@ -519,9 +523,21 @@ def test_reprocess_metrics_now_full_success():
         _teardown()
 
 
-def test_reprocess_metrics_now_full_failure_returns_500():
+def test_reprocess_metrics_full_is_admin_only():
     admin_db = MagicMock()
     _override(admin_db=admin_db)
+    try:
+        with patch.object(sync_router, "reprocess_athlete_metrics", AsyncMock()) as full:
+            res = client.post("/v1/sync/reprocess-metrics", params={"full": "true"})
+        assert res.status_code == 403
+        full.assert_not_awaited()
+    finally:
+        _teardown()
+
+
+def test_reprocess_metrics_now_full_failure_returns_500():
+    admin_db = MagicMock()
+    _override(admin_db=admin_db, is_admin=True)
     try:
         with patch.object(
             sync_router, "reprocess_athlete_metrics", AsyncMock(side_effect=RuntimeError("boom"))

@@ -90,10 +90,15 @@ def reset_ip_rate_limiter():
     after each test so tests stay independent of run order/volume.
     """
     from app.main import _ip_rate_limiter
+    from app import dependencies
+    from app.routers import analysis
 
-    _ip_rate_limiter._memory.clear()
+    limiters = (_ip_rate_limiter, dependencies._rate_limiter, analysis._analysis_limiter)
+    for lim in limiters:
+        lim._memory.clear()
     yield
-    _ip_rate_limiter._memory.clear()
+    for lim in limiters:
+        lim._memory.clear()
 
 
 @pytest.fixture(autouse=True)

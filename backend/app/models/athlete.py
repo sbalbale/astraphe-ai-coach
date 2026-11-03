@@ -1,6 +1,6 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 from datetime import date
-from typing import Optional, List
+from typing import Any, Optional, List
 
 class AthleteState(BaseModel):
     athlete_id: str
@@ -28,20 +28,43 @@ class AthleteState(BaseModel):
     readiness_recommendation: str
 
 class AthleteProfileUpdate(BaseModel):
-    display_name: Optional[str] = None
+    # Bounds keep nonsense out of zone/TSS maths and prompts (display_name is shown to
+    # the coach), and stop a huge timezone offset from breaking webhook date maths.
+    display_name: Optional[str] = Field(None, max_length=80)
     date_of_birth: Optional[date] = None
-    gender: Optional[str] = None
-    weight_kg: Optional[float] = None
-    height_cm: Optional[float] = None
-    ftp_watts: Optional[int] = None
-    max_hr: Optional[int] = None
-    resting_hr: Optional[int] = None
-    hr_zone_method: Optional[str] = None
-    threshold_hr: Optional[int] = None
-    threshold_pace: Optional[str] = None # String format like "5:00"
-    sport_focus: Optional[List[str]] = None
-    notification_settings: Optional[dict] = None
-    privacy_settings: Optional[dict] = None
-    measurement_units: Optional[str] = None
-    time_format: Optional[str] = None
-    timezone_offset_min: Optional[int] = None
+    gender: Optional[str] = Field(None, max_length=20)
+    weight_kg: Optional[float] = Field(None, ge=20, le=350)
+    height_cm: Optional[float] = Field(None, ge=80, le=260)
+    ftp_watts: Optional[int] = Field(None, ge=20, le=800)
+    max_hr: Optional[int] = Field(None, ge=80, le=250)
+    resting_hr: Optional[int] = Field(None, ge=20, le=140)
+    hr_zone_method: Optional[str] = Field(None, max_length=20)
+    threshold_hr: Optional[int] = Field(None, ge=60, le=240)
+    threshold_pace: Optional[str] = Field(None, max_length=12)  # e.g. "5:00"
+    sport_focus: Optional[List[str]] = Field(None, max_length=10)
+    notification_settings: Optional[dict[str, Any]] = None
+    privacy_settings: Optional[dict[str, Any]] = None
+    measurement_units: Optional[str] = Field(None, max_length=10)
+    time_format: Optional[str] = Field(None, max_length=10)
+    timezone_offset_min: Optional[int] = Field(None, ge=-840, le=840)
+
+    @field_validator("sport_focus")
+    @classmethod
+    def _short_sports(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        if v is not None and any(len(str(x)) > 30 for x in v):
+            raise ValueError("sport names must be 30 characters or fewer")
+        return v
+
+    @field_validator("notification_settings", "privacy_settings")
+    @classmethod
+    def _small_flat_settings(cls, v: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
+        if v is None:
+            return v
+        if len(v) > 30:
+            raise ValueError("too many settings")
+        for key, val in v.items():
+            if len(str(key)) > 40 or not isinstance(val, (bool, int, float, str, type(None))):
+                raise ValueError("settings must be flat key/value pairs")
+            if isinstance(val, str) and len(val) > 200:
+                raise ValueError("setting values must be short")
+        return v

@@ -353,9 +353,11 @@ async def delete_conversation(
 
 @router.post("/upload-document")
 async def upload_document(
+    request: Request,
     file: UploadFile,
     athlete_id: str = Depends(get_current_athlete),
     config: UserConfig = Depends(get_user_config),
+    _rl: None = Depends(require_ai_rate_limit),
     db = Depends(get_user_db),
 ):
     """
@@ -368,7 +370,15 @@ async def upload_document(
     if ext not in _ALLOWED_DOC_EXTENSIONS:
         raise HTTPException(status_code=415, detail=f"Unsupported file type '{ext}'. Allowed: {', '.join(_ALLOWED_DOC_EXTENSIONS)}")
 
-    file_bytes = await file.read()
+    # Reject oversized uploads before buffering them: check the declared length, then
+    # read at most one byte past the cap.
+    try:
+        declared = int(request.headers.get("content-length") or 0)
+    except ValueError:
+        declared = 0
+    if declared > _MAX_DOC_BYTES + 64 * 1024:  # multipart overhead
+        raise HTTPException(status_code=413, detail="File too large (max 10 MB)")
+    file_bytes = await file.read(_MAX_DOC_BYTES + 1)
     if len(file_bytes) > _MAX_DOC_BYTES:
         raise HTTPException(status_code=413, detail="File too large (max 10 MB)")
 
@@ -376,7 +386,8 @@ async def upload_document(
         from app.services.file_parser import parse_document
         text = await asyncio.to_thread(parse_document, file_bytes, filename)
     except Exception as e:
-        raise HTTPException(status_code=422, detail=f"Failed to parse document: {e}")
+        print(f"[coach.upload] parse failed file={filename!r}: {e!r}")
+        raise HTTPException(status_code=422, detail="Couldn't read this document. Try a PDF, CSV or Excel file.")
 
     if not (text or "").strip():
         raise HTTPException(status_code=422, detail="No text content could be extracted from this document.")

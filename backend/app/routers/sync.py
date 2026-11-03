@@ -11,7 +11,7 @@ from fastapi import APIRouter, Request, Response, HTTPException, Depends, Backgr
 from fastapi.responses import RedirectResponse, HTMLResponse
 from pydantic import BaseModel, Field
 from starlette.requests import ClientDisconnect
-from app.dependencies import get_current_athlete, get_user_db, get_admin_db
+from app.dependencies import get_current_athlete, get_user_db, get_admin_db, action_rate_limit, get_user_config, UserConfig
 from app.services import whoop
 from app.services import strava as strava_service
 from app.services import intervals_icu as intervals_icu_service
@@ -1508,7 +1508,7 @@ async def unlink_integration(
 
 
 
-@router.post("/refresh-strain")
+@router.post("/refresh-strain", dependencies=[Depends(action_rate_limit("refresh_strain", 10, 3600, "Too many refreshes. Try again later."))])
 async def refresh_strain_scores_now(
     athlete_id: str = Depends(get_current_athlete),
     admin_db=Depends(get_admin_db),
@@ -1522,7 +1522,7 @@ async def refresh_strain_scores_now(
     return {"status": "success", **counts}
 
 
-@router.post("/reprocess-metrics")
+@router.post("/reprocess-metrics", dependencies=[Depends(action_rate_limit("reprocess", 6, 3600, "Too many reprocess requests. Try again later."))])
 async def reprocess_metrics_now(
     full: bool = Query(
         False,
@@ -1531,6 +1531,7 @@ async def reprocess_metrics_now(
     ),
     athlete_id: str = Depends(get_current_athlete),
     admin_db=Depends(get_admin_db),
+    config: UserConfig = Depends(get_user_config),
 ):
     """
     Default (full=false): refresh daily biometrics.strain_score from workout zones — fast, safe from the app.
@@ -1543,21 +1544,23 @@ async def reprocess_metrics_now(
         invalidate_context_cache(athlete_id)
         return {"status": "success", "mode": "strain_refresh", **counts}
 
+    # The full rebuild ties up the API and DB for a long time: admins only (the
+    # script backend/scripts/reprocess_athlete_data.py is the normal path).
+    if not config.is_admin:
+        raise HTTPException(status_code=403, detail="Full reprocess is admin-only")
     try:
         counts = await reprocess_athlete_metrics(athlete_id, admin_db)
     except Exception as e:
+        print(f"[sync.reprocess] full reprocess failed athlete={athlete_id}: {e!r}")
         raise HTTPException(
             status_code=500,
-            detail=(
-                "Full reprocess failed. Run: python backend/scripts/reprocess_athlete_data.py <athlete_id> "
-                f"Error: {e}"
-            ),
+            detail="Full reprocess failed. Run backend/scripts/reprocess_athlete_data.py for this athlete.",
         ) from e
     invalidate_context_cache(athlete_id)
     return {"status": "success", "mode": "full", **counts}
 
 
-@router.post("/whoop/backfill-biometrics")
+@router.post("/whoop/backfill-biometrics", dependencies=[Depends(action_rate_limit("backfill:whoop_bio", 3, 3600, "Backfill already requested recently. Try again later."))])
 async def whoop_backfill_biometrics_now(
     days: int = 90,
     athlete_id: str = Depends(get_current_athlete),
@@ -1584,7 +1587,7 @@ async def whoop_backfill_biometrics_now(
     return {"status": "success", "scheduled": True, "days": d, "mode": "biometrics_only"}
 
 
-@router.post("/whoop/backfill")
+@router.post("/whoop/backfill", dependencies=[Depends(action_rate_limit("backfill:whoop", 3, 3600, "Backfill already requested recently. Try again later."))])
 async def whoop_backfill_now(
     days: int = 90,
     athlete_id: str = Depends(get_current_athlete),
@@ -1613,7 +1616,7 @@ async def whoop_backfill_now(
     return {"status": "success", "scheduled": True, "days": d}
 
 
-@router.post("/strava/backfill")
+@router.post("/strava/backfill", dependencies=[Depends(action_rate_limit("backfill:strava", 3, 3600, "Backfill already requested recently. Try again later."))])
 async def strava_backfill_now(
     days: int = 90,
     athlete_id: str = Depends(get_current_athlete),
@@ -1652,7 +1655,7 @@ async def strava_backfill_now(
     return {"status": "success", "scheduled": True, "days": d}
 
 
-@router.post("/intervals-icu/backfill")
+@router.post("/intervals-icu/backfill", dependencies=[Depends(action_rate_limit("backfill:intervals", 3, 3600, "Backfill already requested recently. Try again later."))])
 async def intervals_icu_backfill_now(
     days: int = 90,
     athlete_id: str = Depends(get_current_athlete),

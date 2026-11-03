@@ -25,10 +25,12 @@ security = HTTPBearer()
 
 # Per-tier default rate limits for AI endpoints (requests per minute / per hour).
 # Individual users can be given overrides via app_metadata.rate_limit_rpm / rate_limit_rph.
+# One coach turn makes several model calls, and the whole server shares one model
+# budget (services/gemini_quota.py), so a single account must stay well below it.
 TIER_DEFAULTS: dict[str, dict[str, int]] = {
-    "free":    {"rpm": 5,  "rph": 20},
-    "trial":   {"rpm": 15, "rph": 75},
-    "premium": {"rpm": 40, "rph": 200},
+    "free":    {"rpm": 5,  "rph": 20,  "rpd": 40},
+    "trial":   {"rpm": 6,  "rph": 60,  "rpd": 150},
+    "premium": {"rpm": 10, "rph": 150, "rpd": 400},
 }
 
 VALID_TIERS = frozenset(TIER_DEFAULTS.keys())
@@ -375,6 +377,27 @@ async def require_ai_rate_limit(
         window_seconds=3600,
         detail=f"Rate limit exceeded: max {config.rate_limit_rph} AI requests per hour.",
     )
+    rpd = TIER_DEFAULTS.get(config.tier, TIER_DEFAULTS["free"])["rpd"]
+    await _rate_limiter.require(
+        key=f"{athlete_id}:ai:day",
+        limit=max(rpd, config.rate_limit_rph),  # an admin rph override also lifts the daily cap
+        window_seconds=86400,
+        detail="Daily AI limit reached. It resets within 24 hours.",
+    )
+
+
+def action_rate_limit(name: str, limit: int, window_seconds: int, detail: str):
+    """
+    Per-athlete limit for expensive non-AI actions (provider backfills, reprocessing,
+    third-party logins). Use as ``Depends(action_rate_limit(...))``.
+    """
+
+    async def _dep(athlete_id: str = Depends(get_current_athlete)) -> None:
+        await _rate_limiter.require(
+            key=f"{athlete_id}:{name}", limit=limit, window_seconds=window_seconds, detail=detail
+        )
+
+    return _dep
 
 
 # ---------------------------------------------------------------------------

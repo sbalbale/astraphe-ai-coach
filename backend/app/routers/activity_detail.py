@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.config import settings
 from app.core.perf_log import perf_span, payload_bytes
-from app.dependencies import get_current_athlete, get_user_db
+from app.dependencies import get_current_athlete, get_user_db, action_rate_limit
 from app.core.redis import get_redis
 from app.services.hr_zones import compute_zone_distribution, get_athlete_zones
 from app.services import strava as strava_service
@@ -304,7 +304,7 @@ async def get_intervals(
     return await _fetch_intervals_payload(db, workout_id, athlete_id)
 
 
-@router.post("/{workout_id}/hydrate-streams")
+@router.post("/{workout_id}/hydrate-streams", dependencies=[Depends(action_rate_limit("hydrate_streams", 30, 3600, "Too many requests. Try again later."))])
 async def hydrate_streams(
     workout_id: str,
     athlete_id: str = Depends(get_current_athlete),
@@ -321,7 +321,7 @@ async def hydrate_streams(
     return res
 
 
-@router.post("/{workout_id}/refetch-strava")
+@router.post("/{workout_id}/refetch-strava", dependencies=[Depends(action_rate_limit("refetch_strava", 20, 3600, "Too many requests. Try again later."))])
 async def refetch_strava(
     workout_id: str,
     athlete_id: str = Depends(get_current_athlete),

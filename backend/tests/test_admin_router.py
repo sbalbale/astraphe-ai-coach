@@ -81,7 +81,7 @@ def test_format_user_falls_back_to_name_field():
     )
     formatted = admin_router._format_user(u)
     assert formatted["display_name"] == "Bo"
-    assert formatted["config"]["rate_limit_rpm"] == 40
+    assert formatted["config"]["rate_limit_rpm"] == 10
 
 
 # ---------------------------------------------------------------------------
