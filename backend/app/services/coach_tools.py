@@ -521,6 +521,15 @@ def handle_schedule_workout(
         planned_date = _parse_iso_date(str(args.get("date", "")))
     except ValueError as e:
         return {"error": f"invalid date: {e}"}
+    claimed_weekday = str(args.get("weekday") or "").strip().lower()
+    actual_weekday = planned_date.strftime("%A")
+    if claimed_weekday and not actual_weekday.lower().startswith(claimed_weekday[:3]):
+        return {
+            "error": (
+                f"{planned_date.isoformat()} is a {actual_weekday}, not a {args.get('weekday')}. "
+                "Fix the date (or weekday) and schedule it again."
+            )
+        }
 
     raw_sport = str(args.get("sport", DEFAULT_SPORT)).strip() or DEFAULT_SPORT
     sport_norm = raw_sport.strip().lower()
@@ -1254,12 +1263,26 @@ _schedule_decl = types.FunctionDeclaration(
         required=["duration_minutes", "focus_zone", "date"],
     ),
 )
+_schedule_decl.parameters.properties["weekday"] = types.Schema(
+    type=types.Type.STRING,
+    description=(
+        "The weekday of `date` (e.g. 'Tuesday'), as a check: the session is rejected if it doesn't "
+        "match the date, so off-by-one dates can't slip in."
+    ),
+)
 _schedule_decl.parameters.properties["title"] = types.Schema(
     type=types.Type.STRING,
     description="Optional session name, e.g. the name used in the athlete's own plan ('Steady state 2x30').",
 )
 
 SCHEDULE_MANY_MAX = 40
+
+# Batch items: the single-session schema with `weekday` required (checked against the date).
+_schedule_many_item = types.Schema(
+    type=types.Type.OBJECT,
+    properties=dict(_schedule_decl.parameters.properties),
+    required=["duration_minutes", "focus_zone", "date", "weekday"],
+)
 
 _schedule_many_decl = types.FunctionDeclaration(
     name="schedule_workouts",
@@ -1275,8 +1298,8 @@ _schedule_many_decl = types.FunctionDeclaration(
         properties={
             "workouts": types.Schema(
                 type=types.Type.ARRAY,
-                description="The sessions to schedule, in date order.",
-                items=_schedule_decl.parameters,
+                description="The sessions to schedule, in date order. Give each one's weekday too.",
+                items=_schedule_many_item,
             ),
         },
         required=["workouts"],
