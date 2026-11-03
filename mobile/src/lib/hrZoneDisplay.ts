@@ -2,7 +2,7 @@ import type { ZoneDef } from '$lib/services/activityService';
 
 /**
  * Canonical HR zone colors (Z1–Z5) for charts, maps, and time-in-zone bars.
- * Z1 (`#579BFA`) is a lighter blue distinct from brand accent (`--blue` / `#4621FF`).
+ * Z1 (`#579BFA`) is a lighter blue distinct from brand accent (`--blue` / `#7FB4FF`, sky).
  */
 export const HR_ZONE_HEX: Record<number, string> = {
   1: '#579BFA',

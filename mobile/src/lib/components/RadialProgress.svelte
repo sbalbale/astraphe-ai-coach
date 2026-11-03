@@ -1,5 +1,5 @@
 <script lang="ts">
-  let { value, max = 100, size = 56, color = '#4621FF', label, sub } = $props<{
+  let { value, max = 100, size = 56, color = '#7FB4FF', label, sub } = $props<{
     value: number;
     max?: number;
     size?: number;
@@ -68,7 +68,7 @@
   }
   .label {
     font-weight: 700;
-    color: #F0F0FF;
+    color: #EDEBE6;
     line-height: 1;
   }
   .sub {

@@ -16,6 +16,8 @@
   import DonutChart from '$lib/components/charts/DonutChart.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import { confirm } from '$lib/confirm';
+  import WeekNavigator from '$lib/components/WeekNavigator.svelte';
+  import { pageHeader, resetPageHeader } from '$lib/stores/pageHeader.svelte';
   import DatePicker from '$lib/components/DatePicker.svelte';
   import { analysisNavEpoch } from '$lib/analysisNavEpoch.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
@@ -51,11 +53,10 @@
     clearWorkoutDetailFromCache,
     preloadWorkoutDetail,
   } from '$lib/stores/workoutDetailCache';
-  import { formatWorkoutDistance, normalizeUnits } from '$lib/utils/units';
+  import { formatElevationMeters, formatWorkoutDistance, normalizeUnits } from '$lib/utils/units';
   import { supportsPaceChart } from '$lib/utils/paceChart';
   import { intervalsToSplits, lapsToSplits } from '$lib/utils/lapSplits';
   import StreamCharts from '$lib/components/workout/StreamCharts.svelte';
-  import SplitCharts from '$lib/components/workout/SplitCharts.svelte';
   import IntervalsTable from '$lib/components/workout/IntervalsTable.svelte';
   import GpsTrace from '$lib/components/workout/GpsTrace.svelte';
   import LapStrip from '$lib/components/workout/LapStrip.svelte';
@@ -98,7 +99,7 @@
     }
   }
 
-  let metric = $state('load');
+  let metric = $state('history');
   const tabs = ['load', 'history']; // Simplified tabs for now as pace/zones need complex processing
   // Avoid UI flicker: `syncStatus` can be briefly null/undefined even when workouts are loaded.
   // Only show "No Training Data" once we know initial load is done and we truly have no workouts.
@@ -215,20 +216,8 @@
       (streamsHaveHeartrate(detailStreams) || streamsHaveVelocity(detailStreams))
   );
 
-  const showLapSplitCharts = $derived(
-    detailSplits.splits.length >= 2 &&
-      !hasPerSecondStreamCharts &&
-      (selectedWorkout?.sport === 'row' ||
-        selectedWorkout?.sport === 'run' ||
-        selectedWorkout?.sport === 'bike')
-  );
 
-  const showSplitsTable = $derived(
-    detailSplits.splits.length >= 2 &&
-      (selectedWorkout?.sport === 'row' ||
-        selectedWorkout?.sport === 'run' ||
-        selectedWorkout?.sport === 'bike')
-  );
+  const showSplitsTable = $derived(detailSplits.splits.length >= 2);
 
   $effect(() => {
     const w = selectedWorkout;
@@ -247,7 +236,7 @@
 
   // Week selector (History tab)
   // Source of truth is the picked day (YYYY-MM-DD). We derive the Monday week start from it.
-  let weekPickerValue = $state('');
+  let weekPickerValue = $state(format(new Date(), 'yyyy-MM-dd'));
 
   function openWorkout(w: { id?: string; started_at?: string }) {
     if (!w?.id) return;
@@ -274,7 +263,10 @@
 
   function parseDateInputLocal(value: string): Date {
     const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value || '');
-    if (!m) return new Date(value);
+    if (!m) {
+      const parsed = new Date(value);
+      return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+    }
     const y = Number(m[1]);
     const mo = Number(m[2]);
     const d = Number(m[3]);
@@ -669,6 +661,89 @@
       }
     })();
   });
+
+  // --- Design view: Log (this week + activities) ---
+  const isCurrentWeek = $derived(format(selectedWeekStart, "yyyy-MM-dd") === format(startOfWeek(new Date(), { weekStartsOn: 1 }), "yyyy-MM-dd"));
+  const weekRangeLabel = $derived(
+    format(selectedWeekStart, "MMM") === format(selectedWeekEnd, "MMM")
+      ? `${format(selectedWeekStart, "d")} – ${format(selectedWeekEnd, "d MMM")}`
+      : `${format(selectedWeekStart, "d MMM")} – ${format(selectedWeekEnd, "d MMM")}`
+  );
+  // Calculated by the backend (calculate_weekly_tss_target) and stored on the athlete.
+  const weeklyTarget = $derived(Number((athleteStore.profile as any)?.weekly_tss_target) || 0);
+  const weekTotals = $derived.by(() => {
+    let tss = 0, secs = 0, meters = 0;
+    for (const w of weekWorkouts as any[]) {
+      tss += Number(w?.tss) || 0;
+      secs += getDurationSecs(w);
+      meters += Number(w?.distance_m) || 0;
+    }
+    const imperial = measurementUnits === "imperial";
+    const dist = imperial ? meters / 1609.344 : meters / 1000;
+    const h = Math.floor(secs / 3600);
+    const m = Math.round((secs % 3600) / 60);
+    return {
+      tss: Math.round(tss),
+      time: h > 0 ? `${h}h ${String(m).padStart(2, "0")}m` : `${m}m`,
+      distance: dist >= 100 ? String(Math.round(dist)) : String(Math.round(dist * 10) / 10),
+      distanceUnit: imperial ? "mi" : "km"
+    };
+  });
+  const SPORT_GLYPHS: Record<string, string> = { bike: "BIKE", cycling: "BIKE", run: "RUN", running: "RUN", swim: "SWIM", swimming: "SWIM", strength: "GYM", gym: "GYM", row: "ROW", rowing: "ROW", mobility: "MOB" };
+  const sportGlyph = (sport: string) => SPORT_GLYPHS[String(sport ?? "").toLowerCase()] ?? "OTHER";
+  function activityMeta(w: any): string {
+    const parts: string[] = [];
+    const d = w?.started_at ? new Date(w.started_at) : null;
+    if (d && !Number.isNaN(d.getTime())) parts.push(format(d, "EEE d MMM"));
+    const secs = getDurationSecs(w);
+    if (secs > 0) { const h = Math.floor(secs / 3600); const m = Math.round((secs % 3600) / 60); parts.push(h > 0 ? `${h}h ${String(m).padStart(2, "0")}m` : `${m}m`); }
+    const meters = Number(w?.distance_m) || 0;
+    if (meters > 0) parts.push(measurementUnits === "imperial" ? `${(meters / 1609.344).toFixed(1)} mi` : `${(meters / 1000).toFixed(1)} km`);
+    const np = Number(w?.norm_power_w) || 0;
+    if (np > 0) parts.push(`${np} W NP`);
+    return parts.join(" · ");
+  }
+  const loadInsight = $derived.by(() => {
+    const ctx = weeklyRollingContext;
+    if (!ctx || ctx.baseline == null || ctx.pct == null) return null;
+    const pct = Math.round(Math.abs(ctx.pct) * 100);
+    return `This week is ${ctx.weekSum} TSS so far, ${pct}% ${ctx.pct >= 0 ? "above" : "below"} your recent average of ${ctx.baseline}.`;
+  });
+
+  $effect(() => {
+    pageHeader.eyebrow = weekRangeLabel;
+    pageHeader.add = () => (addActivityOpen = true);
+    pageHeader.addLabel = "Log activity";
+    return resetPageHeader;
+  });
+
+  // --- Workout detail (design) ---
+  let detailTab = $state('overview');
+  let showAllSplits = $state(false);
+  $effect(() => { void selectedWorkout?.id; detailTab = 'overview'; showAllSplits = false; });
+  // Splits table cells (units live in the column, not the cell).
+  function splitTime(secs: number): string {
+    const t = Math.max(0, Math.round(Number(secs) || 0));
+    const h = Math.floor(t / 3600);
+    const m = Math.floor((t % 3600) / 60);
+    const ss = String(t % 60).padStart(2, "0");
+    return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`;
+  }
+  function splitDistance(meters: number): string {
+    const m = Number(meters) || 0;
+    if (m <= 0) return "—";
+    return (measurementUnits === "imperial" ? m / 1609.344 : m / 1000).toFixed(m < 1000 ? 2 : 1);
+  }
+  function splitPace(secs: number | null): string {
+    const p = Number(secs);
+    if (!Number.isFinite(p) || p <= 0) return "—";
+    return `${Math.floor(p / 60)}:${String(Math.round(p % 60)).padStart(2, "0")}`;
+  }
+  function splitSpeed(r: any): string {
+    const v = Number(r?.average_speed) > 0 ? Number(r.average_speed) : Number(r?.distance) > 0 && Number(r?.elapsed_time) > 0 ? Number(r.distance) / Number(r.elapsed_time) : 0;
+    if (v <= 0) return "—";
+    return (measurementUnits === "imperial" ? v * 2.23694 : v * 3.6).toFixed(1);
+  }
 </script>
 
 {#if addActivityOpen}
@@ -692,15 +767,6 @@
 {/if}
 
 <div class="flex flex-col gap-3">
-  <div class="flex items-center justify-between pt-1">
-    <h1 class="text-[20px] font-bold tracking-[-0.02em] text-text0">Training Analysis</h1>
-    <button
-      onclick={() => (addActivityOpen = true)}
-      class="w-8 h-8 flex items-center justify-center rounded-full bg-glass border border-border text-text2 hover:text-text0 hover:border-blue/50 transition-colors text-lg leading-none"
-      aria-label="Log activity"
-    >+</button>
-  </div>
-
   {#if showNoTrainingData}
     <EmptyState
       title="No Training Data"
@@ -715,475 +781,282 @@
       icon="⏳"
     />
   {:else}
-    <!-- Metric Tabs -->
-    <div class="flex gap-1.5 overflow-x-auto pb-0.5 shrink-0">
-      {#each tabs as tab (tab)}
-        <Pill active={metric === tab} onclick={() => { metric = tab; closeWorkout(); }}>
-          {tab.charAt(0).toUpperCase() + tab.slice(1)}
-        </Pill>
-      {/each}
-    </div>
-
-    {#if metric === 'load'}
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
-        <Card paddingClass="px-6 py-5">
-          <div class="flex flex-col justify-start items-start w-full">
-            <MetricBadge
-              label="Fitness (CTL)"
-              value={Math.round(athleteStore.ctl)}
-              color={CTL_IDENTITY_HEX}
-              sub="Long-term load"
-              labelClass="text-[10px] text-text1 uppercase tracking-[0.08em] font-mono"
-              subClass="text-[10px] text-text1"
-            />
-          </div>
-        </Card>
-        <Card paddingClass="px-6 py-5">
-          <div class="flex flex-col justify-start items-start w-full">
-            <MetricBadge
-              label="Fatigue (ATL)"
-              value={Math.round(athleteStore.atl)}
-              color={ATL_IDENTITY_HEX}
-              sub="Short-term load"
-              labelClass="text-[10px] text-text1 uppercase tracking-[0.08em] font-mono"
-              subClass="text-[10px] text-text1"
-              valueClassName="text-text0"
-            />
-          </div>
-        </Card>
-        <Card paddingClass="px-6 py-5">
-          <div class="flex flex-col justify-start items-start w-full">
-            <MetricBadge
-              label="Form (TSB)"
-              value={athleteStore.tsb > 0 ? `+${Math.round(athleteStore.tsb)}` : Math.round(athleteStore.tsb)}
-              color={formCssColor(athleteStore.tsb)}
-              sub="Training balance"
-              labelClass="text-[10px] text-text1 uppercase tracking-[0.08em] font-mono"
-              subClass="text-[10px] text-text1"
-            />
-          </div>
-        </Card>
-        <Card paddingClass="px-6 py-5">
-          <div class="flex flex-col justify-start items-start w-full leading-tight">
-            <div class="flex flex-col gap-0.5 w-full">
-              <span class="text-[10px] font-mono uppercase tracking-wide text-text1">Weekly TSS</span>
-              <div class="flex flex-col gap-1">
-                <p class="text-[22px] font-semibold tabular-nums leading-none text-text0 tracking-[-0.02em]">
-                  {weeklyRollingContext.weekSum}
-                </p>
-                {#if weeklyRollingContext.baseline !== null && weeklyRollingContext.delta !== null && weeklyRollingContext.pct !== null}
-                  {@const delta = weeklyRollingContext.delta}
-                  <div class="flex flex-row flex-wrap items-baseline gap-x-2 gap-y-0">
-                    <span class="text-[10px] font-mono tabular-nums text-text1">
-                      Baseline: {weeklyRollingContext.baseline}
-                    </span>
-                    <span class="text-[10px] font-mono tabular-nums {getWeeklyLoadDeltaColor(weeklyRollingContext.pct)}">
-                      {#if delta > 0}
-                        ↑ {delta}
-                      {:else if delta < 0}
-                        ↓ {Math.abs(delta)}
-                      {:else}
-                        0
-                      {/if}
-                    </span>
-                  </div>
-                {/if}
-              </div>
-            </div>
-          </div>
-        </Card>
-      </div>
-      
-      {#if athleteStore.metrics?.trainingLoadData?.length > 0}
-        <Card>
-          <p class="text-[13px] font-semibold mb-3 text-text0">Training Load Trend</p>
-          <MultiLineChart data={athleteStore.metrics.trainingLoadData} height={120} />
-        </Card>
-      {/if}
-      
-      <Card
-        paddingClass="px-6 py-4"
-        class="!bg-gradient-to-br from-blue/10 via-transparent to-transparent"
-      >
-        <div class="flex gap-3 items-start">
-          <Lightbulb class="w-4 h-4 shrink-0 text-text2 mt-0.5" strokeWidth={1.5} aria-hidden="true" />
-          <div class="flex-1 min-w-0">
-            <p class="text-[13px] font-semibold mb-1.5 text-text1">Load Insight</p>
-            {#if analysisLoading && analysisText === null}
-              <p class="text-xs text-text2 animate-pulse">Analyzing...</p>
-            {:else}
-              <p class="text-xs text-text1 leading-relaxed">
-                {analysisText ??
-                  (!isConnected
-                    ? 'Keep logging activities to build your training picture. Connect a device for automatic sync and deeper metrics.'
-                    : 'No insight available right now. Check back after your next sync.')}
-              </p>
-            {/if}
-          </div>
-        </div>
-      </Card>
-    {/if}
-
     {#if metric === 'history'}
       {#if selectedWorkout}
-        <!-- Detailed Workout View -->
-        <div class="mb-2 flex items-center justify-between gap-2">
-          <button
-            class="text-xs text-blue flex items-center gap-1 bg-transparent border-none p-0 cursor-pointer"
-            onclick={closeWorkout}
-          >
-            ← Back to list
-          </button>
-
-          <div class="flex items-center gap-3">
-            <button
-              class="text-xs text-blue bg-transparent border-none p-0 cursor-pointer"
-              onclick={openEditActivity}
-            >
-              Edit
-            </button>
-            <button
-              class="text-xs text-red bg-transparent border-none p-0 cursor-pointer"
-              onclick={deleteSelectedWorkout}
-            >
-              Delete
-            </button>
-          </div>
-        </div>
-        
-        <Card>
-          {@const selectedStrainVal = Number.isFinite(Number(selectedWorkout?.strain_score)) ? Math.round(Number(selectedWorkout.strain_score)) : null}
-          {@const selectedTssVal = Number.isFinite(Number(selectedWorkout?.tss)) ? Math.round(Number(selectedWorkout.tss)) : null}
-          <div class="flex items-center gap-4 mb-4">
-            <div class="w-12 h-12 rounded-2xl flex items-center justify-center text-2xl {getWorkoutBg(selectedWorkout.sport)}">
-              {getWorkoutIcon(selectedWorkout.sport)}
-            </div>
-            <div class="flex-1">
-              <h2 class="text-lg font-bold leading-tight text-text0">{selectedWorkout.title || (getWorkoutLabel(selectedWorkout.sport) + ' Session')}</h2>
-              <p class="text-xs text-text2">{format(new Date(selectedWorkout.started_at), (athleteStore.profile as any)?.time_format === '24h' ? 'EEEE, MMM d · HH:mm' : 'EEEE, MMM d · h:mm a')}</p>
-            </div>
-            <div class="text-right flex flex-col gap-1">
-              <div>
-                <p class="text-[18px] font-bold tabular-nums" style:color={boundedScoreCssColor(selectedStrainVal, true)}>
-                  {selectedStrainVal === null ? '--' : selectedStrainVal}
-                </p>
-                <p class="text-[9px] text-text2 font-mono">STRAIN</p>
-              </div>
-              <div>
-                <p
-                  class="text-[18px] font-bold tabular-nums"
-                  style:color={boundedScoreCssColor(selectedTssVal === null ? null : selectedStrainVal, true)}
-                >
-                  {selectedTssVal === null ? '--' : selectedTssVal}
-                </p>
-                <p class="text-[9px] text-text2 font-mono">TSS</p>
-              </div>
-            </div>
-          </div>
-
-          <div class="grid grid-cols-2 gap-2 mb-5">
-            <div class="bg-glass2 p-2.5 rounded-xl border border-border">
-              <p class="text-[9px] text-text2 font-mono uppercase mb-1">Duration</p>
-              <p class="text-sm font-bold">{Math.floor(getDurationSecs(selectedWorkout) / 60)}m</p>
-            </div>
-            <div class="bg-glass2 p-2.5 rounded-xl border border-border">
-              <p class="text-[9px] text-text2 font-mono uppercase mb-1">Distance</p>
-              <p class="text-sm font-bold">
-                {formatWorkoutDistance(selectedWorkout.distance_m, measurementUnits, selectedWorkout.sport)}
-              </p>
-            </div>
-            <div class="bg-glass2 p-2.5 rounded-xl border border-border">
-              <p class="text-[9px] text-text2 font-mono uppercase mb-1">Avg HR</p>
-              <p class="text-sm font-bold">{selectedWorkout.avg_hr || '--'} <span class="text-[10px] font-normal opacity-60">bpm</span></p>
-            </div>
-            <div class="bg-glass2 p-2.5 rounded-xl border border-border">
-              <p class="text-[9px] text-text2 font-mono uppercase mb-1">Avg Watts</p>
-              <p class="text-sm font-bold">
-                {formatAvgPower(selectedWorkout)}
-                {#if formatAvgPower(selectedWorkout) !== '--'}
-                  <span class="text-[10px] font-normal opacity-60">w</span>
-                {/if}
-              </p>
-            </div>
-          </div>
-
-          <div class="mb-5 min-w-0 bg-glass2 p-3 rounded-xl border border-border">
-            <p class="text-[11px] font-semibold mb-2">Heart-rate zones</p>
-
-            {#if hasAnyHrZone(selectedWorkout)}
-              <div class="flex w-full min-w-0 flex-col gap-2">
-                {#each getHrZonePctsTopDown(selectedWorkout) as pct, topIdx (topIdx)}
-                  {@const zone = 5 - topIdx}
-                  {@const color = HR_ZONE_HEX[zone]}
-                  {@const zDef = mergedHrZoneDefs.find((d) => d.zone === zone)}
-                  {@const zn = canonicalHrZoneShortName(zone) || zDef?.name}
-                  <div class="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] gap-x-1.5 gap-y-1.5">
-                    <div class="flex min-w-0 gap-2 self-start pt-0.5">
-                      <span class="mt-1 h-2 w-2 shrink-0 rounded-full" style="background: {color};"></span>
-                      <div class="min-w-0 flex-1">
-                        <div class="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                          <span class="text-[11px] text-text0 font-mono uppercase shrink-0">Z{zone}</span>
-                          {#if zn}
-                            <span class="text-[11px] text-text1 font-sans font-medium leading-snug">{zn}</span>
-                          {/if}
-                          <span class="text-[10px] text-text2 font-mono">{formatZoneBpmRange(zDef)}</span>
-                        </div>
-                      </div>
-                    </div>
-                    <p class="self-start text-right text-[11px] font-mono tabular-nums leading-none text-text2">
-                      {pct == null ? '--' : `${Math.round(pct)}%`}
-                    </p>
-                    <div
-                      class="h-2.5 min-w-0 w-full max-w-full self-center overflow-hidden rounded-full border border-border bg-glass"
-                    >
-                      <div
-                        class="h-full max-w-full rounded-full"
-                        style="width: {pct == null ? 0 : Math.max(0, Math.min(100, pct))}%; background: {color};"
-                      ></div>
-                    </div>
-                    <p class="self-center text-right text-[11px] font-semibold tabular-nums leading-none text-text1">
-                      {pct == null ? '--' : formatMMSS((getDurationSecs(selectedWorkout) * pct) / 100)}
-                    </p>
-                  </div>
-                {/each}
-              </div>
+        <!-- Detailed Workout View (map hero + tabs) -->
+        {@const sel = selectedWorkout}
+        {@const selTss = Number.isFinite(Number(sel?.tss)) && Number(sel.tss) > 0 ? Math.round(Number(sel.tss)) : null}
+        {@const selStrain = Number.isFinite(Number(sel?.strain_score)) && Number(sel.strain_score) > 0 ? Math.round(Number(sel.strain_score)) : null}
+        {@const selSecs = getDurationSecs(sel)}
+        {@const selNp = Number(sel?.norm_power_w) || 0}
+        {@const selLatlng = detailStreams?.time_series?.latlng}
+        {@const selLthr = Number((athleteStore.profile as any)?.lthr ?? (athleteStore.profile as any)?.threshold_hr) || 0}
+        {@const selElev = Number(sel?.elevation_gain_m) || 0}
+        <div class="-mx-4 flex flex-col">
+          <!-- Map hero -->
+          <div class="relative">
+            {#if selLatlng && selLatlng.length > 1}
+              <GpsTrace
+                hero
+                latlng={selLatlng}
+                heartrate={detailStreams?.time_series?.heartrate}
+                time={detailStreams?.time_series?.time}
+                zones={mergedHrZoneDefs}
+              />
             {:else}
-              <p class="text-[11px] text-text2">No zone data for this workout</p>
+              <div class="h-[150px] bg-bg1 {detailLoading || detailHydrating ? 'animate-pulse' : ''}"></div>
             {/if}
-          </div>
-
-          {#if authStore.tier === 'premium'}
-            <div class="mt-4 pt-4 border-t border-border/40 rounded-xl p-3 bg-gradient-to-br from-blue/10 via-transparent to-transparent">
-              <div class="flex items-center gap-1.5 mb-2">
-                <span class="text-[11px] font-mono uppercase tracking-[0.08em] text-blue">AI Insight</span>
-                <Tag color="var(--blue)">ASTRAPHE</Tag>
+            <div class="absolute left-4 right-4 top-4 z-10 flex justify-between pointer-events-none">
+              <button type="button" aria-label="Back to training" class="pointer-events-auto w-11 h-11 rounded-full bg-bg0/85 border border-border text-text0 flex items-center justify-center cursor-pointer" onclick={closeWorkout}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m15 6-6 6 6 6"></path></svg>
+              </button>
+              <div class="pointer-events-auto flex gap-1.5">
+                <button type="button" aria-label="Edit workout" class="w-11 h-11 rounded-full bg-bg0/85 border border-border text-text0 flex items-center justify-center cursor-pointer" onclick={openEditActivity}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4z"></path><path d="m13 7 4 4"></path></svg>
+                </button>
+                <button type="button" aria-label="Delete workout" class="w-11 h-11 rounded-full bg-bg0/85 border border-border text-red flex items-center justify-center cursor-pointer" onclick={deleteSelectedWorkout}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"></path></svg>
+                </button>
               </div>
-              {#if workoutAnalysisLoading && !workoutAnalysisMemo.has(selectedWorkout.id)}
-                <p class="text-xs text-text2 animate-pulse">Analyzing workout...</p>
-              {:else}
-                <p class="text-xs text-text1 leading-relaxed">
-                  {workoutAnalysisMemo.get(selectedWorkout.id) ?? 'Insight unavailable.'}
-                </p>
-              {/if}
             </div>
-          {:else}
-            <div class="p-3 bg-blue-dim rounded-xl border-l-2 border-blue">
-              <p class="text-[11px] font-semibold text-blue mb-1">Analysis</p>
-              <p class="text-[11px] text-text1 leading-relaxed">
-                This session contributed {Math.round(selectedWorkout.tss || 0)} points to your acute load. {selectedWorkout.tss > 80 ? 'Ensure proper recovery tonight.' : 'Good aerobic contribution.'}
-              </p>
-            </div>
-          {/if}
-
-          <div class="mt-5 pt-4 border-t border-border">
-            <DataSources workout={selectedWorkout} />
           </div>
 
-          {#if hasActivityDetailSource(selectedWorkout)}
-            {#if showRepullDataButton}
-              <div class="mt-3">
+          <!-- Sheet -->
+          <div class="relative -mt-6 px-5 pt-5 pb-10 rounded-t-[28px] bg-bg0 border-t border-border flex flex-col gap-3.5">
+            <header class="flex justify-between items-start gap-3">
+              <div class="flex flex-col gap-1.5 min-w-0">
+                <span class="font-mono text-[11px] tracking-[0.14em] text-blue uppercase">{getWorkoutLabel(sel.sport)} · {format(new Date(sel.started_at), (athleteStore.profile as any)?.time_format === '24h' ? 'EEE d MMM · HH:mm' : 'EEE d MMM · h:mm a')}</span>
+                <h1 class="m-0 font-display font-normal text-[32px] leading-[1.05]">{sel.title || (getWorkoutLabel(sel.sport) + ' Session')}</h1>
+              </div>
+              <span class="shrink-0 flex gap-3 pt-[18px]">
+                <span class="flex flex-col items-center"><span class="font-display text-[28px] leading-none">{selStrain ?? '--'}</span><span class="font-mono text-[9px] text-text2">STRAIN</span></span>
+                <span class="flex flex-col items-center"><span class="font-display text-[28px] leading-none">{selTss ?? '--'}</span><span class="font-mono text-[9px] text-text2">TSS</span></span>
+              </span>
+            </header>
+
+            <dl class="m-0 grid grid-cols-4 gap-1.5">
+              {#each [
+                { k: 'Duration', v: `${Math.floor(selSecs / 3600)}:${String(Math.floor((selSecs % 3600) / 60)).padStart(2, '0')} h` },
+                { k: 'Distance', v: formatWorkoutDistance(sel.distance_m, measurementUnits, sel.sport) },
+                { k: 'Avg HR', v: sel.avg_hr ? String(sel.avg_hr) : '--' },
+                { k: 'Avg W', v: formatAvgPower(sel) }
+              ] as stat (stat.k)}
+                <div class="p-2.5 rounded-[14px] bg-bg2 flex flex-col-reverse gap-0.5">
+                  <dt class="text-[10px] text-text2">{stat.k}</dt>
+                  <dd class="m-0 text-[15px] font-medium truncate">{stat.v}</dd>
+                </div>
+              {/each}
+            </dl>
+
+            <div role="tablist" aria-label="Workout sections" class="grid grid-cols-4 gap-0.5 p-1 rounded-[14px] bg-bg2 border border-border">
+              {#each [['overview', 'Overview'], ['charts', 'Charts'], ['laps', 'Laps'], ['data', 'Data']] as [id, label] (id)}
                 <button
                   type="button"
-                  class="px-3 py-1.5 rounded-full text-[11px] font-medium border border-border bg-glass2 text-text1 hover:border-teal/40 hover:text-teal transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  disabled={detailRepulling || detailLoading}
-                  onclick={() => repullWorkoutData()}
-                >
-                  {detailRepulling ? 'Pulling data…' : 'Repull data'}
-                </button>
-              </div>
-            {/if}
-
-            {#if detailLoading}
-              <div class="mt-4 space-y-3">
-                {#each [{ id: 'streams', h: 150 }, { id: 'map', h: 150 }, { id: 'splits', h: 120 }] as skeleton (skeleton.id)}
-                  <div class="rounded-2xl bg-glass animate-pulse" style="height: {skeleton.h}px;"></div>
-                {/each}
-              </div>
-
-            {:else if detailError}
-              <p class="text-[11px] text-red mt-3 font-mono">{detailError}</p>
-
-            {:else}
-              {#if selectedWorkout.strava_activity_id && selectedWorkout.strava_streams_fetched === false && !detailHydrating && !detailStreams}
-                <p class="text-[11px] text-text2 font-mono mt-3 leading-relaxed">
-                  Strava is linked, but stream data has not been imported for this workout yet. Reconnect
-                  Strava or run the Strava backfill script to load charts and GPS.
-                </p>
-              {:else if !detailStreams && !detailHydrating}
-                <p class="text-[11px] text-text2 font-mono mt-3">
-                  No stream data stored for this workout.
-                </p>
-              {/if}
-
-              {#if detailLaps.length >= 2}
-                <div class="mt-4">
-                  <LapStrip
-                    laps={detailLaps}
-                    sport={selectedWorkout.sport}
-                    zones={mergedHrZoneDefs}
-                    measurementUnits={measurementUnits}
-                  />
-                </div>
-              {/if}
-
-              {#if detailMissingPaceStream}
-                <p class="text-[11px] text-text2 font-mono mt-3 leading-relaxed">
-                  Pace stream unavailable for this activity (heart rate is still shown). Try
-                  refreshing imported data if streams were imported incorrectly.
-                </p>
-              {/if}
-
-              {#if detailHydrating && !detailStreams}
-                <div class="mt-4 space-y-2">
-                  <div class="rounded-2xl bg-glass animate-pulse" style="height: 150px;"></div>
-                  <p class="text-[11px] text-text2 font-mono animate-pulse">
-                    Loading stream data…
-                  </p>
-                </div>
-              {:else if detailStreams}
-                <div class="mt-4 min-h-[260px]">
-                  <StreamCharts
-                    streams={detailStreams}
-                    laps={detailLaps}
-                    sport={selectedWorkout.sport}
-                    zones={mergedHrZoneDefs}
-                    measurementUnits={measurementUnits}
-                  />
-                </div>
-              {/if}
-
-              {#if detailStreams?.time_series?.latlng && detailStreams.time_series.latlng.length > 1}
-                <div class="mt-4 min-h-[300px]">
-                  <GpsTrace
-                    latlng={detailStreams.time_series.latlng}
-                    heartrate={detailStreams?.time_series?.heartrate}
-                    time={detailStreams?.time_series?.time}
-                    zones={mergedHrZoneDefs}
-                  />
-                </div>
-              {/if}
-
-              {#if showLapSplitCharts}
-                <div class="mt-4 w-full">
-                  <SplitCharts
-                    splits={detailSplits.splits}
-                    sport={selectedWorkout.sport}
-                    zones={mergedHrZoneDefs}
-                    measurementUnits={measurementUnits}
-                    source={detailSplits.source}
-                  />
-                </div>
-              {/if}
-
-              {#if showSplitsTable}
-                <div class="mt-4 w-full">
-                  <IntervalsTable
-                    splits={detailSplits.splits}
-                    sport={selectedWorkout.sport}
-                    source={detailSplits.source}
-                    measurementUnits={measurementUnits}
-                  />
-                </div>
-              {/if}
-            {/if}
-          {/if}
-        </Card>
-      {:else}
-        <div class="flex flex-col gap-2.5">
-          <!-- Week selector -->
-          <Card style="padding: 12px 14px;">
-            <div class="flex flex-col gap-3 min-w-0 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
-              <div class="min-w-0">
-                <p class="text-[10px] text-text2 font-mono uppercase tracking-[0.08em]">Week</p>
-                <p class="text-[13px] font-semibold break-words">
-                  {format(selectedWeekStart, 'MMM d')} – {format(selectedWeekEnd, 'MMM d, yyyy')}
-                </p>
-              </div>
-
-              <div class="flex items-center gap-2 min-w-0 w-full sm:w-auto sm:shrink-0 sm:max-w-full">
-                <button
-                  class="shrink-0 px-2 py-1 rounded-lg border border-border bg-glass2 text-[11px] text-text1 cursor-pointer"
-                  onclick={() => (weekPickerValue = format(addDays(selectedWeekStart, -7), 'yyyy-MM-dd'))}
-                  aria-label="Previous week"
-                >
-                  ←
-                </button>
-
-                <div class="min-w-0 flex-1 sm:flex-none sm:w-[160px]">
-                  <DatePicker
-                    id="training-history-week"
-                    bind:value={weekPickerValue}
-                    ariaLabel="Select week"
-                    buttonClass="px-2 py-1 pr-2 rounded-lg border border-border bg-glass2 text-[11px] text-text1"
-                  />
-                </div>
-
-                <button
-                  class="shrink-0 whitespace-nowrap px-2 py-1 rounded-lg border border-border bg-glass2 text-[11px] text-text1 cursor-pointer"
-                  onclick={jumpToCurrentWeek}
-                  aria-label="Jump to current week"
-                >
-                  Today
-                </button>
-
-                <button
-                  class="shrink-0 px-2 py-1 rounded-lg border border-border bg-glass2 text-[11px] text-text1 cursor-pointer"
-                  onclick={() => (weekPickerValue = format(addDays(selectedWeekStart, 7), 'yyyy-MM-dd'))}
-                  aria-label="Next week"
-                >
-                  →
-                </button>
-              </div>
+                  role="tab"
+                  aria-selected={detailTab === id}
+                  class="h-9 border-0 rounded-[10px] text-[13px] font-medium cursor-pointer {detailTab === id ? 'bg-bg3 text-text0' : 'bg-transparent text-text2'}"
+                  onclick={() => (detailTab = id)}
+                >{label}</button>
+              {/each}
             </div>
-          </Card>
 
-          {#if weekWorkouts.length === 0}
-            <Card style="padding: 14px;">
-              <p class="text-[12px] text-text2">No workouts logged in this week.</p>
-            </Card>
-          {/if}
+            {#if detailTab === 'overview'}
+              {#if authStore.tier === 'premium'}
+                <section aria-label="Coach analysis" class="flex flex-col gap-2 p-4 rounded-[20px] bg-bg1 border border-dashed border-border">
+                  <span class="font-mono text-[10px] tracking-[0.12em] text-blue">COACH ANALYSIS</span>
+                  {#if workoutAnalysisLoading && !workoutAnalysisMemo.has(selectedWorkout.id)}
+                    <p class="m-0 text-sm text-text2 animate-pulse">Analyzing workout…</p>
+                  {:else}
+                    <p class="m-0 text-sm leading-[1.5] text-text1">{workoutAnalysisMemo.get(selectedWorkout.id) ?? 'Insight unavailable.'}</p>
+                  {/if}
+                </section>
+              {:else}
+                <section aria-label="Analysis" class="flex flex-col gap-2 p-4 rounded-[20px] bg-bg1 border border-dashed border-border">
+                  <span class="font-mono text-[10px] tracking-[0.12em] text-blue">ANALYSIS</span>
+                  <p class="m-0 text-sm leading-[1.5] text-text1">
+                    This session added {Math.round(selectedWorkout.tss || 0)} TSS to your acute load. {selectedWorkout.tss > 80 ? 'Make recovery a priority tonight.' : 'A good aerobic contribution.'}
+                  </p>
+                </section>
+              {/if}
 
-          {#each weekWorkouts as w (w?.id ?? w?.started_at)}
-            {@const strainVal = Number.isFinite(Number(w?.strain_score)) ? Math.round(Number(w.strain_score)) : null}
-            {@const tssVal = Number.isFinite(Number(w?.tss)) ? Math.round(Number(w.tss)) : null}
-            <button
-              class="text-left bg-transparent border-none p-0 cursor-pointer w-full"
-              onclick={() => openWorkout(w)}
-              onmouseenter={() => w.id && onWorkoutCardIntent(w.id)}
-              ontouchstart={() => w.id && onWorkoutCardIntent(w.id)}
-            >
-              <Card style="padding: 12px 14px;">
-                <div class="flex items-center gap-3">
-                  <div class="w-10 h-10 rounded-xl shrink-0 flex items-center justify-center text-[18px] {getWorkoutBg(w.sport)}">
-                    {getWorkoutIcon(w.sport)}
+              <dl class="m-0 grid grid-cols-3 gap-2">
+                {#each [
+                  { k: 'Norm. power', v: selNp > 0 ? `${selNp} W` : '--' },
+                  { k: 'Max HR', v: sel.max_hr ? String(sel.max_hr) : '--' },
+                  { k: 'Elevation', v: selElev > 0 ? `+${formatElevationMeters(selElev, measurementUnits)}` : '--' }
+                ] as stat (stat.k)}
+                  <div class="bg-bg2 border border-border rounded-2xl p-3 flex flex-col-reverse gap-0.5">
+                    <dt class="text-[11px] text-text2">{stat.k}</dt>
+                    <dd class="m-0 text-[17px] font-medium">{stat.v}</dd>
                   </div>
-                  <div class="flex-1">
-                    <p class="text-[13px] font-semibold text-text0">
-                      {w.title || (getWorkoutLabel(w.sport) + ' Session')}
-                    </p>
-                    <p class="text-[11px] text-text2">{format(new Date(w.started_at), 'MMM d')} · {Math.floor(getDurationSecs(w) / 60)} min</p>
-                  </div>
-                  <div class="text-right flex flex-col gap-1">
-                    <div>
-                      <p class="text-[14px] font-bold tabular-nums" style:color={boundedScoreCssColor(strainVal, true)}>
-                        {strainVal === null ? '--' : strainVal}
-                      </p>
-                      <p class="text-[9px] text-text2 font-mono">STRAIN</p>
-                    </div>
-                    <div>
-                      <p
-                        class="text-[14px] font-bold tabular-nums"
-                        style:color={boundedScoreCssColor(tssVal === null ? null : strainVal, true)}
-                      >
-                        {tssVal === null ? '--' : tssVal}
-                      </p>
-                      <p class="text-[9px] text-text2 font-mono">TSS</p>
-                    </div>
-                  </div>
+                {/each}
+              </dl>
+
+              <section aria-label="Heart-rate zones" class="bg-bg2 border border-border rounded-[24px] px-[18px] py-4 flex flex-col gap-3">
+                <div class="flex justify-between items-baseline">
+                  <h2 class="m-0 font-display font-normal text-[22px]">Heart-rate zones</h2>
+                  {#if selLthr}<span class="font-mono text-[11px] text-text2">LTHR {selLthr}</span>{/if}
                 </div>
-              </Card>
-            </button>
-          {/each}
+                {#if hasAnyHrZone(sel)}
+                  {@const zp = getHrZonePcts(sel)}
+                  <div aria-hidden="true" class="flex gap-[3px] h-2.5">
+                    {#each zp as p, i (i)}
+                      {#if (p ?? 0) > 0}<span class="rounded-[3px]" style="flex: {p} 1 0; min-width: 4px; background: var(--zone-{i + 1})"></span>{/if}
+                    {/each}
+                  </div>
+                  <div class="flex flex-col">
+                    {#each getHrZonePctsTopDown(sel) as pct, topIdx (topIdx)}
+                      {@const zone = 5 - topIdx}
+                      {@const zDef = mergedHrZoneDefs.find((d) => d.zone === zone)}
+                      {@const zn = canonicalHrZoneShortName(zone) || zDef?.name}
+                      <div class="grid grid-cols-[14px_1fr_auto_auto_auto] items-center gap-2.5 py-3 border-t border-border text-[15px]">
+                        <span aria-hidden="true" class="h-2.5 w-2.5 rounded-[3px]" style="background: {HR_ZONE_HEX[zone]}"></span>
+                        <span class="min-w-0 truncate"><span class="font-semibold">Z{zone}</span>{#if zn} <span class="text-text1">{zn}</span>{/if}</span>
+                        <span class="font-mono text-xs text-text2">{formatZoneBpmRange(zDef)}</span>
+                        <span class="w-9 text-right font-mono text-[13px] text-text1 tabular-nums">{pct == null ? '--' : `${Math.round(pct)}%`}</span>
+                        <span class="w-12 text-right font-mono text-[13px] tabular-nums">{pct == null ? '--' : formatMMSS((selSecs * pct) / 100)}</span>
+                      </div>
+                    {/each}
+                  </div>
+                {:else}
+                  <p class="m-0 text-[13px] text-text2">No zone data for this workout.</p>
+                {/if}
+              </section>
+            {/if}
+
+            {#if detailTab === 'charts'}
+              {#if detailLoading || (detailHydrating && !detailStreams)}
+                <div class="rounded-[24px] bg-bg2 animate-pulse" style="height: 220px;"></div>
+              {:else if detailError}
+                <p class="m-0 text-[11px] text-red font-mono">{detailError}</p>
+              {:else if detailStreams}
+                {#if detailMissingPaceStream}
+                  <p class="m-0 text-[13px] text-text2 leading-relaxed px-1">Pace stream unavailable for this activity (heart rate is still shown). Try refreshing imported data if streams were imported incorrectly.</p>
+                {/if}
+                <section aria-label="Power and heart rate" class="bg-bg2 border border-border rounded-[24px] p-[18px] min-h-[260px]">
+                  <StreamCharts streams={detailStreams} laps={detailLaps} sport={sel.sport} zones={mergedHrZoneDefs} measurementUnits={measurementUnits} />
+                </section>
+              {:else}
+                <p class="m-0 text-[13px] text-text2 px-1">No stream data stored for this workout.{#if showRepullDataButton} Use “Repull data” on the Data tab to fetch it.{/if}</p>
+              {/if}
+            {/if}
+
+            {#if detailTab === 'laps'}
+              {#if detailLoading}
+                <div class="rounded-[24px] bg-bg2 animate-pulse" style="height: 160px;"></div>
+              {:else if detailLaps.length >= 2 || showSplitsTable}
+                {#if detailLaps.length >= 2}
+                  <section aria-label="Laps" class="bg-bg2 border border-border rounded-[24px] p-[18px]">
+                    <LapStrip laps={detailLaps} sport={sel.sport} zones={mergedHrZoneDefs} measurementUnits={measurementUnits} />
+                  </section>
+                {/if}
+                {#if showSplitsTable}
+                {@const usePace = sel.sport === 'row' || sel.sport === 'run'}
+                {@const showWatts = detailSplits.splits.some((r) => Number(r.average_watts) > 0)}
+                  <section aria-label="Splits" class="bg-bg2 border border-border rounded-[24px] p-[18px] flex flex-col gap-3">
+                    <h2 class="m-0 font-display font-normal text-[22px]">Splits</h2>
+                    <div class="w-full overflow-x-auto">
+                      <table class="w-full border-collapse text-[13px]">
+                        <thead>
+                          <tr class="text-right font-mono text-[10px] tracking-[0.06em] text-text2">
+                            <th scope="col" class="py-1.5 text-left font-normal">LAP</th>
+                            <th scope="col" class="font-normal">TIME</th>
+                            <th scope="col" class="font-normal">DIST</th>
+                            <th scope="col" class="font-normal">{usePace ? 'PACE' : 'SPEED'}</th>
+                            <th scope="col" class="font-normal">HR</th>
+                            {#if showWatts}<th scope="col" class="font-normal">WATTS</th>{/if}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {#each detailSplits.splits as r (r.split_number)}
+                            <tr class="border-t border-border text-right font-mono text-xs tabular-nums">
+                              <th scope="row" class="py-[9px] text-left font-sans font-medium">{r.split_number}</th>
+                              <td>{splitTime(r.elapsed_time)}</td>
+                              <td>{splitDistance(r.distance)}</td>
+                              <td>{usePace ? splitPace(r.pace_seconds) : splitSpeed(r)}</td>
+                              <td class="text-text1">{r.average_heartrate ? Math.round(r.average_heartrate) : '—'}</td>
+                              {#if showWatts}<td>{Number(r.average_watts) > 0 ? Math.round(Number(r.average_watts)) : '—'}</td>{/if}
+                            </tr>
+                          {/each}
+                        </tbody>
+                      </table>
+                    </div>
+                  </section>
+                {/if}
+              {:else}
+                <p class="m-0 text-[13px] text-text2 px-1">No laps or splits recorded for this workout.</p>
+              {/if}
+            {/if}
+
+            {#if detailTab === 'data'}
+              <section aria-label="Data sources" class="bg-bg2 border border-border rounded-[24px] p-[18px] flex flex-col gap-4">
+                <DataSources workout={selectedWorkout} />
+                {#if hasActivityDetailSource(sel)}
+                  {#if sel.strava_activity_id && sel.strava_streams_fetched === false && !detailHydrating && !detailStreams}
+                    <p class="m-0 text-[13px] text-text2 leading-relaxed">Strava is linked, but stream data has not been imported for this workout yet. Reconnect Strava or run the Strava backfill script to load charts and GPS.</p>
+                  {/if}
+                  {#if showRepullDataButton}
+                    <button
+                      type="button"
+                      class="self-start h-11 px-4 rounded-[14px] border border-border bg-transparent text-text0 text-sm font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                      disabled={detailRepulling || detailLoading}
+                      onclick={() => repullWorkoutData()}
+                    >{detailRepulling ? 'Pulling data…' : 'Repull data'}</button>
+                  {/if}
+                {/if}
+              </section>
+            {/if}
+          </div>
+        </div>
+      {:else}
+        <div class="flex flex-col gap-3.5">
+          <!-- This week -->
+          <section aria-label="This week" class="bg-bg2 border border-border rounded-[24px] px-[18px] py-4 flex flex-col gap-3.5">
+            <WeekNavigator bind:value={weekPickerValue} max={format(new Date(), 'yyyy-MM-dd')} />
+            <div class="grid grid-cols-3 gap-2">
+              <div class="flex flex-col gap-0.5"><span class="text-[22px] font-medium tracking-[-0.02em]">{weekTotals.tss}{#if weeklyTarget}<span class="text-xs text-text2 font-normal"> / {weeklyTarget}</span>{/if}</span><span class="text-[11px] text-text2">TSS</span></div>
+              <div class="flex flex-col gap-0.5"><span class="text-[22px] font-medium tracking-[-0.02em]">{weekTotals.time}</span><span class="text-[11px] text-text2">Time</span></div>
+              <div class="flex flex-col gap-0.5"><span class="text-[22px] font-medium tracking-[-0.02em]">{weekTotals.distance}<span class="text-xs text-text2 font-normal"> {weekTotals.distanceUnit}</span></span><span class="text-[11px] text-text2">Distance</span></div>
+            </div>
+            {#if weeklyTarget}
+              <div aria-hidden="true" class="h-1.5 rounded-[3px] bg-border overflow-hidden"><div class="h-1.5 rounded-[3px] bg-blue" style="width: {Math.min(100, Math.round((weekTotals.tss / weeklyTarget) * 100))}%"></div></div>
+            {/if}
+          </section>
+
+          <!-- Activities -->
+          <section aria-label="Activities" class="flex flex-col gap-2">
+            <span class="font-mono text-[11px] tracking-[0.14em] text-text2">{isCurrentWeek ? 'RECENT ACTIVITIES' : 'ACTIVITIES'}</span>
+            {#if weekWorkouts.length === 0}
+              <div class="px-4 py-3.5 rounded-[18px] bg-bg1 border border-border text-[13px] text-text2">No workouts logged in this week.</div>
+            {/if}
+            {#each weekWorkouts as w, i (w?.id ?? w?.started_at)}
+              {@const tssVal = Number.isFinite(Number(w?.tss)) && Number(w.tss) > 0 ? Math.round(Number(w.tss)) : null}
+              <button
+                type="button"
+                class="flex items-center gap-3 px-3.5 py-3 rounded-[18px] bg-bg1 border border-border text-left w-full cursor-pointer"
+                onclick={() => openWorkout(w)}
+                onmouseenter={() => w.id && onWorkoutCardIntent(w.id)}
+                ontouchstart={() => w.id && onWorkoutCardIntent(w.id)}
+              >
+                <span aria-hidden="true" class="shrink-0 w-10 h-10 rounded-xl flex items-center justify-center font-mono text-[11px] font-medium {i === 0 && isCurrentWeek ? 'bg-blue-dim text-blue' : 'bg-bg3 text-text1'}">{sportGlyph(w.sport)}</span>
+                <span class="flex-1 min-w-0 flex flex-col gap-0.5">
+                  <span class="text-sm font-medium truncate">{w.title || (getWorkoutLabel(w.sport) + ' Session')}</span>
+                  <span class="text-xs text-text2 truncate">{activityMeta(w)}</span>
+                </span>
+                <span class="flex flex-col items-end gap-0.5">
+                  <span class="font-mono text-[13px]">{tssVal ?? '—'}</span>
+                  <span class="text-[11px] text-text2">TSS</span>
+                </span>
+              </button>
+            {/each}
+          </section>
+
+          {#if loadInsight}
+            <div class="flex gap-3 items-start px-4 py-3.5 rounded-[18px] bg-bg1 border border-dashed border-border">
+              <span class="font-mono text-[10px] tracking-[0.12em] text-blue pt-0.5">LOAD</span>
+              <span class="text-[13px] leading-[1.45] text-text1">{loadInsight}</span>
+            </div>
+          {/if}
         </div>
       {/if}
     {/if}

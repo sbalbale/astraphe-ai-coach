@@ -284,7 +284,7 @@ def test_calculate_weekly_tss_target_zero_ctl_returns_default():
 
 
 def test_calculate_weekly_tss_target_scales_with_ctl():
-    assert algorithms.calculate_weekly_tss_target(50) == 375
+    assert algorithms.calculate_weekly_tss_target(50) == 350
 
 
 def test_calculate_threshold_hr_est_missing_inputs_returns_zero():

@@ -344,6 +344,23 @@ export class AthleteState {
     }
   }
 
+  /**
+   * Re-reads the athlete profile from the API (bypassing the cached copy), so screens
+   * that show or edit profile values always start from what's in the database.
+   */
+  async refreshProfile(): Promise<boolean> {
+    try {
+      const fresh = await api.getAthleteProfile();
+      if (!fresh) return false;
+      this.profile = fresh;
+      const athleteId = authStore.user?.id ?? null;
+      if (athleteId) this.persistCurrent(athleteId);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   async updateProfile(payload: any): Promise<boolean> {
     this.lastProfileSaveError = null;
     const res = await api.patchAthleteProfile(payload);
@@ -355,6 +372,16 @@ export class AthleteState {
     if (data?.status === 'success') {
       const fresh = await api.getAthleteProfile();
       if (fresh) this.profile = fresh;
+      if (payload && payload.weight_kg != null) {
+        // The backend records a typed-in weight as today's reading; reload the series so
+        // every screen that shows "latest weight" picks it up.
+        try {
+          const bio = await api.getBiometricsPage({ limit: 60 });
+          if (bio) this.biometrics = bio;
+        } catch {
+          // keep the old series; the profile copy is still current
+        }
+      }
       const athleteId = authStore.user?.id ?? null;
       if (athleteId) this.persistCurrent(athleteId);
       return true;

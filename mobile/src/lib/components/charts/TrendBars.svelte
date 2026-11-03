@@ -22,7 +22,7 @@
   let max = $derived(props.max ?? 100);
   let gap = $derived(props.gap ?? 2);
   let background = $derived(props.background ?? 'rgba(255,255,255,0.06)');
-  let color = $derived(props.color ?? '#4621FF');
+  let color = $derived(props.color ?? '#7FB4FF');
   let unit = $derived(props.unit ?? '');
   let showBottomLabels = $derived(props.showBottomLabels ?? false);
 

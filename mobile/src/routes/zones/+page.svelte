@@ -5,11 +5,10 @@
 
 <script lang="ts">
   import Card from '$lib/components/Card.svelte';
-  import Pill from '$lib/components/Pill.svelte';
-  import Tag from '$lib/components/Tag.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
-  import DatePicker from '$lib/components/DatePicker.svelte';
-  import MonthPicker from '$lib/components/MonthPicker.svelte';
+  import { pageHeader, resetPageHeader } from '$lib/stores/pageHeader.svelte';
+  import MonthNavigator from '$lib/components/MonthNavigator.svelte';
+  import WeekNavigator from '$lib/components/WeekNavigator.svelte';
   import { analysisNavEpoch } from '$lib/analysisNavEpoch.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { authStore } from '$lib/stores/authStore.svelte';
@@ -23,8 +22,10 @@
     endOfMonth,
     format,
     isWithinInterval,
+    endOfWeek,
     startOfDay,
     startOfMonth,
+    startOfWeek,
     subDays
   } from 'date-fns';
 
@@ -32,7 +33,7 @@
   let editZone: number | null = $state(null);
 
   type WindowMode = 'week' | 'month';
-  let windowMode: WindowMode = $state('week');
+  let windowMode = $state<WindowMode>('week');
 
   const pad2 = (n: number) => String(n).padStart(2, '0');
   const toDateInputValue = (d: Date) =>
@@ -85,7 +86,7 @@
   });
 
   const canGoForwardWeek = $derived(
-    toDateInputValue(addDays(parseDateInputLocal(selectedDay), 7)) <= todayDayMax
+    toDateInputValue(startOfWeek(addDays(parseDateInputLocal(selectedDay), 7), { weekStartsOn: 1 })) <= todayDayMax
   );
   const canGoForwardMonth = $derived(
     toMonthInputValue(addMonths(parseDateInputLocal(`${selectedMonth}-01`), 1)) <= todayMonthMax
@@ -188,9 +189,8 @@
 
   const windowStart = $derived.by(() => {
     if (windowMode === 'week') {
-      // Rolling 7-day window ending on the selected day (inclusive)
-      const anchor = parseDateInputLocal(selectedDay);
-      return startOfDay(subDays(anchor, 6));
+      // Monday–Sunday calendar week containing the selected day
+      return startOfDay(startOfWeek(parseDateInputLocal(selectedDay), { weekStartsOn: 1 }));
     }
     const monthDate = new Date(`${selectedMonth}-01T00:00:00`);
     return startOfMonth(monthDate);
@@ -198,8 +198,7 @@
 
   const windowEnd = $derived.by(() => {
     if (windowMode === 'week') {
-      const anchor = parseDateInputLocal(selectedDay);
-      return endOfDay(anchor);
+      return endOfDay(endOfWeek(parseDateInputLocal(selectedDay), { weekStartsOn: 1 }));
     }
     const monthDate = new Date(`${selectedMonth}-01T00:00:00`);
     return endOfMonth(monthDate);
@@ -314,270 +313,133 @@
 
     return { pcts: rounded, validCount, totalCount: timeAndSportFilteredWorkouts.length };
   });
+
+  // --- Design view: time per zone, definitions with power ranges ---
+  const ftp = $derived(Number(athleteStore.profile?.ftp_watts) || 0);
+  const lthr = $derived(Number((athleteStore.profile as any)?.lthr ?? (athleteStore.profile as any)?.threshold_hr) || 0);
+  const fmtDuration = (secs: number) => {
+    const m = Math.round(secs / 60);
+    if (m <= 0) return '0m';
+    return m >= 60 ? `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m` : `${m}m`;
+  };
+  const zoneSeconds = $derived.by(() => {
+    const totals = [0, 0, 0, 0, 0];
+    for (const w of timeAndSportFilteredWorkouts as any[]) {
+      if (w.hr_zone_1_pct === null || w.hr_zone_1_pct === undefined) continue;
+      const secs = Number(w.duration_seconds) || 0;
+      for (let z = 0; z < 5; z++) totals[z] += (secs * (Number(w[`hr_zone_${z + 1}_pct`]) || 0)) / 100;
+    }
+    return totals;
+  });
+  // Coggan power zones as % of FTP (upper bound of each zone).
+  const POWER_ZONE_UPPER_PCT = [0.55, 0.75, 0.9, 1.05];
+  const zoneRows = $derived.by(() => {
+    const total = zoneSeconds.reduce((a, b) => a + b, 0);
+    return [...hrZones]
+      .sort((a: any, b: any) => a.zone - b.zone)
+      .map((z: any) => {
+        const secs = zoneSeconds[z.zone - 1] ?? 0;
+        const hr = z.hi >= 500 ? `≥ ${z.lo}` : z.lo <= 0 ? `< ${z.hi + 1}` : `${z.lo}–${z.hi}`;
+        const lo = ftp && z.zone > 1 ? Math.round(ftp * POWER_ZONE_UPPER_PCT[z.zone - 2]) + 1 : 0;
+        const hi = ftp && z.zone <= 4 ? Math.round(ftp * POWER_ZONE_UPPER_PCT[z.zone - 1]) : 0;
+        const watts = !ftp ? '—' : z.zone === 1 ? `< ${hi + 1} W` : z.zone === 5 ? `≥ ${lo} W` : `${lo}–${hi}`;
+        return { zone: z.zone, name: z.name, color: z.color, hr, watts, secs, time: fmtDuration(secs), pct: total > 0 ? Math.round((secs / total) * 100) : 0 };
+      });
+  });
+  const isCurrentWindow = $derived(
+    windowMode === "week"
+      ? toDateInputValue(startOfWeek(parseDateInputLocal(selectedDay), { weekStartsOn: 1 })) === toDateInputValue(startOfWeek(new Date(), { weekStartsOn: 1 }))
+      : selectedMonth === todayMonthMax
+  );
+  const windowTitle = $derived(
+    windowMode === "month"
+      ? format(windowStart, "MMMM")
+      : `${format(windowStart, "d MMM")} – ${format(windowEnd, "d MMM")}`
+  );
+  const windowSubtitle = $derived(
+    isCurrentWindow
+      ? windowMode === "month" ? "This month · so far" : "Last 7 days"
+      : windowMode === "month" ? format(windowStart, "yyyy") : format(windowEnd, "yyyy")
+  );
+  const stepWindow = (dir: 1 | -1) => () => {
+    if (dir === 1 && !canGoForward) return;
+    if (windowMode === "week") selectedDay = toDateInputValue(addDays(parseDateInputLocal(selectedDay), 7 * dir));
+    else selectedMonth = toMonthInputValue(addMonths(parseDateInputLocal(`${selectedMonth}-01`), dir));
+  };
+  const zoneSummary = $derived.by(() => {
+    const total = zoneSeconds.reduce((a, b) => a + b, 0);
+    if (total === 0) return "Log a few heart-rate workouts and your zone split will show up here.";
+    const easy = zoneRows.filter((z) => z.zone <= 2).reduce((a, z) => a + z.pct, 0);
+    const hard = 100 - easy;
+    const verdict = easy >= 75 ? "close to a polarized split" : easy >= 60 ? "a moderate-leaning split" : "heavy on intensity";
+    return `${easy}% easy, ${hard}% at tempo or above — ${verdict}. ${fmtDuration(total)} recorded.`;
+  });
+
+  $effect(() => {
+    pageHeader.eyebrow = 'Heart rate & power';
+    pageHeader.segments = [{ value: 'week', label: 'Week' }, { value: 'month', label: 'Month' }];
+    pageHeader.segment = windowMode;
+    pageHeader.onSegment = (v) => (windowMode = v as WindowMode);
+    return resetPageHeader;
+  });
 </script>
 
-<div class="flex flex-col gap-3">
-  <div>
-    <p class="text-xs text-text2 font-mono uppercase tracking-[0.1em]">Heart Rate & Power</p>
-    <h1 class="text-[22px] font-bold tracking-[-0.02em]">Training Zones</h1>
-    {#if zoneMethod && zoneAnchorLabel}
-      <p class="text-text2 font-mono text-xs mt-1">
-        {METHOD_LABEL[zoneMethod] ?? zoneMethod} · {zoneAnchorLabel}
-      </p>
-    {/if}
-  </div>
-
+<div class="flex flex-col gap-3.5">
   {#if athleteStore.loading && !athleteStore.initialLoadDone}
     <div class="flex-1 flex flex-col items-center justify-center py-20 opacity-40">
       <div class="w-6 h-6 border-2 border-blue border-t-transparent rounded-full animate-spin mb-4"></div>
       <p class="text-[10px] font-mono tracking-widest uppercase">Syncing Biometrics...</p>
     </div>
   {:else if !hasProfile}
-    <EmptyState 
-      title="No Profile Data" 
-      message="Complete your athlete profile to compute personalized training zones."
-      actionLabel="Go to Profile"
-      icon="👤"
-    />
+    <EmptyState title="No Profile Data" message="Complete your athlete profile to compute personalized training zones." actionLabel="Go to Profile" icon="👤" />
   {:else if !hasZoneDefinitions}
-    <EmptyState
-      title="Incomplete HR Data"
-      message="Add at least a max heart rate (or a manual lactate threshold HR) in training settings to display zones."
-      actionLabel="Training settings"
-      icon="📈"
-    />
+    <EmptyState title="Incomplete HR Data" message="Add at least a max heart rate (or a manual lactate threshold HR) in training settings to display zones." actionLabel="Training settings" icon="📈" />
   {:else}
-    {#if zoneMethod === 'max_hr'}
-      <button
-        type="button"
-        class="text-left text-[11px] text-text2 font-mono"
-        onclick={() => goto('/profile/training-settings')}
-      >
-        Add your resting heart rate to get more personalized zones →
-      </button>
-    {/if}
-
-    <!-- Sport toggle -->
-    <div class="flex gap-1.5 overflow-x-auto pb-2 no-scrollbar shrink-0">
-      {#each sportOptions as s (s.id)}
-        <Pill active={sport === s.id} onclick={() => sport = s.id}>
-          {s.label}
-        </Pill>
-      {/each}
-    </div>
-
-    <!-- Anchor values -->
-    <div class="grid grid-cols-2 gap-2.5">
-      <Card class="!bg-gradient-to-br from-red/10 via-transparent to-transparent">
-        <p class="text-[9px] text-text2 font-mono uppercase tracking-[0.08em] mb-1">Max Heart Rate</p>
-        <p class="text-[26px] font-bold text-red tracking-[-0.02em] leading-tight">
-          {maxHRKnown ?? '—'}
-          {#if maxHRKnown != null}
-            <span class="text-[13px] font-normal text-text2 ml-1">bpm</span>
-          {/if}
-        </p>
-        <p class="text-[10px] text-text2 mt-0.5">Profile Baseline</p>
-      </Card>
-      <Card class="!bg-gradient-to-br from-[rgba(87,155,250,0.12)] via-transparent to-transparent">
-        <p class="text-[9px] text-text2 font-mono uppercase tracking-[0.08em] mb-1">Resting Heart Rate</p>
-        <p class="text-[26px] font-bold tracking-[-0.02em] leading-tight" style="color: {HR_ZONE_HEX[1]}">
-          {restingHRKnown ?? '—'}
-          {#if restingHRKnown != null}
-            <span class="text-[13px] font-normal text-text2 ml-1">bpm</span>
-          {/if}
-        </p>
-        <p class="text-[10px] text-text2 mt-0.5">
-          {#if hrrKnown != null}
-            HRR: {hrrKnown} bpm
-          {:else}
-            Needed for Karvonen zones
-          {/if}
-        </p>
-      </Card>
-    </div>
-
-    <!-- Zone Bars -->
-    <Card>
-      <p class="text-[13px] font-semibold mb-3.5">Zone Definitions</p>
-      <div class="flex flex-col gap-2.5">
-        {#each zones as z, i (z.zone)}
-          {@const barHi = z.hi >= 500 ? displayCeiling : z.hi}
-          {@const barLo = Math.min(z.lo, barHi)}
-          <button 
-            class="flex flex-col text-left bg-transparent border-none p-0 cursor-pointer w-full text-text0"
-            onclick={() => editZone = editZone === i ? null : i}
-          >
-            <div class="flex items-center gap-2.5 mb-1.5 w-full">
-              <div class="w-7 h-7 rounded-lg border flex items-center justify-center shrink-0" 
-                   style="background: {z.color}20; border-color: {z.color}50;">
-                <span class="text-[11px] font-bold font-mono" style="color: {z.color}">Z{z.zone}</span>
-              </div>
-              <div class="flex-1">
-                <div class="flex justify-between items-center mb-1">
-                  <span class="text-[12px] font-semibold">{z.name}</span>
-                  <span class="text-[11px] font-mono" style="color: {z.color}">
-                    {z.hi >= 500 ? `${z.lo}+` : `${z.lo}–${z.hi}`} bpm
-                  </span>
-                </div>
-                <div class="h-1.25 bg-glass2 rounded overflow-hidden">
-                  <div class="h-full rounded" 
-                       style="width: {(displayCeiling > 0 ? (barHi - barLo) / displayCeiling : 0) * 100}%; margin-left: {(displayCeiling > 0 ? barLo / displayCeiling : 0) * 100}%; background: {z.color};"></div>
-                </div>
-              </div>
-            </div>
-            {#if editZone === i}
-              <div class="ml-[38px] p-2 px-2.5 bg-glass rounded-lg border-l-2 mt-1 w-[calc(100%-38px)]" style="border-color: {z.color}">
-                <p class="text-[11px] text-text1 leading-relaxed mb-2">{z.desc}</p>
-              </div>
-            {/if}
-          </button>
-        {/each}
-      </div>
-    </Card>
-
-    <!-- Weekly distribution -->
-    <Card>
-      <p class="text-[13px] font-semibold mb-3">Time in Zones ({sport === 'all' ? 'All Activities' : sport.toUpperCase()})</p>
-      <div class="flex flex-col gap-2.5 mb-3 min-w-0">
-        <div class="flex flex-col gap-2 min-w-0 sm:flex-row sm:items-center sm:gap-2">
-          <div class="flex bg-glass2 border border-border/50 rounded-lg overflow-hidden shrink-0 w-fit">
-            <button
-              class="px-2.5 py-1 text-[10px] font-mono uppercase tracking-widest transition-colors {windowMode === 'week' ? 'bg-glass text-text0' : 'text-text2 hover:text-text0'}"
-              onclick={() => windowMode = 'week'}
-              type="button"
-            >
-              Week
-            </button>
-            <button
-              class="px-2.5 py-1 text-[10px] font-mono uppercase tracking-widest transition-colors {windowMode === 'month' ? 'bg-glass text-text0' : 'text-text2 hover:text-text0'}"
-              onclick={() => windowMode = 'month'}
-              type="button"
-            >
-              Month
-            </button>
-          </div>
-
-          <div class="flex items-center gap-1.5 min-w-0 w-full sm:flex-1 sm:justify-end">
-            <button
-              class="w-7 h-7 shrink-0 rounded-lg bg-glass2 border border-border/50 hover:bg-glass transition-colors flex items-center justify-center text-text1"
-              onclick={() => {
-                if (windowMode === 'week') selectedDay = toDateInputValue(addDays(parseDateInputLocal(selectedDay), -7));
-                else selectedMonth = toMonthInputValue(addMonths(parseDateInputLocal(`${selectedMonth}-01`), -1));
-              }}
-              type="button"
-              aria-label={windowMode === 'week' ? 'Previous 7 days' : 'Previous month'}
-              title={windowMode === 'week' ? 'Previous 7 days' : 'Previous month'}
-            >
-              ‹
-            </button>
-
-            {#if windowMode === 'week'}
-              <div class="min-w-0 flex-1 sm:flex-none sm:w-[130px]">
-                <DatePicker
-                  id="zones-week"
-                  bind:value={dayPickerValue}
-                  max={todayDayMax}
-                  ariaLabel="Select end date"
-                  buttonClass="h-7 px-2 pr-2 rounded-lg bg-glass2 border border-border/50 text-[10px] font-mono text-text1"
-                />
-              </div>
-            {:else}
-              <div class="min-w-0 flex-1 sm:flex-none sm:w-[130px]">
-                <MonthPicker
-                  id="zones-month"
-                  bind:value={monthPickerValue}
-                  max={todayMonthMax}
-                  ariaLabel="Select month"
-                  buttonClass="h-7 px-2 pr-2 rounded-lg bg-glass2 border border-border/50 text-[10px] font-mono text-text1"
-                />
-              </div>
-            {/if}
-
-            <button
-              class="h-7 shrink-0 px-2 rounded-lg bg-glass2 border border-border/50 hover:bg-glass transition-colors text-[10px] font-mono text-text1 whitespace-nowrap"
-              onclick={jumpToToday}
-              type="button"
-              aria-label="Jump to current week/month"
-              title="Today"
-            >
-              Today
-            </button>
-
-            <button
-              class="w-7 h-7 shrink-0 rounded-lg bg-glass2 border border-border/50 transition-colors flex items-center justify-center text-text1 {canGoForward ? 'hover:bg-glass' : 'opacity-40 cursor-not-allowed'}"
-              onclick={() => {
-                if (!canGoForward) return;
-                if (windowMode === 'week') selectedDay = toDateInputValue(addDays(parseDateInputLocal(selectedDay), 7));
-                else selectedMonth = toMonthInputValue(addMonths(parseDateInputLocal(`${selectedMonth}-01`), 1));
-              }}
-              type="button"
-              disabled={!canGoForward}
-              aria-label={windowMode === 'week' ? 'Next 7 days' : 'Next month'}
-              title={canGoForward ? (windowMode === 'week' ? 'Next 7 days' : 'Next month') : 'Cannot go past today'}
-            >
-              ›
-            </button>
-          </div>
-        </div>
-
-        <p class="text-[10px] text-text2 text-center font-mono uppercase tracking-widest max-sm:tracking-wide break-words leading-snug px-0.5">
-          {windowLabel}
-        </p>
-      </div>
-      {#if !hasWorkouts}
-        <div class="flex flex-col items-center justify-center py-6 opacity-60">
-          <p class="text-xs text-text2">No training distribution data for this selection.</p>
-        </div>
+    <!-- Distribution -->
+    <section aria-label="Distribution" class="bg-bg2 border border-border rounded-[24px] px-[18px] py-4 flex flex-col gap-3">
+      {#if windowMode === 'month'}
+        <MonthNavigator bind:value={selectedMonth} max={todayMonthMax} subtitle="This month · so far" />
       {:else}
-        <div class="flex flex-col gap-3">
-          <div class="h-6 w-full flex rounded-lg overflow-hidden border border-border/50">
-            {#each distribution.pcts as pct, i (i)}
-              {@const z = i + 1}
-              {@const color = HR_ZONE_HEX[z]}
-              <div
-                class="h-full transition-all duration-500"
-                style="width: {pct}%; background: {color};"
-                title="Z{z}: {pct}%"
-              ></div>
-            {/each}
-          </div>
-
-          <div class="grid grid-cols-2 gap-x-4 gap-y-2">
-            {#each distribution.pcts as pct, i (i)}
-              {@const z = i + 1}
-              {@const color = HR_ZONE_HEX[z]}
-              {@const label = TIME_IN_ZONES_LABELS[i] ?? `Z{z}`}
-              <div class="flex items-center justify-between">
-                <div class="flex items-center gap-1.5">
-                  <div class="w-2 h-2 rounded-full" style="background: {color}"></div>
-                  <span class="text-[10px] text-text1">{label}</span>
-                </div>
-                <span class="text-[10px] font-mono font-bold" style="color: {color}">{pct}%</span>
-              </div>
-            {/each}
-          </div>
-          
-          <p class="text-[10px] text-text2 italic mt-1 text-center break-words leading-snug px-0.5">
-            Average distribution across {distribution.validCount} sessions (from {distribution.totalCount} in range). {windowLabel}
-          </p>
-        </div>
+        <WeekNavigator bind:value={selectedDay} max={todayDayMax} />
       {/if}
-    </Card>
-
-    {#if authStore.tier === 'premium' && hasWorkouts}
-      <Card class="!bg-gradient-to-br from-blue/10 via-transparent to-transparent border-blue/20">
-        <div class="flex items-center gap-1.5 mb-2">
-          <span class="text-[11px] font-mono uppercase tracking-[0.08em] text-blue">Zone Insight</span>
-          <Tag color="var(--blue)">ASTRAPHE</Tag>
+      {#if zoneRows.every((z) => z.secs === 0)}
+        <p class="m-0 text-[13px] text-text2">No heart-rate zone data for this period yet.</p>
+      {/if}
+      {#each zoneRows as z (z.zone)}
+        <div class="flex items-center gap-2.5">
+          <span class="w-[26px] font-mono text-xs text-text1">Z{z.zone}</span>
+          <div aria-hidden="true" class="flex-1 h-2.5 rounded-[5px] bg-bg3 overflow-hidden">
+            <div class="h-2.5 rounded-[5px]" style="width: {Math.max(z.pct * 1.8, z.secs > 0 ? 4 : 0)}%; background: {z.color}"></div>
+          </div>
+          <span class="w-12 text-right font-mono text-xs">{z.time}</span>
+          <span class="w-[34px] text-right font-mono text-xs text-text2">{z.pct}%</span>
         </div>
-        {#if zonesAnalysisLoading && zonesAnalysisText === null}
-          <p class="text-xs text-text2 animate-pulse">Analyzing zone distribution...</p>
-        {:else}
-          <p class="text-xs text-text1 leading-relaxed">
-            {zonesAnalysisText ?? 'Zone insight unavailable — sync more workouts with HR zone data.'}
-          </p>
+      {/each}
+    </section>
+
+    <!-- Definitions -->
+    <section aria-label="Zone definitions" class="bg-bg2 border border-border rounded-[24px] px-[18px] py-4 flex flex-col">
+      <div class="flex justify-between items-baseline pb-2">
+        <h2 class="m-0 font-display font-normal text-[22px]">Your zones</h2>
+        <span class="font-mono text-[11px] text-text2">{#if lthr}LTHR {lthr}{/if}{#if lthr && ftp} · {/if}{#if ftp}FTP {ftp}{/if}</span>
+      </div>
+      {#each zoneRows as z (z.zone)}
+        <div class="grid grid-cols-[14px_1fr_auto_auto] gap-2.5 items-center py-[9px] border-t border-border text-[13px]">
+          <span aria-hidden="true" class="w-2.5 h-2.5 rounded-[3px]" style="background: {z.color}"></span>
+          <span>{z.name}</span>
+          <span class="font-mono text-xs text-text1">{z.hr}</span>
+          <span class="w-16 text-right font-mono text-xs text-text1">{z.watts}</span>
+        </div>
+      {/each}
+    </section>
+
+    <div class="flex gap-3 items-start px-4 py-3.5 rounded-[18px] bg-bg1 border border-dashed border-border">
+      <span class="font-mono text-[10px] tracking-[0.12em] text-blue pt-0.5">ZONES</span>
+      <span class="text-[13px] leading-[1.45] text-text1">
+        {#if zonesAnalysisLoading && zonesAnalysisText === null}Analyzing…{:else}
+          {zonesAnalysisText ?? zoneSummary}
         {/if}
-      </Card>
-    {/if}
+      </span>
+    </div>
   {/if}
 </div>

@@ -30,67 +30,58 @@
     return out;
   });
 
+  /** What each provider contributes, for the one-line summary under its name. */
+  const SOURCE_PROVIDES: Record<string, string> = {
+    garmin: 'GPS · Streams · Power · Laps',
+    strava: 'Activity title · Segments',
+    whoop: 'Strain · Recovery · HRV',
+    healthkit: 'Heart rate · Workouts',
+    intervals_icu: 'Intervals · Power · Laps',
+    manual: 'Logged by hand',
+  };
+
   const sources = $derived(Object.keys(effectiveSourceIds));
   const primary = $derived(workout?.primary_source ?? workout?.source ?? '');
   const merged = $derived(sources.length > 1);
 </script>
 
-<div class="space-y-2">
-  <p class="text-[10px] font-mono text-text2 uppercase tracking-widest">Data Sources</p>
+<div class="flex flex-col gap-1">
+  <div class="mb-1 flex items-baseline justify-between">
+    <h2 class="m-0 font-display font-normal text-[22px]">Data sources</h2>
+    {#if merged}<span class="font-mono text-[10px] tracking-[0.08em] text-text2 uppercase">⟷ Merged</span>{/if}
+  </div>
 
-  <div class="flex flex-wrap items-center gap-2">
-    {#if merged}
-      <span class="text-[10px] text-text2 opacity-40 font-mono">⟷ Merged</span>
-    {/if}
-
-    {#each sources as source (source)}
-      {@const meta = SOURCE_META[source] ?? { label: source, color: '#6B7280', icon: '?' }}
-      {@const ids = effectiveSourceIds[source]}
-      <div class="flex flex-wrap items-center gap-1.5">
-        <span
-          class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium border"
-          style="color: {meta.color}; border-color: {meta.color}66; background: {meta.color}14;"
-        >
-          <span
-            class="w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold"
-            style="background: {meta.color}28; color: {meta.color};"
-          >{meta.icon}</span>
+  {#each sources as source (source)}
+    {@const meta = SOURCE_META[source] ?? { label: source, color: '#6B7280', icon: '?' }}
+    <div class="flex items-center gap-3 border-t border-border py-3">
+      <span aria-hidden="true" class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-bg3 font-mono text-sm text-text1">{meta.icon}</span>
+      <div class="flex min-w-0 flex-col gap-0.5">
+        <span class="flex items-center gap-2 text-base font-medium">
           {meta.label}
           {#if source === primary}
-            <span class="text-[9px] uppercase tracking-wider opacity-80">Primary</span>
+            <span class="rounded-lg border border-blue/40 bg-blue-dim px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.08em] text-blue">Primary</span>
           {/if}
         </span>
-
-        {#if source === 'strava' && workout.strava_activity_id}
-          <span class="text-[9px] font-mono text-text2">GPS · Streams</span>
-        {/if}
-        {#if source === 'whoop' && ids}
-          <span class="text-[9px] font-mono text-text2">Recovery · HRV</span>
-        {/if}
+        <span class="truncate text-[13px] text-text2">{SOURCE_PROVIDES[source] ?? ''}</span>
       </div>
-    {/each}
-  </div>
+    </div>
+  {/each}
 
   {#if sources.length > 0}
     <button
       type="button"
-      class="flex items-center gap-1 text-[10px] font-mono text-text2 bg-transparent border-none p-0 cursor-pointer"
+      class="mt-1 flex h-10 items-center gap-1.5 border-0 bg-transparent p-0 text-sm text-text1 cursor-pointer"
       onclick={() => (expanded = !expanded)}
     >
-      <span
-        class="inline-block text-[8px] leading-none transition-transform duration-150 {expanded
-          ? ''
-          : '-rotate-90'}"
-        aria-hidden="true">▼</span
-      >
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true" class="transition-transform duration-150 {expanded ? 'rotate-90' : ''}"><path d="m9 6 6 6-6 6"></path></svg>
       {expanded ? 'Hide IDs' : 'Show IDs'}
     </button>
 
     {#if expanded}
-      <div class="font-mono text-[10px] text-text2 space-y-0.5 pl-1">
+      <div class="space-y-0.5 pl-5 font-mono text-[11px] text-text2">
         {#each sources as source (source)}
           {@const raw = effectiveSourceIds[source]}
-          <p>
+          <p class="m-0">
             <span class="text-text1">{source}:</span>
             {Array.isArray(raw) ? raw.join(', ') : String(raw ?? '—')}
           </p>

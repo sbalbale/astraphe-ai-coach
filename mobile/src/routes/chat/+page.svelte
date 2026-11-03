@@ -9,6 +9,8 @@
   import { tick, onDestroy } from 'svelte';
   import { isStandaloneDisplayMode } from '$lib/utils/pwa';
   import { normalizeLeadingTimeOfDayGreeting } from '$lib/utils/greeting';
+  import { pageHeader, resetPageHeader } from '$lib/stores/pageHeader.svelte';
+  import { buildCoachSteps, coachStatusText, type CoachStep } from '$lib/coachProgress';
 
   type Conversation = { id: string; title?: string | null; created_at?: string; updated_at?: string };
   type Message = {
@@ -19,6 +21,8 @@
     created_at?: string;
     streaming?: boolean;
     statusText?: string;
+    /** What the coach checked while writing this reply (live, not persisted). */
+    steps?: CoachStep[];
   };
 
   let greetingMessage = $state<string>('');
@@ -127,34 +131,43 @@
    */
   function pollForCoachReply(cid: string, aiMsgId: string, knownMessageCount: number) {
     const token = ++activePollToken;
-    const POLL_INTERVAL_MS = 2500;
-    const MAX_ATTEMPTS = 72; // ~3 minutes
+    const POLL_INTERVAL_MS = 1200;
+    const MAX_ATTEMPTS = 150; // ~3 minutes
     let attempt = 0;
 
     const tickPoll = async () => {
       if (token !== activePollToken) return; // superseded by a newer poll/navigation
       attempt += 1;
       try {
-        const res = await api.getCoachMessages(cid);
+        const [res, events] = await Promise.all([api.getCoachMessages(cid), api.getCoachProgress(cid)]);
         const rows = res?.messages || [];
         if (rows.length > knownMessageCount) {
           const last = rows[rows.length - 1];
           if (token === activePollToken && conversationId === cid) {
             const msgIndex = messages.findIndex((m) => m.id === aiMsgId);
             if (msgIndex !== -1) {
+              const finalSteps = events.length ? buildCoachSteps(events, false) : messages[msgIndex].steps;
               messages[msgIndex] = {
                 id: String(last.id),
                 role: 'ai',
                 text: String(last.content ?? ''),
                 image_urls: Array.isArray(last.image_urls) ? last.image_urls : [],
                 created_at: last.created_at,
-                streaming: false
+                streaming: false,
+                steps: finalSteps?.length ? finalSteps.map((st) => ({ ...st, done: true })) : undefined
               };
             }
             loading = false;
             scrollToBottom();
           }
           return; // done
+        }
+        if (token === activePollToken && conversationId === cid && events.length) {
+          const msgIndex = messages.findIndex((m) => m.id === aiMsgId);
+          if (msgIndex !== -1) {
+            messages[msgIndex].steps = buildCoachSteps(events, true);
+            messages[msgIndex].statusText = coachStatusText(events);
+          }
         }
       } catch (e) {
         console.warn('[Chat] Poll for coach reply failed:', e);
@@ -393,6 +406,7 @@
       if (!convoMenuOpen) return;
       const t = e.target as Node | null;
       if (convoMenuEl && t && convoMenuEl.contains(t)) return;
+      if (t instanceof Element && t.closest('[data-header-action="history"]')) return;
       convoMenuOpen = false;
     };
     const onEsc = (e: KeyboardEvent) => {
@@ -472,252 +486,179 @@
     }
   }
 
+
+  function formatConvoDate(iso?: string): string {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '';
+    return format(d, d.getFullYear() === new Date().getFullYear() ? 'EEE d MMM · HH:mm' : 'd MMM yyyy');
+  }
+
+  $effect(() => {
+    pageHeader.eyebrow = 'Knows your last 90 days';
+    pageHeader.actions = [
+      { key: 'history', label: 'Past conversations', icon: 'history', onclick: () => (convoMenuOpen = !convoMenuOpen) },
+      { key: 'new', label: 'New conversation', icon: 'plus', onclick: () => { convoMenuOpen = false; newChat(); } }
+    ];
+    return resetPageHeader;
+  });
 </script>
 
-<div class="flex flex-col h-full min-h-0 w-full box-border">
-  <div
-    class="w-full h-full flex flex-col flex-1 min-h-0 rounded-none border-0 bg-bg1/35 overflow-hidden"
-  >
-    <!-- Mockup header -->
-    <div class="shrink-0 px-4 pt-4 pb-3 flex items-center justify-between gap-3 border-b border-border">
-      <span class="text-[11px] sm:text-xs tracking-wide font-semibold text-text1">Astraphe AI Coach Chat</span>
-      <div class="flex items-center gap-1.5 shrink-0">
-        <span
-          class="inline-flex h-2 w-2 rounded-full bg-teal animate-pulse shadow-[0_0_10px_rgba(0,200,168,0.55)]"
-          aria-hidden="true"
-        ></span>
-        <span class="text-[11px] uppercase tracking-wider font-semibold text-astraphe-teal">Live</span>
+<div class="relative flex flex-col h-full min-h-0 w-full box-border">
+  {#if convoMenuOpen}
+    <!-- Past conversations -->
+    <div bind:this={convoMenuEl} class="absolute left-4 right-4 top-1 z-30 rounded-[20px] border border-border bg-bg2 shadow-[0_16px_40px_rgba(0,0,0,0.5)] overflow-hidden">
+      <div class="flex items-center justify-between px-4 pt-3 pb-2">
+        <span class="font-mono text-[10px] tracking-[0.12em] text-text2">PAST CONVERSATIONS</span>
+        <button type="button" class="h-8 border-0 bg-transparent p-0 text-[13px] font-medium text-blue cursor-pointer" onclick={() => { convoMenuOpen = false; newChat(); }}>New chat</button>
+      </div>
+      <div class="max-h-[50dvh] overflow-y-auto">
+        {#if conversations.length === 0}
+          <p class="m-0 px-4 pb-4 text-[13px] text-text2">No past conversations yet.</p>
+        {/if}
+        {#each conversations as c (c.id)}
+          <div class="flex items-center gap-2 border-t border-border px-2 {c.id === conversationId ? 'bg-bg3' : ''}">
+            <button type="button" class="flex-1 min-w-0 flex flex-col gap-0.5 px-2 py-2.5 border-0 bg-transparent text-left cursor-pointer" onclick={() => { convoMenuOpen = false; selectConversation(c.id); }}>
+              <span class="text-sm text-text0 truncate">{c.title || 'New chat'}</span>
+              <span class="font-mono text-[10px] text-text2 truncate">{formatConvoDate(c.updated_at || c.created_at)}</span>
+            </button>
+            <button
+              type="button"
+              class="w-10 h-10 shrink-0 rounded-xl border-0 bg-transparent text-text2 flex items-center justify-center cursor-pointer"
+              onclick={(e) => { e.stopPropagation(); deleteConversation(c.id); }}
+              aria-label="Delete chat"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"></path></svg>
+            </button>
+          </div>
+        {/each}
       </div>
     </div>
+  {/if}
 
-    <!-- History controls -->
-    <div class="shrink-0 px-4 py-2 flex items-center justify-end gap-2 border-b border-border bg-bg0/25">
-      {#if conversations.length > 0}
-        <div class="relative flex-1 min-w-0 max-w-[220px]" bind:this={convoMenuEl}>
-          <button
-            type="button"
-            class="w-full bg-glass2 border border-border rounded-xl text-[11px] text-text0 pl-3 pr-8 py-2 outline-none truncate text-left hover:bg-glass transition-colors"
-            onclick={() => { convoMenuOpen = !convoMenuOpen; }}
-            aria-label="Select chat"
-          >
-            {currentConversationTitle()}
-          </button>
-          <div class="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-text2 text-[10px]">▼</div>
-
-          {#if convoMenuOpen}
-            <div
-              class="absolute left-0 right-0 mt-2 max-w-[min(100vw-2rem,320px)] bg-bg1/95 backdrop-blur border border-border rounded-2xl shadow-2xl overflow-hidden z-20"
-            >
-              <div class="max-h-[320px] overflow-y-auto">
-                {#each conversations as c (c.id)}
-                  <div
-                    class="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-glass2 transition-colors cursor-pointer {c.id === conversationId ? 'bg-glass2' : ''}"
-                    role="button"
-                    tabindex="0"
-                    onclick={() => selectConversation(c.id)}
-                    onkeydown={(e) => e.key === 'Enter' && selectConversation(c.id)}
-                  >
-                    <div class="flex-1 min-w-0">
-                      <div class="text-[12px] text-text0 truncate">{c.title || 'New chat'}</div>
-                      <div class="text-[10px] text-text2 truncate">{c.updated_at || c.created_at || ''}</div>
-                    </div>
-                    <button
-                      type="button"
-                      class="w-8 h-8 rounded-lg bg-glass2 border border-border text-text1 hover:text-red transition-colors flex items-center justify-center shrink-0"
-                      onclick={(e) => { e.stopPropagation(); deleteConversation(c.id); }}
-                      aria-label="Delete chat"
-                      title="Delete"
-                    >
-                      🗑
-                    </button>
-                  </div>
-                {/each}
-              </div>
+  <div class="flex-1 overflow-y-auto flex flex-col gap-3.5 px-5 pt-2 pb-4 min-h-0" bind:this={chatContainer}>
+    {#each messages as msg (msg.id)}
+      {#if msg.role === 'ai'}
+        {#if msg.steps && msg.steps.length > 0}
+          <ol aria-label="What the coach checked" class="list-none m-0 p-0 flex flex-col gap-1.5">
+            {#each msg.steps as step (step.key)}
+              <li class="flex items-center gap-2 font-mono text-[11px] text-text2">
+                {#if step.done}
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 5 5L19 7"></path></svg>
+                {:else}
+                  <span aria-hidden="true" class="w-3 h-3 flex items-center justify-center"><span class="w-1.5 h-1.5 rounded-full bg-blue animate-pulse"></span></span>
+                {/if}
+                <span class:text-text1={!step.done}>{step.label}{step.count > 1 ? ` ×${step.count}` : ''}</span>
+              </li>
+            {/each}
+          </ol>
+        {/if}
+        <div class="flex flex-col gap-2.5 p-4 rounded-[20px] bg-bg2 border border-border text-sm leading-[1.55] text-text0 break-words min-w-0">
+          {#if msg.image_urls && msg.image_urls.length > 0}
+            <div class="flex gap-2 flex-wrap">
+              {#each msg.image_urls as u (u)}
+                <a href={u} target={isStandaloneDisplayMode() ? undefined : '_blank'} rel="noopener noreferrer" class="block">
+                  <img src={u} alt="upload" class="w-24 h-24 object-cover rounded-xl border border-border" />
+                </a>
+              {/each}
             </div>
           {/if}
+          {#if msg.streaming && !msg.text.trim()}
+            <div class="flex items-center gap-2.5 text-text2">
+              <span class="flex gap-1" aria-hidden="true">
+                <span class="w-1.5 h-1.5 bg-blue rounded-full animate-bounce"></span>
+                <span class="w-1.5 h-1.5 bg-blue rounded-full animate-bounce [animation-delay:150ms]"></span>
+                <span class="w-1.5 h-1.5 bg-blue rounded-full animate-bounce [animation-delay:300ms]"></span>
+              </span>
+              <span class="font-mono text-[11px]">{msg.statusText || 'Reviewing your data…'}</span>
+            </div>
+          {:else}
+            <div class="chat-md">{@html renderCoachMarkdownToSafeHtml(msg.text)}</div>
+          {/if}
+        </div>
+      {:else}
+        <div class="self-end max-w-[78%] min-w-0 px-3.5 py-3 rounded-[18px_18px_6px_18px] bg-border text-sm leading-[1.45] text-text0 break-words whitespace-pre-wrap">
+          {#if msg.image_urls && msg.image_urls.length > 0}
+            <div class="flex gap-2 flex-wrap mb-2 justify-end">
+              {#each msg.image_urls as u (u)}
+                <a href={u} target={isStandaloneDisplayMode() ? undefined : '_blank'} rel="noopener noreferrer" class="block">
+                  <img src={u} alt="upload" class="w-24 h-24 object-cover rounded-xl border border-border" />
+                </a>
+              {/each}
+            </div>
+          {/if}
+          {normalizeTypographyForWrap(msg.text)}
         </div>
       {/if}
-      <button
-        type="button"
-        class="px-3 py-1.5 rounded-lg text-[11px] bg-glass2 border border-border text-text1 hover:bg-glass transition-colors shrink-0"
-        onclick={newChat}
-      >
-        New
-      </button>
-    </div>
+    {/each}
 
-    <div
-      class="flex-1 overflow-y-auto flex flex-col gap-3 px-4 py-3 min-h-0"
-      bind:this={chatContainer}
-    >
-      {#each messages as msg (msg.id)}
-        {#if msg.role === 'ai'}
-          <div class="flex gap-2.5 items-end justify-start">
-            <div
-              class="w-8 h-8 shrink-0 rounded-full bg-bg2 border border-border flex items-center justify-center text-[9px] font-bold tracking-wide text-teal select-none"
-              aria-hidden="true"
-            >
-              AI
-            </div>
-            <div
-              class="max-w-[min(92%,28rem)] min-w-0 overflow-hidden px-[14px] py-[10px] text-[13px] leading-[1.55] text-text0 rounded-2xl rounded-bl-md border border-border bg-glass2 break-words"
-            >
-              {#if msg.image_urls && msg.image_urls.length > 0}
-                <div class="flex gap-2 flex-wrap mb-2">
-                  {#each msg.image_urls as u (u)}
-                    <a
-                      href={u}
-                      target={isStandaloneDisplayMode() ? undefined : '_blank'}
-                      rel="noopener noreferrer"
-                      class="block"
-                    >
-                      <img
-                        src={u}
-                        alt="upload"
-                        class="w-24 h-24 object-cover rounded-lg border border-border"
-                      />
-                    </a>
-                  {/each}
-                </div>
-              {/if}
-              {#if msg.streaming && !msg.text.trim()}
-                <div class="flex items-center gap-2 text-text1">
-                  <div class="flex gap-1">
-                    <div class="w-1.5 h-1.5 bg-blue rounded-full animate-bounce"></div>
-                    <div class="w-1.5 h-1.5 bg-blue rounded-full animate-bounce [animation-delay:150ms]"></div>
-                    <div class="w-1.5 h-1.5 bg-blue rounded-full animate-bounce [animation-delay:300ms]"></div>
-                  </div>
-                  <span class="text-[12px]">{msg.statusText || "Thinking…"}</span>
-                </div>
-              {:else}
-                <div class="chat-md">{@html renderCoachMarkdownToSafeHtml(msg.text)}</div>
-              {/if}
-            </div>
-          </div>
-        {:else}
-          <div class="flex gap-2.5 items-end justify-end">
-            <div
-              class="max-w-[min(92%,28rem)] min-w-0 px-[14px] py-[10px] text-[13px] leading-[1.55] text-text0 rounded-2xl rounded-br-md border border-blue/30 bg-blue-dim break-words whitespace-pre-wrap"
-            >
-              {#if msg.image_urls && msg.image_urls.length > 0}
-                <div class="flex gap-2 flex-wrap mb-2 justify-end">
-                  {#each msg.image_urls as u (u)}
-                    <a
-                      href={u}
-                      target={isStandaloneDisplayMode() ? undefined : '_blank'}
-                      rel="noopener noreferrer"
-                      class="block"
-                    >
-                      <img
-                        src={u}
-                        alt="upload"
-                        class="w-24 h-24 object-cover rounded-lg border border-blue/30"
-                      />
-                    </a>
-                  {/each}
-                </div>
-              {/if}
-              {normalizeTypographyForWrap(msg.text)}
-            </div>
-            <div
-              class="w-8 h-8 shrink-0 rounded-full bg-bg0 border border-border flex items-center justify-center text-[10px] font-semibold text-text1 select-none uppercase"
-              aria-hidden="true"
-            >
-              {userInitials}
-            </div>
-          </div>
-        {/if}
-      {/each}
-    </div>
-
-    <div class="shrink-0 px-4 pt-2 pb-1 border-t border-border bg-bg0/20">
-      <div class="flex gap-2 overflow-x-auto pb-3 mb-2 scrollbar-thin">
+    {#if !loading && promptSuggestions.length > 0}
+      <div aria-label="Suggested questions" class="flex flex-wrap gap-2">
         {#each promptSuggestions as s, i (s + String(i))}
           <button
             type="button"
-            class="whitespace-nowrap shrink-0 px-3 py-2 rounded-xl text-sm text-text1 bg-glass2 hover:bg-glass border border-border transition-colors text-left cursor-pointer font-sans"
-            onclick={() => { input = s; }}
-          >
-            {s}
-          </button>
+            class="h-9 px-3 rounded-[18px] border border-border bg-bg1 text-[13px] text-text1 cursor-pointer text-left max-w-full truncate"
+            onclick={() => { input = s; tick().then(() => { resizeChatInput(); chatInputEl?.focus(); }); }}
+          >{s}</button>
         {/each}
       </div>
+    {/if}
+  </div>
 
-      {#if pendingImageUrls.length > 0}
-        <div class="flex gap-2 flex-wrap pb-2">
-          {#each pendingImageUrls as u (u)}
-            <div class="relative">
-              <img
-                src={u}
-                alt="pending upload"
-                class="w-16 h-16 object-cover rounded-lg border border-border"
-              />
-              <button
-                class="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-bg1 border border-border text-text1 text-[12px] flex items-center justify-center hover:border-text2"
-                onclick={() => { pendingImageUrls = pendingImageUrls.filter(x => x !== u); }}
-                aria-label="Remove image"
-                type="button"
-              >
-                ✕
-              </button>
-            </div>
-          {/each}
-        </div>
-      {/if}
-
-      <div class="flex gap-2 items-end pb-4">
-        <input
-          bind:this={fileInput}
-          type="file"
-          accept="image/*"
-          multiple
-          class="hidden"
-          onchange={onFilesSelected}
-        />
-        <button
-          type="button"
-          class="w-10 h-10 rounded-xl shrink-0 text-text1 text-[17px] flex items-center justify-center transition-colors border border-border bg-bg1 hover:bg-bg2 disabled:opacity-40"
-          disabled={loading}
-          onclick={pickImage}
-          aria-label="Attach image"
-        >
-          ＋
-        </button>
-        <textarea
-          bind:this={chatInputEl}
-          bind:value={input}
-          rows="1"
-          maxlength="8000"
-          aria-label="Message"
-          oninput={resizeChatInput}
-          onkeydown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              if (!loading) void send();
-            }
-          }}
-          placeholder="Ask your coach... (Shift+Enter for new line)"
-          class="flex-1 min-w-0 min-h-[2.75rem] max-h-[200px] px-4 py-3 rounded-xl text-[13px] leading-snug bg-bg1 border border-border text-text0 placeholder:text-text2 font-sans outline-none focus:border-blue focus:ring-1 focus:ring-blue/30 resize-none overflow-hidden"
-        ></textarea>
-        <button
-          type="button"
-          class="w-11 h-11 shrink-0 rounded-xl flex items-center justify-center transition-all bg-blue hover:bg-blue/90 disabled:opacity-35 disabled:pointer-events-none text-text0 shadow-[0_8px_24px_-12px_rgba(70,33,255,0.7)]"
-          disabled={loading || (!input.trim() && pendingImageUrls.length === 0)}
-          onclick={send}
-          aria-label="Send message"
-        >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path
-              d="M5 12h14m0 0l-6-6m6 6l-6 6"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            />
-          </svg>
-        </button>
+  <div class="shrink-0 px-4 pt-1" style="padding-bottom: 12px;">
+    {#if pendingImageUrls.length > 0}
+      <div class="flex gap-2 flex-wrap pb-2">
+        {#each pendingImageUrls as u (u)}
+          <div class="relative">
+            <img src={u} alt="pending upload" class="w-16 h-16 object-cover rounded-xl border border-border" />
+            <button
+              class="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-bg2 border border-border text-text1 text-[12px] flex items-center justify-center cursor-pointer"
+              onclick={() => { pendingImageUrls = pendingImageUrls.filter((x) => x !== u); }}
+              aria-label="Remove image"
+              type="button"
+            >✕</button>
+          </div>
+        {/each}
       </div>
-    </div>
+    {/if}
+
+    <form class="flex gap-2 items-end p-1.5 rounded-[20px] bg-bg2 border border-border" onsubmit={(e) => { e.preventDefault(); if (!loading) void send(); }}>
+      <input bind:this={fileInput} type="file" accept="image/*" multiple class="hidden" onchange={onFilesSelected} />
+      <button
+        type="button"
+        class="w-11 h-11 shrink-0 rounded-[14px] border-0 bg-transparent text-text2 flex items-center justify-center cursor-pointer disabled:opacity-40"
+        disabled={loading}
+        onclick={pickImage}
+        aria-label="Attach image"
+      >
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"></rect><circle cx="9" cy="10" r="1.6"></circle><path d="m21 16-5-5-9 9"></path></svg>
+      </button>
+      <label for="coach-input" class="sr-only">Ask your coach</label>
+      <textarea
+        id="coach-input"
+        bind:this={chatInputEl}
+        bind:value={input}
+        rows="1"
+        maxlength="8000"
+        oninput={resizeChatInput}
+        onkeydown={(e) => {
+          if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            if (!loading) void send();
+          }
+        }}
+        placeholder="Ask about your training…"
+        class="flex-1 min-w-0 min-h-11 max-h-[200px] py-3 bg-transparent border-0 text-sm leading-snug text-text0 placeholder:text-text2 outline-none resize-none overflow-hidden"
+      ></textarea>
+      <button
+        type="submit"
+        class="w-11 h-11 shrink-0 rounded-[14px] border-0 bg-blue text-[#0B1420] flex items-center justify-center cursor-pointer disabled:opacity-35 disabled:pointer-events-none"
+        disabled={loading || (!input.trim() && pendingImageUrls.length === 0)}
+        aria-label="Send"
+      >
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"></path></svg>
+      </button>
+    </form>
   </div>
 </div>
 
@@ -726,7 +667,7 @@
   :global(.chat-md) {
     word-break: break-word;
     overflow-wrap: break-word;
-    font-family: 'ChatSans', 'Space Grotesk', sans-serif;
+    font-family: 'Inter', system-ui, sans-serif;
   }
   :global(.chat-md :where(p, li, blockquote)) {
     overflow-wrap: break-word;
@@ -752,7 +693,7 @@
     margin: 0.15rem 0;
   }
   :global(.chat-md :where(a)) {
-    color: rgb(0 200 168);
+    color: var(--teal);
     text-decoration: underline;
     text-underline-offset: 2px;
   }
@@ -760,15 +701,15 @@
     font-size: 0.92em;
     padding: 0.12rem 0.3rem;
     border-radius: 0.45rem;
-    background: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: var(--glass2);
+    border: 1px solid var(--border);
   }
   :global(.chat-md :where(pre)) {
     overflow-x: auto;
     padding: 0.6rem 0.7rem;
     border-radius: 0.75rem;
-    background: rgba(0, 0, 0, 0.25);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: var(--bg0);
+    border: 1px solid var(--border);
   }
   :global(.chat-md :where(pre code)) {
     padding: 0;
@@ -788,22 +729,22 @@
     border-radius: 0.5rem;
   }
   :global(.chat-md :where(thead)) {
-    background: rgba(70, 33, 255, 0.12);
+    background: var(--glass2);
   }
   :global(.chat-md :where(th)) {
     padding: 0.35rem 0.65rem;
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    border: 1px solid var(--border);
     white-space: nowrap; /* header labels stay on one line */
     vertical-align: top;
     text-align: left;
-    color: rgb(0 200 168);
+    color: var(--teal);
     font-size: 0.9em;
     letter-spacing: 0.04em;
     text-transform: uppercase;
   }
   :global(.chat-md :where(td)) {
     padding: 0.35rem 0.65rem;
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    border: 1px solid var(--border);
     white-space: normal; /* allow wrapping */
     overflow-wrap: break-word;
     word-break: normal;
@@ -814,13 +755,13 @@
     min-width: 6.5rem;
   }
   :global(.chat-md :where(tbody tr:nth-child(even))) {
-    background: rgba(255, 255, 255, 0.03);
+    background: var(--glass);
   }
 
   :global(.chat-md .chat-table-note) {
     margin-top: 0.6rem;
     font-size: 0.82em;
-    color: rgb(148 163 184);
+    color: var(--text2);
     line-height: 1.5;
   }
 

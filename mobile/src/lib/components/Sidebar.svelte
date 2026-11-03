@@ -20,7 +20,7 @@
   }
 
   const ALL_NAV = [
-    { id: '/dashboard', label: 'Home' },
+    { id: '/dashboard', label: 'Today' },
     { id: '/training', label: 'Training' },
     { id: '/plan', label: 'Plan' },
     { id: '/zones', label: 'Zones' },
@@ -28,19 +28,20 @@
     { id: '/sleep', label: 'Sleep' },
     { id: '/strain', label: 'Strain' },
     { id: '/chat', label: 'Coach' },
-    { id: '/profile', label: 'Profile' },
+    { id: '/profile', label: 'Me' },
   ];
 
   const GROUPS = [
-    { group: 'Overview', items: ['/dashboard','/training','/plan','/zones'] },
+    { group: 'Train', items: ['/dashboard','/training','/zones','/plan'] },
     { group: 'Body', items: ['/recovery','/sleep','/strain'] },
-    { group: 'Tools', items: ['/chat','/profile'] },
+    { group: 'You', items: ['/chat','/profile'] },
   ];
 
   function getIcon(id: string, active: boolean) {
-    const c = active ? '#4621FF' : 'currentColor';
-    const fill = active ? '#4621FF' : 'none';
-    const fillLight = active ? 'rgba(70,33,255,0.2)' : 'none';
+    // Icons inherit the button's text color (accent when active).
+    const c = 'currentColor';
+    const fill = active ? 'currentColor' : 'none';
+    const fillLight = 'none';
     
     switch(id) {
       case '/dashboard':
@@ -68,21 +69,21 @@
   }
 </script>
 
-<div class="w-[220px] bg-bg1 border-r border-border flex flex-col p-6 px-4 gap-1 shrink-0">
+<div class="w-[232px] bg-bg1 border-r border-border flex flex-col p-6 px-4 gap-1 shrink-0">
   <div class="mb-6 pl-2">
-    <p class="font-mono font-bold text-[15px] tracking-[0.1em] text-blue">ASTRAPHE</p>
-    <p class="text-[10px] text-text2 font-mono tracking-[0.08em]">AI COACH · v2.1</p>
+    <p class="font-display text-[28px] leading-none text-text0">Astraphe</p>
+    <p class="mt-1 text-[10px] text-text2 font-mono tracking-[0.14em]">AI COACH</p>
   </div>
   
   {#each GROUPS as { group, items }}
     <div class="mb-2">
-      <p class="text-[9px] text-text2 font-mono uppercase tracking-[0.12em] px-3 pt-1.5 pb-1">{group}</p>
+      <p class="text-[10px] text-text2 font-mono uppercase tracking-[0.14em] px-3 pt-1.5 pb-1">{group}</p>
       {#each ALL_NAV.filter(n => items.includes(n.id)) as item}
         {@const active = currentPath === item.id || (currentPath === '/' && item.id === '/dashboard')}
         <button
           type="button"
           class="flex items-center gap-2.5 py-2.25 px-3 rounded-xl w-full font-sans text-[13px] text-left transition-all duration-150 border
-          {active ? 'bg-blue-dim border-[rgba(70,33,255,0.25)] text-blue font-semibold' : 'bg-transparent border-transparent text-text1 font-normal'}"
+          {active ? 'bg-bg3 border-border text-blue font-medium' : 'bg-transparent border-transparent text-text1 font-normal'}"
           onclick={(e) => {
             onNavClick(e, item.id);
             if (!e.defaultPrevented) navTo(item.id);
@@ -98,10 +99,10 @@
   
   <button
     type="button"
-    class="mt-auto p-3 bg-glass rounded-xl border border-border cursor-pointer flex items-center gap-2.5 w-full text-left"
+    class="mt-auto p-3 bg-bg2 rounded-2xl border border-border cursor-pointer flex items-center gap-2.5 w-full text-left"
     onclick={() => navTo('/profile')}
   >
-    <div class="w-8 h-8 rounded-full bg-gradient-to-br from-blue to-teal flex items-center justify-center text-sm shrink-0 text-white font-bold">
+    <div class="w-8 h-8 rounded-full bg-blue-dim border border-blue/30 flex items-center justify-center text-sm shrink-0 text-blue font-bold">
       {authStore.user?.user_metadata?.full_name?.charAt(0)?.toUpperCase() || 'A'}
     </div>
     <div>

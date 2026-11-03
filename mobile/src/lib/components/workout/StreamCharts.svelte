@@ -1,7 +1,6 @@
 <script lang="ts">
   import * as d3 from 'd3';
   import { slide } from 'svelte/transition';
-  import { formatHrZoneTitle } from '$lib/hrZoneDisplay';
   import {
     cadenceChartTitle,
     cadenceUnitLabel,
@@ -488,9 +487,7 @@
           hoverLine: (idx: number) => {
             const hb = hrArr[idx];
             if (hb == null || !Number.isFinite(hb)) return '';
-            const z = getZone(hb);
-            const segment = z > 0 ? formatHrZoneTitle(z) : 'Outside zones';
-            return `${Math.round(tArr[idx] / 60)}m · ${Math.round(hb)} bpm · ${segment}`;
+            return `${Math.round(tArr[idx] / 60)}m · ${Math.round(hb)} bpm`;
           },
         },
       });
@@ -894,11 +891,51 @@
 
 </script>
 
-<div class="rounded-2xl bg-glass2 border border-border p-3 space-y-4">
-  <p class="text-[11px] font-semibold text-text1 flex items-center gap-1.5">
-    <span class="w-1.5 h-1.5 rounded-full bg-teal inline-block"></span>
-    Activity Streams
-  </p>
+<div class="space-y-4">
+  <div class="flex items-baseline justify-between">
+    <h2 class="m-0 font-display font-normal text-[22px]">Activity streams</h2>
+    <span class="font-mono text-[10px] tracking-[0.08em] text-text2 uppercase">Drag to select</span>
+  </div>
+
+  {#if hasSelection && rangeStats}
+    {@const i0 = Math.min(selStartIdx ?? 0, selEndIdx ?? 0)}
+    {@const i1 = Math.max(selStartIdx ?? 0, selEndIdx ?? 0)}
+    {@const imperial = measurementUnits === 'imperial'}
+    {@const speedMps = rangeStats.distanceM !== null && rangeStats.durationSecs > 0 ? rangeStats.distanceM / rangeStats.durationSecs : null}
+    <div
+      class="relative z-30 flex flex-col gap-3 rounded-2xl border border-blue/30 bg-blue-dim px-4 py-3"
+      transition:slide={{ duration: 200, axis: 'y' }}
+    >
+      <div class="flex items-center justify-between gap-2">
+        <span class="font-mono text-[11px] tracking-[0.14em] text-blue uppercase">
+          Selection · {Math.round((tArr[i0] ?? 0) / 60)}m → {Math.round((tArr[i1] ?? 0) / 60)}m
+        </span>
+        <button
+          type="button"
+          class="h-8 px-3 rounded-[10px] border border-border bg-bg0/60 text-text0 text-[13px] font-medium cursor-pointer"
+          onclick={clearSelection}
+        >Clear</button>
+      </div>
+      <dl class="m-0 grid grid-cols-4 gap-x-3 gap-y-2.5">
+        {#each [
+          { k: 'Duration', v: formatDuration(rangeStats.durationSecs), show: true },
+          { k: 'Distance', v: rangeStats.distanceM !== null ? formatRangeDistance(rangeStats.distanceM) : '', show: rangeStats.distanceM !== null },
+          { k: 'Avg HR', v: rangeStats.avgHr !== null ? rangeStats.avgHr + ' bpm' : '', show: rangeStats.avgHr !== null },
+          { k: 'Max HR', v: rangeStats.maxHr !== null ? rangeStats.maxHr + ' bpm' : '', show: rangeStats.maxHr !== null },
+          { k: 'Avg power', v: rangeStats.avgWatts !== null ? rangeStats.avgWatts + ' W' : '', show: rangeStats.avgWatts !== null },
+          { k: 'Avg pace', v: rangeStats.avgPace !== null ? rangeStats.avgPace + paceDistanceSuffix(sport, measurementUnits) : '', show: rangeStats.avgPace !== null },
+          { k: 'Avg speed', v: speedMps !== null ? (imperial ? (speedMps * 2.23694).toFixed(1) + ' mph' : (speedMps * 3.6).toFixed(1) + ' km/h') : '', show: speedMps !== null && rangeStats.avgPace === null },
+          { k: 'Cadence', v: rangeStats.avgCadence !== null ? rangeStats.avgCadence + ' ' + cadenceUnitLabel(sport) : '', show: rangeStats.avgCadence !== null },
+          { k: 'Elev gain', v: rangeStats.elevGain !== null ? '+' + (imperial ? Math.round(rangeStats.elevGain * 3.28084) + ' ft' : rangeStats.elevGain + ' m') : '', show: rangeStats.elevGain !== null && rangeStats.elevGain > 0 }
+        ].filter((x) => x.show) as stat (stat.k)}
+          <div class="flex min-w-0 flex-col-reverse gap-0.5">
+            <dt class="truncate text-[11px] text-text2">{stat.k}</dt>
+            <dd class="m-0 truncate text-[15px] font-medium tabular-nums">{stat.v}</dd>
+          </div>
+        {/each}
+      </dl>
+    </div>
+  {/if}
 
   {#if chartModels.length === 0}
     <p class="text-[12px] text-text2 font-mono text-center py-6">
@@ -922,10 +959,12 @@
         data-chart-id={c.id}
         class="relative"
       >
-        <p class="text-[11px] font-semibold text-text0 mb-0.5">{c.title}</p>
-        <p class="text-[10px] font-mono text-text2 h-4 mb-0.5">
-          {hoveredIdx === null ? c.stats.subtitle : c.stats.hoverLine(hoveredIdx)}
-        </p>
+        <div class="mb-0.5 flex items-baseline justify-between gap-2">
+          <p class="m-0 flex shrink-0 items-center gap-2 whitespace-nowrap text-sm font-medium text-text0"><span aria-hidden="true" class="h-2.5 w-2.5 rounded-[3px]" style="background: {c.color}"></span>{c.title}</p>
+          <p class="m-0 min-h-4 truncate text-right font-mono text-xs text-text2">
+            {hoveredIdx === null ? c.stats.subtitle : c.stats.hoverLine(hoveredIdx)}
+          </p>
+        </div>
         <svg
           class="pointer-events-none block w-full"
           width="100%"
@@ -1008,121 +1047,12 @@
         </svg>
       </div>
 
-      {#if hasSelection && rangeStats && interactionChartId === c.id}
-        <div
-          class="relative z-30 flex items-center gap-1.5 mt-2 px-2.5 py-2 bg-bg2 border border-white/[0.12] rounded-xl overflow-x-auto touch-pan-y"
-          transition:slide={{ duration: 200, axis: 'y' }}
-        >
-            <div class="flex gap-1.5 flex-1 overflow-x-auto">
-              <div class="flex flex-col items-center px-2.5 py-1 bg-white/[0.07] rounded-lg shrink-0">
-                <span class="font-mono text-[9px] uppercase tracking-widest text-white/[0.45] mb-0.5"
-                  >Duration</span
-                >
-                <span class="font-mono text-[13px] font-bold tabular-nums text-text0"
-                  >{formatDuration(rangeStats.durationSecs)}</span
-                >
-              </div>
 
-              {#if rangeStats.distanceM !== null}
-                <div class="flex flex-col items-center px-2.5 py-1 bg-white/[0.07] rounded-lg shrink-0">
-                  <span class="font-mono text-[9px] uppercase tracking-widest text-white/[0.45] mb-0.5"
-                    >Dist</span
-                  >
-                  <span class="font-mono text-[13px] font-bold tabular-nums text-text0"
-                    >{formatRangeDistance(rangeStats.distanceM)}</span
-                  >
-                </div>
-              {/if}
-
-              {#if rangeStats.avgPace !== null}
-                <div class="flex flex-col items-center px-2.5 py-1 bg-white/[0.07] rounded-lg shrink-0">
-                  <span class="font-mono text-[9px] uppercase tracking-widest text-white/[0.45] mb-0.5"
-                    >Avg pace</span
-                  >
-                  <span class="font-mono text-[13px] font-bold tabular-nums text-text0"
-                    >{rangeStats.avgPace}{paceDistanceSuffix(sport, measurementUnits)}</span
-                  >
-                </div>
-              {/if}
-
-              {#if rangeStats.avgHr !== null}
-                <div class="flex flex-col items-center px-2.5 py-1 bg-white/[0.07] rounded-lg shrink-0">
-                  <span class="font-mono text-[9px] uppercase tracking-widest text-white/[0.45] mb-0.5"
-                    >Avg HR</span
-                  >
-                  <span class="font-mono text-[13px] font-bold tabular-nums text-text0">
-                    {rangeStats.avgHr}
-                    <span class="text-[10px] font-normal text-text2">bpm</span>
-                  </span>
-                </div>
-              {/if}
-
-              {#if rangeStats.maxHr !== null}
-                <div class="flex flex-col items-center px-2.5 py-1 bg-white/[0.07] rounded-lg shrink-0">
-                  <span class="font-mono text-[9px] uppercase tracking-widest text-white/[0.45] mb-0.5"
-                    >Max HR</span
-                  >
-                  <span class="font-mono text-[13px] font-bold tabular-nums text-text0">
-                    {rangeStats.maxHr}
-                    <span class="text-[10px] font-normal text-text2">bpm</span>
-                  </span>
-                </div>
-              {/if}
-
-              {#if rangeStats.avgWatts !== null}
-                <div class="flex flex-col items-center px-2.5 py-1 bg-white/[0.07] rounded-lg shrink-0">
-                  <span class="font-mono text-[9px] uppercase tracking-widest text-white/[0.45] mb-0.5"
-                    >Avg power</span
-                  >
-                  <span class="font-mono text-[13px] font-bold tabular-nums text-text0">
-                    {rangeStats.avgWatts}
-                    <span class="text-[10px] font-normal text-text2">W</span>
-                  </span>
-                </div>
-              {/if}
-
-              {#if rangeStats.avgCadence !== null}
-                <div class="flex flex-col items-center px-2.5 py-1 bg-white/[0.07] rounded-lg shrink-0">
-                  <span class="font-mono text-[9px] uppercase tracking-widest text-white/[0.45] mb-0.5"
-                    >Cadence</span
-                  >
-                  <span class="font-mono text-[13px] font-bold tabular-nums text-text0">
-                    {rangeStats.avgCadence}
-                    <span class="text-[10px] font-normal text-text2"
-                      >{cadenceUnitLabel(sport)}</span
-                    >
-                  </span>
-                </div>
-              {/if}
-
-              {#if rangeStats.elevGain !== null && rangeStats.elevGain > 0}
-                <div class="flex flex-col items-center px-2.5 py-1 bg-white/[0.07] rounded-lg shrink-0">
-                  <span class="font-mono text-[9px] uppercase tracking-widest text-white/[0.45] mb-0.5"
-                    >Elev gain</span
-                  >
-                  <span class="font-mono text-[13px] font-bold tabular-nums text-text0">
-                    {rangeStats.elevGain}
-                    <span class="text-[10px] font-normal text-text2">m</span>
-                  </span>
-                </div>
-              {/if}
-            </div>
-
-            <button
-              type="button"
-              class="shrink-0 text-text2 hover:text-text1 hover:bg-white/[0.07] rounded-md px-1.5 py-1 text-sm leading-none transition-colors"
-              onclick={clearSelection}
-              aria-label="Clear selection"
-            >
-              ✕
-            </button>
-          </div>
-        {/if}
     {/each}
 
       {#if overlayStyle}
         <div
-          class="absolute top-0 bottom-0 pointer-events-none z-10 bg-white/[0.07] border-l-2 border-r-2 border-white/30"
+          class="absolute top-0 bottom-0 pointer-events-none z-10 bg-blue/10 border-l border-r border-blue/40"
           style={overlayStyle}
           aria-hidden="true"
         ></div>

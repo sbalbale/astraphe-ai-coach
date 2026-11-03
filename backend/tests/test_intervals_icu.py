@@ -345,6 +345,12 @@ class _RecordingQuery:
     def lt(self, *_args, **_kwargs):
         return self
 
+    def lte(self, *_args, **_kwargs):
+        return self
+
+    def limit(self, *_args, **_kwargs):
+        return self
+
     def order(self, *_args, **_kwargs):
         return self
 

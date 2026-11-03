@@ -880,10 +880,15 @@ def _daily_biometrics_from_garmin(
 
     resting_hr = _round_int((heart_rates or {}).get("restingHeartRate"))
     # 0% is not a physiological SpO2 reading, so a 0 (or negative / non-numeric / absent)
-    # avgSpO2 is treated as missing rather than stored -- otherwise it would be saved as
+    # SpO2 is treated as missing rather than stored -- otherwise it would be saved as
     # real data and could win source-priority over a valid value from another source.
+    # The live get_sleep_data() payload names it averageSpO2Value; avgSpO2 is the key the
+    # garminconnect typed model uses, so keep it as a fallback.
+    spo2_source = sleep_dto.get("averageSpO2Value")
+    if spo2_source is None:
+        spo2_source = sleep_dto.get("avgSpO2")
     try:
-        spo2_raw = float(sleep_dto.get("avgSpO2"))
+        spo2_raw = float(spo2_source)
     except (TypeError, ValueError):
         spo2_raw = None
     spo2_pct = spo2_raw if spo2_raw and spo2_raw > 0 else None
@@ -935,6 +940,176 @@ def _parse_epoch_ms(value: Any) -> datetime | None:
         return None
 
 
+# Garmin sleepLevels `activityLevel` codes (confirmed against dailySleepDTO totals).
+_SLEEP_STAGE_BY_LEVEL = {0: "deep", 1: "light", 2: "rem", 3: "awake"}
+
+
+def _parse_garmin_naive_utc(value: Any) -> datetime | None:
+    """sleepLevels timestamps look like '2026-11-01T03:09:18.0' -- UTC with no offset."""
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+
+
+def parse_sleep_stage_segments(sleep: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """
+    Turn get_sleep_data()['sleepLevels'] into [{stage, start_at, end_at}] (UTC, sorted).
+    Missing/empty input gives []; segments with an unknown stage code or unparseable
+    / non-positive timestamps are skipped (logged), never raised.
+    """
+    levels = (sleep or {}).get("sleepLevels")
+    if not isinstance(levels, list):
+        return []
+    segments: list[dict[str, Any]] = []
+    for seg in levels:
+        if not isinstance(seg, dict):
+            continue
+        try:
+            stage = _SLEEP_STAGE_BY_LEVEL.get(int(float(seg.get("activityLevel"))))
+        except (TypeError, ValueError):
+            stage = None
+        if stage is None:
+            logger.info("garmin sleepLevels: skipping unknown activityLevel=%r", seg.get("activityLevel"))
+            continue
+        start = _parse_garmin_naive_utc(seg.get("startGMT"))
+        end = _parse_garmin_naive_utc(seg.get("endGMT"))
+        if start is None or end is None or end <= start:
+            logger.info("garmin sleepLevels: skipping segment with bad timestamps %r", seg)
+            continue
+        segments.append({"stage": stage, "start_at": start, "end_at": end})
+    segments.sort(key=lambda s: s["start_at"])
+    return segments
+
+
+def _parse_garmin_ts(value: Any) -> datetime | None:
+    """Garmin timestamps arrive as epoch ms or as naive-UTC ISO strings."""
+    if isinstance(value, (int, float)):
+        return _parse_epoch_ms(value)
+    return _parse_garmin_naive_utc(value)
+
+
+def parse_garmin_naps(payload: Any) -> list[dict[str, Any]]:
+    """
+    Naps from a Garmin sleep payload: get_sleep_data()['dailyNapDTOS'] or the list
+    returned by get_naps(). Returns [{start, end, duration_min, calendar_date}],
+    skipping entries without a usable time window.
+    """
+    if isinstance(payload, list):
+        items = payload
+    elif isinstance(payload, dict):
+        items = payload.get("dailyNapDTOS") or payload.get("dailyNapDTOs") or payload.get("naps") or []
+    else:
+        items = []
+    naps: list[dict[str, Any]] = []
+    for n in items if isinstance(items, list) else []:
+        if not isinstance(n, dict):
+            continue
+        start = _parse_garmin_ts(n.get("napStartTimestampGMT") or n.get("startTimestampGMT") or n.get("startGMT"))
+        end = _parse_garmin_ts(n.get("napEndTimestampGMT") or n.get("endTimestampGMT") or n.get("endGMT"))
+        if start is None or end is None or end <= start:
+            logger.info("garmin naps: skipping nap with bad timestamps %r", n)
+            continue
+        window_s = (end - start).total_seconds()
+        try:
+            dur_s = float(n.get("napTimeSec") or n.get("napTimeSeconds") or n.get("durationInSeconds") or window_s)
+        except (TypeError, ValueError):
+            dur_s = window_s
+        dur_s = min(max(dur_s, 0.0), window_s)
+        if dur_s < 60:
+            continue
+        naps.append(
+            {
+                "start": start,
+                "end": end,
+                "duration_min": int(round(dur_s / 60.0)),
+                "calendar_date": n.get("calendarDate"),
+            }
+        )
+    naps.sort(key=lambda x: x["start"])
+    return naps
+
+
+def _athlete_offset_min(db: Any, athlete_id: str) -> int:
+    try:
+        res = db.table("athletes").select("timezone_offset_min").eq("id", athlete_id).maybe_single().execute()
+        row = getattr(res, "data", None) if res else None
+        return int((row or {}).get("timezone_offset_min") or 0)
+    except Exception:
+        return 0
+
+
+def save_garmin_naps(
+    athlete_id: str, db: Any, naps: list[dict[str, Any]], timezone_offset_min: int = 0
+) -> list[str]:
+    """
+    Store naps as `sleep_periods` rows (is_nap=True), dated by the local wake day like
+    WHOOP naps. Idempotent: the external id is derived from the athlete and nap start.
+    Returns the dates touched.
+    """
+    if not naps:
+        return []
+    rows = []
+    for nap in naps:
+        start, end = nap["start"], nap["end"]
+        cal = nap.get("calendar_date")
+        try:
+            day = date.fromisoformat(str(cal)[:10]) if cal else None
+        except ValueError:
+            day = None
+        if day is None:
+            day = (end + timedelta(minutes=timezone_offset_min or 0)).date()
+        in_bed = int(round((end - start).total_seconds() / 60.0))
+        rows.append(
+            {
+                "athlete_id": athlete_id,
+                "date": day.isoformat(),
+                "started_at": start.isoformat(),
+                "ended_at": end.isoformat(),
+                "duration_min": nap["duration_min"],
+                "in_bed_min": in_bed,
+                "awake_pct": round(max(0, in_bed - nap["duration_min"]) / in_bed * 100.0, 1) if in_bed else None,
+                "is_nap": True,
+                "source": PROVIDER,
+                # Athlete id in the key: sleep_periods is unique on (source, external_id) only.
+                "external_id": f"{PROVIDER}:nap:{athlete_id}:{int(start.timestamp())}",
+            }
+        )
+    db.table("sleep_periods").upsert(rows, on_conflict="source,external_id").execute()
+    return sorted({r["date"] for r in rows})
+
+
+def save_sleep_stage_segments(
+    athlete_id: str, db: Any, day: date, segments: list[dict[str, Any]]
+) -> int:
+    """
+    Replace this athlete+date+'garmin' rows with `segments` (idempotent re-sync).
+    No segments => leave existing rows untouched (a transient empty response must
+    not wipe stored data).
+    """
+    if not segments:
+        return 0
+    db.table("sleep_stage_segments").delete().eq("athlete_id", athlete_id).eq(
+        "date", day.isoformat()
+    ).eq("source", PROVIDER).execute()
+    rows = [
+        {
+            "athlete_id": athlete_id,
+            "date": day.isoformat(),
+            "source": PROVIDER,
+            "stage": s["stage"],
+            "start_at": s["start_at"].isoformat(),
+            "end_at": s["end_at"].isoformat(),
+        }
+        for s in segments
+    ]
+    db.table("sleep_stage_segments").upsert(rows, on_conflict="athlete_id,source,start_at").execute()
+    return len(rows)
+
+
 async def fetch_and_store_biometrics_for_day(
     athlete_id: str, db: Any, client: Garmin, day: date
 ) -> bool:
@@ -964,6 +1139,35 @@ async def fetch_and_store_biometrics_for_day(
         raise GarminRateLimitedError(str(exc)) from exc
     except Exception as exc:
         logger.info("garmin.get_heart_rates failed athlete=%s date=%s: %s", athlete_id, cdate, exc)
+
+    # Stage timeline rides on the sleep response we already fetched (no extra Garmin
+    # call). Stored independently of the summary so it survives WHOOP winning the night.
+    try:
+        await asyncio.to_thread(
+            save_sleep_stage_segments, athlete_id, db, day, parse_sleep_stage_segments(sleep)
+        )
+    except Exception as exc:
+        logger.warning("garmin sleep stage segments save failed athlete=%s date=%s: %s", athlete_id, cdate, exc)
+
+    # Naps. Saved before the day's summary so the summary's sleep aggregation includes
+    # them (as it does for WHOOP naps). Usually they ride on the sleep response; only
+    # when Garmin reports nap time without the nap list do we spend a call on get_naps.
+    naps = parse_garmin_naps(sleep)
+    nap_seconds = ((sleep or {}).get("dailySleepDTO") or {}).get("napTimeSeconds") or 0
+    if not naps and nap_seconds:
+        try:
+            naps = parse_garmin_naps(await asyncio.to_thread(client.get_naps, cdate))
+        except GarminConnectTooManyRequestsError as exc:
+            raise GarminRateLimitedError(str(exc)) from exc
+        except Exception as exc:
+            logger.info("garmin.get_naps failed athlete=%s date=%s: %s", athlete_id, cdate, exc)
+    if naps:
+        try:
+            await asyncio.to_thread(
+                save_garmin_naps, athlete_id, db, naps, _athlete_offset_min(db, athlete_id)
+            )
+        except Exception as exc:
+            logger.warning("garmin naps save failed athlete=%s date=%s: %s", athlete_id, cdate, exc)
 
     payload = _daily_biometrics_from_garmin(day, sleep, hrv, heart_rates)
     if payload is None:

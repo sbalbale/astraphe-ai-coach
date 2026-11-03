@@ -120,7 +120,7 @@
           type="button"
           class={[
             'w-full text-left px-2.5 py-2 rounded-lg text-[12px] font-mono transition-colors',
-            active ? 'bg-blue text-white' : 'hover:bg-glass2 text-text0'
+            active ? 'bg-blue text-bg0' : 'hover:bg-glass2 text-text0'
           ].join(' ')}
           onclick={() => selectOpt(opt)}
         >

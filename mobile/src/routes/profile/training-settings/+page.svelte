@@ -1,7 +1,6 @@
 <script lang="ts">
-  import Card from '$lib/components/Card.svelte';
+  import SubpageHeader from '$lib/components/SubpageHeader.svelte';
   import SelectMenu from '$lib/components/SelectMenu.svelte';
-  import { goto } from '$app/navigation';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { convertPace, normalizeUnits, type Units } from '$lib/utils/units';
   import { onMount } from 'svelte';
@@ -36,9 +35,9 @@
   let saveError = $state<string | null>(null);
 
   const hrZoneMethodOptions: { value: string; label: string }[] = [
-    { value: 'lthr', label: 'LTHR (Coggan)' },
-    { value: 'hrr', label: 'Karvonen %HRR' },
-    { value: 'max_hr', label: 'Max HR %' }
+    { value: 'lthr', label: '5 zones from LTHR (Coggan)' },
+    { value: 'hrr', label: '5 zones from HR reserve (Karvonen)' },
+    { value: 'max_hr', label: '5 zones from max HR' }
   ];
 
   const sportOptions = [
@@ -54,6 +53,8 @@
   onMount(async () => {
     try {
       await athleteStore.fetchAll();
+      // The form starts from the database values, not a cached profile.
+      await athleteStore.refreshProfile();
     } catch {
       // ignore
     }
@@ -75,9 +76,6 @@
     initialized = true;
   });
 
-  function goBack() {
-    goto('/profile');
-  }
 
   function setUnits(next: Units) {
     if (next === units) return;
@@ -119,161 +117,103 @@
       saveError = athleteStore.lastProfileSaveError ?? 'Failed to save changes. Please try again.';
     }
   }
+
+  const anchorInput =
+    'w-[88px] h-11 px-3 rounded-xl border border-border bg-bg0 text-right font-mono text-[15px] text-text0 outline-none focus:border-blue';
 </script>
 
-<div class="flex flex-col gap-3">
-  <div class="flex items-center gap-3">
-    <button onclick={goBack} class="w-8 h-8 flex items-center justify-center bg-glass border border-border rounded-lg text-text2 hover:text-text0 transition-colors cursor-pointer">
-      ←
-    </button>
-    <div>
-      <p class="text-xs text-text2 font-mono uppercase tracking-[0.1em]">Account</p>
-      <h1 class="text-[22px] font-bold tracking-[-0.02em]">Training Settings</h1>
+<form onsubmit={handleSave} class="flex flex-col gap-4 pb-6">
+  <SubpageHeader title="Training settings" />
+
+  <div class="flex flex-col gap-2">
+    <label for="sport" class="font-mono text-[11px] tracking-[0.14em] text-text2">MAIN SPORT</label>
+    <SelectMenu
+      id="sport"
+      bind:value={sport}
+      options={sportOptions}
+      ariaLabel="Main sport"
+      buttonClass="w-full h-14 px-4 pr-3 bg-bg2 border border-border rounded-[14px] text-base text-text0 outline-none focus:border-blue"
+    />
+  </div>
+
+  <section aria-label="Performance anchors" class="bg-bg2 border border-border rounded-[24px] px-[18px] py-1 flex flex-col">
+    {#each [
+      { id: 'ftp', label: 'Cycling FTP', unit: 'W' },
+      { id: 'lthr', label: 'Lactate threshold HR', unit: 'bpm' },
+      { id: 'maxhr', label: 'Max HR', unit: 'bpm' },
+      { id: 'restinghr', label: 'Resting HR', unit: 'bpm' },
+      { id: 'pace', label: 'Threshold pace', unit: units === 'metric' ? '/km' : '/mi' }
+    ] as row, i (row.id)}
+      <div class="flex items-center gap-3 py-2.5 {i ? 'border-t border-border' : ''}">
+        <label for={row.id} class="flex-1 text-[15px]">{row.label}</label>
+        {#if row.id === 'ftp'}
+          <input id="ftp" type="number" inputmode="numeric" bind:value={ftp} class={anchorInput} />
+        {:else if row.id === 'lthr'}
+          <input id="lthr" type="number" inputmode="numeric" min="100" max="220" step="1" bind:value={thresholdHR} class={anchorInput} />
+        {:else if row.id === 'maxhr'}
+          <input id="maxhr" type="number" inputmode="numeric" bind:value={maxHR} class={anchorInput} />
+        {:else if row.id === 'restinghr'}
+          <input
+            id="restinghr"
+            type="number"
+            inputmode="numeric"
+            min="30"
+            max="120"
+            placeholder="—"
+            value={restingHR ?? ''}
+            oninput={(e) => {
+              const v = e.currentTarget.value;
+              restingHR = v === '' ? null : Number(v);
+            }}
+            class={anchorInput}
+          />
+        {:else}
+          <input id="pace" type="text" inputmode="numeric" bind:value={pace} class={anchorInput} />
+        {/if}
+        <span class="w-9 text-[13px] text-text2">{row.unit}</span>
+      </div>
+    {/each}
+  </section>
+
+  <div class="flex flex-col gap-2">
+    <label for="hrzone-method" class="font-mono text-[11px] tracking-[0.14em] text-text2">HEART-RATE ZONES</label>
+    <SelectMenu
+      id="hrzone-method"
+      bind:value={hrZoneMethod}
+      options={hrZoneMethodOptions}
+      ariaLabel="Heart-rate zone calculation"
+      buttonClass="w-full h-14 px-4 pr-3 bg-bg2 border border-border rounded-[14px] text-base text-text0 outline-none focus:border-blue"
+    />
+    <p class="m-0 text-xs leading-[1.45] text-text2">Karvonen needs max and resting HR. Coggan uses your lactate threshold HR.</p>
+  </div>
+
+  <div class="grid grid-cols-2 gap-3">
+    <div class="flex flex-col gap-2">
+      <span class="font-mono text-[11px] tracking-[0.14em] text-text2">UNITS</span>
+      <div role="radiogroup" aria-label="Units" class="grid grid-cols-2 gap-0.5 p-1 rounded-[14px] bg-bg2 border border-border">
+        {#each [['metric', 'Metric'], ['imperial', 'Imperial']] as [v, l] (v)}
+          <button type="button" role="radio" aria-checked={units === v} class="h-10 rounded-[10px] border-0 text-[13px] font-medium cursor-pointer {units === v ? 'bg-bg3 text-text0' : 'bg-transparent text-text2'}" onclick={() => setUnits(v as Units)}>{l}</button>
+        {/each}
+      </div>
+    </div>
+    <div class="flex flex-col gap-2">
+      <span class="font-mono text-[11px] tracking-[0.14em] text-text2">TIME</span>
+      <div role="radiogroup" aria-label="Time format" class="grid grid-cols-2 gap-0.5 p-1 rounded-[14px] bg-bg2 border border-border">
+        {#each [['12h', '12h'], ['24h', '24h']] as [v, l] (v)}
+          <button type="button" role="radio" aria-checked={timeFormat === v} class="h-10 rounded-[10px] border-0 text-[13px] font-medium cursor-pointer {timeFormat === v ? 'bg-bg3 text-text0' : 'bg-transparent text-text2'}" onclick={() => (timeFormat = v)}>{l}</button>
+        {/each}
+      </div>
     </div>
   </div>
 
-  <form onsubmit={handleSave} class="flex flex-col gap-3 mt-2">
-    {#if saved}
-      <div class="px-3 py-2 rounded-xl border text-[12px] bg-teal-dim border-teal/30 text-teal">
-        Saved successfully.
-      </div>
-    {/if}
-    {#if saveError}
-      <div class="px-3 py-2 rounded-xl border text-[12px] bg-red-dim border-red/30 text-red">
-        {saveError}
-      </div>
-    {/if}
-    <Card>
-      <p class="text-[13px] font-semibold mb-3">Primary Focus</p>
-      <div class="flex flex-col gap-4">
-        <div>
-          <label for="sport" class="block text-[11px] text-text2 mb-1">Main Sport</label>
-          <SelectMenu
-            id="sport"
-            bind:value={sport}
-            options={sportOptions}
-            ariaLabel="Main Sport"
-            buttonClass="w-full p-2.5 pr-2 bg-glass2 border border-border rounded-lg text-sm text-text0 outline-none focus:border-blue"
-          />
-        </div>
-        <div>
-          <label for="units" class="block text-[11px] text-text2 mb-1">Measurement Units</label>
-          <div class="flex p-1 bg-glass2 rounded-lg border border-border">
-            <button type="button" class="flex-1 py-1.5 text-xs rounded-md transition-colors {units === 'metric' ? 'bg-blue text-text0' : 'text-text2 hover:text-text0'}" onclick={() => setUnits('metric')}>Metric</button>
-            <button type="button" class="flex-1 py-1.5 text-xs rounded-md transition-colors {units === 'imperial' ? 'bg-blue text-text0' : 'text-text2 hover:text-text0'}" onclick={() => setUnits('imperial')}>Imperial</button>
-          </div>
-        </div>
-        <div>
-          <label for="timeformat" class="block text-[11px] text-text2 mb-1">Time Format</label>
-          <div class="flex p-1 bg-glass2 rounded-lg border border-border">
-            <button type="button" class="flex-1 py-1.5 text-xs rounded-md transition-colors {timeFormat === '12h' ? 'bg-blue text-text0' : 'text-text2 hover:text-text0'}" onclick={() => timeFormat = '12h'}>12-Hour</button>
-            <button type="button" class="flex-1 py-1.5 text-xs rounded-md transition-colors {timeFormat === '24h' ? 'bg-blue text-text0' : 'text-text2 hover:text-text0'}" onclick={() => timeFormat = '24h'}>24-Hour</button>
-          </div>
-        </div>
-      </div>
-    </Card>
+  {#if saved}
+    <p class="m-0 px-4 py-3 rounded-[14px] bg-teal-dim border border-teal/30 text-[13px] text-teal">Saved.</p>
+  {/if}
+  {#if saveError}
+    <p class="m-0 px-4 py-3 rounded-[14px] bg-red-dim border border-red/30 text-[13px] text-red">{saveError}</p>
+  {/if}
 
-    <Card>
-      <p class="text-[13px] font-semibold mb-3">Performance Anchors</p>
-      <div class="flex flex-col gap-4">
-        <div class="flex items-center justify-between gap-3 flex-wrap">
-          <div class="flex-1 min-w-[120px]">
-            <label for="maxhr" class="block text-[11px] text-text2 mb-1">Max HR</label>
-            <div class="relative">
-              <input
-                id="maxhr"
-                type="number"
-                bind:value={maxHR}
-                class="w-full p-2 pr-10 bg-glass2 border border-border rounded-lg text-sm text-text0 font-mono outline-none focus:border-red"
-              />
-              <span class="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[11px] text-text2 font-mono">bpm</span>
-            </div>
-          </div>
-          <div class="flex-1 min-w-[120px]">
-            <label for="restinghr" class="block text-[11px] text-text2 mb-1">Resting HR</label>
-            <div class="relative">
-              <input
-                id="restinghr"
-                type="number"
-                min="30"
-                max="120"
-                value={restingHR ?? ''}
-                oninput={(e) => {
-                  const v = e.currentTarget.value;
-                  restingHR = v === '' ? null : Number(v);
-                }}
-                class="w-full p-2 pr-10 bg-glass2 border border-border rounded-lg text-sm text-text0 font-mono outline-none focus:border-teal placeholder:text-text2"
-                placeholder="Optional"
-              />
-              <span class="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[11px] text-text2 font-mono">bpm</span>
-            </div>
-          </div>
-        </div>
-        <div class="flex items-center justify-between gap-3 flex-wrap">
-          <div class="flex-1 min-w-[120px]">
-            <label for="lthr" class="block text-[11px] text-text2 mb-1">Lactate Threshold HR</label>
-            <div class="relative">
-              <input
-                id="lthr"
-                type="number"
-                min="100"
-                max="220"
-                step="1"
-                bind:value={thresholdHR}
-                class="w-full p-2 pr-10 bg-glass2 border border-border rounded-lg text-sm text-text0 font-mono outline-none focus:border-amber"
-              />
-              <span class="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[11px] text-text2 font-mono">bpm</span>
-            </div>
-          </div>
-          <div class="flex-1 min-w-[120px]">
-            <label for="ftp" class="block text-[11px] text-text2 mb-1">Cycling FTP</label>
-            <div class="relative">
-              <input
-                id="ftp"
-                type="number"
-                bind:value={ftp}
-                class="w-full p-2 pr-10 bg-glass2 border border-border rounded-lg text-sm text-text0 font-mono outline-none focus:border-blue"
-              />
-              <span class="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[11px] text-text2 font-mono">W</span>
-            </div>
-          </div>
-        </div>
-        <div>
-          <label for="pace" class="block text-[11px] text-text2 mb-1">Threshold Pace</label>
-          <div class="relative">
-            <input
-              id="pace"
-              type="text"
-              bind:value={pace}
-              class="w-full p-2.5 pr-14 bg-glass2 border border-border rounded-lg text-sm text-text0 font-mono outline-none focus:border-teal"
-            />
-            <span class="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[11px] text-text2 font-mono">{units === 'metric' ? '/km' : '/mile'}</span>
-          </div>
-        </div>
-      </div>
-    </Card>
-
-    <Card>
-      <p class="text-[13px] font-semibold mb-3">Heart rate zones</p>
-      <div class="flex flex-col gap-3 mb-4">
-        <div>
-          <label for="hrzone-method" class="block text-[11px] text-text2 mb-1">Zone calculation</label>
-          <SelectMenu
-            id="hrzone-method"
-            bind:value={hrZoneMethod}
-            options={hrZoneMethodOptions}
-            ariaLabel="Heart rate zone calculation method"
-            buttonClass="w-full p-2.5 pr-2 bg-glass2 border border-border rounded-lg text-sm text-text0 outline-none focus:border-red"
-          />
-        </div>
-        <p class="text-[10px] text-text2 leading-relaxed">
-          %HRR (Karvonen) needs max HR and resting HR. LTHR (Coggan) uses lactate threshold HR from Performance Anchors.
-        </p>
-      </div>
-    </Card>
-
-    <button type="submit" disabled={saving} class="w-full py-3.5 bg-blue text-text0 font-semibold rounded-xl hover:bg-blue/90 transition-colors mt-2 disabled:opacity-50">
-      {saving ? 'Saving...' : 'Save Configuration'}
-    </button>
-  </form>
-</div>
+  <button type="submit" disabled={saving} class="mt-2 h-14 rounded-[16px] border-0 bg-blue text-[#0B1420] text-base font-semibold cursor-pointer disabled:opacity-50">
+    {saving ? 'Saving…' : 'Save changes'}
+  </button>
+</form>

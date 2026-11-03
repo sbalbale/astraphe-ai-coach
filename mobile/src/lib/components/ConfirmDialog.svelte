@@ -40,7 +40,7 @@
         type="button"
         class="px-4 py-2 rounded-xl text-[12px] border transition-colors {confirmTone === 'danger'
           ? 'bg-red-600/90 border-red-500/60 text-white hover:bg-red-600'
-          : 'bg-blue border-blue text-white hover:brightness-110'}"
+          : 'bg-blue border-blue text-bg0 hover:brightness-110'}"
         onclick={onConfirm}
       >
         {confirmText}

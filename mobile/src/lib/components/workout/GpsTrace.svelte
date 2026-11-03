@@ -167,15 +167,13 @@
 
   const HR_LEGEND_ZONES = [1, 2, 3, 4, 5] as const;
 
-  const PREVIEW_HEIGHT =
-    'h-[240px] md:h-[min(28rem,52vh)] md:min-h-[22rem]';
-
   let {
     latlng = [],
     polyline = null,
     heartrate = undefined,
     time = undefined,
     zones = undefined,
+    hero = false,
   }: {
     latlng?: [number, number][];
     polyline?: string | null;
@@ -183,7 +181,13 @@
     /** Stream time in seconds; required when route point count ≠ heartrate length. */
     time?: number[];
     zones?: ZoneDef[];
+    /** Full-bleed header map (no card, title or legend) for the workout detail hero. */
+    hero?: boolean;
   } = $props();
+
+  const PREVIEW_HEIGHT = $derived(
+    hero ? 'h-[260px]' : 'h-[240px] md:h-[min(28rem,52vh)] md:min-h-[22rem]'
+  );
 
   const routeLatLng = $derived<[number, number][]>(
     latlng.length >= 2 ? latlng : polyline ? decodePolyline(polyline) : []
@@ -500,7 +504,7 @@
               'line-join': 'round',
             },
             paint: {
-              'line-color': '#0F0F1A',
+              'line-color': '#141416',
               'line-opacity': 0.92,
               'line-width': 11,
             },
@@ -528,7 +532,7 @@
               'circle-radius': 7,
               'circle-color': ['get', 'color'],
               'circle-stroke-width': 2,
-              'circle-stroke-color': '#0F0F1A',
+              'circle-stroke-color': '#141416',
             },
           });
 
@@ -561,14 +565,14 @@
 
 <svelte:window onkeydown={onWindowKeydown} />
 
-<div class="bg-glass2 border border-border rounded-2xl p-4">
-  <p class="text-[11px] font-semibold text-text1 mb-3 font-sans">Route</p>
+<div class={hero ? '' : 'bg-glass2 border border-border rounded-2xl p-4'}>
+  {#if !hero}<p class="text-[11px] font-semibold text-text1 mb-3 font-sans">Route</p>{/if}
 
   {#if routeLatLng.length < 2}
     <div class="text-text2 text-[11px] text-center py-8">No GPS data</div>
   {:else}
     <div class="gps-map-slot {PREVIEW_HEIGHT}" aria-hidden={mapExpanded}>
-      <div class="gps-map-shell" class:expanded={mapExpanded}>
+      <div class="gps-map-shell" class:expanded={mapExpanded} class:hero={hero && !mapExpanded}>
         {#if mapExpanded}
           <button
             type="button"
@@ -609,12 +613,19 @@
               aria-label="Expand map"
               onclick={openMap}
             ></button>
+            {#if hero}
+              <span aria-hidden="true" class="pointer-events-none absolute right-4 bottom-9 z-10 flex h-10 w-10 items-center justify-center rounded-xl border border-border bg-bg0/80 text-text0">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"></path></svg>
+              </span>
+            {/if}
           {/if}
         </div>
       </div>
     </div>
 
-    {#if hrMode}
+    {#if hero}
+      <!-- hero map: no legend -->
+    {:else if hrMode}
       <div class="mt-2 flex flex-wrap items-center gap-3 text-[10px] font-mono text-text2">
         {#each HR_LEGEND_ZONES as z (z)}
           <span class="inline-flex items-center gap-1.5">
@@ -655,6 +666,11 @@
     border-radius: 1rem;
     border: 1px solid var(--border, rgba(255, 255, 255, 0.07));
     background: var(--bg1, #0f0f1a);
+  }
+
+  .gps-map-shell.hero {
+    border: none;
+    border-radius: 0;
   }
 
   .gps-map-shell.expanded {
@@ -774,6 +790,18 @@
   .map-host :global(.maplibregl-ctrl-attrib-inner) {
     font-size: 10px;
     line-height: 14px;
+  }
+
+  /* Hero map: the workout sheet overlaps the bottom 24px and the expand icon sits
+     bottom-right, so the (license-required) attribution moves bottom-left, above the
+     overlap, and is dimmed until tapped. */
+  .gps-map-shell.hero :global(.maplibregl-ctrl-bottom-right) {
+    right: auto;
+    left: 4px;
+    bottom: 26px;
+  }
+  .gps-map-shell.hero :global(.maplibregl-ctrl-attrib.maplibregl-compact:not(.maplibregl-compact-show)) {
+    opacity: 0.45;
   }
 
   .map-host:not(.interactive) :global(.maplibregl-canvas-container),

@@ -12,6 +12,7 @@ from app.services.hr_zones import athlete_dict_with_hr_zones, get_athlete_zones,
 from app.services.resend_service import sync_marketing_contact
 from app.dependencies import get_current_athlete, get_current_user_email, get_user_db, get_admin_db, run_supabase_call
 from app.core.redis import get_redis
+from app.services.time_utils import coerce_timezone_offset_min, local_datetime_from_timezone_offset
 
 router = APIRouter(prefix="/v1/athlete", tags=["Athlete"])
 
@@ -166,6 +167,57 @@ def _fetch_latest_weight_kg_sync(db, athlete_id: str) -> float | None:
     if raw is None:
         return None
     return float(raw)
+
+
+def _record_manual_weight_sync(db, athlete_id: str, weight_kg: float) -> bool:
+    """
+    Record a weight the athlete typed in as today's biometrics reading (source "manual").
+
+    The app shows the newest biometrics weight, so without this a stale scale sync would
+    keep overriding what the athlete just entered. Nothing is written when the value
+    matches the newest reading, so re-saving the profile doesn't create readings.
+    Returns True when a reading was written.
+    """
+    latest = _fetch_latest_weight_kg_sync(db, athlete_id)
+    if latest is not None and abs(latest - weight_kg) < 0.05:
+        return False
+
+    offset = None
+    try:
+        res = db.table("athletes").select("timezone_offset_min").eq("id", athlete_id).maybe_single().execute()
+        row = getattr(res, "data", None) if res else None
+        if isinstance(row, dict):
+            offset = row.get("timezone_offset_min")
+    except Exception:
+        pass
+    today = local_datetime_from_timezone_offset(coerce_timezone_offset_min(offset)).date().isoformat()
+
+    metric_sources: dict = {}
+    try:
+        res = (
+            db.table("biometrics")
+            .select("metric_sources")
+            .eq("athlete_id", athlete_id)
+            .eq("date", today)
+            .limit(1)
+            .execute()
+        )
+        if res.data and isinstance(res.data[0].get("metric_sources"), dict):
+            metric_sources = dict(res.data[0]["metric_sources"])
+    except Exception:
+        pass
+    metric_sources["weight_kg"] = "manual"
+
+    db.table("biometrics").upsert(
+        {
+            "athlete_id": athlete_id,
+            "date": today,
+            "weight_kg": round(float(weight_kg), 2),
+            "metric_sources": metric_sources,
+        },
+        on_conflict="athlete_id,date",
+    ).execute()
+    return True
 
 
 def _fetch_bio_window_sync(db, athlete_id: str) -> list:
@@ -555,6 +607,15 @@ async def update_athlete_profile(
 
     if not getattr(fresh, "data", None):
         raise HTTPException(status_code=500, detail="Updated profile but could not load updated record")
+
+    new_weight = update_data.get("weight_kg")
+    if isinstance(new_weight, (int, float)) and new_weight > 0:
+        try:
+            await asyncio.to_thread(_record_manual_weight_sync, db, athlete_id, float(new_weight))
+            await _cache_del(f"state:{athlete_id}")
+        except Exception as e:
+            # The profile is saved; a failed reading only means the old scale value still shows.
+            print(f"[athlete.profile.patch] manual weight reading failed: {repr(e)}")
 
     await _cache_del(f"profile:{athlete_id}")
     await _cache_del(f"zones:{athlete_id}")

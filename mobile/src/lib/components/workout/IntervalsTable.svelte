@@ -23,11 +23,14 @@
     sport,
     source = 'laps',
     measurementUnits = 'metric',
+    bare = false,
   }: {
     splits: ActivitySplit[];
     sport: string;
     source?: string;
     measurementUnits?: Units;
+    /** Drop the inner title row when a parent card already titles the table. */
+    bare?: boolean;
   } = $props();
 
   const sportKind = $derived(coercePaceSport(sport));
@@ -94,9 +97,9 @@
   const cadenceColHeader = $derived(cadenceColumnHeader(sport));
 </script>
 
-<div class="w-full bg-glass2 border border-border rounded-2xl p-4">
-  <div class="flex items-center justify-between mb-3 gap-2">
-    <p class="text-[11px] font-semibold text-text1 font-sans">{splitsTableTitle(sport)}</p>
+<div class="w-full">
+  <div class="flex items-center justify-between mb-3 gap-2" class:hidden={bare}>
+    <p class="m-0 text-[11px] font-semibold text-text1 font-sans">{splitsTableTitle(sport)}</p>
     <span
       class="text-[9px] font-mono uppercase tracking-wider px-2 py-0.5 rounded-full bg-teal-dim text-teal border border-teal/30 shrink-0"
     >
@@ -108,9 +111,9 @@
     <p class="text-[12px] text-text2 font-mono text-center py-4">No lap data found.</p>
   {:else}
     <div class="w-full overflow-x-auto">
-      <table class="w-full min-w-full text-[11px]">
+      <table class="w-full min-w-full text-[13px]">
         <thead>
-          <tr class="text-text2 font-mono uppercase text-[9px] tracking-wider border-b border-border">
+          <tr class="text-text2 font-mono uppercase text-[10px] tracking-[0.08em] whitespace-nowrap border-b border-border">
             <th class="text-left py-2 pr-2 w-[10%]">{labelWord} #</th>
             <th class="text-right py-2 pr-2">Distance</th>
             {#if showPaceCol}
@@ -132,7 +135,7 @@
           {#each splits as row (row.split_number)}
             <tr
               class="border-b border-border/50 font-mono tabular-nums {row.split_number === bestSplitNum
-                ? 'bg-[rgba(0,200,168,0.1)] border-l-2 border-l-teal'
+                ? 'bg-teal-dim'
                 : ''}"
             >
               <td class="py-2 pr-2 text-text1">{row.split_number}</td>

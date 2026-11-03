@@ -68,7 +68,7 @@
   }
 
   .label {
-    font-family: 'Space Grotesk', sans-serif;
+    font-family: 'Inter', system-ui, sans-serif;
     font-size: 9px;
     font-weight: 600;
     text-transform: uppercase;
@@ -89,7 +89,7 @@
     color: var(--text0);
     font-size: 11px;
     line-height: 1.4;
-    font-family: 'Space Grotesk', sans-serif;
+    font-family: 'Inter', system-ui, sans-serif;
     box-shadow: 0 10px 25px rgba(0, 0, 0, 0.4);
     z-index: 50;
     pointer-events: none;
@@ -101,5 +101,5 @@
     to { opacity: 1; transform: translateX(-50%) translateY(0); }
   }
 
-  /* Space Mono for numbers if needed, though not used in this specific badge text */
+  /* JetBrains Mono for numbers if needed, though not used in this specific badge text */
 </style>

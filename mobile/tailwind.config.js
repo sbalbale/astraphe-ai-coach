@@ -1,22 +1,28 @@
 import typography from '@tailwindcss/typography';
 
+/**
+ * Graphite + Sky theme (Nov 2026 UI overhaul).
+ * Surfaces step up in lightness bg0 → bg3; `blue` is the brand accent (soft sky).
+ * Keep in sync with the CSS custom properties in src/app.css.
+ */
+
 /** @type {import('tailwindcss').Config} */
 export default {
   content: ['./src/**/*.{html,js,svelte,ts}'],
   theme: {
     extend: {
       colors: {
-        bg0: '#08080F',
-        bg1: '#0F0F1A',
-        bg2: '#141424',
-        bg3: '#1C1C30',
-        glass: 'rgba(255,255,255,0.04)',
-        glass2: 'rgba(255,255,255,0.08)',
-        border: 'rgba(255,255,255,0.07)',
+        bg0: '#0E0E10',
+        bg1: '#141416',
+        bg2: '#17171A',
+        bg3: '#1F1F23',
+        glass: 'rgba(255,255,255,0.03)',
+        glass2: 'rgba(255,255,255,0.06)',
+        border: '#26262B',
         blue: {
-          DEFAULT: '#4621FF',
-          dim: 'rgba(70,33,255,0.15)',
-          glow: 'rgba(70,33,255,0.3)',
+          DEFAULT: '#7FB4FF',
+          dim: 'rgba(127,180,255,0.14)',
+          glow: 'rgba(127,180,255,0.3)',
         },
         teal: {
           DEFAULT: '#00C8A8',
@@ -31,40 +37,44 @@ export default {
           dim: 'rgba(240,113,120,0.15)',
         },
         sky: {
-          DEFAULT: '#4A9EFF',
-          dim: 'rgba(74,158,255,0.15)',
+          DEFAULT: '#7FB4FF',
+          dim: 'rgba(127,180,255,0.14)',
         },
         violet: {
-          DEFAULT: '#A78BFA',
-          dim: 'rgba(167,139,250,0.15)',
+          DEFAULT: '#B49CFF',
+          dim: 'rgba(180,156,255,0.15)',
         },
         steel: {
           DEFAULT: '#6B7FA3',
           dim: 'rgba(107,127,163,0.15)',
         },
         green: {
-          DEFAULT: '#5BAD6F',
-          dim: 'rgba(91,173,111,0.15)',
+          DEFAULT: '#6FCF97',
+          dim: 'rgba(111,207,151,0.15)',
         },
-        text0: '#F0F0FF',
-        text1: 'rgba(240,240,255,0.65)',
-        text2: 'rgba(240,240,255,0.35)',
+        text0: '#EDEBE6',
+        text1: '#A9A69E',
+        text2: '#8A877F',
         astraphe: {
-          neutral: '#F0F0FF',
-          muted: 'rgba(240,240,255,0.65)',
+          neutral: '#EDEBE6',
+          muted: '#A9A69E',
           teal: '#00C8A8',
           amber: '#FFCB88',
           red: '#F07178',
-          blue: '#4621FF',
+          blue: '#7FB4FF',
         },
-        /** Training-load chart identities (canonical Tailwind blue-500 / slate-700) */
-        chartCtl: '#3b82f6',
-        chartAtl: '#334155',
+        /** Training-load chart identities: fitness = accent, fatigue = neutral grey */
+        chartCtl: '#7FB4FF',
+        chartAtl: '#6A6A72',
       },
       fontFamily: {
-        sans: ['"Space Grotesk"', 'sans-serif'],
-        mono: ['"Space Mono"', 'monospace'],
-      }
+        sans: ['Inter', 'system-ui', 'sans-serif'],
+        mono: ['"JetBrains Mono"', 'ui-monospace', 'monospace'],
+        display: ['"Instrument Serif"', 'Georgia', 'serif'],
+      },
+      borderRadius: {
+        card: '24px',
+      },
     }
   },
   plugins: [typography()]

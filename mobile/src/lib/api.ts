@@ -505,6 +505,21 @@ export const api = {
     return null;
   },
 
+  /** Live steps for the reply being generated (see coachProgress.ts); [] when none. */
+  async getCoachProgress(conversationId: string): Promise<{ status: string; tool?: string; hop?: number; at?: number }[]> {
+    try {
+      const headers = await getAuthHeaders();
+      const res = await fetch(`${API_URL}/v1/coach/conversations/${conversationId}/progress`, { headers });
+      if (res.ok) {
+        const body = await res.json();
+        return Array.isArray(body?.events) ? body.events : [];
+      }
+    } catch (e) {
+      console.warn("Failed to fetch coach progress.", e);
+    }
+    return [];
+  },
+
   async uploadCoachImage(file: File, conversationId: string) {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user?.id) throw new Error('Not signed in');

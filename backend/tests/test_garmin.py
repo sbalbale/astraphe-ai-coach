@@ -815,3 +815,14 @@ def test_poll_interval_negative_minutes_clamped_to_a_60s_floor(monkeypatch):
     into a tight hammer against Garmin's API."""
     monkeypatch.setattr(garmin_service.settings, "GARMIN_SYNC_POLL_MINUTES", -5)
     assert garmin_service._poll_interval_sec() == 60
+
+
+def test_daily_biometrics_from_garmin_reads_averagespo2value_from_live_payload():
+    """The live get_sleep_data() payload puts the nightly average under averageSpO2Value
+    (not avgSpO2), so that key must be what populates spo2_pct."""
+    sleep = {"dailySleepDTO": {"averageSpO2Value": 95.0, "lowestSpO2Value": 85}}
+
+    bio = garmin_service._daily_biometrics_from_garmin(date(2026, 11, 2), sleep, {}, {})
+
+    assert bio is not None
+    assert bio.spo2_pct == 95.0

@@ -254,7 +254,7 @@ def test_extract_and_save_memories_saves_extracted_facts():
     saved = []
 
     with patch.object(memory._llm_client.models, "generate_content", return_value=fake_response), patch.object(
-        memory, "save_coach_memory", lambda athlete_id, fact, db: saved.append(fact)
+        memory, "save_coach_memory", lambda athlete_id, fact, db, **_kw: saved.append(fact)
     ):
         memory.extract_and_save_memories("athlete-1", conversation, MagicMock())
 
@@ -299,7 +299,7 @@ def test_extract_and_save_memories_filters_facts_by_length():
     saved = []
 
     with patch.object(memory._llm_client.models, "generate_content", return_value=fake_response), patch.object(
-        memory, "save_coach_memory", lambda athlete_id, fact, db: saved.append(fact)
+        memory, "save_coach_memory", lambda athlete_id, fact, db, **_kw: saved.append(fact)
     ):
         memory.extract_and_save_memories("athlete-1", conversation, MagicMock())
 
@@ -332,3 +332,132 @@ def test_save_coach_memory_continues_when_duplicate_check_raises():
 def test_should_skip_rag_for_message_false_for_long_question_without_keywords():
     # Long enough, more than 4 words, contains "?" -> should NOT skip.
     assert memory.should_skip_rag_for_message("What do you think about my overall progress lately?") is False
+
+
+# ---------------------------------------------------------------------------
+# Dated memories: absolute dates, replacements, past/upcoming in context
+# ---------------------------------------------------------------------------
+
+
+def test_save_coach_memory_stores_event_date():
+    db = _MemDb(_MemQuery())
+    with patch.object(memory, "_extract_embedding", return_value=[0.1]):
+        memory.save_coach_memory("athlete-1", "52 km row on 2026-10-24", db, event_date="2026-10-24")
+    assert db._query.inserted_payloads[0]["event_date"] == "2026-10-24"
+
+
+def test_extract_and_save_memories_gives_model_today_and_known_memories():
+    conversation = [{"role": "user", "content": "I'm doing a 52k row this Saturday to end the season"}]
+    fake_response = SimpleNamespace(
+        text='[{"fact": "52 km row on 2026-10-24 to end the season", "event_date": "2026-10-24", "replaces": []}]'
+    )
+    saved = []
+    with patch.object(memory._llm_client.models, "generate_content", return_value=fake_response) as gen, \
+         patch.object(memory, "_athlete_local_today", return_value=date(2026, 10, 21)), \
+         patch.object(memory, "list_coach_memories", return_value=[
+             {"id": "m1", "created_at": "2026-08-15T10:00:00Z", "content": "Has asthma"}
+         ]), \
+         patch.object(memory, "save_coach_memory", lambda a, fact, db, **kw: saved.append((fact, kw.get("event_date")))):
+        memory.extract_and_save_memories("athlete-1", conversation, MagicMock())
+    prompt = gen.call_args.kwargs["contents"]
+    assert "Today is 2026-10-21 (Wednesday)" in prompt
+    assert "m1 · 2026-08-15 · Has asthma" in prompt
+    assert saved == [("52 km row on 2026-10-24 to end the season", "2026-10-24")]
+
+
+def test_extract_and_save_memories_deletes_only_known_replaced_ids():
+    conversation = [{"role": "user", "content": "Did the 52k on Saturday, 4:10 finish"}]
+    fake_response = SimpleNamespace(
+        text='[{"fact": "Completed the 52 km row on 2026-10-24 in 4:10", "event_date": "2026-10-24", '
+        '"replaces": ["m1", "not-mine"]}]'
+    )
+    deleted = []
+    with patch.object(memory._llm_client.models, "generate_content", return_value=fake_response), \
+         patch.object(memory, "_athlete_local_today", return_value=date(2026, 10, 25)), \
+         patch.object(memory, "list_coach_memories", return_value=[
+             {"id": "m1", "created_at": "2026-10-21T10:00:00Z", "content": "52 km row scheduled for this Saturday"}
+         ]), \
+         patch.object(memory, "save_coach_memory"), \
+         patch.object(memory, "_delete_memories", lambda a, ids, db: deleted.extend(ids)):
+        memory.extract_and_save_memories("athlete-1", conversation, MagicMock())
+    assert deleted == ["m1"]
+
+
+def test_extract_and_save_memories_ignores_bad_event_dates():
+    conversation = [{"role": "user", "content": "Planning a long row sometime soon, maybe"}]
+    fake_response = SimpleNamespace(text='[{"fact": "Planning a long row sometime soon", "event_date": "soon"}]')
+    saved = []
+    with patch.object(memory._llm_client.models, "generate_content", return_value=fake_response), \
+         patch.object(memory, "_athlete_local_today", return_value=date(2026, 10, 25)), \
+         patch.object(memory, "list_coach_memories", return_value=[]), \
+         patch.object(memory, "save_coach_memory", lambda a, fact, db, **kw: saved.append(kw.get("event_date"))):
+        memory.extract_and_save_memories("athlete-1", conversation, MagicMock())
+    assert saved == [None]
+
+
+def test_athlete_local_today_uses_profile_offset():
+    db = MagicMock()
+    db.table.return_value.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = (
+        SimpleNamespace(data={"timezone_offset_min": -300})
+    )
+    with patch.object(memory, "local_datetime_from_timezone_offset") as local_now:
+        local_now.return_value.date.return_value = date(2026, 11, 2)
+        assert memory._athlete_local_today("athlete-1", db) == date(2026, 11, 2)
+    local_now.assert_called_once_with(-300)
+
+
+def test_athlete_local_today_falls_back_when_lookup_fails():
+    db = MagicMock()
+    db.table.side_effect = RuntimeError("db down")
+    assert isinstance(memory._athlete_local_today("athlete-1", db), date)
+
+
+def test_delete_memories_scopes_to_athlete_and_swallows_errors(capsys):
+    db = MagicMock()
+    memory._delete_memories("athlete-1", ["m1"], db)
+    db.table.return_value.delete.return_value.eq.return_value.eq.assert_called_with("athlete_id", "athlete-1")
+    db.table.side_effect = RuntimeError("boom")
+    memory._delete_memories("athlete-1", ["m2"], db)
+    assert "delete failed" in capsys.readouterr().out
+
+
+def test_memories_for_context_labels_past_and_upcoming_events_newest_first():
+    out = memory.memories_for_context(
+        [
+            {"content": "52 km row scheduled for this Saturday", "created_at": "2026-10-21T12:00:00Z", "event_date": "2026-10-24"},
+            {"content": "Has asthma", "created_at": "2026-08-15T12:00:00Z"},
+            {"content": "Half marathon on 2026-11-20", "created_at": "2026-10-30T12:00:00Z", "event_date": "2026-11-20"},
+            {"content": "Rest day today", "created_at": "2026-11-02T08:00:00Z", "event_date": "2026-11-02"},
+            {"content": "", "created_at": "2026-11-01T08:00:00Z"},
+        ],
+        "2026-11-02",
+    )
+    assert [m["content"] for m in out] == [
+        "Rest day today",
+        "Half marathon on 2026-11-20",
+        "52 km row scheduled for this Saturday",
+        "Has asthma",
+    ]
+    by = {m["content"]: m for m in out}
+    assert by["52 km row scheduled for this Saturday"]["event_status"] == "past"
+    assert by["52 km row scheduled for this Saturday"]["noted_on"] == "2026-10-21"
+    assert by["52 km row scheduled for this Saturday"]["noted_days_ago"] == 12
+    assert by["Half marathon on 2026-11-20"]["event_status"] == "upcoming"
+    assert by["Rest day today"]["event_status"] == "today"
+    assert "event_status" not in by["Has asthma"]
+
+
+def test_memories_for_context_tolerates_bad_today():
+    out = memory.memories_for_context([{"content": "x fact", "created_at": None}], "not-a-date")
+    assert out == [{"content": "x fact"}]
+
+
+def test_retrieve_relevant_memories_attaches_event_dates():
+    db = MagicMock()
+    db.rpc.return_value.execute.return_value = SimpleNamespace(data=[{"id": "m1", "content": "52k row"}])
+    db.table.return_value.select.return_value.eq.return_value.in_.return_value.execute.return_value = (
+        SimpleNamespace(data=[{"id": "m1", "event_date": "2026-10-24"}])
+    )
+    with patch.object(memory, "_extract_embedding", return_value=[0.1]):
+        rows = memory.retrieve_relevant_memories("athlete-1", "52k", db)
+    assert rows == [{"id": "m1", "content": "52k row", "event_date": "2026-10-24"}]

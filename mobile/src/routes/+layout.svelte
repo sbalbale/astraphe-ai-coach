@@ -8,6 +8,10 @@
   import { isStandaloneDisplayMode } from '$lib/utils/pwa';
   import Sidebar from '$lib/components/Sidebar.svelte';
   import BottomNav from '$lib/components/BottomNav.svelte';
+  import { format } from 'date-fns';
+  import { pageHeader } from '$lib/stores/pageHeader.svelte';
+  import DatePicker from '$lib/components/DatePicker.svelte';
+  import { subtabsFor, titleFor } from '$lib/navTabs';
   import ConfirmHost from '$lib/components/ConfirmHost.svelte';
   import { analysisNavEpoch } from '$lib/analysisNavEpoch.svelte';
   import { authStore } from '$lib/stores/authStore.svelte';
@@ -46,8 +50,19 @@
   // and docs/MCP_SERVER.md.
   let isOAuthRoute = $derived($page.url.pathname.startsWith('/oauth/'));
   let isNoShellRoute = $derived(isAuthRoute || isOnboardingRoute || isOAuthRoute);
-  const mobileSubtabRoutes = ['/recovery', '/sleep', '/strain', '/dashboard', '/training', '/zones'];
-  let hasMobileSubtabs = $derived(mobileSubtabRoutes.includes($page.url.pathname));
+  /** Workout detail (map hero) and Me pages draw their own header, so the page header steps aside. */
+  let hidePageHeader = $derived(
+    ($page.url.pathname === '/training' && $page.url.searchParams.has('workout_id')) || $page.url.pathname.startsWith('/profile') || $page.url.pathname === '/readiness'
+  );
+  let mobileSubtabs = $derived(subtabsFor($page.url.pathname));
+  let headerTitle = $derived(titleFor($page.url.pathname));
+  let avatarInitials = $derived.by(() => {
+    const name: string =
+      athleteStore.profile?.display_name || authStore.user?.user_metadata?.full_name || '';
+    const parts = name.trim().split(/\s+/).filter(Boolean);
+    if (parts.length === 0) return 'A';
+    return ((parts[0][0] ?? '') + (parts.length > 1 ? parts[parts.length - 1][0] : '')).toUpperCase();
+  });
   /** Logo header already adds bottom spacing; skip duplicate top pad on these pages. */
   const mobileTightContentTopRoutes = ['/profile', '/plan'];
   let hasMobileTightContentTop = $derived(mobileTightContentTopRoutes.includes($page.url.pathname));
@@ -158,7 +173,7 @@
 <svelte:window bind:innerWidth />
 
 <svelte:head>
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
 </svelte:head>
 
 <!-- Show loading state briefly while checking auth -->
@@ -177,38 +192,87 @@
     {/if}
     
     <div class="flex-1 flex flex-col overflow-hidden relative bg-bg0">
-      {#if !wide}
-      <!-- Mobile Header -->
-      <div class="px-4 pt-3.5 {hasMobileSubtabs ? 'pb-0' : 'pb-2.5'} flex items-center justify-between shrink-0">
-        <p class="font-mono font-bold text-sm tracking-[0.12em] text-blue">ASTRAPHE</p>
-        <div class="flex items-center gap-2">
-          <div class="w-1.5 h-1.5 rounded-full bg-teal shadow-[0_0_6px_var(--teal)]"></div>
-          <span class="text-[10px] text-text2 font-mono tracking-widest">SYNCED</span>
+      {#if !wide && !hidePageHeader}
+      <!-- Mobile Header: serif page title + avatar (Me) -->
+      <div class="px-5 pt-4 {mobileSubtabs ? 'pb-3' : 'pb-2'} flex {pageHeader.dateMax ? 'items-center' : 'items-end'} justify-between shrink-0">
+        <div class="flex flex-col gap-1">
+          {#if $page.url.pathname === '/dashboard'}
+            <span class="font-mono text-[11px] tracking-[0.14em] text-text2 uppercase">{format(new Date(), 'EEE dd MMM')}</span>
+          {:else if pageHeader.eyebrow}
+            <span class="font-mono text-[11px] tracking-[0.14em] text-text2 uppercase">{pageHeader.eyebrow}</span>
+          {/if}
+          <h1 class="font-display text-[36px] leading-none text-text0">{headerTitle}</h1>
         </div>
+        {#if pageHeader.dateMax}
+          <!-- Day stepper (‹ calendar · label ›) plus a Today shortcut, as in the Body designs. -->
+          <div class="flex items-center gap-2">
+            <div class="flex items-center h-11 rounded-[14px] border border-border bg-bg2 px-1">
+              <button type="button" aria-label="Previous day" class="w-8 h-9 border-0 bg-transparent text-text1 flex items-center justify-center cursor-pointer" onclick={pageHeader.prev}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m15 6-6 6 6 6"></path></svg>
+              </button>
+              <div class="min-w-[84px]">
+                <DatePicker bind:value={pageHeader.dateValue} max={pageHeader.dateMax} label={pageHeader.dateLabel} marked={pageHeader.dateMarks} hideChevron ariaLabel="Pick a date" buttonClass="h-9 px-1 justify-center gap-1.5 rounded-[10px] bg-transparent border-0 text-[13px] font-semibold text-text0" popoverClass="!fixed !left-1/2 -translate-x-1/2 !top-auto mt-2" />
+              </div>
+              <button type="button" aria-label="Next day" disabled={!pageHeader.canNext} class="w-8 h-9 border-0 bg-transparent flex items-center justify-center {pageHeader.canNext ? 'text-text1 cursor-pointer' : 'text-text2/40 cursor-not-allowed'}" onclick={pageHeader.next}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m9 6 6 6-6 6"></path></svg>
+              </button>
+            </div>
+            <button type="button" disabled={!pageHeader.canNext} class="h-11 px-3 rounded-[14px] text-[13px] font-semibold {pageHeader.canNext ? 'border-0 bg-blue text-[#0B1420] cursor-pointer' : 'border border-border bg-transparent text-text2/60 cursor-default'}" onclick={pageHeader.today ?? undefined}>Today</button>
+          </div>
+        {:else if pageHeader.add}
+          <button type="button" aria-label={pageHeader.addLabel} class="w-11 h-11 rounded-[14px] border-0 bg-blue text-[#0B1420] flex items-center justify-center cursor-pointer" onclick={pageHeader.add}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+          </button>
+        {:else if pageHeader.actions.length}
+          <div class="flex items-center gap-2">
+            {#each pageHeader.actions as action (action.key)}
+              <button
+                type="button"
+                aria-label={action.label}
+                data-header-action={action.key}
+                class="w-11 h-11 rounded-[14px] border border-border bg-transparent text-text0 flex items-center justify-center cursor-pointer"
+                onclick={action.onclick}
+              >
+                {#if action.icon === 'history'}
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"></path><path d="M3 3v5h5M12 7v5l3 2"></path></svg>
+                {:else}
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+                {/if}
+              </button>
+            {/each}
+          </div>
+        {:else if pageHeader.segments.length}
+          <div role="tablist" aria-label="Period" class="flex gap-0.5 p-[3px] h-11 rounded-[14px] bg-bg2 border border-border">
+            {#each pageHeader.segments as seg (seg.value)}
+              <button type="button" role="tab" aria-selected={pageHeader.segment === seg.value} class="px-3.5 border-0 rounded-[11px] text-[13px] font-medium cursor-pointer {pageHeader.segment === seg.value ? 'bg-bg3 text-text0' : 'bg-transparent text-text2'}" onclick={() => pageHeader.onSegment?.(seg.value)}>{seg.label}</button>
+            {/each}
+          </div>
+        {/if}
+        <!-- The design only shows the profile avatar on Today. -->
+        {#if $page.url.pathname === '/dashboard'}
+          <button
+            type="button"
+            class="w-11 h-11 rounded-full bg-blue-dim border border-blue/30 flex items-center justify-center text-sm font-semibold text-blue cursor-pointer"
+            onclick={() => navTo('/profile')}
+            aria-label="Your profile"
+          >
+            {avatarInitials}
+          </button>
+        {/if}
       </div>
-      
-      <!-- Subtabs for Body screens -->
-      {#if ['/recovery', '/sleep', '/strain'].includes($page.url.pathname)}
-        <div class="flex gap-5 px-4 pt-2.5 border-b border-border shrink-0">
-          {#each [{id: '/recovery', label: 'Recovery'}, {id: '/sleep', label: 'Sleep'}, {id: '/strain', label: 'Strain'}] as t (t.id)}
+
+      <!-- Sub-tabs for grouped tabs (Training: Log/Zones · Body: Recovery/Sleep/Strain) -->
+      {#if mobileSubtabs}
+        <nav
+          aria-label="{headerTitle} views"
+          class="mx-4 mb-1 grid gap-1 p-1 rounded-[14px] bg-bg2 border border-border shrink-0"
+          style="grid-template-columns: repeat({mobileSubtabs.length}, minmax(0, 1fr));"
+        >
+          {#each mobileSubtabs as t (t.id)}
             <button
               type="button"
-              class="pb-2 text-xs font-medium font-mono tracking-wide border-b-2 -mb-px bg-transparent cursor-pointer transition-all duration-200
-              {$page.url.pathname === t.id ? 'border-blue text-text0' : 'border-transparent text-text2'}"
-              onclick={() => navTo(t.id)}
-              aria-current={$page.url.pathname === t.id ? 'page' : undefined}
-            >
-              {t.label}
-            </button>
-          {/each}
-        </div>
-      {:else if ['/dashboard', '/training', '/zones'].includes($page.url.pathname)}
-        <div class="flex gap-5 px-4 pt-2.5 border-b border-border shrink-0">
-          {#each [{id: '/dashboard', label: 'Home'}, {id: '/training', label: 'Training'}, {id: '/zones', label: 'Zones'}] as t (t.id)}
-            <button
-              type="button"
-              class="pb-2 text-xs font-medium font-mono tracking-wide border-b-2 -mb-px bg-transparent cursor-pointer transition-all duration-200
-              {$page.url.pathname === t.id ? 'border-blue text-text0' : 'border-transparent text-text2'}"
+              class="h-9 rounded-[10px] text-[13px] font-medium border-none cursor-pointer transition-colors duration-200
+              {$page.url.pathname === t.id ? 'bg-bg3 text-text0' : 'bg-transparent text-text2'}"
               onclick={(e) => {
                 if (t.id === '/training') {
                   onTrainingTabClick(e);
@@ -224,7 +288,7 @@
               {t.label}
             </button>
           {/each}
-        </div>
+        </nav>
       {/if}
     {/if}
     
@@ -233,7 +297,7 @@
         ? 'overflow-hidden p-0'
         : wide
           ? 'overflow-y-auto p-6 px-7'
-          : hasMobileTightContentTop
+          : hasMobileTightContentTop || hidePageHeader
             ? 'overflow-y-auto px-4 pb-3 pt-0'
             : 'overflow-y-auto p-3 px-4'}"
     >
