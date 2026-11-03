@@ -221,6 +221,24 @@
           <button type="button" aria-label={pageHeader.addLabel} class="w-11 h-11 rounded-[14px] border-0 bg-blue text-[#0B1420] flex items-center justify-center cursor-pointer" onclick={pageHeader.add}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
           </button>
+        {:else if pageHeader.actions.length}
+          <div class="flex items-center gap-2">
+            {#each pageHeader.actions as action (action.key)}
+              <button
+                type="button"
+                aria-label={action.label}
+                data-header-action={action.key}
+                class="w-11 h-11 rounded-[14px] border border-border bg-transparent text-text0 flex items-center justify-center cursor-pointer"
+                onclick={action.onclick}
+              >
+                {#if action.icon === 'history'}
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"></path><path d="M3 3v5h5M12 7v5l3 2"></path></svg>
+                {:else}
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+                {/if}
+              </button>
+            {/each}
+          </div>
         {:else if pageHeader.segments.length}
           <div role="tablist" aria-label="Period" class="flex gap-0.5 p-[3px] h-11 rounded-[14px] bg-bg2 border border-border">
             {#each pageHeader.segments as seg (seg.value)}

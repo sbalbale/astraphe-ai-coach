@@ -19,7 +19,9 @@ export const pageHeader = $state<{
   segments: { value: string; label: string }[];
   segment: string;
   onSegment: ((value: string) => void) | null;
-}>({ eyebrow: '', prev: null, next: null, canNext: true, add: null, addLabel: '', today: null, dateValue: '', dateMax: '', dateLabel: '', dateMarks: [], segments: [], segment: '', onSegment: null });
+  /** Outlined icon buttons on the right of the title (e.g. Coach history / new chat). */
+  actions: { key: string; label: string; icon: 'history' | 'plus'; onclick: () => void }[];
+}>({ eyebrow: '', prev: null, next: null, canNext: true, add: null, addLabel: '', today: null, dateValue: '', dateMax: '', dateLabel: '', dateMarks: [], segments: [], segment: '', onSegment: null, actions: [] });
 
 export function resetPageHeader() {
   pageHeader.eyebrow = '';
@@ -36,4 +38,5 @@ export function resetPageHeader() {
   pageHeader.segments = [];
   pageHeader.segment = '';
   pageHeader.onSegment = null;
+  pageHeader.actions = [];
 }
