@@ -1117,19 +1117,37 @@ async def backfill_historical_data(
 
     print(f"[strava.backfill] Starting {window_label} backfill for athlete={athlete_id}")
 
+    async def _current_token() -> str:
+        """A long backfill (rate-limit sleeps of 15 min) outlives the 6 h token: re-read
+        it, refreshing when close to expiry. Falls back to the token we already have."""
+        nonlocal access_token
+        try:
+            fresh = await get_valid_token(athlete_id, db)
+        except Exception as e:  # noqa: BLE001 - keep the backfill going on the old token
+            print(f"[strava.backfill] Token check failed for athlete={athlete_id}: {e}")
+            fresh = None
+        if fresh:
+            access_token = fresh
+        return access_token
+
     while True:
         await asyncio.sleep(STRAVA_BACKFILL_REQUEST_GAP_S)
 
         url = f"{STRAVA_API_BASE}/athlete/activities"
         # Do not pass ``after`` — Strava then returns oldest-first; ``page`` alone is newest-first.
         params = {"page": page, "per_page": per_page}
-        headers = _auth_headers(access_token)
+        headers = _auth_headers(await _current_token())
 
         activities: list[Any] = []
         list_retries = 0
+        auth_retried = False
         while list_retries < max_rate_limit_retries:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 resp = await client.get(url, params=params, headers=headers)
+            if resp.status_code == 401 and not auth_retried:
+                auth_retried = True
+                headers = _auth_headers(await _current_token())
+                continue
             if resp.status_code == 429:
                 wait = _retry_after_seconds(resp)
                 print(f"[strava.backfill] List activities 429 — sleeping {wait}s")
@@ -1137,7 +1155,11 @@ async def backfill_historical_data(
                 list_retries += 1
                 continue
             if resp.status_code != 200:
-                print(f"[strava.backfill] Error fetching page {page}: {resp.status_code}")
+                # Not "done": the backfill stopped early (e.g. revoked token). Say so.
+                print(
+                    f"[strava.backfill] Stopping early: page {page} returned {resp.status_code} "
+                    f"for athlete={athlete_id}"
+                )
                 activities = []
                 break
             raw = resp.json()
@@ -1181,7 +1203,7 @@ async def backfill_historical_data(
                         activity_id=int(aid),
                         db=db,
                         delay=True,
-                        access_token=access_token,
+                        access_token=await _current_token(),
                         skip_pmc_recalc=True,
                     )
                     total_ingested += 1
