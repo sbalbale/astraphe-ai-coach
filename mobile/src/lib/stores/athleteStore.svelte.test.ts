@@ -462,3 +462,23 @@ describe('sign-out while loading (shared device)', () => {
     expect(apiMock.getAthleteState).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('stale responses vs saves', () => {
+  it('a refresh that started before a profile save does not undo it', async () => {
+    let releaseProfile!: (v: unknown) => void;
+    apiMock.getAthleteState.mockResolvedValue({ ctl: 1 });
+    apiMock.getAthleteProfile.mockReturnValueOnce(new Promise((r) => (releaseProfile = r)));
+    apiMock.getSyncStatus.mockResolvedValue({ integrations: {} });
+    resolveAllTier2();
+
+    const load = athleteStore.fetchAll(); // starts reading the *old* profile
+    apiMock.patchAthleteProfile.mockResolvedValue({ ok: true, data: { status: 'success' } });
+    apiMock.getAthleteProfile.mockResolvedValue({ id: 'ath-1', weight_kg: 83.91, timezone_offset_min: CURRENT_TZ_OFFSET_MIN });
+    await athleteStore.updateProfile({ weight_kg: 83.91 });
+    expect(athleteStore.profile.weight_kg).toBe(83.91);
+
+    releaseProfile({ id: 'ath-1', weight_kg: 85.05, timezone_offset_min: CURRENT_TZ_OFFSET_MIN }); // old value arrives late
+    await load;
+    expect(athleteStore.profile.weight_kg).toBe(83.91);
+  });
+});

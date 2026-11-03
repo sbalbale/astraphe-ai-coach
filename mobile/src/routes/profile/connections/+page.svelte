@@ -95,8 +95,7 @@
     );
     if (!res.ok) {
       const detail = (await res.json().catch(() => ({}))) as { detail?: string };
-      console.error(`OAuth authorize failed (${res.status}):`, detail.detail ?? res.statusText);
-      return;
+      throw new Error(detail.detail || `Couldn't start the connection (${res.status}).`);
     }
     const { url } = (await res.json()) as { url: string };
     if (!url) return;
@@ -209,10 +208,24 @@
     syncing = '';
   }
 
+  // Shown above the list. Errors used to only reach the console, and an exception
+  // left `syncing` set, disabling every Connect/Unlink button until reload.
+  let connectError = $state('');
+
   async function toggleIntegration(id: string) {
     if (syncing) return;
     syncing = id;
+    connectError = '';
+    try {
+      await runToggle(id);
+    } catch (e) {
+      connectError = e instanceof Error && e.message ? e.message : 'Something went wrong. Please try again.';
+    } finally {
+      syncing = '';
+    }
+  }
 
+  async function runToggle(id: string) {
     if (id === 'apple') {
       if (integrations.apple.connected) {
         await athleteStore.unlinkIntegration('healthkit');
@@ -250,8 +263,6 @@
         garminError = '';
       }
     }
-
-    syncing = '';
   }
 
   type AppId = 'strava' | 'whoop' | 'garmin' | 'apple';
@@ -282,6 +293,9 @@
     title="Connected apps"
     subtitle="Where Astraphe reads your training and body data. When two sources overlap, the more accurate sensor wins."
   />
+  {#if connectError}
+    <p role="alert" class="m-0 px-4 py-3 rounded-[14px] bg-red-dim border border-red/30 text-[13px] text-red">{connectError}</p>
+  {/if}
 
   {#each APPS as app (app.id)}
     {@const connected = integrations[app.id].connected}

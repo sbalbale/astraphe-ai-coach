@@ -93,6 +93,9 @@ export class AthleteState {
   private _gen = 0;
   // A forced refresh requested while a load was running (e.g. after adding a workout).
   private _forceQueued = false;
+  // Bumped by every profile save. A refresh that started before a save must not
+  // overwrite what the save just stored (a just-saved weight appeared to revert).
+  private _profileWrites = 0;
 
   /** True when the store still belongs to the run that captured `gen`. */
   private current(gen: number): boolean {
@@ -212,6 +215,7 @@ export class AthleteState {
     this.loading = true;
 
     try {
+      const profileWritesAtStart = this._profileWrites;
       const [stateResult, profileResult, syncResult] = await Promise.allSettled([
         api.getAthleteState(),
         api.getAthleteProfile(),
@@ -233,7 +237,7 @@ export class AthleteState {
           days_on_platform: state.days_on_platform || 0
         });
       }
-      if (profileData) this.profile = profileData;
+      if (profileData && profileWritesAtStart === this._profileWrites) this.profile = profileData;
       if (syncData) this.syncStatus = syncData;
 
       this.initialLoadDone = true;
@@ -271,6 +275,7 @@ export class AthleteState {
     this._refreshing = true;
     const gen = this._gen;
     try {
+      const profileWritesAtStart = this._profileWrites;
       const [stateResult, profileResult, syncResult] = await Promise.allSettled([
         api.getAthleteState(),
         api.getAthleteProfile(),
@@ -292,7 +297,7 @@ export class AthleteState {
           days_on_platform: state.days_on_platform || 0
         });
       }
-      if (profileData) this.profile = profileData;
+      if (profileData && profileWritesAtStart === this._profileWrites) this.profile = profileData;
       if (syncData) this.syncStatus = syncData;
 
       this.loadTier2(athleteId, state, gen);
@@ -307,6 +312,7 @@ export class AthleteState {
   }
 
   private loadTier2(athleteId: string | null, state: any, gen: number = this._gen) {
+    const profileWritesAtStart = this._profileWrites;
     Promise.allSettled([
       api.getAthleteMetrics(),
       api.getBiometricsPage({ limit: 60 }),
@@ -320,7 +326,8 @@ export class AthleteState {
       const workoutsData = workoutsResult.status === 'fulfilled' ? workoutsResult.value : null;
 
       if (metricsData) this.metrics = metricsData;
-      if (biometricsData) {
+      // A weight save reloads biometrics itself; don't let this older response undo it.
+      if (biometricsData && profileWritesAtStart === this._profileWrites) {
         this.biometrics = biometricsData;
         if (this.biometrics?.series?.length > 0) {
           const { row } = currentRecoveryState(
@@ -405,6 +412,7 @@ export class AthleteState {
   async updateProfile(payload: any): Promise<boolean> {
     this.lastProfileSaveError = null;
     const gen = this._gen;
+    this._profileWrites++;
     const res = await api.patchAthleteProfile(payload);
     if (!this.current(gen)) return false;
     if (!res.ok) {
