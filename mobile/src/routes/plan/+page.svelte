@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { formatStepClock, formatStepDuration } from '$lib/utils/stepDuration';
   import { WEEKDAY_LETTERS } from '$lib/utils/week';
   import { WEEK_STARTS_ON } from '$lib/utils/week';
   import type { Action } from 'svelte/action';
@@ -126,7 +127,8 @@
         intervals: w.structure ?? [],
         structure: (w.structure ?? []).map((i) => ({
           title: i.name,
-          duration: i.duration_minutes != null ? `${i.duration_minutes} min` : undefined,
+          duration: i.duration_minutes != null ? formatStepDuration(Number(i.duration_minutes)) : undefined,
+          minutes: Number(i.duration_minutes) || undefined,
           target: intervalTarget(i),
           note: i.description
         }))
@@ -454,7 +456,7 @@
     return arr.map((step) => {
       if (typeof step === 'string') return { title: step, minutes: 1, hard: false, color: 'var(--bg3)' };
       const z = targetZone(step.target);
-      const minutes = (() => { const m = /(\d+)/.exec(step.duration ?? ''); return m ? Number(m[1]) : 1; })();
+      const minutes = (step as { minutes?: number }).minutes ?? (() => { const m = /(\d+)/.exec(step.duration ?? ''); return m ? Number(m[1]) : 1; })();
       return {
         title: step.title ?? 'Step',
         duration: step.duration?.replace(/\s*min$/, '′'),
@@ -629,13 +631,9 @@
     if (z.min <= 0) return `< ${z.max + 1} bpm`;
     return `${z.min}–${z.max} bpm`;
   }
-  // Steps can be fractional minutes (1:30 = 1.5).
-  const mmss = (mins: number) => {
-    const total = Math.round(mins * 60);
-    return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
-  };
-  /** Step length: 15′, or 1:30 for fractional minutes. */
-  const stepLen = (mins: number) => (Number.isInteger(mins) ? `${mins}′` : mmss(mins).replace(/^0/, ''));
+  // Steps can be fractional minutes (1:30 = 1.5): clock times and lengths keep the seconds.
+  const mmss = formatStepClock;
+  const stepLen = formatStepDuration;
 
   type SessionStep = {
     title: string;
