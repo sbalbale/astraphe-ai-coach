@@ -553,7 +553,7 @@
             {/each}
           </ol>
         {/if}
-        <div class="flex flex-col gap-2.5 p-4 rounded-[20px] bg-bg2 border border-border text-sm leading-[1.55] text-text1 break-words min-w-0">
+        <div class="flex flex-col gap-2.5 p-4 rounded-[20px] bg-bg2 border border-border text-sm leading-[1.55] text-text0 break-words min-w-0">
           {#if msg.image_urls && msg.image_urls.length > 0}
             <div class="flex gap-2 flex-wrap">
               {#each msg.image_urls as u (u)}
