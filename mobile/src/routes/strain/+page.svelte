@@ -1,7 +1,6 @@
 <script module lang="ts">
   import { SvelteMap } from 'svelte/reactivity';
 
-  const strainAnalysisMemo = new SvelteMap<string, string | null>();
   const workoutAnalysisMemo = new SvelteMap<string, string | null>();
 </script>
 
@@ -17,7 +16,6 @@
   import Modal from '$lib/components/Modal.svelte';
   import { pageHeader, resetPageHeader } from '$lib/stores/pageHeader.svelte';
   import { bodyDate, rememberBodyDate } from '$lib/stores/bodyDate.svelte';
-  import { analysisNavEpoch } from '$lib/analysisNavEpoch.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { authStore } from '$lib/stores/authStore.svelte';
   import { api } from '$lib/api';
@@ -307,45 +305,8 @@
     return m < 1 ? '0m' : `${m}m`;
   };
 
-  let analysisText = $state<string | null>(null);
-  let analysisLoading = $state(false);
-  let activeAnalysisKey: string | null = null;
-  $effect(() => {
-    void analysisNavEpoch.epoch;
-    const scopeKey = d?.date;
-    if (!scopeKey) {
-      analysisText = null;
-      return;
-    }
-
-    const cached = strainAnalysisMemo.get(scopeKey);
-    if (cached !== undefined) {
-      analysisText = cached;
-      return;
-    }
-
-    analysisText = null;
-
-    const requestKey = `strain-analysis:${scopeKey}`;
-    activeAnalysisKey = requestKey;
-
-    (async () => {
-      try {
-        analysisLoading = true;
-        const res = await api.get<{ analysis: { content: string } }>(`/v1/analysis/strain?day=${scopeKey}`);
-        const content = typeof res?.analysis?.content === 'string' ? res.analysis.content.trim() : '';
-        if (activeAnalysisKey !== requestKey) return;
-        const next = content || null;
-        strainAnalysisMemo.set(scopeKey, next);
-        analysisText = next;
-      } catch {
-        if (activeAnalysisKey !== requestKey) return;
-        strainAnalysisMemo.set(scopeKey, null);
-      } finally {
-        if (activeAnalysisKey === requestKey) analysisLoading = false;
-      }
-    })();
-  });
+  // (An AI analysis used to be requested here on every change and never shown,
+  // costing an LLM generation per view. Removed.)
 </script>
 
 <div class="flex flex-col gap-3.5">

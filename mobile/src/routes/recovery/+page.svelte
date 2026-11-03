@@ -1,16 +1,12 @@
 <script module lang="ts">
-  import { SvelteMap } from 'svelte/reactivity';
 
-  const recoveryAnalysisMemo = new SvelteMap<string, string | null>();
 </script>
 
 <script lang="ts">
   import Card from '$lib/components/Card.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import { boundedScoreCssColor, zScoreCssColor } from '$lib/scoreColors';
-  import { analysisNavEpoch } from '$lib/analysisNavEpoch.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
-  import { api } from '$lib/api';
   import { normalizeUnits, type Units } from '$lib/utils/units';
   import { currentRecoveryState, firstPositiveFiniteNumber } from '$lib/utils/biometrics';
   import { onMount } from 'svelte';
@@ -412,41 +408,8 @@
     return unsub;
   });
 
-  let analysisText = $state<string | null>(null);
-  let activeAnalysisKey: string | null = null;
-  $effect(() => {
-    void analysisNavEpoch.epoch;
-    void athleteStore.initialLoadDone;
-    void athleteStore.loading;
-    void d?.score;
-
-    const day = d?.date;
-    if (!day) {
-      analysisText = null;
-      return;
-    }
-
-    const cached = recoveryAnalysisMemo.get(day);
-    if (cached !== undefined && cached !== null) {
-      analysisText = cached;
-      return;
-    }
-
-    analysisText = null;
-
-    const requestKey = `recovery:${day}`;
-    activeAnalysisKey = requestKey;
-
-    (async () => {
-      const res = await api.getRecoveryAnalysis(day);
-      const content = typeof res?.analysis?.content === 'string' ? res.analysis.content.trim() : '';
-      const next = content ? content : null;
-      if (next) recoveryAnalysisMemo.set(day, next);
-
-      if (activeAnalysisKey !== requestKey) return;
-      analysisText = next;
-    })();
-  });
+  // (An AI analysis used to be requested here on every day change and never shown,
+  // costing an LLM generation per view. Removed; the dashboard summary covers it.)
 </script>
 
 <div class="flex flex-col gap-3.5">

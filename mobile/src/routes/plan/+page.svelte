@@ -210,6 +210,9 @@
       return;
     }
     viewMonth = new Date(y, m - 1, 1);
+    // Keep the selected day inside the month being shown (the day panel under the
+    // calendar showed "MON 2 NOV · Nothing planned" beneath January).
+    trainingStore.selectedDate = format(viewMonth, 'yyyy-MM-dd');
   }
 
   function jumpToToday() {
@@ -344,6 +347,11 @@
     const startIso = format(weekStart, 'yyyy-MM-dd');
     const endIso = format(addDays(weekStart, 6), 'yyyy-MM-dd');
     if (!iso || iso < startIso || iso > endIso) selectDate(new Date());
+    // The store only holds the fetched month's grid. After browsing another month in
+    // Month view, come back to a month whose grid contains this week, or the week
+    // shows "Nothing planned" every day. (Either month a week touches covers it.)
+    const weekMonths = [format(weekStart, 'yyyy-MM'), format(addDays(weekStart, 6), 'yyyy-MM')];
+    if (!weekMonths.includes(format(viewMonth, 'yyyy-MM'))) viewMonth = startOfMonth(new Date());
   });
   const weekDays = $derived(Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)));
   const dayItems = $derived(workoutsByIso[selectedIso] ?? []);
@@ -602,7 +610,9 @@
   function profileTicks(total: number): number[] {
     if (total <= 0) return [0];
     const step = total / 4;
-    return [0, 1, 2, 3].map((i) => Math.round((i * step) / 5) * 5).concat(total);
+    // Rounded to 5 min, so short sessions repeat values (15 min → 0,5,10,10,15); the
+    // ticks are an each-key, so keep them unique.
+    return [...new Set([0, 1, 2, 3].map((i) => Math.round((i * step) / 5) * 5).concat(total))];
   }
 </script>
 

@@ -446,6 +446,10 @@
 
     const aiMsgId = `local-ai-${Date.now()}`;
     messages.push({ id: aiMsgId, role: 'ai', text: '', streaming: true });
+    // newChat()/selectConversation() bump this. If the user switches away while the
+    // submit is in flight, this send must not re-point the screen at its conversation
+    // (later messages went to the old chat) or poll its reply into another chat.
+    const sendToken = activePollToken;
 
     try {
       // Fire-and-forget: the backend inserts the user message, generates the
@@ -459,6 +463,7 @@
         conversation_id: cid,
         image_urls
       });
+      if (sendToken !== activePollToken) return; // user moved on; the reply is still saved server-side
       if (data.conversation_id) conversationId = data.conversation_id;
       // loading stays true — pollForCoachReply() (below) is responsible for
       // clearing it once the reply actually resolves, not this submit call.
@@ -467,6 +472,7 @@
       // the local `messages` array isn't a reliable proxy for it (it may
       // hold a synthetic, never-persisted greeting row for a new chat).
       const baselineRes = await api.getCoachMessages(data.conversation_id);
+      if (sendToken !== activePollToken) return;
       const baselineCount = (baselineRes?.messages || []).length;
       pollForCoachReply(data.conversation_id, aiMsgId, baselineCount);
     } catch (e) {

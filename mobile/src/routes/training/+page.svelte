@@ -1,7 +1,6 @@
 <script module lang="ts">
   import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 
-  const trainingLoadAnalysisMemo = new SvelteMap<string, string | null>();
   const workoutAnalysisMemo = new SvelteMap<string, string | null>();
 </script>
 
@@ -19,7 +18,6 @@
   import WeekNavigator from '$lib/components/WeekNavigator.svelte';
   import { pageHeader, resetPageHeader } from '$lib/stores/pageHeader.svelte';
   import DatePicker from '$lib/components/DatePicker.svelte';
-  import { analysisNavEpoch } from '$lib/analysisNavEpoch.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { authStore } from '$lib/stores/authStore.svelte';
   import { api } from '$lib/api';
@@ -250,12 +248,23 @@
       if (match) selectedWorkout = match;
       return;
     }
-    goto(target, { keepFocus: true, noScroll: true, replaceState: true });
+    // Push the detail on top of the list, so Back (incl. Android's) returns to the list.
+    openedFromList = true;
+    goto(target, { keepFocus: true, noScroll: true });
   }
+
+  // True when this page pushed the detail entry itself (vs. arriving on a deep link).
+  let openedFromList = false;
 
   function closeWorkout() {
     if ($page.url.searchParams.has('workout_id')) {
-      goto(resolve('/training'), { keepFocus: true, noScroll: true });
+      if (openedFromList && typeof history !== 'undefined' && history.length > 1) {
+        // Pop the entry we pushed: closing then Back no longer reopens the workout.
+        openedFromList = false;
+        history.back();
+      } else {
+        goto(resolve('/training'), { keepFocus: true, noScroll: true, replaceState: true });
+      }
     } else {
       selectedWorkout = null;
     }
@@ -622,45 +631,8 @@
     };
   });
 
-  let analysisText = $state<string | null>(null);
-  let analysisLoading = $state(false);
-  let activeAnalysisKey: string | null = null;
-  $effect(() => {
-    void analysisNavEpoch.epoch;
-    const scopeKey = selectedWeekEndStr;
-    if (!scopeKey) {
-      analysisText = null;
-      return;
-    }
-
-    const cached = trainingLoadAnalysisMemo.get(scopeKey);
-    if (cached !== undefined) {
-      analysisText = cached;
-      return;
-    }
-
-    analysisText = null;
-
-    const requestKey = `training-analysis:${scopeKey}`;
-    activeAnalysisKey = requestKey;
-
-    (async () => {
-      try {
-        analysisLoading = true;
-        const res = await api.get<{ analysis: { content: string } }>(`/v1/analysis/training-load?end_day=${scopeKey}`);
-        const content = typeof res?.analysis?.content === 'string' ? res.analysis.content.trim() : '';
-        if (activeAnalysisKey !== requestKey) return;
-        const next = content || null;
-        trainingLoadAnalysisMemo.set(scopeKey, next);
-        analysisText = next;
-      } catch {
-        if (activeAnalysisKey !== requestKey) return;
-        trainingLoadAnalysisMemo.set(scopeKey, null);
-      } finally {
-        if (activeAnalysisKey === requestKey) analysisLoading = false;
-      }
-    })();
-  });
+  // (An AI analysis used to be requested here on every change and never shown,
+  // costing an LLM generation per view. Removed.)
 
   // --- Design view: Log (this week + activities) ---
   const isCurrentWeek = $derived(format(selectedWeekStart, "yyyy-MM-dd") === format(startOfWeek(new Date(), { weekStartsOn: 1 }), "yyyy-MM-dd"));
