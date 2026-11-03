@@ -15,6 +15,10 @@
   import { bodyDate, rememberBodyDate } from '$lib/stores/bodyDate.svelte';
   import { addDays, format, subDays } from 'date-fns';
   import { page } from '$app/stores';
+  import { viewport } from '$lib/stores/viewport.svelte';
+  import { bodyEyebrow } from '$lib/utils/bodyWide';
+  import BodyScoreTabs from '$lib/components/wide/body/BodyScoreTabs.svelte';
+  import RecoveryWide from '$lib/components/wide/body/RecoveryWide.svelte';
 
   const isConnected = $derived(Object.values(athleteStore.syncStatus?.integrations || {}).some((i: any) => i.connected));
   
@@ -106,6 +110,9 @@
     pageHeader.dateLabel = canGoForward ? format(clampedEndDay, 'EEE d MMM') : 'Today';
     pageHeader.dateMarks = (athleteStore.biometrics?.series ?? []).filter((r: any) => r?.date && Number(r?.recovery_score) > 0).map((r: any) => r.date);
     pageHeader.dateValue = format(clampedEndDay, "yyyy-MM-dd");
+    // Wide layouts show Recovery, Sleep and Strain as one "Body" screen.
+    pageHeader.wideTitle = 'Body';
+    pageHeader.wideEyebrow = bodyEyebrow(days[dayIndex]?.date ?? todayStr, days[dayIndex]?.data ?? (current.row as any));
     return resetPageHeader;
   });
 
@@ -289,6 +296,20 @@
   // costing an LLM generation per view. Removed; the dashboard summary covers it.)
 </script>
 
+{#if viewport.wide && !(showConnectPrompt || showRecoverySetup) && hasData}
+  <div class="flex-1 flex flex-col gap-[22px]">
+    <BodyScoreTabs active="recovery" day={d.date} />
+    <RecoveryWide
+      series={biometricsSeries ?? []}
+      day={d.date}
+      row={showRecoveryHero ? headlineRow : null}
+      {days}
+      selected={dayIndex}
+      onSelect={(i) => (dayIndex = i)}
+      {isImperial}
+    />
+  </div>
+{:else}
 <div class="flex flex-col gap-3.5">
   {#if showConnectPrompt || showRecoverySetup}
     <EmptyStateCard
@@ -409,3 +430,4 @@
     </section>
   {/if}
 </div>
+{/if}
