@@ -6,6 +6,7 @@
   import { latestWeightKg } from '$lib/utils/biometrics';
   import { normalizeUnits, kgToLbRoundedHalf, type Units } from '$lib/utils/units';
   import { onMount } from 'svelte';
+  import { enabledNotificationCount } from '$lib/notificationSettings';
 
   // Always show what's in the database, not a cached profile from an earlier session.
   onMount(() => {
@@ -53,9 +54,7 @@
   const connectedCount = $derived(
     Object.values(athleteStore.syncStatus?.integrations || {}).filter((i: any) => i?.connected).length
   );
-  const notificationsOn = $derived(
-    Object.values(((athleteStore.profile as any)?.notification_settings ?? {}) as Record<string, unknown>).filter(Boolean).length
-  );
+  const notificationsOn = $derived(enabledNotificationCount((athleteStore.profile as any)?.notification_settings));
 
   const menu = $derived([
     { label: 'Personal info', meta: '', href: '/profile/personal-info' },

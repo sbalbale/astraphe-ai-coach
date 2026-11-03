@@ -5,13 +5,16 @@
   import { convertPace, normalizeUnits, type Units } from '$lib/utils/units';
   import { onMount } from 'svelte';
 
-  let maxHR = $state(185);
+  // Empty until the athlete sets them: invented values (280 W / 185 bpm / 5:00) used to
+  // be saved as real anchors on any save, then drove zones, plan targets and W/kg.
+  let maxHR = $state<number | null>(null);
   let restingHR = $state<number | null>(null);
   /** Writable preference — use profile.hr_zone_method, not generated profile.zone_method */
   let hrZoneMethod = $state('lthr');
   let thresholdHR = $state<number | null>(null);
-  let ftp = $state(280);
-  let pace = $state('5:00');
+  let ftp = $state<number | null>(null);
+  let pace = $state('');
+  const PACE_RE = /^d{1,2}:[0-5]d$/;
   const LEGACY_SPORT_FOCUS: Record<string, string> = {
     running: 'run',
     cycling: 'bike',
@@ -60,7 +63,7 @@
     }
 
     if (initialized) return;
-    maxHR = athleteStore.profile?.max_hr ?? 185;
+    maxHR = Number(athleteStore.profile?.max_hr) > 0 ? Number(athleteStore.profile?.max_hr) : null;
     restingHR =
       typeof athleteStore.profile?.resting_hr === 'number' ? athleteStore.profile.resting_hr : null;
     const hm = (athleteStore.profile as { hr_zone_method?: string })?.hr_zone_method;
@@ -68,8 +71,8 @@
       hrZoneMethod = hm;
     }
     thresholdHR = athleteStore.profile?.threshold_hr ?? null;
-    ftp = athleteStore.profile?.ftp_watts ?? 280;
-    pace = athleteStore.profile?.threshold_pace || '5:00';
+    ftp = Number(athleteStore.profile?.ftp_watts) > 0 ? Number(athleteStore.profile?.ftp_watts) : null;
+    pace = athleteStore.profile?.threshold_pace || '';
     sport = coerceSportFocus(String(athleteStore.profile?.sport_focus?.[0] || 'run'));
     units = normalizeUnits((athleteStore.profile as any)?.measurement_units);
     timeFormat = (athleteStore.profile as any)?.time_format || '12h';
@@ -79,7 +82,7 @@
 
   function setUnits(next: Units) {
     if (next === units) return;
-    pace = convertPace(pace, units, next);
+    if (PACE_RE.test(pace)) pace = convertPace(pace, units, next);
     units = next;
   }
 
@@ -89,14 +92,23 @@
     saved = false;
     saveError = null;
     const updates: Record<string, unknown> = {
-      max_hr: maxHR,
-      ftp_watts: ftp,
-      threshold_pace: pace,
       sport_focus: [sport.toLowerCase()],
       measurement_units: units,
       time_format: timeFormat,
       hr_zone_method: hrZoneMethod
     };
+
+    // Only send anchors the athlete has actually set.
+    if (maxHR != null && Number(maxHR) > 0) updates.max_hr = Number(maxHR);
+    if (ftp != null && Number(ftp) > 0) updates.ftp_watts = Number(ftp);
+    if (pace.trim()) {
+      if (!PACE_RE.test(pace.trim())) {
+        saving = false;
+        saveError = 'Threshold pace should look like 5:00.';
+        return;
+      }
+      updates.threshold_pace = pace.trim();
+    }
 
     if (restingHR != null && restingHR > 0) {
       updates.resting_hr = restingHR;
@@ -147,11 +159,11 @@
       <div class="flex items-center gap-3 py-2.5 {i ? 'border-t border-border' : ''}">
         <label for={row.id} class="flex-1 text-[15px]">{row.label}</label>
         {#if row.id === 'ftp'}
-          <input id="ftp" type="number" inputmode="numeric" bind:value={ftp} class={anchorInput} />
+          <input id="ftp" type="number" inputmode="numeric" placeholder="—" bind:value={ftp} class={anchorInput} />
         {:else if row.id === 'lthr'}
           <input id="lthr" type="number" inputmode="numeric" min="100" max="220" step="1" bind:value={thresholdHR} class={anchorInput} />
         {:else if row.id === 'maxhr'}
-          <input id="maxhr" type="number" inputmode="numeric" bind:value={maxHR} class={anchorInput} />
+          <input id="maxhr" type="number" inputmode="numeric" placeholder="—" bind:value={maxHR} class={anchorInput} />
         {:else if row.id === 'restinghr'}
           <input
             id="restinghr"
@@ -168,7 +180,7 @@
             class={anchorInput}
           />
         {:else}
-          <input id="pace" type="text" inputmode="numeric" bind:value={pace} class={anchorInput} />
+          <input id="pace" type="text" inputmode="numeric" placeholder="5:00" bind:value={pace} class={anchorInput} />
         {/if}
         <span class="w-9 text-[13px] text-text2">{row.unit}</span>
       </div>

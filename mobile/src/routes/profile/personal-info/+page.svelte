@@ -12,8 +12,10 @@
 
   let name = $state('');
   let email = $state(authStore.user?.email || '');
-  let dob = $state('1990-05-15');
-  let gender = $state<'male' | 'female'>('male');
+  // Empty until set: a made-up birth date / gender used to be saved with any edit
+  // (age and gender feed HR estimates and TRIMP).
+  let dob = $state('');
+  let gender = $state<'' | 'male' | 'female'>('');
 
   // canonical fields (what the backend expects); NaN = unknown, shown as an empty field
   let weightKg = $state(NaN);
@@ -42,6 +44,7 @@
   let saveError = $state<string | null>(null);
 
   const genderOptions = [
+    { value: '', label: 'Not set' },
     { value: 'male', label: 'Male' },
     { value: 'female', label: 'Female' }
   ];
@@ -76,8 +79,9 @@
 
     if (initialized) return;
     name = athleteStore.profile?.display_name || authStore.user?.user_metadata?.full_name || '';
-    dob = athleteStore.profile?.date_of_birth || '1990-05-15';
-    gender = (athleteStore.profile?.gender || 'male') === 'female' ? 'female' : 'male';
+    dob = athleteStore.profile?.date_of_birth || '';
+    const g = athleteStore.profile?.gender;
+    gender = g === 'female' || g === 'male' ? g : '';
 
     weightKg = currentWeightKg ?? NaN;
     heightCm = currentHeightCm;
@@ -106,7 +110,9 @@
 
     const nextWeightKg = units === 'imperial' ? lbToKg(weightLb) : Number(weightKg);
     const nextHeightCm = units === 'imperial' ? ftInToCm(heightFt, heightIn) : Number(heightCm);
-    const payload: Record<string, unknown> = { display_name: name, date_of_birth: dob, gender };
+    const payload: Record<string, unknown> = { display_name: name };
+    if (dob) payload.date_of_birth = dob;
+    if (gender) payload.gender = gender;
     // Empty fields are left alone rather than saved as a made-up value.
     if (Number.isFinite(nextWeightKg) && nextWeightKg > 0) payload.weight_kg = nextWeightKg;
     if (Number.isFinite(nextHeightCm) && nextHeightCm > 0) payload.height_cm = nextHeightCm;

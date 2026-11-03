@@ -29,17 +29,19 @@
   let units = $state<Units>('metric');
   let timeFormat = $state<'12h' | '24h'>('12h');
 
-  let dob = $state('1990-05-15');
-  let gender = $state<'male' | 'female'>('male');
+  // Start empty: "Finish setup" was enabled straight away with an invented birth date,
+  // gender, 75 kg and 180 cm, which were then stored as the athlete's real data.
+  let dob = $state('');
+  let gender = $state<'' | 'male' | 'female'>('');
 
-  // canonical fields (what the backend expects)
-  let weightKg = $state(75);
-  let heightCm = $state(180);
+  // canonical fields (what the backend expects); NaN = not entered (empty input)
+  let weightKg = $state(NaN);
+  let heightCm = $state(NaN);
 
   // imperial display fields (only used when units === 'imperial')
-  let weightLb = $state(165);
-  let heightFt = $state(5);
-  let heightIn = $state(11);
+  let weightLb = $state(NaN);
+  let heightFt = $state(NaN);
+  let heightIn = $state(NaN);
 
   // Optional thresholds
   let maxHrRaw = $state(''); // bpm
@@ -57,16 +59,22 @@
   ];
 
   const genderOptions = [
+    { value: '', label: 'Select…' },
     { value: 'male', label: 'Male' },
     { value: 'female', label: 'Female' }
   ];
 
   function syncDisplayFromCanonical() {
     if (units !== 'imperial') return;
-    weightLb = kgToLbRoundedHalf(weightKg);
-    const { ft, inch } = cmToFtIn(heightCm);
-    heightFt = ft;
-    heightIn = inch;
+    weightLb = Number.isFinite(weightKg) && weightKg > 0 ? kgToLbRoundedHalf(weightKg) : NaN;
+    if (Number.isFinite(heightCm) && heightCm > 0) {
+      const { ft, inch } = cmToFtIn(heightCm);
+      heightFt = ft;
+      heightIn = inch;
+    } else {
+      heightFt = NaN;
+      heightIn = NaN;
+    }
   }
 
   function applyImperialToCanonical() {
@@ -102,11 +110,11 @@
     sport = coerceSportFocus(String(p?.sport_focus?.[0] || 'run'));
     units = normalizeUnits(p?.measurement_units);
     timeFormat = (p?.time_format === '24h' ? '24h' : '12h') as any;
-    dob = p?.date_of_birth || '1990-05-15';
-    gender = (p?.gender || 'male') === 'female' ? 'female' : 'male';
+    dob = p?.date_of_birth || '';
+    gender = p?.gender === 'female' || p?.gender === 'male' ? p.gender : '';
 
-    weightKg = p?.weight_kg ?? 75;
-    heightCm = p?.height_cm ?? 180;
+    weightKg = Number(p?.weight_kg) > 0 ? Number(p?.weight_kg) : NaN;
+    heightCm = Number(p?.height_cm) > 0 ? Number(p?.height_cm) : NaN;
     if (units === 'imperial') syncDisplayFromCanonical();
 
     // Optional thresholds (keep blank if missing to preserve "optional")
