@@ -182,8 +182,20 @@ def _force_set_conversation_title(db, athlete_id: str, conversation_id: str, tit
     except Exception:
         return
 
+def _ai_message_writer(db):
+    """
+    Client for coach/system turns: the service role. User sessions will only be
+    allowed to insert role='user', so nobody can plant fake coach or system turns in
+    their own prompt history. (Audit X-L9; the RLS check is a post-deploy migration.)
+    """
+    from app.dependencies import get_admin_db
+
+    return get_admin_db()
+
+
 def _insert_message(db, athlete_id: str, conversation_id: str, role: str, content: str, image_urls: Optional[List[str]] = None):
-    db.table("coach_messages").insert({
+    writer = db if role == "user" else _ai_message_writer(db)
+    writer.table("coach_messages").insert({
         "athlete_id": athlete_id,
         "conversation_id": conversation_id,
         "role": role,

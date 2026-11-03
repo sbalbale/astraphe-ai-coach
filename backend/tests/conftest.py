@@ -55,6 +55,15 @@ async def override_require_ai_rate_limit():
 
 
 @pytest.fixture(autouse=True)
+def ai_messages_use_test_db(monkeypatch):
+    """Coach replies are written with the service-role client in production; in tests
+    write them to whatever fake db the test passed, never a real Supabase."""
+    from app.routers import coach as coach_router
+
+    monkeypatch.setattr(coach_router, "_ai_message_writer", lambda db: db)
+
+
+@pytest.fixture(autouse=True)
 def disable_startup_backfills(monkeypatch):
     """Prevent TestClient startup from scheduling real Strava/WHOOP API backfills."""
     monkeypatch.setattr(settings, "STRAVA_STARTUP_BACKFILL_ENABLED", False)
