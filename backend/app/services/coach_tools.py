@@ -539,6 +539,10 @@ def handle_schedule_workout(
             focus_zone, duration_minutes, ftp, thr_hr, max_hr, resting_hr, sport
         )
         title = f"{sport} — {focus_zone} ({duration_minutes}m)"
+    # An imported plan's own session name ("Steady state 3x20", "Cat 1 race") beats the generic one.
+    given_title = str(args.get("title") or "").strip()
+    if given_title:
+        title = given_title[:120]
 
     raw_ai_structure = args.get("structure")
     if duration_minutes > 0 and isinstance(raw_ai_structure, list) and len(raw_ai_structure) > 0:
@@ -600,6 +604,34 @@ def handle_schedule_workout(
             "reason": "Garmin Training API integration not yet wired",
         },
     }
+
+
+def handle_schedule_workouts(
+    args: dict[str, Any],
+    *,
+    athlete_id: str,
+    db: Client,
+) -> dict[str, Any]:
+    """Batch schedule_workout: each item is scheduled independently; failures are reported per item."""
+    items = args.get("workouts")
+    if not isinstance(items, list) or not items:
+        return {"error": "workouts must be a non-empty list"}
+    extra = max(0, len(items) - SCHEDULE_MANY_MAX)
+    scheduled: list[dict[str, Any]] = []
+    failed: list[dict[str, Any]] = []
+    for i, item in enumerate(items[:SCHEDULE_MANY_MAX]):
+        if not isinstance(item, dict):
+            failed.append({"index": i, "error": "not an object"})
+            continue
+        res = handle_schedule_workout(item, athlete_id=athlete_id, db=db)
+        if res.get("error"):
+            failed.append({"index": i, "date": item.get("date"), "error": res["error"]})
+        else:
+            scheduled.append({"date": res.get("planned_date"), "title": res.get("title"), "training_plan_id": res.get("training_plan_id")})
+    out: dict[str, Any] = {"scheduled_count": len(scheduled), "scheduled": scheduled, "failed": failed}
+    if extra:
+        out["not_scheduled"] = f"{extra} more were sent than the {SCHEDULE_MANY_MAX}-per-call limit; call schedule_workouts again with the rest."
+    return out
 
 
 def handle_calculate_nutrition(
@@ -842,7 +874,8 @@ def handle_list_memories(
     return {"status": "success", "memories": rows}
 
 
-CLEAR_PLANS_MAX_DAYS = 14
+# Long enough to replace a two-month plan; done sessions are never cleared.
+CLEAR_PLANS_MAX_DAYS = 62
 
 
 def handle_clear_training_plans(
@@ -1145,6 +1178,34 @@ _schedule_decl = types.FunctionDeclaration(
             ),
         },
         required=["duration_minutes", "focus_zone", "date"],
+    ),
+)
+_schedule_decl.parameters.properties["title"] = types.Schema(
+    type=types.Type.STRING,
+    description="Optional session name, e.g. the name used in the athlete's own plan ('Steady state 2x30').",
+)
+
+SCHEDULE_MANY_MAX = 40
+
+_schedule_many_decl = types.FunctionDeclaration(
+    name="schedule_workouts",
+    description=(
+        "Schedule several planned sessions in one call, e.g. when importing a multi-week plan "
+        "from the athlete's photo or document. Use this instead of many schedule_workout calls "
+        f"whenever there are more than 2 sessions. Up to {SCHEDULE_MANY_MAX} per call; call it "
+        "again for the rest. Each item takes the same fields as schedule_workout. Leave rest "
+        "days out (don't schedule a 'Rest' session); keep the plan's own session names as title."
+    ),
+    parameters=types.Schema(
+        type=types.Type.OBJECT,
+        properties={
+            "workouts": types.Schema(
+                type=types.Type.ARRAY,
+                description="The sessions to schedule, in date order.",
+                items=_schedule_decl.parameters,
+            ),
+        },
+        required=["workouts"],
     ),
 )
 
@@ -1551,6 +1612,7 @@ TOOLS: list[types.Tool] = [
     types.Tool(function_declarations=[
         _simulate_decl, 
         _schedule_decl, 
+        _schedule_many_decl,
         _nutrition_decl, 
         _clear_training_plans_decl,
         _list_workouts_decl,
@@ -1626,6 +1688,7 @@ ToolHandler = Callable[[dict[str, Any], str, Client], dict[str, Any]]
 TOOL_HANDLERS: dict[str, ToolHandler] = {
     "simulate_training_impact": lambda args, aid, db: handle_simulate_training_impact(args, athlete_id=aid, db=db),
     "schedule_workout": lambda args, aid, db: handle_schedule_workout(args, athlete_id=aid, db=db),
+    "schedule_workouts": lambda args, aid, db: handle_schedule_workouts(args, athlete_id=aid, db=db),
     "calculate_nutrition": lambda args, aid, db: handle_calculate_nutrition(args, athlete_id=aid, db=db),
     "web_search": lambda args, aid, db: handle_web_search(args, athlete_id=aid, db=db),
     "clear_training_plans": lambda args, aid, db: handle_clear_training_plans(args, athlete_id=aid, db=db),

@@ -223,7 +223,7 @@ def _load_conversation_history(db: Client, athlete_id: str, conversation_id: str
     try:
         res = (
             db.table("coach_messages")
-            .select("role,content,image_urls,created_at")
+            .select("role,content,image_urls,attachments,created_at")
             .eq("athlete_id", athlete_id)
             .eq("conversation_id", conversation_id)
             .order("created_at", desc=True)
@@ -243,6 +243,7 @@ def _load_conversation_history(db: Client, athlete_id: str, conversation_id: str
                 "role": role,
                 "content": content,
                 "image_urls": r.get("image_urls") or [],
+                "attachments": r.get("attachments") or [],
                 "created_at": r.get("created_at"),
             })
         return out
@@ -707,12 +708,135 @@ def build_initialization_message(
     return text, bool(anomalies)
 
 
-def _history_to_gemini_contents(history: list[dict]) -> list[types.Content]:
-    """Map coach_messages rows to Gemini Content (user / model)."""
+# Photos the athlete attached (coach-uploads bucket). Only the newest user messages with
+# photos are sent, to bound tokens and download time.
+_IMAGE_MESSAGES_SENT = 2
+_IMAGES_PER_TURN = 6
+_MAX_IMAGE_BYTES = 8 * 1024 * 1024
+_COACH_UPLOAD_PATH_RE = re.compile(r"/storage/v1/object/(?:sign|public|authenticated)/coach-uploads/([^?#]+)")
+_IMAGE_MIME = {
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "png": "image/png",
+    "webp": "image/webp",
+    "heic": "image/heic",
+    "heif": "image/heif",
+}
+
+
+def _coach_upload_path(url: str) -> str | None:
+    """Object path inside the coach-uploads bucket for a (signed) storage URL, else None.
+
+    Only our own bucket's paths are accepted (never an arbitrary URL), and downloads go
+    through the athlete's own client, so storage RLS limits them to their own folder.
+    """
+    from urllib.parse import unquote
+
+    m = _COACH_UPLOAD_PATH_RE.search(url or "")
+    if not m:
+        return None
+    path = unquote(m.group(1))
+    if not path.startswith("coach/") or ".." in path.split("/"):
+        return None
+    return path
+
+
+_SIGNED_UPLOAD_RE = re.compile(r"(/storage/v1/object/sign/coach-uploads/[^?#]+\?token=[A-Za-z0-9._-]+)")
+
+
+def _download_upload(db: Any, url: str, path: str) -> bytes | None:
+    """Fetch a chat photo. The app stores signed URLs (the bucket is private); their token
+    grants read access to that one object. The request always goes to our own Supabase
+    (settings.SUPABASE_URL), never to the host in the stored URL. Without a token, fall
+    back to the athlete's client."""
+    m = _SIGNED_UPLOAD_RE.search(url or "")
+    if m:
+        r = httpx.get(settings.SUPABASE_URL.rstrip("/") + m.group(1), timeout=15.0)
+        r.raise_for_status()
+        return r.content
+    return db.storage.from_("coach-uploads").download(path)
+
+
+def _load_image_parts(db: Any, urls: list[str], limit: int = _IMAGES_PER_TURN) -> list[types.Part]:
+    parts: list[types.Part] = []
+    for url in urls:
+        if len(parts) >= limit:
+            break
+        path = _coach_upload_path(url)
+        if not path:
+            continue
+        mime = _IMAGE_MIME.get(path.rsplit(".", 1)[-1].lower())
+        if not mime:
+            continue
+        try:
+            data = _download_upload(db, url, path)
+        except Exception as e:
+            logger.warning("[coach] image download failed path=%s: %r", path, e)
+            continue
+        if not data or len(data) > _MAX_IMAGE_BYTES:
+            continue
+        parts.append(types.Part.from_bytes(data=data, mime_type=mime))
+    return parts
+
+
+# Document text replayed from earlier messages, newest first, across the whole history.
+_HISTORY_DOC_CHARS = 60000
+
+
+def _attachment_preface(history: list[dict]) -> dict[int, str]:
+    """Per history index, the attached documents' text to put before that user message.
+
+    The newest user message is skipped: it is the one being answered, and its documents
+    already ride along with the current turn's message. Older documents are replayed
+    newest first until _HISTORY_DOC_CHARS, so a plan uploaded a few turns ago stays visible.
+    """
+    last_user = max((i for i, r in enumerate(history) if r.get("role") == "user"), default=-1)
+    budget = _HISTORY_DOC_CHARS
+    out: dict[int, str] = {}
+    for i in range(len(history) - 1, -1, -1):
+        r = history[i]
+        if i == last_user or r.get("role") != "user":
+            continue
+        parts: list[str] = []
+        for d in r.get("attachments") or []:
+            if not isinstance(d, dict):
+                continue
+            text = str(d.get("content") or "")
+            name = str(d.get("name") or "document")
+            if budget <= 0 or not text:
+                parts.append(f"[ATTACHED DOCUMENT: {name} (text omitted)]")
+                continue
+            text = text[:budget]
+            budget -= len(text)
+            parts.append(f"[ATTACHED DOCUMENT: {name}]\n{text}")
+        if parts:
+            out[i] = "\n\n".join(parts)
+    return out
+
+
+def _history_to_gemini_contents(
+    history: list[dict],
+    image_parts: Callable[[list[str]], list[types.Part]] | None = None,
+) -> list[types.Content]:
+    """Map coach_messages rows to Gemini Content (user / model).
+
+    With `image_parts`, the photos on the newest user messages are sent as image parts
+    (they used to be stored and shown in the chat but never reached the model).
+    """
     out: list[types.Content] = []
-    for r in history:
+    docs_before = _attachment_preface(history)
+    with_images: set[int] = set()
+    if image_parts is not None:
+        for i in range(len(history) - 1, -1, -1):
+            if len(with_images) >= _IMAGE_MESSAGES_SENT:
+                break
+            if history[i].get("role") == "user" and history[i].get("image_urls"):
+                with_images.add(i)
+    for idx, r in enumerate(history):
         raw_role = (r.get("role") or "").strip()
         content = (r.get("content") or "").strip()
+        if idx in docs_before:
+            content = f"{docs_before[idx]}\n\n[ATHLETE MESSAGE]\n{content}"
         if not content:
             continue
         if raw_role not in ("user", "ai"):
@@ -722,7 +846,10 @@ def _history_to_gemini_contents(history: list[dict]) -> list[types.Content]:
             if not content:
                 continue
         grole = "user" if raw_role == "user" else "model"
-        out.append(types.Content(role=grole, parts=[types.Part.from_text(text=content)]))
+        parts = [types.Part.from_text(text=content)]
+        if idx in with_images and image_parts is not None:
+            parts.extend(image_parts(list(r.get("image_urls") or [])))
+        out.append(types.Content(role=grole, parts=parts))
     return out
 
 
@@ -1292,8 +1419,32 @@ SCRATCHPAD_UNAVAILABLE_NOTE = (
 )
 COACH_FAILURE_REPLIES = frozenset({COACH_PARTIAL_ERROR_REPLY, COACH_ERROR_REPLY, COACH_INCOMPLETE_REPLY})
 
+_WRAP_UP_NOTE = (
+    "[SYSTEM] You have used all tool calls for this message. Do not call tools. Reply to the "
+    "athlete now: say plainly what you did (from the tool results above, with dates), what is "
+    "not done yet, and offer to continue in the next message."
+)
+
+
+def _wrap_up_after_tool_budget(contents: list[types.Content], system_instruction: str, candidates: list[str]) -> str:
+    wrap = list(contents) + [types.Content(role="user", parts=[types.Part.from_text(text=_WRAP_UP_NOTE)])]
+    config = types.GenerateContentConfig(system_instruction=system_instruction, temperature=0.4)
+    for model in candidates:
+        try:
+            gemini_quota.wait_for_slot(model, max_wait_sec=20.0)
+            resp = _client.models.generate_content(model=model, contents=wrap, config=config)
+        except Exception as e:
+            logger.warning("[coach] wrap-up call failed model=%s: %r", model, e)
+            continue
+        text = _extract_athlete_message_from_text(_extract_non_thought_text_from_response(resp))
+        if text.strip() and not _is_failed_extraction(text):
+            return text
+    return ""
+
+
 _MUTATING_TOOL_NAMES = frozenset({
     "schedule_workout",
+    "schedule_workouts",
     "log_workout",
     "update_workout",
     "log_biometrics",
@@ -1386,7 +1537,9 @@ def get_coach_response_agentic(
         else []
     )
     calendar = _athlete_local_calendar(db, athlete_id, timezone_offset_min=timezone_offset_min)
-    contents = _history_to_gemini_contents(history)
+    contents = _history_to_gemini_contents(history, image_parts=lambda urls: _load_image_parts(db, urls))
+    last_user = next((r for r in reversed(history) if r.get("role") == "user"), None)
+    history_has_images = bool(last_user and last_user.get("image_urls"))
     # Always append the current user message (history alone is not sufficient).
     contents.append(types.Content(role="user", parts=[types.Part.from_text(text=_calendar_preface(message, calendar))]))
     # If there was no history, `contents` is now a 1-item list with the current message.
@@ -1426,7 +1579,7 @@ def get_coach_response_agentic(
     last_response = None
     planned_dates_from_tools: list[str] = []
     last_tool_names: list[str] = []
-    max_hops = _agentic_max_tool_hops(message)
+    max_hops = _agentic_max_tool_hops(message, has_images=history_has_images)
     for _hop in range(max_hops):
         hop_t0 = time.perf_counter()
         _coach_progress(progress_callback, "thinking", hop=_hop)
@@ -1572,6 +1725,11 @@ def get_coach_response_agentic(
                         planned_date = workout_strict.get("date")
                     if isinstance(planned_date, str) and planned_date:
                         planned_dates_from_tools.append(planned_date[:10])
+                if name == "schedule_workouts" and isinstance(result, dict):
+                    for item in result.get("scheduled") or []:
+                        d = item.get("date") if isinstance(item, dict) else None
+                        if isinstance(d, str) and d:
+                            planned_dates_from_tools.append(d[:10])
                 print(f"\n--- [TOOL EXECUTED: {name}] ---")
                 print(f"Args: {args}")
                 print(f"Result: {result}\n")
@@ -1601,6 +1759,11 @@ def get_coach_response_agentic(
     final = _extract_athlete_message_from_text(fallback)
     if _is_failed_extraction(final):
         final = ""
+    if not final and last_response is not None and tools_enabled:
+        # Ran out of tool rounds mid-task (e.g. importing a long plan). The tool results
+        # are already in `contents`; ask once more with tools off so the athlete gets an
+        # honest summary of what was done and what is left, not a generic failure.
+        final = _wrap_up_after_tool_budget(contents, system_for_models, candidates)
     final = _correct_relative_date_language(final, planned_dates_from_tools, calendar)
     grounding = _extract_grounding_sources(last_response) if last_response else []
     if not final and last_response is not None:
@@ -1658,8 +1821,29 @@ async def get_coach_response_agentic_async(
     )
 
 
-def _agentic_max_tool_hops(message: str) -> int:
+_BULK_PLAN_HINTS = (
+    "[attached document",
+    "training plan",
+    "full plan",
+    "whole plan",
+    "into the plan",
+    "into my plan",
+    "into the app",
+    "import",
+    "weeks",
+    "months",
+    "month",
+    "photo",
+    "picture",
+    "screenshot",
+)
+
+
+def _agentic_max_tool_hops(message: str, has_images: bool = False) -> int:
     msg_l = (message or "").lower()
+    # Importing or building a multi-week plan: clear + several batches + checks.
+    if has_images or any(h in msg_l for h in _BULK_PLAN_HINTS):
+        return 14
     if any(
         w in msg_l
         for w in (
