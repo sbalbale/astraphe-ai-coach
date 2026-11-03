@@ -48,10 +48,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
           cache: pip
@@ -74,10 +74,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
           cache: pip
@@ -96,20 +96,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
         with:
-          version: latest
+          version: 10.32.1  # pinned; bump deliberately (matches local dev)
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          # No pinned version: track the runner's current default (matches
-          # firebase-hosting-pull-request.yml's convention). Pinning to 20
-          # broke this job outright once pnpm/action-setup's "latest" moved
-          # to a pnpm release requiring Node >=22.13 (node:sqlite import).
+          # Pinned with pnpm above. (Node 20 once broke when an unpinned pnpm
+          # "latest" started requiring Node >=22.13.)
+          node-version: 24
           cache: pnpm
           cache-dependency-path: mobile/pnpm-lock.yaml
 
@@ -131,7 +130,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # Skipped for pull_request: nothing is published in that case (see
       # push: below), so registry credentials aren't needed — and PRs from
@@ -140,14 +139,14 @@ jobs:
       # be a no-op.
       - name: Log in to GitHub Container Registry
         if: github.event_name == 'push'
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build (and push on merge to main)
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5.4.0
         with:
           context: ./backend
           # A PR build only has to prove the image compiles — it must never
@@ -171,18 +170,18 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Log in to GitHub Container Registry
         if: github.event_name == 'push'
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build (and push on merge to main)
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5.4.0
         with:
           # Build context is the repo root, not mcp-server/ — the image needs both
           # backend/app and mcp-server/astraphe_mcp (see mcp-server/Dockerfile).
@@ -209,12 +208,16 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Install cloudflared
         run: |
-          curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
+          # Fixed version + checksum (not 'latest'): this binary carries the deploy credentials.
+          CLOUDFLARED_VERSION=2026.10.7
+          CLOUDFLARED_SHA256=1f99fb518b83dec2ba8d870a7cc991d82a77e6196295a3d2754ba17ab9f91872
+          curl -fsSL "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64" \
             -o cloudflared
+          echo "${CLOUDFLARED_SHA256}  cloudflared" | sha256sum -c -
           chmod +x cloudflared
           sudo mv cloudflared /usr/local/bin/
           cloudflared --version
@@ -240,6 +243,8 @@ jobs:
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
           mkdir -p ~/.ssh
+          # Pinned host keys (see .github/ssh_known_hosts); never trust-on-first-use as root.
+          install -m 644 .github/ssh_known_hosts ~/.ssh/known_hosts_astraphe
           echo "${{ secrets.PROXMOX_SSH_KEY }}" > ~/.ssh/id_ed25519_deploy
           chmod 600 ~/.ssh/id_ed25519_deploy
 
@@ -258,7 +263,9 @@ jobs:
             User root
             IdentityFile ~/.ssh/id_ed25519_deploy
             ProxyCommand /tmp/cf-proxy.sh %h
-            StrictHostKeyChecking no
+            StrictHostKeyChecking yes
+            HostKeyAlgorithms ssh-ed25519
+            UserKnownHostsFile ~/.ssh/known_hosts_astraphe
             BatchMode yes
           EOF
 
@@ -303,12 +310,16 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Install cloudflared
         run: |
-          curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
+          # Fixed version + checksum (not 'latest'): this binary carries the deploy credentials.
+          CLOUDFLARED_VERSION=2026.10.7
+          CLOUDFLARED_SHA256=1f99fb518b83dec2ba8d870a7cc991d82a77e6196295a3d2754ba17ab9f91872
+          curl -fsSL "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64" \
             -o cloudflared
+          echo "${CLOUDFLARED_SHA256}  cloudflared" | sha256sum -c -
           chmod +x cloudflared
           sudo mv cloudflared /usr/local/bin/
           cloudflared --version
@@ -319,6 +330,8 @@ jobs:
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
           mkdir -p ~/.ssh
+          # Pinned host keys (see .github/ssh_known_hosts); never trust-on-first-use as root.
+          install -m 644 .github/ssh_known_hosts ~/.ssh/known_hosts_astraphe
           echo "${{ secrets.PROXMOX_SSH_KEY }}" > ~/.ssh/id_ed25519_deploy
           chmod 600 ~/.ssh/id_ed25519_deploy
 
@@ -332,7 +345,9 @@ jobs:
             User root
             IdentityFile ~/.ssh/id_ed25519_deploy
             ProxyCommand /tmp/cf-proxy.sh %h
-            StrictHostKeyChecking no
+            StrictHostKeyChecking yes
+            HostKeyAlgorithms ssh-ed25519
+            UserKnownHostsFile ~/.ssh/known_hosts_astraphe
             BatchMode yes
           EOF
 
@@ -352,10 +367,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "20"
           cache: npm
@@ -377,18 +392,18 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Log in to GitHub Container Registry
         if: github.event_name == 'push'
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build (and push on merge to main)
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5.4.0
         with:
           context: photon-bridge
           push: ${{ github.event_name == 'push' }}
@@ -406,12 +421,16 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Install cloudflared
         run: |
-          curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
+          # Fixed version + checksum (not 'latest'): this binary carries the deploy credentials.
+          CLOUDFLARED_VERSION=2026.10.7
+          CLOUDFLARED_SHA256=1f99fb518b83dec2ba8d870a7cc991d82a77e6196295a3d2754ba17ab9f91872
+          curl -fsSL "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64" \
             -o cloudflared
+          echo "${CLOUDFLARED_SHA256}  cloudflared" | sha256sum -c -
           chmod +x cloudflared
           sudo mv cloudflared /usr/local/bin/
 
@@ -421,6 +440,8 @@ jobs:
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
           mkdir -p ~/.ssh
+          # Pinned host keys (see .github/ssh_known_hosts); never trust-on-first-use as root.
+          install -m 644 .github/ssh_known_hosts ~/.ssh/known_hosts_astraphe
           echo "${{ secrets.PROXMOX_SSH_KEY }}" > ~/.ssh/id_ed25519_deploy
           chmod 600 ~/.ssh/id_ed25519_deploy
 
@@ -434,7 +455,9 @@ jobs:
             User root
             IdentityFile ~/.ssh/id_ed25519_deploy
             ProxyCommand /tmp/cf-proxy.sh %h
-            StrictHostKeyChecking no
+            StrictHostKeyChecking yes
+            HostKeyAlgorithms ssh-ed25519
+            UserKnownHostsFile ~/.ssh/known_hosts_astraphe
             BatchMode yes
           EOF
 
@@ -459,12 +482,16 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Install cloudflared
         run: |
-          curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
+          # Fixed version + checksum (not 'latest'): this binary carries the deploy credentials.
+          CLOUDFLARED_VERSION=2026.10.7
+          CLOUDFLARED_SHA256=1f99fb518b83dec2ba8d870a7cc991d82a77e6196295a3d2754ba17ab9f91872
+          curl -fsSL "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64" \
             -o cloudflared
+          echo "${CLOUDFLARED_SHA256}  cloudflared" | sha256sum -c -
           chmod +x cloudflared
           sudo mv cloudflared /usr/local/bin/
 
@@ -474,6 +501,8 @@ jobs:
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
           mkdir -p ~/.ssh
+          # Pinned host keys (see .github/ssh_known_hosts); never trust-on-first-use as root.
+          install -m 644 .github/ssh_known_hosts ~/.ssh/known_hosts_astraphe
           echo "${{ secrets.PROXMOX_SSH_KEY }}" > ~/.ssh/id_ed25519_deploy
           chmod 600 ~/.ssh/id_ed25519_deploy
 
@@ -492,7 +521,9 @@ jobs:
             User root
             IdentityFile ~/.ssh/id_ed25519_deploy
             ProxyCommand /tmp/cf-proxy.sh %h
-            StrictHostKeyChecking no
+            StrictHostKeyChecking yes
+            HostKeyAlgorithms ssh-ed25519
+            UserKnownHostsFile ~/.ssh/known_hosts_astraphe
             BatchMode yes
           EOF
 
