@@ -615,6 +615,23 @@ def download_and_parse_fit(
     return streams, laps
 
 
+def _streams_already_stored(db: Any, workout_id: str) -> bool:
+    """True when this workout already has a stored stream blob."""
+    try:
+        res = (
+            db.table("activity_streams")
+            .select("workout_id")
+            .eq("workout_id", workout_id)
+            .not_.is_("storage_path", "null")
+            .limit(1)
+            .execute()
+        )
+    except Exception:
+        return False
+    data = getattr(res, "data", None)
+    return isinstance(data, list) and len(data) > 0
+
+
 def _upsert_activity_streams(
     db: Any, workout_id: str, athlete_id: str, time_series: dict[str, Any]
 ) -> bool:
@@ -750,6 +767,10 @@ async def _save_one_activity(
     activity_id = activity.get("activityId")
     streams: dict[str, Any] = {}
     laps: list[dict[str, Any]] = []
+    # The hourly poll sees the same recent activities every time; re-downloading each
+    # FIT file burned Garmin quota (and risks its multi-day lockouts) for no new data.
+    if activity_id is not None and await asyncio.to_thread(_streams_already_stored, db, workout_id):
+        return True, False
     if activity_id is not None:
         # `garminconnect` is a synchronous (requests/curl_cffi) client — run its
         # blocking network calls off the event loop.
