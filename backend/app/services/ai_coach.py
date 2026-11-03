@@ -245,7 +245,8 @@ def _load_conversation_history(db: Client, athlete_id: str, conversation_id: str
 # Per-athlete context cache — avoids 3 repeated DB queries across chat messages.
 # Keys: athlete_id → (bio, profile, tss_base_dict, expires_at)
 _context_parts_cache: dict[str, tuple[dict, dict, dict, float]] = {}
-_CONTEXT_CACHE_TTL = 300.0  # 5 minutes
+# Per process: other instances can't be told to drop it, so keep the TTL short.
+_CONTEXT_CACHE_TTL = 60.0
 _TIME_OF_DAY_GREETING_RE = re.compile(r"^\s*good\s+(morning|afternoon|evening)\b[\s,!.:-]*", re.IGNORECASE)
 
 

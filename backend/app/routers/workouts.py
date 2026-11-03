@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Query
+from app.core.cache_invalidation import invalidate_athlete_caches
 from app.models.workout import WorkoutPayload, WorkoutUpdatePayload
 from app.services.algorithms import compute_tss_power
 from app.services.processing import (
@@ -231,6 +232,9 @@ async def update_workout(
         background_tasks.add_task(recalculate_tss_history, athlete_id, db)
         for day in _patch_refresh_days(existing, updated):
             background_tasks.add_task(_refresh_daily_strain_for_instant_sync, db, athlete_id, day)
+        # After the recomputes (background tasks run in order): drop the cached state
+        # card, coach context and this athlete's workout detail/zones.
+        background_tasks.add_task(invalidate_athlete_caches, athlete_id, workouts=True)
 
         return {"status": "success", "workout": updated}
     except HTTPException:
@@ -268,12 +272,7 @@ async def delete_workout(
         background_tasks.add_task(recalculate_tss_history, athlete_id, db)
         for day in _patch_refresh_days(existing.data, existing.data):
             background_tasks.add_task(_refresh_daily_strain_for_instant_sync, db, athlete_id, day)
-        try:
-            from app.services.ai_coach import invalidate_context_cache
-
-            invalidate_context_cache(athlete_id)
-        except Exception:
-            pass
+        background_tasks.add_task(invalidate_athlete_caches, athlete_id, workouts=True)
         return {"status": "success", "deleted_id": workout_id}
     except HTTPException:
         raise

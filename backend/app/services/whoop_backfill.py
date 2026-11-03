@@ -7,6 +7,7 @@ from typing import Any, Optional
 
 from fastapi import HTTPException, status
 
+from app.core.cache_invalidation import invalidate_athlete_caches
 from app.services import whoop
 from app.models.biometrics import DailyBiometrics
 from app.models.workout import WorkoutPayload
@@ -201,6 +202,7 @@ async def _backfill_historical_data_impl(
 
         if profile_update:
             db.table("athletes").update(profile_update).eq("id", athlete_id).execute()
+            await invalidate_athlete_caches(athlete_id, profile=True)
 
         # Weight/height into the athlete's *local* today, respecting source priority
         # (a manual entry outranks WHOOP).

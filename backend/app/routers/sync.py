@@ -11,6 +11,7 @@ from fastapi import APIRouter, Request, Response, HTTPException, Depends, Backgr
 from fastapi.responses import RedirectResponse, HTMLResponse
 from pydantic import BaseModel, Field
 from starlette.requests import ClientDisconnect
+from app.core.cache_invalidation import invalidate_athlete_caches
 from app.services.background import spawn as spawn_background
 from app.dependencies import get_current_athlete, get_user_db, get_admin_db, action_rate_limit, get_user_config, UserConfig
 from app.services import whoop
@@ -460,6 +461,7 @@ async def garmin_webhook(request: Request, background_tasks: BackgroundTasks, db
                             "weight_kg": round(weight_in_grams / 1000, 2)
                         }).eq("id", athlete_id).execute
                     )
+                    await invalidate_athlete_caches(athlete_id, profile=True)
             except Exception as e:
                 print(f"Failed to process Garmin body comp: {e}")
 
@@ -655,6 +657,7 @@ async def _whoop_sync_whoop_body_measurements(
 
         if height_cm is not None and not have_height:
             db.table("athletes").update({"height_cm": round(float(height_cm), 1)}).eq("id", athlete_id).execute()
+        await invalidate_athlete_caches(athlete_id, profile=True)
     except Exception as e:
         print(f"[whoop.body] sync failed athlete_id={athlete_id}: {repr(e)}")
 
@@ -1382,6 +1385,7 @@ async def strava_oauth_callback(
             db.table("athletes").update({"strava_athlete_id": strava_athlete_id}).eq(
                 "id", athlete_id
             ).execute()
+            await invalidate_athlete_caches(athlete_id, profile=True)
 
         if strava_athlete_id is not None:
             if background_tasks is not None:

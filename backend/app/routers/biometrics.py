@@ -4,6 +4,7 @@ import asyncio
 from datetime import date, datetime, timedelta, timezone
 import math
 
+from app.core.cache_invalidation import invalidate_athlete_caches
 from app.models.biometrics import DailyBiometrics
 from app.services.processing import process_and_save_biometrics
 from app.dependencies import get_current_athlete, get_user_db
@@ -198,4 +199,5 @@ async def ingest_daily_biometrics(
 ):
     """Ingest a daily biometric summary and calculate recovery score in the background."""
     background_tasks.add_task(process_and_save_biometrics, payload, athlete_id, db)
+    background_tasks.add_task(invalidate_athlete_caches, athlete_id)
     return {"status": "success", "message": "Biometrics recorded and recovery analysis queued", "date": payload.date}
