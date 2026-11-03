@@ -1,4 +1,14 @@
 <script lang="ts">
+  /** Same-origin in-app paths only. `/\evil.com` passed the old check and browsers treat it as //evil.com. */
+  function safeRedirect(raw: string | null): string {
+    if (!raw || !raw.startsWith('/') || raw.startsWith('//') || raw.includes('\\')) return '/dashboard';
+    try {
+      const u = new URL(raw, window.location.origin);
+      return u.origin === window.location.origin ? u.pathname + u.search + u.hash : '/dashboard';
+    } catch {
+      return '/dashboard';
+    }
+  }
   import { supabase } from '$lib/supabase';
   import { authStore } from '$lib/stores/authStore.svelte';
   import { goto } from '$app/navigation';
@@ -37,10 +47,14 @@
     // Used by the MCP OAuth consent screen (/oauth/consent) to send the user back to
     // the pending authorization request after signing in, instead of always /dashboard.
     // Only same-origin relative paths are honored — never redirect off-app.
-    const redirect = $page.url.searchParams.get('redirect');
-    const target = redirect && redirect.startsWith('/') && !redirect.startsWith('//') ? redirect : '/dashboard';
-    await goto(target, { replaceState: true });
-    loading = false;
+    const target = safeRedirect($page.url.searchParams.get('redirect'));
+    try {
+      await goto(target, { replaceState: true });
+    } catch {
+      await goto('/dashboard', { replaceState: true }).catch(() => {});
+    } finally {
+      loading = false;
+    }
   }
 </script>
 
