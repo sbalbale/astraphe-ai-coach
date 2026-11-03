@@ -1,7 +1,9 @@
 <script lang="ts">
-  import Card from '$lib/components/Card.svelte';
   import DatePicker from '$lib/components/DatePicker.svelte';
   import SelectMenu from '$lib/components/SelectMenu.svelte';
+  import BrandMark from '$lib/components/ui/BrandMark.svelte';
+  import Button from '$lib/components/ui/Button.svelte';
+  import FormAlert from '$lib/components/ui/FormAlert.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { convertPace, normalizeUnits, kgToLbRoundedHalf, lbToKg, cmToFtIn, ftInToCm, type Units } from '$lib/utils/units';
   import { goto } from '$app/navigation';
@@ -64,6 +66,33 @@
     { value: 'female', label: 'Female' }
   ];
 
+  // The setup form is shown in four steps; everything is still saved once, at the end.
+  const STEPS = [
+    {
+      label: 'Preferences',
+      title: 'How do you like your numbers?',
+      subtitle: 'Units and time format for everything you see. You can change these later in Settings.'
+    },
+    {
+      label: 'About you',
+      title: 'A little about you',
+      subtitle: 'Part of your athlete profile. You can change it later in Personal info.'
+    },
+    {
+      label: 'Thresholds',
+      title: 'Where are you starting from?',
+      subtitle: "These set your zones. Skip any you don't know; you can add them later in Training settings."
+    },
+    {
+      label: 'Body',
+      title: 'Last, your body',
+      subtitle: 'Weight and height for your profile. You can change them later in Personal info.'
+    }
+  ] as const;
+  let step = $state(0);
+  const current = $derived(STEPS[step]);
+  const isLastStep = $derived(step === STEPS.length - 1);
+
   function syncDisplayFromCanonical() {
     if (units !== 'imperial') return;
     weightLb = Number.isFinite(weightKg) && weightKg > 0 ? kgToLbRoundedHalf(weightKg) : NaN;
@@ -125,19 +154,30 @@
     initialized = true;
   });
 
-  const canSubmit = $derived.by(() => {
-    const haveSport = !!sport?.trim();
-    const haveDob = /^\d{4}-\d{2}-\d{2}$/.test(dob);
-    const haveGender = gender === 'male' || gender === 'female';
-    const haveUnits = units === 'metric' || units === 'imperial';
-    const haveTime = timeFormat === '12h' || timeFormat === '24h';
-
+  const haveSport = $derived(!!sport?.trim());
+  const haveUnits = $derived(units === 'metric' || units === 'imperial');
+  const haveTime = $derived(timeFormat === '12h' || timeFormat === '24h');
+  const haveAboutYou = $derived(/^\d{4}-\d{2}-\d{2}$/.test(dob) && (gender === 'male' || gender === 'female'));
+  const haveBio = $derived.by(() => {
     const w = units === 'imperial' ? lbToKg(weightLb) : Number(weightKg);
     const h = units === 'imperial' ? ftInToCm(heightFt, heightIn) : Number(heightCm);
-    const haveBio = Number.isFinite(w) && w > 0 && Number.isFinite(h) && h > 0;
-
-    return haveSport && haveUnits && haveTime && haveDob && haveGender && haveBio && !saving;
+    return Number.isFinite(w) && w > 0 && Number.isFinite(h) && h > 0;
   });
+
+  const canSubmit = $derived(haveSport && haveUnits && haveTime && haveAboutYou && haveBio && !saving);
+
+  /** Whether the current step's required fields are filled (later steps can't be skipped to). */
+  const stepComplete = $derived.by(() => {
+    if (step === 0) return haveUnits && haveTime;
+    if (step === 1) return haveAboutYou;
+    if (step === 2) return haveSport;
+    return canSubmit;
+  });
+
+  function back() {
+    saveError = null;
+    if (step > 0) step -= 1;
+  }
 
   /** Optional numeric fields use `type="number"`; bind values may be number or empty, never call .trim() blindly. */
   function optionalNumericText(v: unknown): string {
@@ -145,8 +185,18 @@
     return typeof v === 'string' ? v.trim() : String(v).trim();
   }
 
-  async function handleSubmit(e: Event) {
+  /** Enter / Continue: advance a step, or save on the last one. */
+  function handleFormSubmit(e: Event) {
     e.preventDefault();
+    if (!stepComplete) return;
+    if (!isLastStep) {
+      step += 1;
+      return;
+    }
+    void handleSubmit();
+  }
+
+  async function handleSubmit() {
     saveError = null;
     saving = true;
     try {
@@ -186,229 +236,134 @@
       saving = false;
     }
   }
+
+  const fieldClass =
+    'w-full h-14 px-5 bg-bg2 border border-border rounded-[18px] text-[16px] text-text0 outline-none focus:border-blue transition-colors placeholder:text-text2/70';
+  const segBtn = (on: boolean) =>
+    `h-12 rounded-[14px] text-[16px] font-medium border-none cursor-pointer transition-colors ${on ? 'bg-bg3 text-text0' : 'bg-transparent text-text2 hover:text-text1'}`;
 </script>
 
-<div class="min-h-full flex flex-col p-6 items-center justify-center relative">
-  <!-- Decor elements (match auth styling) -->
-  <div class="absolute -top-[100px] -right-[100px] w-[320px] h-[320px] bg-teal rounded-full blur-[120px] opacity-15 pointer-events-none"></div>
+<div
+  class="min-h-full flex flex-col bg-bg0 px-6"
+  style="padding-top: max(24px, env(safe-area-inset-top, 0px)); padding-bottom: max(24px, env(safe-area-inset-bottom, 0px));"
+>
+  <form onsubmit={handleFormSubmit} class="w-full max-w-md mx-auto flex-1 flex flex-col">
+    <BrandMark size={40} wordmark class="mt-6 mb-8" />
 
-  <div class="w-full max-w-sm z-10">
-    <div class="mb-7 text-center">
-      <p class="text-[10px] text-text2 font-mono uppercase tracking-widest mb-2">Welcome</p>
-      <h1 class="text-2xl font-bold tracking-tight mb-1">Finish setup</h1>
-      <p class="text-text2 text-sm">A few details to personalize your training.</p>
+    <div class="grid grid-cols-4 gap-2" aria-hidden="true">
+      {#each STEPS as s, i (s.label)}
+        <div class="h-1 rounded-full {i <= step ? 'bg-blue' : 'bg-border'}"></div>
+      {/each}
     </div>
+    <p class="font-mono text-[12px] tracking-[0.22em] uppercase text-text2 mt-4">
+      Step {step + 1} of {STEPS.length} · {current.label}
+    </p>
 
-    {#if saveError}
-      <div class="p-3 bg-red-dim border-l-2 border-red rounded-lg mb-4 text-xs text-text0 leading-relaxed">
-        {saveError}
+    <h1 class="font-display text-[44px] leading-[1.05] text-text0 mt-5 mb-3">{current.title}</h1>
+    <p class="text-[17px] text-text1 leading-relaxed mb-8">{current.subtitle}</p>
+
+    {#if step === 0}
+      <div class="flex flex-col gap-6">
+        <div>
+          <span id="units-label" class="block text-[14px] text-text2 mb-2">Measurement units</span>
+          <div role="group" aria-labelledby="units-label" class="grid grid-cols-2 gap-1 p-1.5 bg-bg2 border border-border rounded-[18px]">
+            <button type="button" aria-pressed={units === 'metric'} class={segBtn(units === 'metric')} onclick={() => setUnits('metric')}>Metric</button>
+            <button type="button" aria-pressed={units === 'imperial'} class={segBtn(units === 'imperial')} onclick={() => setUnits('imperial')}>Imperial</button>
+          </div>
+        </div>
+        <div>
+          <span id="timeformat-label" class="block text-[14px] text-text2 mb-2">Time format</span>
+          <div role="group" aria-labelledby="timeformat-label" class="grid grid-cols-2 gap-1 p-1.5 bg-bg2 border border-border rounded-[18px]">
+            <button type="button" aria-pressed={timeFormat === '12h'} class={segBtn(timeFormat === '12h')} onclick={() => (timeFormat = '12h')}>12-hour</button>
+            <button type="button" aria-pressed={timeFormat === '24h'} class={segBtn(timeFormat === '24h')} onclick={() => (timeFormat = '24h')}>24-hour</button>
+          </div>
+        </div>
+      </div>
+    {:else if step === 1}
+      <div class="flex flex-col gap-6">
+        <div>
+          <label for="dob" class="block text-[14px] text-text2 mb-2">Date of birth</label>
+          <DatePicker id="dob" bind:value={dob} ariaLabel="Date of birth" buttonClass={fieldClass} placeholder="YYYY-MM-DD" />
+        </div>
+        <div>
+          <label for="gender" class="block text-[14px] text-text2 mb-2">Gender</label>
+          <SelectMenu id="gender" bind:value={gender} options={genderOptions} ariaLabel="Gender" buttonClass={fieldClass} />
+        </div>
+      </div>
+    {:else if step === 2}
+      <div class="flex flex-col gap-6">
+        <div>
+          <span id="sport-label" class="block text-[14px] text-text2 mb-2">Main sport</span>
+          <div role="group" aria-labelledby="sport-label" class="grid grid-cols-4 gap-1 p-1.5 bg-bg2 border border-border rounded-[18px]">
+            {#each sportOptions as opt (opt.value)}
+              <button type="button" aria-pressed={sport === opt.value} class="{segBtn(sport === opt.value)} text-[14px]" onclick={() => (sport = opt.value)}>
+                {opt.label}
+              </button>
+            {/each}
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label for="ftp" class="block text-[14px] text-text2 mb-2">Cycling FTP (W)</label>
+            <input id="ftp" type="number" inputmode="numeric" bind:value={ftpRaw} placeholder="e.g. 280" class="{fieldClass} font-mono" />
+          </div>
+          <div>
+            <label for="maxhr" class="block text-[14px] text-text2 mb-2">Max HR (bpm)</label>
+            <input id="maxhr" type="number" inputmode="numeric" bind:value={maxHrRaw} placeholder="e.g. 190" class="{fieldClass} font-mono" />
+          </div>
+        </div>
+
+        <div>
+          <label for="pace" class="block text-[14px] text-text2 mb-2">
+            Threshold pace <span class="text-text2/80">· optional</span>
+          </label>
+          <input
+            id="pace"
+            type="text"
+            bind:value={pace}
+            placeholder={`mm:ss ${units === 'metric' ? '/km' : '/mi'}`}
+            class="{fieldClass} font-mono max-w-[calc(50%-0.5rem)]"
+          />
+        </div>
+      </div>
+    {:else}
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          {#if units === 'imperial'}
+            <label for="weight-lb" class="block text-[14px] text-text2 mb-2">Weight (lb)</label>
+            <input id="weight-lb" type="number" step="0.1" inputmode="decimal" bind:value={weightLb} class="{fieldClass} font-mono" />
+          {:else}
+            <label for="weight-kg" class="block text-[14px] text-text2 mb-2">Weight (kg)</label>
+            <input id="weight-kg" type="number" step="0.1" inputmode="decimal" bind:value={weightKg} class="{fieldClass} font-mono" />
+          {/if}
+        </div>
+        <div>
+          {#if units === 'imperial'}
+            <label for="height-ft" class="block text-[14px] text-text2 mb-2">Height</label>
+            <div class="flex gap-2">
+              <input id="height-ft" type="number" step="1" min="0" inputmode="numeric" bind:value={heightFt} placeholder="ft" aria-label="Height, feet" class="{fieldClass} font-mono px-4" />
+              <input id="height-in" type="number" step="1" min="0" max="11" inputmode="numeric" bind:value={heightIn} placeholder="in" aria-label="Height, inches" class="{fieldClass} font-mono px-4" />
+            </div>
+          {:else}
+            <label for="height-cm" class="block text-[14px] text-text2 mb-2">Height (cm)</label>
+            <input id="height-cm" type="number" step="0.1" inputmode="decimal" bind:value={heightCm} class="{fieldClass} font-mono" />
+          {/if}
+        </div>
       </div>
     {/if}
 
-    <form onsubmit={handleSubmit} class="flex flex-col gap-3">
-      <Card>
-        <p class="text-[13px] font-semibold mb-3">Preferences</p>
-        <div class="flex flex-col gap-4">
-          <div>
-            <label for="sport" class="block text-[11px] text-text2 mb-1">Main Sport</label>
-            <SelectMenu
-              id="sport"
-              bind:value={sport}
-              options={sportOptions}
-              ariaLabel="Main Sport"
-              buttonClass="w-full p-2.5 pr-2 bg-glass2 border border-border rounded-lg text-sm text-text0 outline-none focus:border-blue"
-            />
-          </div>
+    {#if saveError}
+      <FormAlert class="mt-6">{saveError}</FormAlert>
+    {/if}
 
-          <div>
-            <span id="units-label" class="block text-[11px] text-text2 mb-1">Measurement Units</span>
-            <div role="group" aria-labelledby="units-label" class="flex p-1 bg-glass2 rounded-lg border border-border">
-              <button
-                type="button"
-                aria-pressed={units === 'metric'}
-                class="flex-1 py-1.5 text-xs rounded-md transition-colors {units === 'metric' ? 'bg-blue text-text0' : 'text-text2 hover:text-text0'}"
-                onclick={() => setUnits('metric')}
-              >
-                Metric
-              </button>
-              <button
-                type="button"
-                aria-pressed={units === 'imperial'}
-                class="flex-1 py-1.5 text-xs rounded-md transition-colors {units === 'imperial' ? 'bg-blue text-text0' : 'text-text2 hover:text-text0'}"
-                onclick={() => setUnits('imperial')}
-              >
-                Imperial
-              </button>
-            </div>
-          </div>
-
-          <div>
-            <span id="timeformat-label" class="block text-[11px] text-text2 mb-1">Time Format</span>
-            <div role="group" aria-labelledby="timeformat-label" class="flex p-1 bg-glass2 rounded-lg border border-border">
-              <button
-                type="button"
-                aria-pressed={timeFormat === '12h'}
-                class="flex-1 py-1.5 text-xs rounded-md transition-colors {timeFormat === '12h' ? 'bg-blue text-text0' : 'text-text2 hover:text-text0'}"
-                onclick={() => (timeFormat = '12h')}
-              >
-                12-Hour
-              </button>
-              <button
-                type="button"
-                aria-pressed={timeFormat === '24h'}
-                class="flex-1 py-1.5 text-xs rounded-md transition-colors {timeFormat === '24h' ? 'bg-blue text-text0' : 'text-text2 hover:text-text0'}"
-                onclick={() => (timeFormat = '24h')}
-              >
-                24-Hour
-              </button>
-            </div>
-          </div>
-        </div>
-      </Card>
-
-      <Card>
-        <p class="text-[13px] font-semibold mb-3">About you</p>
-        <div class="flex flex-col gap-4">
-          <div>
-            <label for="dob" class="block text-[11px] text-text2 mb-1">Date of Birth</label>
-            <DatePicker
-              id="dob"
-              bind:value={dob}
-              ariaLabel="Date of Birth"
-              buttonClass="w-full p-2.5 pr-2 bg-glass2 border border-border rounded-lg text-sm text-text0 outline-none focus:border-blue"
-              placeholder="YYYY-MM-DD"
-            />
-          </div>
-          <div>
-            <label for="gender" class="block text-[11px] text-text2 mb-1">Gender</label>
-            <SelectMenu
-              id="gender"
-              bind:value={gender}
-              options={genderOptions}
-              ariaLabel="Gender"
-              buttonClass="w-full p-2.5 pr-2 bg-glass2 border border-border rounded-lg text-sm text-text0 outline-none focus:border-blue"
-            />
-          </div>
-        </div>
-      </Card>
-
-      <Card>
-        <p class="text-[13px] font-semibold mb-3">Biometrics</p>
-        <div class="flex flex-col gap-4">
-          <div class="flex gap-3">
-            <div class="flex-1">
-              {#if units === 'imperial'}
-                <label for="weight-lb" class="block text-[11px] text-text2 mb-1">Weight (lb)</label>
-                <input
-                  id="weight-lb"
-                  type="number"
-                  step="0.1"
-                  bind:value={weightLb}
-                  class="w-full p-2.5 bg-glass2 border border-border rounded-lg text-sm text-text0 font-mono outline-none focus:border-blue"
-                />
-              {:else}
-                <label for="weight-kg" class="block text-[11px] text-text2 mb-1">Weight (kg)</label>
-                <input
-                  id="weight-kg"
-                  type="number"
-                  step="0.1"
-                  bind:value={weightKg}
-                  class="w-full p-2.5 bg-glass2 border border-border rounded-lg text-sm text-text0 font-mono outline-none focus:border-blue"
-                />
-              {/if}
-            </div>
-
-            <div class="flex-1">
-              {#if units === 'imperial'}
-                <label for="height-ft" class="block text-[11px] text-text2 mb-1">Height</label>
-                <div class="flex gap-2">
-                  <input
-                    id="height-ft"
-                    type="number"
-                    step="1"
-                    min="0"
-                    bind:value={heightFt}
-                    placeholder="ft"
-                    class="w-full p-2.5 bg-glass2 border border-border rounded-lg text-sm text-text0 font-mono outline-none focus:border-blue"
-                  />
-                  <input
-                    id="height-in"
-                    type="number"
-                    step="1"
-                    min="0"
-                    max="11"
-                    bind:value={heightIn}
-                    placeholder="in"
-                    class="w-full p-2.5 bg-glass2 border border-border rounded-lg text-sm text-text0 font-mono outline-none focus:border-blue"
-                  />
-                </div>
-              {:else}
-                <label for="height-cm" class="block text-[11px] text-text2 mb-1">Height (cm)</label>
-                <input
-                  id="height-cm"
-                  type="number"
-                  step="0.1"
-                  bind:value={heightCm}
-                  class="w-full p-2.5 bg-glass2 border border-border rounded-lg text-sm text-text0 font-mono outline-none focus:border-blue"
-                />
-              {/if}
-            </div>
-          </div>
-
-          <div class="border-t border-border pt-4">
-            <div class="flex items-center justify-between mb-2">
-              <p class="text-[13px] font-semibold">Thresholds</p>
-              <p class="text-[10px] text-text2 font-mono uppercase tracking-widest">Optional</p>
-            </div>
-
-            <div class="flex items-center justify-between gap-3">
-              <div class="flex-1">
-                <label for="maxhr" class="block text-[11px] text-text2 mb-1">Max HR (bpm)</label>
-                <input
-                  id="maxhr"
-                  type="number"
-                  bind:value={maxHrRaw}
-                  placeholder="e.g. 190"
-                  class="w-full p-2 bg-glass2 border border-border rounded-lg text-sm text-text0 font-mono outline-none focus:border-red"
-                />
-              </div>
-              <div class="flex-1">
-                <label for="ftp" class="block text-[11px] text-text2 mb-1">Cycling FTP (W)</label>
-                <input
-                  id="ftp"
-                  type="number"
-                  bind:value={ftpRaw}
-                  placeholder="e.g. 280"
-                  class="w-full p-2 bg-glass2 border border-border rounded-lg text-sm text-text0 font-mono outline-none focus:border-blue"
-                />
-              </div>
-            </div>
-
-            <div class="mt-4">
-              <label for="pace" class="block text-[11px] text-text2 mb-1">Threshold Pace ({units === 'metric' ? '/km' : '/mile'})</label>
-              <input
-                id="pace"
-                type="text"
-                bind:value={pace}
-                placeholder="e.g. 5:00"
-                class="w-full p-2.5 bg-glass2 border border-border rounded-lg text-sm text-text0 font-mono outline-none focus:border-teal"
-              />
-              <p class="text-[10px] text-text2 mt-2 leading-relaxed">
-                Enter pace as <span class="text-text1 font-mono">mm:ss</span>. It will automatically convert if you switch units.
-              </p>
-            </div>
-          </div>
-        </div>
-      </Card>
-
-      <button
-        type="submit"
-        disabled={!canSubmit}
-        class="w-full mt-1 py-3.5 bg-teal text-bg1 font-semibold rounded-xl hover:bg-teal/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-      >
-        {saving ? 'Saving...' : 'Finish Setup'}
-      </button>
-    </form>
-  </div>
+    <div class="mt-auto pt-10 flex gap-3">
+      {#if step > 0}
+        <Button variant="secondary" full={false} class="w-[120px] shrink-0" onclick={back} disabled={saving}>Back</Button>
+      {/if}
+      <Button type="submit" full={false} class="flex-1" disabled={!stepComplete}>
+        {#if isLastStep}{saving ? 'Saving…' : 'Finish setup'}{:else}Continue{/if}
+      </Button>
+    </div>
+  </form>
 </div>
-

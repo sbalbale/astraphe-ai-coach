@@ -1,10 +1,18 @@
 <script lang="ts">
+  import { MIN_PASSWORD_LENGTH } from '$lib/utils/passwordStrength';
   import { onMount } from 'svelte';
   import { supabase } from '$lib/supabase';
   import { authStore } from '$lib/stores/authStore.svelte';
   import { goto } from '$app/navigation';
+  import AuthShell from '$lib/components/ui/AuthShell.svelte';
+  import TextField from '$lib/components/ui/TextField.svelte';
+  import Button from '$lib/components/ui/Button.svelte';
+  import FormAlert from '$lib/components/ui/FormAlert.svelte';
+  import UiIcon from '$lib/components/ui/UiIcon.svelte';
+  import Spinner from '$lib/components/ui/Spinner.svelte';
+  import PasswordStrengthMeter from '$lib/components/ui/PasswordStrengthMeter.svelte';
 
-  let password = $state('');
+  /** This page's own rule (checked in handleUpdate); the server may also enforce one. */  let password = $state('');
   let confirmPassword = $state('');
   let loading = $state(false);
   let sessionReady = $state(false);
@@ -83,8 +91,8 @@
       return;
     }
 
-    if (password.length < 8) {
-      errorMsg = 'Password must be at least 8 characters';
+    if (password.length < MIN_PASSWORD_LENGTH) {
+      errorMsg = `Password must be at least ${MIN_PASSWORD_LENGTH} characters`;
       return;
     }
 
@@ -123,70 +131,54 @@
   }
 </script>
 
-<div class="min-h-full flex flex-col p-6 items-center justify-center relative">
-  <div class="absolute -top-[100px] -right-[100px] w-[300px] h-[300px] bg-teal rounded-full blur-[120px] opacity-20 pointer-events-none"></div>
-
-  <div class="w-full max-w-sm z-10">
-    {#if done}
-      <div class="text-center">
-        <div class="w-16 h-16 rounded-2xl bg-teal/10 border border-teal/20 flex items-center justify-center mx-auto mb-6">
-          <span class="text-3xl text-teal">✓</span>
-        </div>
-        <h1 class="text-3xl font-bold tracking-tight mb-2">Password updated</h1>
-        <p class="text-text2 text-sm">Redirecting you to sign in…</p>
-      </div>
-    {:else if !sessionReady}
-      <div class="text-center">
-        <div class="w-16 h-16 rounded-2xl bg-blue-dim border border-blue/30 flex items-center justify-center mx-auto mb-6">
-          <span class="text-3xl font-bold text-text0">A</span>
-        </div>
-        <p class="text-text2 text-sm animate-pulse">Verifying link…</p>
-      </div>
-    {:else}
-      <div class="mb-10">
-        <h1 class="text-3xl font-bold tracking-tight mb-2">Set New Password</h1>
-        <p class="text-text2 text-sm">Choose a strong password for your Astraphe account.</p>
-      </div>
-
-      {#if errorMsg}
-        <div class="p-3 bg-red-dim border-l-2 border-red rounded-lg mb-6 text-xs text-text0 leading-relaxed">
-          {errorMsg}
-        </div>
-      {/if}
-
-      <form onsubmit={handleUpdate} class="flex flex-col gap-4">
-        <div>
-          <label for="password" class="block text-[10px] text-text2 font-mono uppercase tracking-widest mb-1.5 ml-1">New password</label>
-          <input
-            id="password"
-            type="password"
-            bind:value={password}
-            required
-            class="w-full px-4 py-3.5 bg-glass border border-border rounded-xl text-text0 text-sm outline-none focus:border-teal focus:bg-glass2 transition-colors placeholder:text-text2"
-            placeholder="••••••••"
-          />
-        </div>
-
-        <div>
-          <label for="confirmPassword" class="block text-[10px] text-text2 font-mono uppercase tracking-widest mb-1.5 ml-1">Confirm password</label>
-          <input
-            id="confirmPassword"
-            type="password"
-            bind:value={confirmPassword}
-            required
-            class="w-full px-4 py-3.5 bg-glass border border-border rounded-xl text-text0 text-sm outline-none focus:border-teal focus:bg-glass2 transition-colors placeholder:text-text2"
-            placeholder="••••••••"
-          />
-        </div>
-
-        <button
-          type="submit"
-          disabled={loading}
-          class="w-full mt-4 py-3.5 bg-teal text-bg1 font-semibold rounded-xl hover:bg-teal/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {loading ? 'Updating…' : 'Update Password'}
-        </button>
-      </form>
+{#if done}
+  <AuthShell centered>
+    <div class="w-14 h-14 rounded-2xl bg-green-dim border border-green/20 text-green flex items-center justify-center mb-6">
+      <UiIcon name="check" size={24} />
+    </div>
+    <h1 class="font-display text-[36px] leading-[1.1] text-text0 mb-2">Password updated</h1>
+    <p class="text-[16px] text-text2">Redirecting you to sign in…</p>
+  </AuthShell>
+{:else if !sessionReady}
+  <AuthShell centered>
+    <Spinner label="Verifying link" />
+    <h1 class="font-display text-[36px] leading-[1.1] text-text0 mt-8 mb-2">Verifying your link…</h1>
+    <p class="text-[16px] text-text2">This only takes a moment.</p>
+  </AuthShell>
+{:else}
+  <AuthShell title="Set a new password" subtitle="Choose a strong password for your Astraphe account.">
+    {#if errorMsg}
+      <FormAlert class="mb-6">{errorMsg}</FormAlert>
     {/if}
-  </div>
-</div>
+
+    <form onsubmit={handleUpdate} class="flex flex-col gap-6">
+      <div>
+        <TextField
+          id="password"
+          label="New password"
+          type="password"
+          autocomplete="new-password"
+          bind:value={password}
+          required
+          aria-describedby="password-strength"
+          placeholder={`At least ${MIN_PASSWORD_LENGTH} characters`}
+        />
+        <PasswordStrengthMeter id="password-strength" {password} minLength={MIN_PASSWORD_LENGTH} />
+      </div>
+
+      <TextField
+        id="confirmPassword"
+        label="Confirm password"
+        type="password"
+        autocomplete="new-password"
+        bind:value={confirmPassword}
+        required
+        placeholder="••••••••"
+      />
+
+      <Button type="submit" disabled={loading} class="mt-2">
+        {loading ? 'Updating…' : 'Update password'}
+      </Button>
+    </form>
+  </AuthShell>
+{/if}
