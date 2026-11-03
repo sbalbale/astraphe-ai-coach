@@ -25,6 +25,10 @@
   import { bodyDate, rememberBodyDate } from '$lib/stores/bodyDate.svelte';
   import { page } from "$app/stores";
   import AddSleepModal from "$lib/components/AddSleepModal.svelte";
+  import { viewport } from '$lib/stores/viewport.svelte';
+  import { bodyEyebrow } from '$lib/utils/bodyWide';
+  import BodyScoreTabs from '$lib/components/wide/body/BodyScoreTabs.svelte';
+  import SleepWide from '$lib/components/wide/body/SleepWide.svelte';
 
   const isConnected = $derived(
     Object.values(athleteStore.syncStatus?.integrations || {}).some(
@@ -86,6 +90,10 @@
     pageHeader.dateLabel = canGoForward ? format(clampedEndDay, 'EEE d MMM') : 'Today';
     pageHeader.dateMarks = (athleteStore.biometrics?.series ?? []).filter((r: any) => r?.date && (Number(r?.sleep_duration_min) > 0 || Number(r?.sleep_score) > 0)).map((r: any) => r.date);
     pageHeader.dateValue = format(clampedEndDay, "yyyy-MM-dd");
+    // Wide layouts show Recovery, Sleep and Strain as one "Body" screen.
+    const wideDay = nights[nightIndex]?.rawDate ?? todayStr;
+    pageHeader.wideTitle = 'Body';
+    pageHeader.wideEyebrow = bodyEyebrow(wideDay, (athleteStore.biometrics?.series ?? []).find((r: any) => r?.date === wideDay) ?? (current.row as any));
     return resetPageHeader;
   });
 
@@ -493,6 +501,22 @@
     await athleteStore.addSleep(payload);
   }
 
+  const hour12 = $derived((athleteStore.profile as any)?.time_format !== '24h');
+  const wideTip = $derived.by<string | null>(() => {
+    if (!nightData) return null;
+    if (analysisLoading && analysisText === null) return 'Analyzing…';
+    return (
+      analysisText ??
+      (!nightData.stagesAvailable
+        ? 'Stage data is unavailable for this night, so this is based on duration, debt, HRV and resting HR.'
+        : nightData.deep < 15
+          ? 'Deep sleep is below your baseline. Cool the room and cut screens before bed tonight.'
+          : nightData.rem < 20
+            ? 'REM is slightly low, which can affect cognitive performance today.'
+            : 'Your sleep architecture looks balanced. Recovery is on track.')
+    );
+  });
+
   // Naps for the selected night (the main sleep is already the page's subject).
   const naps = $derived(((nightData?.periods ?? []) as any[]).filter((p) => p?.is_nap));
 
@@ -542,6 +566,24 @@
   onSaved={handleSleepSaved}
 />
 
+{#if viewport.wide && !showConnectPrompt && hasData}
+  <div class="flex-1 flex flex-col gap-[22px]">
+    <BodyScoreTabs active="sleep" day={n?.rawDate ?? todayStr} />
+    <SleepWide
+      night={nightData}
+      {nights}
+      selected={nightIndex}
+      onSelect={(i) => (nightIndex = i)}
+      title={n?.rawDate === todayStr ? 'Last night' : nightLabel(n?.rawDate)}
+      tip={wideTip}
+      {hour12}
+      onLog={() => (addSleepOpen = true)}
+      onCheckSync={checkSync}
+      {checking}
+      emptyTitle={`No sleep for ${nightLabel(n?.rawDate)} yet`}
+    />
+  </div>
+{:else}
 <div class="flex flex-col gap-3.5">
   {#if showConnectPrompt}
     <EmptyStateCard
@@ -703,3 +745,4 @@
     </div>
   {/if}
 </div>
+{/if}

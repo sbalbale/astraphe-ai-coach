@@ -23,7 +23,8 @@
     /** Display name for the sport, e.g. getWorkoutLabel(sport). */
     sportLabel: string;
     backLabel?: string;
-    onBack: () => void;
+    /** Omit to hide the back link (the wide master–detail layout has no back). */
+    onBack?: () => void;
     onEdit?: () => void;
     onDelete?: () => void;
   } = $props();
@@ -51,11 +52,13 @@
 </script>
 
 <div class="flex flex-col gap-4">
-  <div class="flex items-center justify-between">
-    <button type="button" class="inline-flex items-center gap-2 bg-transparent border-0 p-0 text-[16px] text-text1 cursor-pointer hover:text-text0" onclick={onBack}>
-      <UiIcon name="chevron-left" size={18} />
-      {backLabel}
-    </button>
+  <div class="flex items-center {onBack ? 'justify-between' : 'justify-end'}">
+    {#if onBack}
+      <button type="button" class="inline-flex items-center gap-2 bg-transparent border-0 p-0 text-[16px] text-text1 cursor-pointer hover:text-text0" onclick={onBack}>
+        <UiIcon name="chevron-left" size={18} />
+        {backLabel}
+      </button>
+    {/if}
     <div class="flex items-center gap-2">
       {#if onDelete}
         <button type="button" aria-label="Delete workout" class="w-11 h-11 rounded-[14px] border border-border bg-transparent text-red flex items-center justify-center cursor-pointer" onclick={onDelete}>

@@ -27,6 +27,10 @@
   import { canonicalHrZoneShortName, formatHrZoneTitle } from '$lib/hrZoneDisplay';
   import { normalizeUnits, workoutDistanceParts } from '$lib/utils/units';
   import { workoutDurationSecs } from '$lib/utils/workoutDuration';
+  import { viewport } from '$lib/stores/viewport.svelte';
+  import { bodyEyebrow, dayStrain } from '$lib/utils/bodyWide';
+  import BodyScoreTabs from '$lib/components/wide/body/BodyScoreTabs.svelte';
+  import StrainWide from '$lib/components/wide/body/StrainWide.svelte';
 
   const CTL_IDENTITY_HEX = CHART_CTL_STROKE;
   const ATL_IDENTITY_HEX = CHART_ATL_STROKE;
@@ -84,6 +88,9 @@
     pageHeader.dateLabel = canGoForward ? format(clampedEndDay, 'EEE d MMM') : 'Today';
     pageHeader.dateMarks = Array.from(new Set([...(athleteStore.workouts ?? []).map((w: any) => localDay(w?.started_at)), ...(athleteStore.biometrics?.series ?? []).filter((r: any) => Number(r?.strain_score) > 0).map((r: any) => r.date)].filter(Boolean)));
     pageHeader.dateValue = format(clampedEndDay, "yyyy-MM-dd");
+    // Wide layouts show Recovery, Sleep and Strain as one "Body" screen.
+    pageHeader.wideTitle = 'Body';
+    pageHeader.wideEyebrow = bodyEyebrow(days[dayIndex]?.date ?? todayStr, days[dayIndex]?.data);
     return resetPageHeader;
   });
 
@@ -314,6 +321,8 @@
   });
 
   const dayZones = $derived.by(() => computeZoneBreakdown(d?.workouts || []));
+  /** Wide layout: the day's strain split into workouts and all-day activity. */
+  const wideStrain = $derived(dayStrain(d?.data, d?.workouts ?? []));
 
   const formatMinutes = (secs: number) => {
     const m = Math.round(Math.max(0, secs) / 60);
@@ -324,6 +333,21 @@
   // costing an LLM generation per view. Removed.)
 </script>
 
+{#if viewport.wide && !showConnectPrompt && hasData}
+  <div class="flex-1 flex flex-col gap-[22px]">
+    <BodyScoreTabs active="strain" day={d.date} />
+    <StrainWide
+      day={d.date}
+      strain={wideStrain}
+      ctl={d.ctl}
+      atl={d.atl}
+      tsb={d.tsb}
+      {days}
+      selected={dayIndex}
+      onSelect={(i) => (dayIndex = i)}
+    />
+  </div>
+{:else}
 <div class="flex flex-col gap-3.5">
   {#if showConnectPrompt}
     <EmptyStateCard
@@ -416,6 +440,7 @@
     {/if}
   {/if}
 </div>
+{/if}
 
 <Modal
   show={showWorkoutModal}

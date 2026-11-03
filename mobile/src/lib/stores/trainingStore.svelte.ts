@@ -132,6 +132,17 @@ export class TrainingState {
     return ok;
   }
 
+  /** Marks a planned session done (or not done); refreshes the given date range view. */
+  async setCompleted(id: string, completed: boolean, rangeStartIso: string, rangeEndIso: string): Promise<boolean> {
+    const current = this.workouts.find((w) => w.id === id);
+    if (!current) return false;
+    // Optimistic, so the toggle answers at once; the refetch below settles it.
+    this.workouts = this.workouts.map((w) => (w.id === id ? { ...w, completed } : w));
+    const saved = await api.saveWorkout({ ...current, completed });
+    await this.fetchWorkouts(rangeStartIso, rangeEndIso);
+    return !!saved;
+  }
+
   /** Removes a planned session from `training_plans`; refreshes the given date range view. */
   async deleteTrainingPlan(planId: string, rangeStartIso: string, rangeEndIso: string): Promise<boolean> {
     const ok = await api.deleteTrainingPlan(planId);

@@ -23,7 +23,12 @@ export const pageHeader = $state<{
   onSegment: ((value: string) => void) | null;
   /** Outlined icon buttons on the right of the title (e.g. Coach history / new chat). */
   actions: { key: string; label: string; icon: 'history' | 'plus'; onclick: () => void }[];
-}>({ title: '', eyebrow: '', prev: null, next: null, canNext: true, add: null, addLabel: '', today: null, dateValue: '', dateMax: '', dateLabel: '', dateMarks: [], segments: [], segment: '', onSegment: null, actions: [] });
+  /** Wide layouts (tablet / desktop): title and eyebrow when they differ from the phone's. */
+  wideTitle: string;
+  wideEyebrow: string;
+  /** Wide layouts: the page draws its own header (e.g. Training log, Coach). */
+  hideOnWide: boolean;
+}>({ wideTitle: '', wideEyebrow: '', hideOnWide: false, title: '', eyebrow: '', prev: null, next: null, canNext: true, add: null, addLabel: '', today: null, dateValue: '', dateMax: '', dateLabel: '', dateMarks: [], segments: [], segment: '', onSegment: null, actions: [] });
 
 export function resetPageHeader() {
   pageHeader.title = '';
@@ -42,4 +47,7 @@ export function resetPageHeader() {
   pageHeader.segment = '';
   pageHeader.onSegment = null;
   pageHeader.actions = [];
+  pageHeader.wideTitle = '';
+  pageHeader.wideEyebrow = '';
+  pageHeader.hideOnWide = false;
 }

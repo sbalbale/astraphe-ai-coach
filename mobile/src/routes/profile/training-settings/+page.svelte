@@ -2,7 +2,7 @@
   import SubpageHeader from '$lib/components/SubpageHeader.svelte';
   import SelectMenu from '$lib/components/SelectMenu.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
-  import { convertPace, normalizeUnits, type Units } from '$lib/utils/units';
+  import { convertPace, isValidPace, normalizeUnits, type Units } from '$lib/utils/units';
   import { onMount } from 'svelte';
 
   // Empty until the athlete sets them: invented values (280 W / 185 bpm / 5:00) used to
@@ -14,7 +14,6 @@
   let thresholdHR = $state<number | null>(null);
   let ftp = $state<number | null>(null);
   let pace = $state('');
-  const PACE_RE = /^d{1,2}:[0-5]d$/;
   const LEGACY_SPORT_FOCUS: Record<string, string> = {
     running: 'run',
     cycling: 'bike',
@@ -82,7 +81,7 @@
 
   function setUnits(next: Units) {
     if (next === units) return;
-    if (PACE_RE.test(pace)) pace = convertPace(pace, units, next);
+    if (isValidPace(pace)) pace = convertPace(pace, units, next);
     units = next;
   }
 
@@ -102,7 +101,7 @@
     if (maxHR != null && Number(maxHR) > 0) updates.max_hr = Number(maxHR);
     if (ftp != null && Number(ftp) > 0) updates.ftp_watts = Number(ftp);
     if (pace.trim()) {
-      if (!PACE_RE.test(pace.trim())) {
+      if (!isValidPace(pace)) {
         saving = false;
         saveError = 'Threshold pace should look like 5:00.';
         return;
