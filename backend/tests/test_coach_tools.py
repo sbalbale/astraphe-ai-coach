@@ -164,9 +164,10 @@ def test_schedule_workout_vo2max_inserts_training_plan():
     assert "sub_intervals" in struct[0]
     assert isinstance(struct[0]["sub_intervals"], list)
     assert "phase" not in struct[0]
-    main = struct[1]
-    assert main["name"].lower() == "main"
-    assert len(main["sub_intervals"]) >= 2
+    # Repeats are expanded into visible blocks (the app draws top-level blocks only).
+    assert struct[1]["name"].lower().startswith("work")
+    assert any(b["name"].lower().startswith("recovery") for b in struct)
+    assert all(b["sub_intervals"] == [] for b in struct)
     assert out["garmin_push"]["status"] == "stubbed"
     # 45 min * 1.1^2 * (45/60) * 100 ≈ 90.75 TSS
     assert 85 <= float(out["target_tss_estimate"]) <= 95
@@ -251,15 +252,9 @@ def test_schedule_workout_optional_ai_structure_override():
     assert "error" not in out
     row = db.inserts[0][1]
     struct = row["structure"]
-    assert len(struct) == 1
-    b = struct[0]
-    assert b["name"] == "Main"
-    assert b["duration_minutes"] == 40
-    assert b["description"] == "Custom main"
-    assert len(b["sub_intervals"]) == 2
-    assert b["sub_intervals"][0]["name"] == "Work"
-    assert b["sub_intervals"][0]["target_power_percent_ftp"] == 95
-    assert b["sub_intervals"][1]["name"] == "Recovery"
+    # A block with Work / Recovery sub-intervals is shown as those blocks.
+    assert [b["name"] for b in struct] == ["Work", "Recovery"]
+    assert struct[0]["target_power_percent_ftp"] == 95
 
 
 def test_schedule_workout_empty_structure_list_keeps_generated():

@@ -2,7 +2,8 @@
   import { WEEKDAY_SHORT } from '$lib/utils/week';
   /** Wide Plan month grid: 7 day cells + a weekly TSS column; sessions drag onto other days. */
   import { format, isSameMonth } from 'date-fns';
-  import { fmtDur, isMovable, totals, type WideSession } from './planWide';
+  import { totals, type WideSession } from './planWide';
+  import PlanSessionChip from './PlanSessionChip.svelte';
 
   let {
     weeks,
@@ -11,7 +12,9 @@
     selectedIso,
     todayIso,
     dragId,
+    selectedId = null,
     onpick,
+    onpicksession,
     ondragstart,
     ondragend,
     ondrop
@@ -22,13 +25,18 @@
     selectedIso: string;
     todayIso: string;
     dragId: string | null;
+    /** The session shown in the inspector (highlighted in its day). */
+    selectedId?: string | null;
     onpick: (iso: string) => void;
+    /** Pick one session of a day (days can hold several). */
+    onpicksession: (iso: string, id: string) => void;
     ondragstart: (id: string) => void;
     ondragend: () => void;
     ondrop: (fromId: string, toIso: string) => void;
   } = $props();
 
-  const zoneColor = (z: number) => (z > 0 ? `var(--zone-${z})` : 'var(--text2)');
+  /** Sessions shown per month cell before "+N more". */
+  const MAX_IN_CELL = 3;
 
   function weekLabel(days: Date[]): string {
     const first = format(days[0], 'yyyy-MM-dd');
@@ -47,19 +55,17 @@
       {#each days as d (d.toISOString())}
         {@const iso = format(d, 'yyyy-MM-dd')}
         {@const items = byIso[iso] ?? []}
-        {@const first = items[0]}
         {@const past = iso < todayIso}
         {@const today = iso === todayIso}
         {@const sel = iso === selectedIso}
         {@const inMonth = isSameMonth(d, viewMonth)}
-        {@const movable = first ? isMovable(first, todayIso) : false}
         {@const dropTarget = dragId !== null && !past}
-        <button
-          type="button"
-          draggable={movable}
+        <div
+          role="button"
+          tabindex="0"
           aria-pressed={sel}
-          aria-label="{format(d, 'EEE d MMM')}: {first ? first.title : 'rest'}{first?.completed ? ', completed' : ''}{items.length > 1 ? `, ${items.length} sessions` : ''}"
-          class="h-full min-h-0 p-2.5 gap-1.5 overflow-hidden rounded-[14px] flex flex-col items-start text-left text-text0 transition-colors {movable ? 'cursor-grab' : 'cursor-pointer'} {sel
+          aria-label="{format(d, 'EEE d MMM')}: {items.length ? items.map((s) => s.title).join(', ') : 'rest'}"
+          class="h-full min-h-0 p-2.5 gap-1 overflow-hidden rounded-[14px] flex flex-col items-start text-left text-text0 cursor-pointer transition-colors {sel
             ? 'bg-accent-surface border border-blue'
             : today
               ? 'bg-bg2 border border-accent-surface-border hover:border-text3'
@@ -67,16 +73,12 @@
                 ? 'bg-bg1 border border-dashed border-text3'
                 : 'bg-bg1 border border-rail-border hover:border-text3'}"
           onclick={() => onpick(iso)}
-          ondragstart={(e) => {
-            if (!movable || !first) {
+          onkeydown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
               e.preventDefault();
-              return;
+              onpick(iso);
             }
-            e.dataTransfer?.setData('text/plain', first.id);
-            if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
-            ondragstart(first.id);
           }}
-          ondragend={ondragend}
           ondragover={(e) => {
             if (!past && dragId !== null) e.preventDefault();
           }}
@@ -86,16 +88,22 @@
             if (from && !past) ondrop(from, iso);
           }}
         >
-          <span class="flex justify-between w-full">
-            <span class="font-mono text-[11px] {today ? 'font-bold text-blue' : inMonth ? 'font-medium text-text1' : 'font-medium text-text3'}">{format(d, 'd')}</span>
-            {#if first?.completed}<span class="text-[10px] text-green">✓ done</span>{/if}
-          </span>
-          {#if first}
-            <span aria-hidden="true" class="block w-full h-[3px] rounded-sm shrink-0" style="background: {zoneColor(first.zone)}; opacity: {past ? 0.4 : 1}"></span>
-            <span class="text-[12px] font-medium leading-[1.25] line-clamp-2 {past ? 'text-text2' : 'text-text0'}">{first.title}</span>
-            <span class="font-mono text-[10px] text-text2 truncate max-w-full">{fmtDur(first.durationMin)}{first.tss ? ` · ${first.tss}` : ''}{items.length > 1 ? ` · +${items.length - 1}` : ''}</span>
+          <span class="font-mono text-[11px] {today ? 'font-bold text-blue' : inMonth ? 'font-medium text-text1' : 'font-medium text-text3'}">{format(d, 'd')}</span>
+          {#each items.slice(0, MAX_IN_CELL) as s (s.id)}
+            <PlanSessionChip
+              {s}
+              {todayIso}
+              {past}
+              selected={sel && s.id === selectedId}
+              onpick={() => onpicksession(iso, s.id)}
+              {ondragstart}
+              {ondragend}
+            />
+          {/each}
+          {#if items.length > MAX_IN_CELL}
+            <span class="font-mono text-[10px] text-text2">+{items.length - MAX_IN_CELL} more</span>
           {/if}
-        </button>
+        </div>
       {/each}
       <span class="flex flex-col items-end justify-center gap-0.5">
         <span class="font-mono text-[13px]">{t.tss}</span>

@@ -416,11 +416,7 @@ def _sanitize_workout_structure(raw_structure: Any) -> list[dict[str, Any]]:
         if not isinstance(block, dict):
             continue
 
-        duration = block.get("duration_minutes") or block.get("duration_min") or block.get("duration") or 0
-        try:
-            duration = int(duration)
-        except (TypeError, ValueError):
-            duration = 0
+        duration = _minutes_value(block.get("duration_minutes") or block.get("duration_min") or block.get("duration") or 0)
 
         name = block.get("name") or block.get("phase") or block.get("type") or "Step"
 
@@ -443,16 +439,12 @@ def _sanitize_workout_structure(raw_structure: Any) -> list[dict[str, Any]]:
             for sub in raw_subs:
                 if not isinstance(sub, dict):
                     continue
-                sub_dur = sub.get("duration_minutes") or sub.get("duration_min") or sub.get("duration") or 0
-                try:
-                    sub_dur_int = int(sub_dur)
-                except (TypeError, ValueError):
-                    sub_dur_int = 0
+                sub_dur = _minutes_value(sub.get("duration_minutes") or sub.get("duration_min") or sub.get("duration") or 0)
                 sub_name = sub.get("name") or sub.get("type") or "Interval"
 
                 clean_sub: dict[str, Any] = {
                     "name": str(sub_name).capitalize(),
-                    "duration_minutes": sub_dur_int,
+                    "duration_minutes": sub_dur,
                     "description": str(sub.get("description") or ""),
                 }
                 for key in ("target_power_percent_ftp", "target_hr_zone"):
@@ -463,9 +455,48 @@ def _sanitize_workout_structure(raw_structure: Any) -> list[dict[str, Any]]:
                             pass
                 clean_block["sub_intervals"].append(clean_sub)
 
+        # The app draws top-level blocks only, so repeats ("8 × 1:30 hard / 1:30 easy") are
+        # expanded into visible Work / Recovery blocks instead of hiding in sub_intervals.
+        subs = clean_block["sub_intervals"]
+        try:
+            repeat = int(block.get("repeat") or block.get("repeats") or 0)
+        except (TypeError, ValueError):
+            repeat = 0
+        if subs and (repeat > 1 or len(subs) > 1):
+            reps = max(1, min(repeat or 1, 50))
+            n = 0
+            for r in range(reps):
+                for s in subs:
+                    n += 1
+                    if n > _MAX_EXPANDED_BLOCKS:
+                        break
+                    label = s["name"] if reps == 1 else f"{s['name']} {r + 1}/{reps}"
+                    clean_structure.append({**s, "name": label, "sub_intervals": []})
+            continue
+
         clean_structure.append(clean_block)
 
     return clean_structure
+
+
+_MAX_EXPANDED_BLOCKS = 120
+
+
+def _minutes_value(v: Any) -> float | int:
+    """Minutes as a number; decimals kept for short reps (1:30 = 1.5), whole numbers as int."""
+    if isinstance(v, str) and ":" in v:  # "1:30"
+        try:
+            m, s = v.split(":", 1)
+            v = int(m) + int(s) / 60
+        except ValueError:
+            return 0
+    try:
+        f = round(float(v), 2)
+    except (TypeError, ValueError):
+        return 0
+    if f <= 0:
+        return 0
+    return int(f) if f == int(f) else f
 
 
 def handle_schedule_workout(
@@ -527,6 +558,8 @@ def handle_schedule_workout(
     max_hr = _safe_int(row.get("max_hr"))
     resting_hr = _safe_int(row.get("resting_hr"))
 
+    if sport in ("strength", "mobility"):
+        focus_zone = "Recovery"
     if duration_minutes == 0:
         est_tss = 0.0
         workout_json = {"sport": sport, "focus_zone": focus_zone, "duration_minutes": 0, "structure": []}
@@ -545,11 +578,43 @@ def handle_schedule_workout(
         title = given_title[:120]
 
     raw_ai_structure = args.get("structure")
-    if duration_minutes > 0 and isinstance(raw_ai_structure, list) and len(raw_ai_structure) > 0:
+    if duration_minutes > 0 and sport in ("strength", "mobility"):
+        # Gym / mobility time isn't zone work: one easy block for the whole session.
+        workout_json["structure"] = [
+            {
+                "name": "Strength" if sport == "strength" else "Mobility",
+                "duration_minutes": duration_minutes,
+                "target_hr_zone": 1,
+                "description": str(args.get("markdown_notes") or "")[:0],
+            }
+        ]
+    elif duration_minutes > 0 and isinstance(raw_ai_structure, list) and len(raw_ai_structure) > 0:
         workout_json["structure"] = raw_ai_structure
 
     clean_structure = _sanitize_workout_structure(workout_json.get("structure") or [])
     workout_json["structure"] = clean_structure
+
+    try:
+        dup = (
+            db.table("training_plans")
+            .select("id,title")
+            .eq("athlete_id", athlete_id)
+            .eq("planned_date", planned_date.isoformat())
+            .eq("title", title)
+            .in_("status", ["planned", "modified"])
+            .limit(1)
+            .execute()
+        ).data or []
+    except Exception:
+        dup = []
+    if isinstance(dup, list) and dup and isinstance(dup[0], dict):
+        return {
+            "skipped": "duplicate",
+            "training_plan_id": dup[0]["id"],
+            "planned_date": planned_date.isoformat(),
+            "title": title,
+            "note": "This session is already on the calendar that day; nothing was added.",
+        }
 
     # Keep legacy `description` as a compact JSON string for backwards compatibility.
     description = json.dumps(workout_json, ensure_ascii=False)
@@ -1136,15 +1201,24 @@ _schedule_decl = types.FunctionDeclaration(
             ),
             "structure": types.Schema(
                 type=types.Type.ARRAY,
-                description="The workout structure blocks (Warmup, Main Set, Cooldown).",
+                description=(
+                    "The workout's blocks in order. Required whenever the session has intervals, so the "
+                    "plan shows them: e.g. '8 x 1:30 hard / 1:30 easy' = Warmup, then a 'Main Set' with "
+                    "repeat=8 and sub_intervals [Work 1.5 min, Recovery 1.5 min], then Cooldown. Minutes "
+                    "may be decimals (1:30 = 1.5). Strength / mobility: leave empty (one Z1 block is used)."
+                ),
                 items=types.Schema(
                     type=types.Type.OBJECT,
                     properties={
                         "name": types.Schema(
                             type=types.Type.STRING,
-                            description="'Warmup', 'Main Set', or 'Cooldown'",
+                            description="'Warmup', 'Main Set', 'Cooldown', or a step name",
                         ),
-                        "duration_minutes": types.Schema(type=types.Type.INTEGER),
+                        "duration_minutes": types.Schema(type=types.Type.NUMBER),
+                        "repeat": types.Schema(
+                            type=types.Type.INTEGER,
+                            description="Repeat the sub_intervals this many times (e.g. 8 for 8 x 1:30).",
+                        ),
                         "description": types.Schema(type=types.Type.STRING),
                         "target_power_percent_ftp": types.Schema(type=types.Type.INTEGER),
                         "target_hr_zone": types.Schema(type=types.Type.INTEGER),
@@ -1158,7 +1232,7 @@ _schedule_decl = types.FunctionDeclaration(
                                         type=types.Type.STRING,
                                         description="'Work' or 'Recovery'",
                                     ),
-                                    "duration_minutes": types.Schema(type=types.Type.INTEGER),
+                                    "duration_minutes": types.Schema(type=types.Type.NUMBER),
                                     "target_power_percent_ftp": types.Schema(type=types.Type.INTEGER),
                                     "target_hr_zone": types.Schema(type=types.Type.INTEGER),
                                 },
@@ -1281,8 +1355,10 @@ _list_memories_decl = types.FunctionDeclaration(
 _clear_training_plans_decl = types.FunctionDeclaration(
     name="clear_training_plans",
     description=(
-        "Delete planned workouts (training_plans) in a date range for the current athlete. "
-        "Use this before scheduling a replacement week to prevent duplicates."
+        "Replace planned sessions in a date range. Only when the athlete wants sessions replaced or "
+        "removed; never to add sessions (schedule_workouts adds alongside what's there). Unless the "
+        "athlete explicitly asked to clear/delete, it only takes effect for the days you then "
+        "schedule new sessions on, so days you don't reschedule keep their sessions."
     ),
     parameters=types.Schema(
         type=types.Type.OBJECT,

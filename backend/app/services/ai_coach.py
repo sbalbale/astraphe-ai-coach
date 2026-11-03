@@ -1444,23 +1444,75 @@ def _wrap_up_after_tool_budget(contents: list[types.Content], system_instruction
 
 # "I've scheduled / added / cleared / moved …", "… into your calendar", "synced to your app".
 _PLAN_CHANGE_CLAIM_RE = re.compile(
-    r"\b(i(?:'| ha)ve|i just|i)\s+(?:\w+\s+){0,3}?"
-    r"(scheduled|added|cleared|populated|loaded|moved|swapped|replaced|updated|built|mapped out|put|deleted|removed|logged|rescheduled)\b"
-    r"|\b(synced|saved|added|scheduled|loaded|populated)\s+(?:\w+\s+){0,3}?(to|into|in|on)\s+(your\s+)?(calendar|plan|app|training plan)\b"
-    r"|\bcheck your calendar\b",
+    r"\b(i(?:'| ha)ve|i just|i)\s+(?:\w+\s+){0,6}?"
+    r"(scheduled|added|cleared|populated|loaded|moved|swapped|replaced|updated|built|mapped out|put|deleted|"
+    r"removed|logged|rescheduled|pushed|integrated|programmed|set up|locked in|uploaded|created)\b"
+    r"|\b(synced|saved|added|scheduled|loaded|populated|pushed|integrated|locked in|uploaded)\s+(?:\w+\s+){0,3}?"
+    r"(to|into|in|on)\s+(your\s+)?(app\s+)?(calendar|plan|app|training plan)\b"
+    r"|\b(now\s+)?live (on|in) your\b"
+    r"|\b(fully|now)\s+(populated|scheduled|loaded|locked in)\b"
+    r"|\bcheck your (calendar|plan)\b",
     re.IGNORECASE,
+)
+
+# A claim needs one of these to have actually run (a clear alone doesn't fill a calendar).
+_PLAN_WRITE_TOOLS = frozenset({
+    "schedule_workout", "schedule_workouts", "update_planned_workout", "delete_planned_workout",
+    "log_workout", "update_workout",
+})
+
+# The athlete asked for sessions to go (clear / delete / start over): clears run as asked.
+_EXPLICIT_CLEAR_RE = re.compile(
+    r"\b(clear|delete|remove|wipe|reset|erase|start (?:over|fresh)|replace|scrap|get rid of)\b", re.IGNORECASE
 )
 
 _UNSAVED_CLAIM_NOTE = (
     "[SYSTEM] Your reply says you changed the athlete's calendar or plan, but you did not call "
     "any tool this turn, so NOTHING was saved. If the athlete asked for that change, call the tools "
-    "now to actually make it (clear_training_plans for the range if replacing, then "
-    "schedule_workouts with every session) and reply with what was really saved. If they didn't, "
+    "now to actually make it (schedule_workouts with every session; to replace a range, call "
+    "clear_training_plans first) and reply with what was really saved. If they didn't, "
     "rewrite your reply so it doesn't say anything was changed."
 )
 _UNSAVED_CLAIM_DISCLAIMER = (
     "_Note: nothing was actually saved to your calendar this time. Ask me again and I'll schedule it._"
 )
+
+
+def _defer_clear(args: dict[str, Any], pending: list[tuple[str, str]]) -> dict[str, Any]:
+    start = str(args.get("start_date") or "")[:10]
+    end = str(args.get("end_date") or "")[:10]
+    try:
+        if date.fromisoformat(end) < date.fromisoformat(start):
+            return {"error": "end_date must be >= start_date"}
+    except ValueError:
+        return {"error": "start_date and end_date must be YYYY-MM-DD"}
+    pending.append((start, end))
+    return {
+        "status": "deferred",
+        "note": (
+            "Nothing deleted yet. When you schedule sessions in this range, the existing sessions on "
+            "those same days are replaced; days you don't schedule keep their sessions. To add "
+            "sessions, just schedule them."
+        ),
+    }
+
+
+def _apply_pending_clears(db: Any, athlete_id: str, args: dict[str, Any], name: str, pending: list[tuple[str, str]]) -> int:
+    """Delete not-done sessions on the days about to get new ones, within a deferred clear range."""
+    items = args.get("workouts") if name == "schedule_workouts" else [args]
+    days = sorted({str(i.get("date") or "")[:10] for i in (items or []) if isinstance(i, dict)})
+    targets = [d for d in days if any(s <= d <= e for s, e in pending)]
+    if not targets:
+        return 0
+    res = (
+        db.table("training_plans")
+        .delete()
+        .eq("athlete_id", athlete_id)
+        .in_("status", ["planned", "modified"])
+        .in_("planned_date", targets)
+        .execute()
+    )
+    return len(res.data or [])
 
 
 def _claims_plan_change(text: str) -> bool:
@@ -1606,6 +1658,10 @@ def get_coach_response_agentic(
     # Tools that change data and actually ran this turn (any result, including errors).
     mutations_run: list[str] = []
     claim_nudged = False
+    # clear_training_plans the athlete didn't ask for: held until sessions are scheduled, then
+    # applied only to the days that get new sessions (so a partial reschedule can't wipe a plan).
+    explicit_clear = bool(_EXPLICIT_CLEAR_RE.search(message or ""))
+    pending_clears: list[tuple[str, str]] = []
     last_tool_names: list[str] = []
     max_hops = _agentic_max_tool_hops(message, has_images=history_has_images)
     for _hop in range(max_hops):
@@ -1743,9 +1799,12 @@ def get_coach_response_agentic(
                 args = _normalize_relative_tool_dates(name, args, message=message, calendar=calendar)
                 handler = coach_tools.TOOL_HANDLERS.get(name)
                 try:
-                    result: dict[str, Any] = (
-                        handler(args, athlete_id, db) if handler else {"error": f"unknown_tool:{name}"}
-                    )
+                    if name == "clear_training_plans" and not explicit_clear:
+                        result = _defer_clear(args, pending_clears)
+                    else:
+                        if name in ("schedule_workout", "schedule_workouts") and pending_clears:
+                            _apply_pending_clears(db, athlete_id, args, name, pending_clears)
+                        result = handler(args, athlete_id, db) if handler else {"error": f"unknown_tool:{name}"}
                 except Exception as e:
                     result = {"error": str(e)}
                 if name == "schedule_workout" and isinstance(result, dict):
@@ -1781,7 +1840,8 @@ def get_coach_response_agentic(
             if not _is_failed_extraction(final_text):
                 # The reply says the calendar/plan was changed, but no write tool ran this turn:
                 # nothing was saved. Push back once so the model makes the calls for real.
-                if tools_enabled and not mutations_run and _claims_plan_change(final_text):
+                wrote = any(n in _PLAN_WRITE_TOOLS for n in mutations_run)
+                if tools_enabled and not wrote and _claims_plan_change(final_text):
                     if not claim_nudged and _hop < max_hops - 1:
                         claim_nudged = True
                         logger.warning("[coach] reply claimed a plan change without tool calls; nudging")

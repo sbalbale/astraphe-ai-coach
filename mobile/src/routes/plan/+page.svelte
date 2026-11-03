@@ -629,7 +629,13 @@
     if (z.min <= 0) return `< ${z.max + 1} bpm`;
     return `${z.min}–${z.max} bpm`;
   }
-  const mmss = (mins: number) => `${String(Math.floor(mins)).padStart(2, '0')}:00`;
+  // Steps can be fractional minutes (1:30 = 1.5).
+  const mmss = (mins: number) => {
+    const total = Math.round(mins * 60);
+    return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+  };
+  /** Step length: 15′, or 1:30 for fractional minutes. */
+  const stepLen = (mins: number) => (Number.isInteger(mins) ? `${mins}′` : mmss(mins).replace(/^0/, ''));
 
   type SessionStep = {
     title: string;
@@ -892,7 +898,12 @@
           {selectedIso}
           {todayIso}
           dragId={wideDragId}
+          selectedId={wideSelected?.id ?? null}
           onpick={widePick}
+          onpicksession={(iso, id) => {
+            widePick(iso);
+            wideSelId = id;
+          }}
           ondragstart={(id) => (wideDragId = id)}
           ondragend={() => (wideDragId = null)}
           ondrop={wideDrop}
@@ -904,7 +915,12 @@
           {selectedIso}
           {todayIso}
           dragId={wideDragId}
+          selectedId={wideSelected?.id ?? null}
           onpick={widePick}
+          onpicksession={(iso, id) => {
+            widePick(iso);
+            wideSelId = id;
+          }}
           ondragstart={(id) => (wideDragId = id)}
           ondragend={() => (wideDragId = null)}
           ondrop={wideDrop}
@@ -1222,7 +1238,7 @@
                   <span class="text-[11px] text-text2 truncate">{s.sub}</span>
                 </span>
                 {#if s.watts}<span class="font-mono text-xs text-text1">{s.watts}</span>{/if}
-                <span class="w-[34px] text-right font-mono text-xs text-text2">{s.minutes}′</span>
+                <span class="w-[34px] text-right font-mono text-xs text-text2">{stepLen(s.minutes)}</span>
               </button>
             </li>
           {/each}
