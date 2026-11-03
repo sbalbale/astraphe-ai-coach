@@ -4,11 +4,11 @@
    * night's summary, naps, and the last 7 nights. Gets the Sleep page's own night data.
    */
   import EmptyStateCard from '$lib/components/ui/EmptyStateCard.svelte';
-  import { sleepDebtCssColor } from '$lib/scoreColors';
+  import { boundedScoreCssColor, sleepDebtCssColor } from '$lib/scoreColors';
   import { formatMinutes, hourTicks } from '$lib/utils/bodyWide';
 
   type Seg = { stage: string; start_at: string; end_at: string };
-  type Night = { rawDate: string; day: string; label: string; missing: boolean; durationRaw?: number };
+  type Night = { rawDate: string; day: string; label: string; missing: boolean; durationRaw?: number; score?: number | null };
 
   let {
     night,
@@ -62,10 +62,10 @@
     const t0 = segs[0].a;
     const t1 = segs[segs.length - 1].b;
     const px = (t: number) => Math.round(((t - t0) / (t1 - t0)) * W * 10) / 10;
-    return {
-      bars: segs.map((s) => ({ x1: px(s.a), x2: Math.max(px(s.b), px(s.a) + 1), y: ROW_Y[s.stage], stage: s.stage as StageKey })),
-      ticks: hourTicks(t0, t1, 2, hour12)
-    };
+    const bars = segs.map((s) => ({ x1: px(s.a), x2: Math.max(px(s.b), px(s.a) + 1), y: ROW_Y[s.stage], stage: s.stage as StageKey }));
+    // Thin step line joining the stages (vertical connectors), as on the phone.
+    const path = bars.map((bar, i) => `${i === 0 ? 'M' : 'L'}${bar.x1},${bar.y} L${bar.x2},${bar.y}`).join(' ');
+    return { bars, path, ticks: hourTicks(t0, t1, 2, hour12) };
   });
 
   function opacity(stage: StageKey): number {
@@ -112,6 +112,7 @@
         {#if hyp}
           <svg width="100%" height="190" viewBox="0 0 {W} 96" preserveAspectRatio="none" role="img" aria-label="Sleep stage timeline" class="block">
             {#each [12, 36, 60, 84] as y (y)}<line x1="0" y1={y} x2={W} y2={y} stroke="var(--bg3)" vector-effect="non-scaling-stroke"></line>{/each}
+            <path d={hyp.path} fill="none" stroke="var(--border)" stroke-width="1" vector-effect="non-scaling-stroke"></path>
             {#each hyp.bars as bar, i (i)}
               <line x1={bar.x1} y1={bar.y} x2={bar.x2} y2={bar.y} stroke={STAGE_COLOR[bar.stage]} stroke-width="10" stroke-opacity={opacity(bar.stage)}></line>
             {/each}
@@ -199,7 +200,7 @@
       </div>
     {/if}
     <div class="mt-auto flex flex-col gap-2">
-      <span class="font-mono text-[10px] tracking-[0.14em] text-text2">LAST 7 NIGHTS · HOURS ASLEEP</span>
+      <span class="font-mono text-[10px] tracking-[0.14em] text-text2">LAST 7 NIGHTS · HOURS ASLEEP · COLOUR = SLEEP SCORE</span>
       <div class="h-[110px] flex items-end gap-2">
         {#each nights as n, i (n.rawDate)}
           {@const mins = n.missing ? 0 : Number(n.durationRaw) || 0}
@@ -214,7 +215,7 @@
               <span
                 aria-hidden="true"
                 class="block rounded-md {i === selected ? 'ring-1 ring-text0/60' : ''}"
-                style="height: {Math.max(6, Math.min(100, Math.round((mins / 540) * 100)))}%; background: var(--stage-deep); opacity: {mins >= 450 ? 1 : 0.5}"
+                style="height: {Math.max(6, Math.min(100, Math.round((mins / 540) * 100)))}%; background: {n.score ? boundedScoreCssColor(n.score) : 'var(--text3)'}; opacity: {i === selected ? 1 : 0.75}"
               ></span>
             {:else}
               <span aria-hidden="true" class="block h-full rounded-md border border-dashed {i === selected ? 'border-amber/50' : 'border-popover-border'}"></span>

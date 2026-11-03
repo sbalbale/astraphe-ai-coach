@@ -248,6 +248,25 @@
     removingPlanWorkout = false;
   }
 
+  /** Whether a phone-view row's plan session is marked done (from the store's `completed`). */
+  function isPlanDone(w: PlannedWorkout | null): boolean {
+    const id = backendTrainingPlanId(w);
+    return !!id && !!trainingStore.workouts.find((x) => x.id === id)?.completed;
+  }
+  let togglingDone = $state(false);
+  async function toggleSelectedDone() {
+    const planId = backendTrainingPlanId(selectedWorkout);
+    if (!planId) return;
+    togglingDone = true;
+    planActionError = null;
+    try {
+      const ok = await trainingStore.setCompleted(planId, !isPlanDone(selectedWorkout), viewMonthRange.startIso, viewMonthRange.endIso);
+      if (!ok) planActionError = "Couldn't update the session. Try again.";
+    } finally {
+      togglingDone = false;
+    }
+  }
+
   async function removeSelectedTrainingPlan() {
     const planId = backendTrainingPlanId(selectedWorkout);
     if (!planId) return;
@@ -800,6 +819,19 @@
     void wideApply(t.undo, 'Change undone.', focus, false);
   }
 
+  async function wideToggleDone() {
+    const s = wideSelected;
+    if (!s) return;
+    wideSaving = true;
+    wideError = null;
+    try {
+      const ok = await trainingStore.setCompleted(s.id, !s.completed, viewMonthRange.startIso, viewMonthRange.endIso);
+      if (!ok) wideError = "Couldn't update the session. Try again.";
+    } finally {
+      wideSaving = false;
+    }
+  }
+
   async function wideRemove() {
     const s = wideSelected;
     if (!s) return;
@@ -895,6 +927,7 @@
         askCoach(`Swap my ${wideSelected.title} on ${format(selectedDate, 'EEEE d MMMM')} for a different session: `)}
       onadd={() => askCoach(`Add a session to my plan on ${format(selectedDate, 'EEEE d MMMM')}: `)}
       onremove={wideRemove}
+      ontoggledone={wideToggleDone}
       onopen={wideOpenFull}
       onundo={wideUndo}
       ondismiss={() => (wideToast = null)}
@@ -968,7 +1001,7 @@
         {@const steps = structuredSteps(w)}
         <section aria-label="Selected session" class="bg-bg2 border border-border rounded-[24px] p-5 flex flex-col gap-3.5">
           <div class="flex justify-between items-center">
-            <span class="font-mono text-[11px] tracking-[0.14em] uppercase" style="color: var(--blue)">{format(w.date, 'EEE')} · {sessionLabel(w)}</span>
+            <span class="font-mono text-[11px] tracking-[0.14em] uppercase" style="color: var(--blue)">{format(w.date, 'EEE')} · {sessionLabel(w)}{#if isPlanDone(w)}<span class="text-green"> · ✓ Done</span>{/if}</span>
             <button type="button" class="min-h-8 flex items-center gap-1 border-0 bg-transparent p-0 font-mono text-[11px] text-text1 cursor-pointer" onclick={() => openWorkout(w)}>
               {Number.isFinite(Number(w.tss)) ? `${w.tss} TSS · ` : ''}DETAILS
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m9 6 6 6-6 6"></path></svg>
@@ -1050,7 +1083,7 @@
         <button type="button" class="flex items-center gap-3.5 px-[18px] py-4 rounded-[20px] bg-bg2 border border-border text-left w-full cursor-pointer" onclick={() => openWorkout(w)}>
           <span aria-hidden="true" class="shrink-0 w-1.5 h-11 rounded-[3px]" style="background: {sessionColor(w)}"></span>
           <span class="flex-1 min-w-0 flex flex-col gap-[3px]">
-            <span class="font-mono text-[10px] tracking-[0.12em] text-text2 uppercase">{format(w.date, 'EEE d MMM')}</span>
+            <span class="font-mono text-[10px] tracking-[0.12em] text-text2 uppercase">{format(w.date, 'EEE d MMM')}{#if isPlanDone(w)}<span class="text-green"> · ✓ Done</span>{/if}</span>
             <span class="text-base font-medium truncate">{w.title ?? w.type ?? 'Session'}</span>
             <span class="text-xs text-text2">{[w.duration, Number.isFinite(Number(w.tss)) ? `${w.tss} TSS` : null].filter(Boolean).join(' · ')}</span>
           </span>
@@ -1247,7 +1280,20 @@
         {#if planActionError}
           <p class="m-0 text-[13px] text-red">{planActionError}</p>
         {/if}
-        <div class="mt-auto flex gap-2">
+        {#if backendTrainingPlanId(sw) && sw.isoDate <= todayIso}
+          {@const swDone = isPlanDone(sw)}
+          <button
+            type="button"
+            aria-pressed={swDone}
+            disabled={togglingDone}
+            class="mt-auto h-12 rounded-[14px] text-sm font-medium cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50 {swDone ? 'border border-green/40 bg-green-dim text-green' : 'border border-border bg-transparent text-text0'}"
+            onclick={toggleSelectedDone}
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 5 5 9-10"></path></svg>
+            {swDone ? 'Done · tap to undo' : 'Mark as done'}
+          </button>
+        {/if}
+        <div class="{backendTrainingPlanId(sw) && sw.isoDate <= todayIso ? '' : 'mt-auto'} flex gap-2">
           <button type="button" class="flex-1 h-12 rounded-[14px] border border-border bg-transparent text-text0 text-sm font-medium cursor-pointer {sheetMode === 'move' ? 'bg-bg3' : ''}" onclick={() => { moveDate = sw.isoDate; sheetMode = sheetMode === 'move' ? 'none' : 'move'; }}>Move</button>
           <button type="button" class="flex-1 h-12 rounded-[14px] border border-border bg-transparent text-text0 text-sm font-medium cursor-pointer {sheetMode === 'swap' ? 'bg-bg3' : ''}" onclick={() => (sheetMode = sheetMode === 'swap' ? 'none' : 'swap')}>Swap</button>
           <button

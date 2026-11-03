@@ -9,12 +9,13 @@ from app.main import app
 from app.routers.training_plans import _to_workout_row
 
 
-def test_to_workout_row_maps_done_and_modified_statuses_to_completed():
+def test_to_workout_row_only_done_status_is_completed():
     row = {"id": "1", "planned_date": "2026-05-20", "status": "done"}
     assert _to_workout_row(row)["completed"] is True
 
+    # An edited or moved session is not a completed one.
     row2 = {"id": "2", "planned_date": "2026-05-20", "status": "modified"}
-    assert _to_workout_row(row2)["completed"] is True
+    assert _to_workout_row(row2)["completed"] is False
 
     row3 = {"id": "3", "planned_date": "2026-05-20", "status": "planned"}
     assert _to_workout_row(row3)["completed"] is False

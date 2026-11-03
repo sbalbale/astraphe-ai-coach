@@ -76,7 +76,9 @@ def _to_workout_row(row: dict[str, Any]) -> dict[str, Any]:
     d = planned_date if isinstance(planned_date, str) else ""
 
     status = str(row.get("status") or "planned").strip().lower()
-    completed = status in ("done", "modified")
+    # Only "done" is completed. "modified" just means the session was edited or moved
+    # (PUT without completed=True), so it used to show moved future sessions as done.
+    completed = status == "done"
 
     return {
         "id": row.get("id"),

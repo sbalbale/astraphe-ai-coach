@@ -27,18 +27,25 @@
   const yL = (v: number) => (scale ? BASE - ((v - scale.lo) / Math.max(scale.hi - scale.lo, 1)) * 170 : BASE);
 
   const pts = $derived(weeks.map((w, j) => ({ j, w })).filter((p) => p.w.ctl != null));
-  const ctlPts = $derived(pts.map((p) => `${xAt(p.j).toFixed(1)},${yL(p.w.ctl!).toFixed(1)}`));
-  const atlPts = $derived(pts.map((p) => `${xAt(p.j).toFixed(1)},${yL(p.w.atl ?? p.w.ctl!).toFixed(1)}`).join(' '));
+  /** Form bar width; the lines run from the first bar's left edge to the last bar's right edge. */
+  const bw = $derived(Math.max((W / Math.max(n, 1)) * 0.35, 3));
+  const lineX = (k: number) => {
+    const x = xAt(pts[k].j);
+    if (pts.length > 1 && k === 0) return x - bw / 2;
+    if (pts.length > 1 && k === pts.length - 1) return x + bw / 2;
+    return x;
+  };
+  const ctlPts = $derived(pts.map((p, k) => `${lineX(k).toFixed(1)},${yL(p.w.ctl!).toFixed(1)}`));
+  const atlPts = $derived(pts.map((p, k) => `${lineX(k).toFixed(1)},${yL(p.w.atl ?? p.w.ctl!).toFixed(1)}`).join(' '));
   const area = $derived(
     pts.length > 1
-      ? `M${ctlPts[0]} L${ctlPts.join(' L')} L${xAt(pts[pts.length - 1].j).toFixed(1)},${BASE} L${xAt(pts[0].j).toFixed(1)},${BASE} Z`
+      ? `M${ctlPts[0]} L${ctlPts.join(' L')} L${lineX(pts.length - 1).toFixed(1)},${BASE} L${lineX(0).toFixed(1)},${BASE} Z`
       : ''
   );
   const formBars = $derived(
     pts.map((p) => {
       const f = p.w.ctl! - (p.w.atl ?? p.w.ctl!);
       const h = Math.min(Math.abs(f) * 1.6, 28);
-      const bw = Math.max((W / n) * 0.35, 3);
       return { x: xAt(p.j) - bw / 2, w: bw, y: f >= 0 ? BASE - h : BASE, h: Math.max(h, 1), c: formCssColor(f) };
     })
   );

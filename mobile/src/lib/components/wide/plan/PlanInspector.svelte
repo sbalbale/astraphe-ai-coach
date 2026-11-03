@@ -23,6 +23,7 @@
     onswap,
     onadd,
     onremove,
+    ontoggledone,
     onopen,
     onundo,
     ondismiss
@@ -42,6 +43,8 @@
     onswap: () => void;
     onadd: () => void;
     onremove: () => void;
+    /** Marks the selected session done / not done (today and earlier). */
+    ontoggledone: () => void;
     onopen: () => void;
     onundo: () => void;
     ondismiss: () => void;
@@ -160,8 +163,21 @@
     <p role="alert" class="m-0 text-[13px] text-red">{error}</p>
   {/if}
 
+  {#if s && iso <= todayIso}
+    <button
+      type="button"
+      aria-pressed={done}
+      disabled={saving}
+      class="mt-auto h-[42px] rounded-xl text-[13px] font-medium cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50 {done ? 'border border-green/40 bg-green-dim text-green' : 'border border-popover-border bg-transparent text-text0 hover:border-text3'}"
+      onclick={ontoggledone}
+    >
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 5 5 9-10"></path></svg>
+      {done ? 'Done · tap to undo' : 'Mark as done'}
+    </button>
+  {/if}
+
   {#if canAct || (!s && !past)}
-    <div class="relative mt-auto flex flex-col gap-2">
+    <div class="relative {s && iso <= todayIso ? '' : 'mt-auto'} flex flex-col gap-2">
       {#if moveOpen && s}
         <div role="menu" aria-label="Move to" class="absolute left-0 right-0 bottom-[calc(100%+8px)] z-30 p-2 rounded-[18px] bg-popover border border-popover-border shadow-[0_18px_44px_rgba(0,0,0,0.5)] flex flex-col gap-0.5">
           <span class="px-2.5 py-1.5 font-mono text-[10px] tracking-[0.14em] text-text2">MOVE TO (SWAPS DAYS)</span>
