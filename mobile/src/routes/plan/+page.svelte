@@ -12,8 +12,25 @@
   import { goto } from '$app/navigation';
   import { pageHeader, resetPageHeader } from '$lib/stores/pageHeader.svelte';
   import MonthNavigator from '$lib/components/MonthNavigator.svelte';
+  import { viewport } from '$lib/stores/viewport.svelte';
+  import PlanWideHeader from '$lib/components/wide/plan/PlanWideHeader.svelte';
+  import PlanMonthGrid from '$lib/components/wide/plan/PlanMonthGrid.svelte';
+  import PlanWeekColumns from '$lib/components/wide/plan/PlanWeekColumns.svelte';
+  import PlanInspector from '$lib/components/wide/plan/PlanInspector.svelte';
+  import {
+    fmtHoursMinutes,
+    groupByIso,
+    inverseChanges,
+    monthWeeks,
+    planDrop,
+    toWideSession,
+    totals,
+    weekDaysFrom,
+    type WideSession
+  } from '$lib/components/wide/plan/planWide';
   import {
     addDays,
+    addMonths,
     endOfMonth,
     endOfWeek,
     format,
@@ -345,7 +362,8 @@
   // Week view is always the current week.
   const weekStart = startOfWeek(new Date(), { weekStartsOn: 1 });
   $effect(() => {
-    if (planView !== 'week') return;
+    // Phone week view only: the wide week view navigates to any week itself.
+    if (planView !== 'week' || viewport.wide) return;
     const iso = trainingStore.selectedDate;
     const startIso = format(weekStart, 'yyyy-MM-dd');
     const endIso = format(addDays(weekStart, 6), 'yyyy-MM-dd');
@@ -487,12 +505,14 @@
     goto(`/chat?prompt=${encodeURIComponent(prompt)}`);
   }
 
-  $effect(() => {
+  $effect.pre(() => {
     if (noPlanYet || planCheckPending) {
       resetPageHeader();
       return resetPageHeader;
     }
     pageHeader.eyebrow = periodSummary;
+    // Wide: the page draws the design's header (arrows + Today + Week/Month) itself.
+    pageHeader.hideOnWide = true;
     pageHeader.segments = [
       { value: 'week', label: 'Week' },
       { value: 'month', label: 'Month' }
@@ -659,8 +679,228 @@
     // ticks are an each-key, so keep them unique.
     return [...new Set([0, 1, 2, 3].map((i) => Math.round((i * step) / 5) * 5).concat(total))];
   }
+
+  // --- Wide (tablet / desktop): month or week calendar + inspector (design: WPlan) ---
+  const wide = $derived(viewport.wide);
+  let wideView = $state<'week' | 'month'>('month');
+  const wideSessions = $derived.by<WideSession[]>(() => {
+    const unique = Array.from(new Map((trainingStore.workouts ?? []).map((w) => [w.id, w])).values());
+    return unique.map((w) => toWideSession(w, planFtp));
+  });
+  const wideByIso = $derived(groupByIso(wideSessions));
+  const wideWeekStart = $derived(startOfWeek(selectedDate, { weekStartsOn: 1 }));
+  const wideWeekDays = $derived(weekDaysFrom(wideWeekStart));
+  const wideMonthWeeks = $derived(monthWeeks(viewMonth));
+  const wideDaySessions = $derived(wideByIso[selectedIso] ?? []);
+  let wideSelId = $state<string | null>(null);
+  const wideSelected = $derived(
+    wideDaySessions.find((s) => s.id === wideSelId) ?? wideDaySessions[0] ?? null
+  );
+  let wideDragId = $state<string | null>(null);
+  let wideSaving = $state(false);
+  let wideError = $state<string | null>(null);
+  let wideToast = $state<{ message: string; canUndo: boolean; undo: { id: string; date: string }[] } | null>(null);
+
+  const wideTitle = $derived(
+    wideView === 'month'
+      ? format(viewMonth, viewMonth.getFullYear() === new Date().getFullYear() ? 'MMMM' : 'MMMM yyyy')
+      : `${format(wideWeekDays[0], 'd MMM')} – ${format(wideWeekDays[6], 'd MMM')}`
+  );
+  const wideKicker = $derived.by(() => {
+    if (wideView === 'month') {
+      const days = wideMonthWeeks.flat().filter((d) => isSameMonth(d, viewMonth));
+      const t = totals(days, wideByIso);
+      return `${t.count} session${t.count === 1 ? '' : 's'} · ${fmtHoursMinutes(t.minutes)} · ${t.tss} TSS planned`;
+    }
+    const weeksAway = Math.round((wideWeekStart.getTime() - weekStart.getTime()) / (7 * 86_400_000));
+    const rel =
+      weeksAway === 0 ? 'This week' : weeksAway === 1 ? 'Next week' : weeksAway === -1 ? 'Last week' : `Week of ${format(wideWeekStart, 'd MMM')}`;
+    const t = totals(wideWeekDays, wideByIso);
+    return `${rel} · ${t.count} session${t.count === 1 ? '' : 's'} · ${t.tss} TSS`;
+  });
+  const wideAtToday = $derived(
+    selectedIso === todayIso &&
+      (wideView === 'month' ? isSameMonth(viewMonth, new Date()) : isSameDay(wideWeekStart, weekStart))
+  );
+
+  function wideClearNotes() {
+    wideToast = null;
+    wideError = null;
+  }
+
+  function widePick(iso: string) {
+    if (iso !== selectedIso) wideSelId = null;
+    trainingStore.selectedDate = iso;
+  }
+
+  function wideStep(dir: 1 | -1) {
+    wideClearNotes();
+    wideSelId = null;
+    if (wideView === 'month') {
+      const m = startOfMonth(addMonths(viewMonth, dir));
+      viewMonth = m;
+      trainingStore.selectedDate = isSameMonth(m, new Date()) ? todayIso : format(m, 'yyyy-MM-dd');
+      return;
+    }
+    const ws = addDays(wideWeekStart, 7 * dir);
+    const inWeek = todayIso >= format(ws, 'yyyy-MM-dd') && todayIso <= format(addDays(ws, 6), 'yyyy-MM-dd');
+    trainingStore.selectedDate = inWeek ? todayIso : format(ws, 'yyyy-MM-dd');
+    // The store holds the month grid; the grid of the week-start's month covers the whole week.
+    viewMonth = startOfMonth(ws);
+  }
+
+  function wideToday() {
+    wideClearNotes();
+    wideSelId = null;
+    viewMonth = startOfMonth(new Date());
+    trainingStore.selectedDate = todayIso;
+  }
+
+  function wideSetView(v: 'week' | 'month') {
+    wideView = v;
+    viewMonth = startOfMonth(v === 'week' ? wideWeekStart : selectedDate);
+  }
+
+  async function wideApply(changes: { id: string; date: string }[], message: string, focusIso: string, undoable = true) {
+    const before = Object.fromEntries(wideSessions.map((s) => [s.id, s.isoDate]));
+    wideSaving = true;
+    wideError = null;
+    try {
+      const ok = await trainingStore.rescheduleWorkouts(changes, viewMonthRange.startIso, viewMonthRange.endIso);
+      if (!ok) {
+        wideError = "Couldn't update the plan. Try again.";
+        wideToast = null;
+        return;
+      }
+      trainingStore.selectedDate = focusIso;
+      wideSelId = changes[0]?.id ?? null;
+      wideToast = undoable ? { message, canUndo: true, undo: inverseChanges(changes, before) } : { message, canUndo: false, undo: [] };
+    } finally {
+      wideSaving = false;
+    }
+  }
+
+  function wideDrop(fromId: string, toIso: string) {
+    wideDragId = null;
+    if (wideSaving) return;
+    const from = wideSessions.find((s) => s.id === fromId);
+    if (!from) return;
+    const changes = planDrop(from, toIso, wideByIso, todayIso);
+    if (!changes) return;
+    const day = format(parseIsoLocal(toIso), 'EEE d MMM');
+    const other = changes.length > 1 ? wideSessions.find((s) => s.id === changes[1].id) : null;
+    const message = other ? `${from.title} swapped with ${other.title} (${day}).` : `${from.title} moved to ${day}.`;
+    void wideApply(changes, message, toIso);
+  }
+
+  function wideUndo() {
+    const t = wideToast;
+    if (!t?.undo.length) return;
+    const focus = t.undo[0].date;
+    void wideApply(t.undo, 'Change undone.', focus, false);
+  }
+
+  async function wideRemove() {
+    const s = wideSelected;
+    if (!s) return;
+    const ok = await confirm({
+      title: 'Remove from plan?',
+      message: 'This session will be removed from your calendar. You can add or schedule workouts again anytime.',
+      confirmText: 'Remove',
+      cancelText: 'Cancel',
+      confirmTone: 'danger'
+    });
+    if (!ok) return;
+    wideSaving = true;
+    wideError = null;
+    try {
+      const deleted = await trainingStore.deleteTrainingPlan(s.id, viewMonthRange.startIso, viewMonthRange.endIso);
+      if (deleted) {
+        wideSelId = null;
+        wideToast = { message: `${s.title} removed.`, canUndo: false, undo: [] };
+      } else {
+        wideError = "Couldn't remove the session. Try again.";
+      }
+    } finally {
+      wideSaving = false;
+    }
+  }
+
+  function wideOpenFull() {
+    const s = wideSelected;
+    if (!s) return;
+    const match = plannedWorkouts.find((w) => backendTrainingPlanId(w) === s.id);
+    if (match) openWorkout(match);
+  }
 </script>
 
+{#if wide && hasPremiumAccess(authStore.tier) && !planCheckPending && !noPlanYet}
+  <!-- Wide: calendar (month grid or week columns) + inspector, flush to the content edges. -->
+  <div class="flex-1 min-h-[640px] -mr-10 -my-8 flex">
+    <div class="flex-1 min-w-0 flex flex-col gap-[18px] py-8 pr-7">
+      <PlanWideHeader
+        kicker={wideKicker}
+        title={wideTitle}
+        view={wideView}
+        atToday={wideAtToday}
+        onprev={() => wideStep(-1)}
+        onnext={() => wideStep(1)}
+        ontoday={wideToday}
+        onview={wideSetView}
+      />
+      {#if trainingStore.isLoading && wideSessions.length === 0}
+        <div aria-busy="true" aria-label="Loading plan" class="flex-1 rounded-[14px] bg-bg2 animate-pulse"></div>
+      {:else if wideView === 'month'}
+        <PlanMonthGrid
+          weeks={wideMonthWeeks}
+          {viewMonth}
+          byIso={wideByIso}
+          {selectedIso}
+          {todayIso}
+          dragId={wideDragId}
+          onpick={widePick}
+          ondragstart={(id) => (wideDragId = id)}
+          ondragend={() => (wideDragId = null)}
+          ondrop={wideDrop}
+        />
+      {:else}
+        <PlanWeekColumns
+          days={wideWeekDays}
+          byIso={wideByIso}
+          {selectedIso}
+          {todayIso}
+          dragId={wideDragId}
+          onpick={widePick}
+          ondragstart={(id) => (wideDragId = id)}
+          ondragend={() => (wideDragId = null)}
+          ondrop={wideDrop}
+        />
+      {/if}
+    </div>
+    <PlanInspector
+      date={selectedDate}
+      {todayIso}
+      sessions={wideDaySessions}
+      selected={wideSelected}
+      weekDays={wideWeekDays}
+      byIso={wideByIso}
+      saving={wideSaving}
+      error={wideError}
+      toast={wideToast}
+      narrow={!viewport.landscape}
+      onselect={(id) => (wideSelId = id)}
+      onmove={(iso) => wideSelected && wideDrop(wideSelected.id, iso)}
+      onswap={() =>
+        wideSelected &&
+        askCoach(`Swap my ${wideSelected.title} on ${format(selectedDate, 'EEEE d MMMM')} for a different session: `)}
+      onadd={() => askCoach(`Add a session to my plan on ${format(selectedDate, 'EEEE d MMMM')}: `)}
+      onremove={wideRemove}
+      onopen={wideOpenFull}
+      onundo={wideUndo}
+      ondismiss={() => (wideToast = null)}
+    />
+  </div>
+{:else}
 <div class="flex flex-col gap-4">
   {#if !hasPremiumAccess(authStore.tier)}
     <EmptyStateCard icon="calendar-plus" tone="blue" eyebrow="Premium" title="Training plans are a premium feature" message="Your coach builds and adjusts a week-by-week plan around your goal and recovery. Upgrade to premium to use it." />
@@ -826,6 +1066,7 @@
     </div>
   {/if}
 </div>
+{/if}
 
 {#if selectedWorkout}
   {@const sw = selectedWorkout}
@@ -834,15 +1075,15 @@
   {@const ifValue = mins > 0 && Number(sw.tss) > 0 ? Math.sqrt(Number(sw.tss) / ((mins / 60) * 100)) : null}
   {@const atTarget = steps.filter((s) => s.zone >= 3).reduce((a, s) => a + s.minutes, 0)}
   {@const cur = steps[Math.min(stepIdx, Math.max(steps.length - 1, 0))]}
-  <div class="fixed inset-0 z-50 flex flex-col justify-end" role="dialog" aria-modal="true" aria-labelledby="sess-title">
+  <div class="fixed inset-0 z-50 flex {wide ? 'items-center justify-center p-8' : 'flex-col justify-end'}" role="dialog" aria-modal="true" aria-labelledby="sess-title">
     <button type="button" class="absolute inset-0 bg-black/60" aria-label="Close" onclick={closeWorkout}></button>
     <div
       use:modalDialog={{ onEscape: closeWorkout }}
-      class="relative overflow-y-auto outline-none bg-bg1 border-t border-border px-5 pt-2.5 flex flex-col gap-4 transition-[max-height,border-radius] duration-300 ease-out {sheetExpanded ? 'rounded-none' : 'rounded-t-[28px]'}"
-      style="max-height: {sheetExpanded ? '100dvh' : '88dvh'}; height: {sheetExpanded ? '100dvh' : 'auto'}; padding-bottom: max(28px, env(safe-area-inset-bottom, 0px)); padding-top: {sheetExpanded ? 'max(10px, env(safe-area-inset-top, 0px))' : '10px'};"
-      onscroll={(e) => { if (!sheetExpanded && (e.currentTarget as HTMLElement).scrollTop > 8) sheetExpanded = true; }}
+      class="relative overflow-y-auto outline-none bg-bg1 border-border px-5 pt-2.5 flex flex-col gap-4 transition-[max-height,border-radius] duration-300 ease-out {wide ? 'w-full max-w-[640px] border rounded-[28px]' : sheetExpanded ? 'border-t rounded-none' : 'border-t rounded-t-[28px]'}"
+      style="max-height: {sheetExpanded && !wide ? '100dvh' : '88dvh'}; height: {sheetExpanded && !wide ? '100dvh' : 'auto'}; padding-bottom: max(28px, env(safe-area-inset-bottom, 0px)); padding-top: {sheetExpanded && !wide ? 'max(10px, env(safe-area-inset-top, 0px))' : '10px'};"
+      onscroll={(e) => { if (!wide && !sheetExpanded && (e.currentTarget as HTMLElement).scrollTop > 8) sheetExpanded = true; }}
     >
-      <span aria-hidden="true" class="self-center w-10 h-1 rounded-sm bg-bg3"></span>
+      {#if !wide}<span aria-hidden="true" class="self-center w-10 h-1 rounded-sm bg-bg3"></span>{/if}
 
       <div class="flex justify-between items-start gap-3">
         <div class="flex flex-col gap-1.5 min-w-0">
