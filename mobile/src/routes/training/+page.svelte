@@ -1,4 +1,5 @@
 <script module lang="ts">
+  import { WEEK_STARTS_ON } from '$lib/utils/week';
   import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 
   const workoutAnalysisMemo = new SvelteMap<string, string | null>();
@@ -309,8 +310,8 @@
     if (!weekPickerValue) weekPickerValue = format(new Date(), 'yyyy-MM-dd');
   });
 
-  const selectedWeekStart = $derived.by(() => startOfWeek(parseDateInputLocal(weekPickerValue), { weekStartsOn: 1 }));
-  const selectedWeekEnd = $derived(endOfWeek(selectedWeekStart, { weekStartsOn: 1 }));
+  const selectedWeekStart = $derived.by(() => startOfWeek(parseDateInputLocal(weekPickerValue), { weekStartsOn: WEEK_STARTS_ON }));
+  const selectedWeekEnd = $derived(endOfWeek(selectedWeekStart, { weekStartsOn: WEEK_STARTS_ON }));
 
   const workoutIdFromUrl = $derived($page.url.searchParams.get('workout_id'));
 
@@ -569,7 +570,7 @@
   // costing an LLM generation per view. Removed.)
 
   // --- Design view: Log (this week + activities) ---
-  const isCurrentWeek = $derived(format(selectedWeekStart, "yyyy-MM-dd") === format(startOfWeek(new Date(), { weekStartsOn: 1 }), "yyyy-MM-dd"));
+  const isCurrentWeek = $derived(format(selectedWeekStart, "yyyy-MM-dd") === format(startOfWeek(new Date(), { weekStartsOn: WEEK_STARTS_ON }), "yyyy-MM-dd"));
   const weekRangeLabel = $derived(
     format(selectedWeekStart, "MMM") === format(selectedWeekEnd, "MMM")
       ? `${format(selectedWeekStart, "d")} – ${format(selectedWeekEnd, "d MMM")}`

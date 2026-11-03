@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { WEEKDAY_LETTERS } from '$lib/utils/week';
+  import { WEEK_STARTS_ON } from '$lib/utils/week';
   import {
     addDays,
     addMonths,
@@ -70,8 +72,8 @@
     if (selectedDate) viewMonth = selectedDate;
   });
 
-  const gridStart = $derived(startOfWeek(startOfMonth(viewMonth), { weekStartsOn: 1 }));
-  const gridEnd = $derived(endOfWeek(endOfMonth(viewMonth), { weekStartsOn: 1 }));
+  const gridStart = $derived(startOfWeek(startOfMonth(viewMonth), { weekStartsOn: WEEK_STARTS_ON }));
+  const gridEnd = $derived(endOfWeek(endOfMonth(viewMonth), { weekStartsOn: WEEK_STARTS_ON }));
   const days = $derived.by(() => {
     const out: Date[] = [];
     for (let d = gridStart; d <= gridEnd; d = addDays(d, 1)) out.push(d);
@@ -138,7 +140,7 @@
     selectedDate ? format(selectedDate, 'MMM d, yyyy') : placeholder
   );
 
-  const dow = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+  const dow = WEEKDAY_LETTERS;
 
 
 

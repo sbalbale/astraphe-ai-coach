@@ -491,10 +491,10 @@ def test_handle_clear_training_plans_success():
     db.table.return_value.delete.return_value.eq.return_value.in_.assert_called_with("status", ["planned", "modified"])
 
 
-def test_handle_clear_training_plans_rejects_more_than_two_weeks():
+def test_handle_clear_training_plans_rejects_more_than_two_months():
     db = MagicMock()
     result = coach_tools.handle_clear_training_plans(
-        {"start_date": "2026-05-01", "end_date": "2026-05-20"}, athlete_id="athlete-1", db=db
+        {"start_date": "2026-05-01", "end_date": "2026-07-05"}, athlete_id="athlete-1", db=db
     )
     assert "error" in result
     db.table.assert_not_called()

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { WEEKDAY_SHORT } from '$lib/utils/week';
   /** Wide Plan month grid: 7 day cells + a weekly TSS column; sessions drag onto other days. */
   import { format, isSameMonth } from 'date-fns';
   import { fmtDur, isMovable, totals, type WideSession } from './planWide';
@@ -37,7 +38,7 @@
 </script>
 
 <div aria-hidden="true" class="grid grid-cols-[repeat(7,minmax(0,1fr))_64px] gap-1.5 font-mono text-[10px] tracking-[0.1em] text-text2">
-  <span>MON</span><span>TUE</span><span>WED</span><span>THU</span><span>FRI</span><span>SAT</span><span>SUN</span><span class="text-right">TSS</span>
+  {#each WEEKDAY_SHORT as d (d)}<span>{d}</span>{/each}<span class="text-right">TSS</span>
 </div>
 <div class="flex-1 min-h-0 flex flex-col gap-1.5">
   {#each weeks as days (days[0].toISOString())}

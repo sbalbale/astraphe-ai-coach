@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { WEEKDAY_LETTERS } from '$lib/utils/week';
+  import { WEEK_STARTS_ON } from '$lib/utils/week';
   /**
    * Week header for a card: ‹ [week ▾ / year] › plus a "This week" shortcut, with a month
    * calendar popover where tapping any day picks its Monday–Sunday week.
@@ -28,7 +30,7 @@
     onchange?: (value: string) => void;
   } = $props();
 
-  const WEEK = { weekStartsOn: 1 as const };
+  const WEEK = { weekStartsOn: WEEK_STARTS_ON };
   const todayIso = format(new Date(), 'yyyy-MM-dd');
   const thisWeekStart = format(startOfWeek(new Date(), WEEK), 'yyyy-MM-dd');
 
@@ -140,7 +142,7 @@
         </button>
       </div>
       <div aria-hidden="true" class="grid grid-cols-7 pb-1 text-center font-mono text-[10px] tracking-[0.08em] text-text2">
-        {#each ['M', 'T', 'W', 'T', 'F', 'S', 'S'] as l, i (i)}<span class="py-1">{l}</span>{/each}
+        {#each WEEKDAY_LETTERS as l, i (i)}<span class="py-1">{l}</span>{/each}
       </div>
       <div class="flex flex-col gap-1">
         {#each rows as row, r (r)}

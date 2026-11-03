@@ -4,6 +4,7 @@
  */
 import { addDays, endOfMonth, endOfWeek, format, startOfMonth, startOfWeek } from 'date-fns';
 import type { Interval, Workout, WorkoutZone } from '$lib/types/training';
+import { WEEK_STARTS_ON } from '$lib/utils/week';
 
 export type WideStep = { name: string; minutes: number; zone: number; target?: string };
 export type WideBar = { minutes: number; pct: number; hard: boolean };
@@ -113,10 +114,10 @@ export function groupByIso(sessions: WideSession[]): Record<string, WideSession[
   return out;
 }
 
-/** Monday-first weeks covering `month` (first row may start in the previous month). */
+/** Sunday-first weeks covering `month` (first row may start in the previous month). */
 export function monthWeeks(month: Date): Date[][] {
-  const start = startOfWeek(startOfMonth(month), { weekStartsOn: 1 });
-  const end = endOfWeek(endOfMonth(month), { weekStartsOn: 1 });
+  const start = startOfWeek(startOfMonth(month), { weekStartsOn: WEEK_STARTS_ON });
+  const end = endOfWeek(endOfMonth(month), { weekStartsOn: WEEK_STARTS_ON });
   const weeks: Date[][] = [];
   for (let d = start; d <= end; d = addDays(d, 7)) {
     weeks.push(Array.from({ length: 7 }, (_, i) => addDays(d, i)));

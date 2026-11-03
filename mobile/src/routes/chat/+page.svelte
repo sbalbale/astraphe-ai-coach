@@ -18,6 +18,7 @@
   import CoachContextPane from '$lib/components/wide/coach/CoachContextPane.svelte';
   import { buildCoachSteps, coachStatusText, type CoachStep } from '$lib/coachProgress';
   import { COACH_REPLY_WAIT_MS, remainingReplyWaitMs } from '$lib/utils/coachReply';
+  import { CHAT_FILE_ACCEPT, documentBadge, documentProblem, fileExtension, isDocumentFile, isImageFile } from '$lib/utils/chatAttachments';
 
   type Conversation = { id: string; title?: string | null; created_at?: string; updated_at?: string };
   type Message = {
@@ -25,6 +26,8 @@
     role: 'user' | 'ai';
     text: string;
     image_urls?: string[];
+    /** Documents attached to a user message (names only; the text stays server-side). */
+    attachments?: { name: string; kind: string }[];
     created_at?: string;
     streaming?: boolean;
     statusText?: string;
@@ -44,6 +47,12 @@
   let input = $state('');
   let loading = $state(false);
   let pendingImageUrls = $state<string[]>([]);
+  /** Documents picked for the next message: read on the server first, then sent with it. */
+  type PendingDoc = { id: string; name: string; status: 'reading' | 'ready' | 'error'; content?: string; error?: string };
+  let pendingDocs = $state<PendingDoc[]>([]);
+  let attachError = $state<string | null>(null);
+  const docsReading = $derived(pendingDocs.some((d) => d.status === 'reading'));
+  const readyDocs = $derived(pendingDocs.filter((d) => d.status === 'ready' && d.content));
   let chatContainer: HTMLElement;
   let fileInput: HTMLInputElement | null = null;
   let chatInputEl = $state<HTMLTextAreaElement | null>(null);
@@ -101,6 +110,7 @@
         role: m.role === 'user' ? 'user' : 'ai',
         text: String(m.content ?? ''),
         image_urls: Array.isArray(m.image_urls) ? m.image_urls : [],
+        attachments: Array.isArray(m.attachments) ? m.attachments : [],
         created_at: m.created_at
       }));
       // A conversation loaded (or reloaded, e.g. re-opening the app) whose
@@ -327,20 +337,45 @@
     const files = Array.from(inputEl.files || []);
     inputEl.value = '';
     if (files.length === 0) return;
+    attachError = null;
+
+    const images = files.filter((f) => isImageFile(f) && !isDocumentFile(f));
+    const docs = files.filter((f) => !images.includes(f));
+    for (const f of docs) void addDocument(f);
+    if (images.length === 0) return;
 
     const cid = await ensureConversation();
     if (!cid) return;
 
     try {
       loading = true;
-      for (const f of files) {
+      for (const f of images) {
         const url = await api.uploadCoachImage(f, cid);
         pendingImageUrls = [...pendingImageUrls, url];
       }
     } catch (err) {
       console.warn('Image upload failed', err);
+      attachError = "Couldn't upload that photo. Try again.";
     } finally {
       loading = false;
+    }
+  }
+
+  /** Reads a document on the server; its chip shows reading → ready (or the reason it failed). */
+  async function addDocument(file: File) {
+    const problem = documentProblem(file, pendingDocs.filter((d) => d.status !== 'error').length);
+    if (problem) {
+      attachError = problem;
+      return;
+    }
+    const id = `doc-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    pendingDocs = [...pendingDocs, { id, name: file.name, status: 'reading' }];
+    try {
+      const res = await api.uploadCoachDocument(file);
+      pendingDocs = pendingDocs.map((d) => (d.id === id ? { ...d, status: 'ready', content: res.content } : d));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : `Couldn't read ${file.name}.`;
+      pendingDocs = pendingDocs.map((d) => (d.id === id ? { ...d, status: 'error', error: msg } : d));
     }
   }
 
@@ -442,7 +477,9 @@
 
   async function send() {
     const text = input.trim();
-    if (!text && pendingImageUrls.length === 0) return;
+    if (!text && pendingImageUrls.length === 0 && readyDocs.length === 0) return;
+    // Wait for documents still being read rather than sending without them.
+    if (docsReading) return;
     // Serialize sends: a reply still in flight (loading stays true from the
     // moment it's submitted until pollForCoachReply resolves it — see that
     // function's docstring) must finish before the next one starts, or a
@@ -457,8 +494,17 @@
     const cid = await ensureConversation();
     const image_urls = pendingImageUrls;
     pendingImageUrls = [];
+    const documents = readyDocs.map((d) => ({ name: d.name, content: d.content as string }));
+    pendingDocs = [];
+    attachError = null;
 
-    const userMsg: Message = { id: `local-user-${Date.now()}`, role: 'user', text, image_urls };
+    const userMsg: Message = {
+      id: `local-user-${Date.now()}`,
+      role: 'user',
+      text,
+      image_urls,
+      attachments: documents.map((d) => ({ name: d.name, kind: fileExtension(d.name) }))
+    };
     messages.push(userMsg);
     loading = true;
     scrollToBottom();
@@ -477,10 +523,11 @@
       // takes — pollForCoachReply picks up the result, and a push
       // notification covers the case where the athlete has already left.
       const data = await api.submitCoachMessageAsync({
-        message: text || '(image)',
+        message: text || (documents.length ? '' : '(image)'),
         recent_tss: athleteStore.recent_tss,
         conversation_id: cid,
-        image_urls
+        image_urls,
+        documents
       });
       if (sendToken !== activePollToken) return; // user moved on; the reply is still saved server-side
       if (data.conversation_id) conversationId = data.conversation_id;
@@ -678,6 +725,16 @@
         </div>
       {:else}
         <div class="self-end max-w-[78%] min-w-0 rounded-[18px_18px_6px_18px] bg-border text-text0 break-words whitespace-pre-wrap {wide ? 'px-4 py-3 text-[15px] leading-normal' : 'px-3.5 py-3 text-sm leading-[1.45]'}">
+          {#if msg.attachments && msg.attachments.length > 0}
+            <div class="flex gap-1.5 flex-wrap justify-end {msg.text.trim() || msg.image_urls?.length ? 'mb-2' : ''}">
+              {#each msg.attachments as a, i (a.name + i)}
+                <span class="inline-flex items-center gap-2 max-w-full h-9 pl-1.5 pr-3 rounded-xl bg-bg2 border border-popover-border text-[13px]">
+                  <span aria-hidden="true" class="shrink-0 h-6 px-1.5 rounded-md bg-bg3 font-mono text-[9px] tracking-[0.06em] text-text1 flex items-center">{documentBadge(a.kind || a.name)}</span>
+                  <span class="truncate">{a.name}</span>
+                </span>
+              {/each}
+            </div>
+          {/if}
           {#if msg.image_urls && msg.image_urls.length > 0}
             <div class="flex gap-2 flex-wrap mb-2 justify-end">
               {#each msg.image_urls as u (u)}
@@ -714,16 +771,43 @@
       </div>
     {/if}
 
+    {#if pendingDocs.length > 0}
+      <div class="flex gap-1.5 flex-wrap" aria-label="Attached documents">
+        {#each pendingDocs as d (d.id)}
+          <span
+            class="relative inline-flex items-center gap-2 max-w-full h-10 pl-1.5 pr-8 rounded-xl border text-[13px] {d.status === 'error' ? 'bg-red-dim border-red/40 text-red' : 'bg-bg2 border-popover-border text-text0'}"
+            title={d.error ?? d.name}
+          >
+            <span aria-hidden="true" class="shrink-0 h-7 px-1.5 rounded-md bg-bg3 font-mono text-[9px] tracking-[0.06em] text-text1 flex items-center">{documentBadge(d.name)}</span>
+            <span class="flex flex-col min-w-0 leading-tight">
+              <span class="truncate max-w-[220px]">{d.name}</span>
+              <span class="text-[11px] {d.status === 'error' ? 'text-red' : 'text-text2'}">{d.status === 'reading' ? 'Reading…' : d.status === 'error' ? "Couldn't read" : 'Ready'}</span>
+            </span>
+            <button
+              type="button"
+              class="absolute right-1.5 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full border-0 bg-transparent text-text2 text-[12px] flex items-center justify-center cursor-pointer hover:text-text0"
+              aria-label="Remove {d.name}"
+              onclick={() => { pendingDocs = pendingDocs.filter((x) => x.id !== d.id); }}
+            >✕</button>
+          </span>
+        {/each}
+      </div>
+    {/if}
+    {#if attachError || pendingDocs.some((d) => d.status === 'error')}
+      <p role="alert" class="m-0 text-[12px] text-red">{attachError ?? pendingDocs.find((d) => d.status === 'error')?.error}</p>
+    {/if}
+
     <form class="flex gap-2 items-end rounded-[20px] bg-bg2 border border-border {wide ? 'p-2' : 'p-1.5'}" onsubmit={(e) => { e.preventDefault(); if (!loading) void send(); }}>
-      <input bind:this={fileInput} type="file" accept="image/*" multiple class="hidden" onchange={onFilesSelected} />
+      <input bind:this={fileInput} type="file" accept={CHAT_FILE_ACCEPT} multiple class="hidden" onchange={onFilesSelected} />
       <button
         type="button"
         class="w-11 h-11 shrink-0 rounded-[14px] border-0 bg-transparent text-text2 flex items-center justify-center cursor-pointer disabled:opacity-40"
         disabled={loading}
         onclick={pickImage}
-        aria-label="Attach image"
+        aria-label="Attach a photo or document"
+        title="Attach a photo, PDF, Word or Excel file"
       >
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"></rect><circle cx="9" cy="10" r="1.6"></circle><path d="m21 16-5-5-9 9"></path></svg>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21 11.5-8.6 8.6a5.5 5.5 0 0 1-7.8-7.8l8.6-8.6a3.7 3.7 0 0 1 5.2 5.2l-8.6 8.6a1.8 1.8 0 0 1-2.6-2.6l8-8"></path></svg>
       </button>
       <label for="coach-input" class="sr-only">Ask your coach</label>
       <textarea
@@ -745,8 +829,8 @@
       <button
         type="submit"
         class="w-11 h-11 shrink-0 rounded-[14px] border-0 bg-blue text-on-accent flex items-center justify-center cursor-pointer disabled:opacity-35 disabled:pointer-events-none"
-        disabled={loading || (!input.trim() && pendingImageUrls.length === 0)}
-        aria-label="Send"
+        disabled={loading || docsReading || (!input.trim() && pendingImageUrls.length === 0 && readyDocs.length === 0)}
+        aria-label={docsReading ? 'Reading your document…' : 'Send'}
       >
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"></path></svg>
       </button>

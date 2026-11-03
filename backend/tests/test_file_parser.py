@@ -64,8 +64,8 @@ def test_parse_xlsx_skips_fully_empty_rows():
 
     result = file_parser.parse_xlsx(buf.getvalue())
 
-    # The fully-empty middle row is skipped; only "a" and "b" rows remain.
-    assert result == "[Sheet: Sheet]\na | \nb | "
+    # The fully-empty middle row is skipped, and trailing empty cells don't leave "a | ".
+    assert result == "[Sheet: Sheet]\na\nb"
 
 
 def test_parse_pdf_extracts_text_per_page():
@@ -88,13 +88,79 @@ def test_parse_document_dispatches_by_extension():
     assert file_parser.parse_document(b"anything", "notes.txt") == ""
 
 
-def test_parse_document_dispatches_xlsx_and_xls(monkeypatch):
-    calls = []
-    monkeypatch.setattr(file_parser, "parse_xlsx", lambda b: calls.append(b) or "parsed")
+def test_parse_document_dispatches_xlsx_xls_and_docx(monkeypatch):
+    monkeypatch.setattr(file_parser, "parse_xlsx", lambda b: "xlsx")
+    monkeypatch.setattr(file_parser, "parse_xls", lambda b: "xls")
+    monkeypatch.setattr(file_parser, "parse_docx", lambda b: "docx")
 
-    assert file_parser.parse_document(b"x", "sheet.xlsx") == "parsed"
-    assert file_parser.parse_document(b"x", "sheet.xls") == "parsed"
-    assert len(calls) == 2
+    assert file_parser.parse_document(b"x", "sheet.xlsx") == "xlsx"
+    # Legacy .xls needs xlrd; openpyxl only reads .xlsx.
+    assert file_parser.parse_document(b"x", "sheet.xls") == "xls"
+    assert file_parser.parse_document(b"x", "Plan.DOCX") == "docx"
+
+
+def _docx_bytes(build) -> bytes:
+    from docx import Document
+
+    doc = Document()
+    build(doc)
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
+def test_parse_docx_keeps_headings_lists_and_tables_in_order():
+    def build(doc):
+        doc.add_heading("Week 1", level=1)
+        doc.add_paragraph("Base block. Keep it easy.")
+        doc.add_paragraph("Fuel 60 g/h", style="List Bullet")
+        t = doc.add_table(rows=3, cols=3)
+        for r, row in enumerate([["Day", "Session", "Duration"], ["Mon", "Rest", ""], ["Tue", "Threshold 2x20", "90"]]):
+            for c, v in enumerate(row):
+                t.cell(r, c).text = v
+        doc.add_paragraph("Week 2 follows.")
+
+    text = file_parser.parse_docx(_docx_bytes(build))
+
+    assert text.index("## Week 1") < text.index("Base block") < text.index("[Table]") < text.index("Week 2 follows")
+    assert "- Fuel 60 g/h" in text
+    assert "Day | Session | Duration" in text
+    assert "Tue | Threshold 2x20 | 90" in text
+
+
+def test_parse_docx_lists_a_merged_cell_once():
+    def build(doc):
+        t = doc.add_table(rows=1, cols=3)
+        merged = t.cell(0, 0).merge(t.cell(0, 1))
+        merged.text = "Week 1"
+        t.cell(0, 2).text = "Build"
+
+    assert "Week 1 | Build" in file_parser.parse_docx(_docx_bytes(build))
+
+
+def test_parse_docx_stops_at_max_chars(monkeypatch):
+    monkeypatch.setattr(file_parser, "_MAX_CHARS", 50)
+
+    def build(doc):
+        for i in range(40):
+            doc.add_paragraph(f"Session line number {i}")
+
+    assert len(file_parser.parse_docx(_docx_bytes(build))) <= 50
+
+
+def test_parse_docx_rejects_a_zip_bomb(monkeypatch):
+    import pytest
+
+    monkeypatch.setattr(file_parser, "_MAX_DOCX_UNCOMPRESSED_BYTES", 100)
+    with pytest.raises(file_parser.DocumentTooComplexError):
+        file_parser.parse_docx(_docx_bytes(lambda doc: doc.add_paragraph("x" * 1000)))
+
+
+def test_cell_text_drops_trailing_zero_from_whole_floats():
+    assert file_parser._cell_text(3.0) == "3"
+    assert file_parser._cell_text(2.5) == "2.5"
+    assert file_parser._cell_text(None) == ""
+    assert file_parser._cell_text("  Z2  ") == "Z2"
 
 
 def test_parse_document_dispatches_pdf(monkeypatch):

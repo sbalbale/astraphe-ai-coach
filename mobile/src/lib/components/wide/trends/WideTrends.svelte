@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { WEEK_STARTS_ON } from '$lib/utils/week';
   /**
    * Wide (tablet / desktop) Trends & zones (design: WTrends): stat tiles, training load,
    * weekly TSS and time in zones side by side. Selecting a week in either chart also
@@ -28,7 +29,7 @@
   onMount(async () => {
     athleteStore.fetchAll();
     const start = format(rangeStart(today, MAX_WEEKS), 'yyyy-MM-dd');
-    const end = format(addDays(startOfWeek(today, { weekStartsOn: 1 }), 6), 'yyyy-MM-dd');
+    const end = format(addDays(startOfWeek(today, { weekStartsOn: WEEK_STARTS_ON }), 6), 'yyyy-MM-dd');
     const [metrics, plan] = await Promise.all([
       api.get<{ trainingLoadData?: LoadRow[] }>(`/v1/athlete/metrics?start_date=${start}&end_date=${format(today, 'yyyy-MM-dd')}`),
       api.getWorkouts(start, end)
@@ -48,7 +49,7 @@
   function selectWeek(i: number) {
     const w = weeks[i];
     if (!w) return;
-    selBack = Math.round(differenceInCalendarDays(startOfWeek(today, { weekStartsOn: 1 }), w.start) / 7);
+    selBack = Math.round(differenceInCalendarDays(startOfWeek(today, { weekStartsOn: WEEK_STARTS_ON }), w.start) / 7);
     zonePeriod = 'week';
     zoneOffset = -selBack;
   }

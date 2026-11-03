@@ -4,6 +4,7 @@
  */
 import { addDays, addMonths, differenceInCalendarDays, endOfMonth, format, startOfMonth, startOfWeek } from 'date-fns';
 import { workoutDurationSecs } from '$lib/utils/workoutDuration';
+import { WEEK_STARTS_ON } from '$lib/utils/week';
 
 export type LoadRow = { date: string; ctl?: number; atl?: number; tsb?: number; daily_tss?: number };
 export type PlannedRow = { date: string; projected_tss?: number | null };
@@ -23,10 +24,10 @@ const day = (iso: string) => new Date(`${iso}T00:00:00`);
 
 /** Monday of the week `weeksBack` weeks before the week containing `today`. */
 export function rangeStart(today: Date, weeks: number): Date {
-  return addDays(startOfWeek(today, { weekStartsOn: 1 }), -(weeks - 1) * 7);
+  return addDays(startOfWeek(today, { weekStartsOn: WEEK_STARTS_ON }), -(weeks - 1) * 7);
 }
 
-/** `weeks` Monday-start buckets ending with the current week, oldest first. */
+/** `weeks` Sunday-start buckets ending with the current week, oldest first. */
 export function weeklyBuckets(rows: LoadRow[], planned: PlannedRow[], weeks: number, today: Date): WeekBucket[] {
   const first = rangeStart(today, weeks);
   const buckets: WeekBucket[] = Array.from({ length: weeks }, (_, i) => ({
@@ -86,7 +87,7 @@ export function zoneWindow(period: ZonePeriod, offset: number, today: Date): { s
     const m = addMonths(startOfMonth(today), offset);
     return { start: m, end: endOfMonth(m) };
   }
-  const start = addDays(startOfWeek(today, { weekStartsOn: 1 }), offset * 7);
+  const start = addDays(startOfWeek(today, { weekStartsOn: WEEK_STARTS_ON }), offset * 7);
   return { start, end: new Date(start.getFullYear(), start.getMonth(), start.getDate() + 6, 23, 59, 59, 999) };
 }
 
