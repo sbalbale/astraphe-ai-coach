@@ -1566,7 +1566,7 @@ def _workout_row_to_payload(row: dict) -> WorkoutPayload:
 
 async def recompute_workout_tss_for_athlete(athlete_id: str, db) -> int:
     """Recompute TSS/strain for workouts missing tss. Returns count updated."""
-    res = db.table("workouts").select("*").eq("athlete_id", athlete_id).order("started_at").execute()
+    res = await asyncio.to_thread(db.table("workouts").select("*").eq("athlete_id", athlete_id).order("started_at").execute)
     updated = 0
     for row in res.data or []:
         # process_and_save_workout() always writes a numeric "tss" (defaulting
@@ -1628,6 +1628,6 @@ async def reprocess_athlete_metrics(athlete_id: str, db) -> dict[str, int]:
         process_and_save_biometrics(payload, athlete_id, db, skip_pmc_recalc=True)
         bio_count += 1
 
-    recalculate_tss_history(athlete_id, db)
+    await asyncio.to_thread(recalculate_tss_history, athlete_id, db)
     return {"workouts": workout_count, "biometrics": bio_count}
 

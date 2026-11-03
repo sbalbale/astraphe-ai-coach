@@ -602,11 +602,13 @@ async def _whoop_sync_whoop_body_measurements(
     """
     try:
         existing = (
-            db.table("athletes")
-            .select("height_cm")
-            .eq("id", athlete_id)
-            .maybe_single()
-            .execute()
+            await asyncio.to_thread(
+                db.table("athletes")
+                .select("height_cm")
+                .eq("id", athlete_id)
+                .maybe_single()
+                .execute
+            )
         )
         row = existing.data or {}
         have_height = _coerce_float(row.get("height_cm")) is not None
@@ -624,7 +626,7 @@ async def _whoop_sync_whoop_body_measurements(
                 update: dict = {"access_token": new_access, "refresh_token": new_refresh}
                 if new_expires:
                     update["expires_at"] = new_expires
-                db.table("oauth_tokens").update(encrypt_oauth_fields(update)).eq("provider", "whoop").eq("external_user_id", str(external_user_id)).execute()
+                await asyncio.to_thread(db.table("oauth_tokens").update(encrypt_oauth_fields(update)).eq("provider", "whoop").eq("external_user_id", str(external_user_id)).execute)
             return new_access
 
         try:
@@ -656,7 +658,7 @@ async def _whoop_sync_whoop_body_measurements(
             print(f"[whoop.body] biometrics athlete_id={athlete_id} date={bio_date.isoformat()} fields={fields}")
 
         if height_cm is not None and not have_height:
-            db.table("athletes").update({"height_cm": round(float(height_cm), 1)}).eq("id", athlete_id).execute()
+            await asyncio.to_thread(db.table("athletes").update({"height_cm": round(float(height_cm), 1)}).eq("id", athlete_id).execute)
         await invalidate_athlete_caches(athlete_id, profile=True)
     except Exception as e:
         print(f"[whoop.body] sync failed athlete_id={athlete_id}: {repr(e)}")
@@ -727,12 +729,14 @@ async def _whoop_retry_recovery_vitals(
         # (the main handler may have already rotated it before the retry fires).
         try:
             cur = (
-                db.table("oauth_tokens")
-                .select("access_token,refresh_token")
-                .eq("provider", "whoop")
-                .eq("external_user_id", str(external_user_id))
-                .single()
-                .execute()
+                await asyncio.to_thread(
+                    db.table("oauth_tokens")
+                    .select("access_token,refresh_token")
+                    .eq("provider", "whoop")
+                    .eq("external_user_id", str(external_user_id))
+                    .single()
+                    .execute
+                )
             )
             cur_data = decrypt_oauth_row(cur.data) or {}
         except Exception:
@@ -750,7 +754,7 @@ async def _whoop_retry_recovery_vitals(
             update: dict = {"access_token": new_access, "refresh_token": new_refresh}
             if new_expires:
                 update["expires_at"] = new_expires
-            db.table("oauth_tokens").update(encrypt_oauth_fields(update)).eq("provider", "whoop").eq("external_user_id", str(external_user_id)).execute()
+            await asyncio.to_thread(db.table("oauth_tokens").update(encrypt_oauth_fields(update)).eq("provider", "whoop").eq("external_user_id", str(external_user_id)).execute)
             token = new_access
         return new_access
 
@@ -838,11 +842,13 @@ async def whoop_webhook(request: Request, background_tasks: BackgroundTasks, db=
         pass
     
     token_record = (
-        db.table("oauth_tokens")
-        .select("*")
-        .eq("provider", "whoop")
-        .eq("external_user_id", str(user_id) if user_id is not None else "")
-        .execute()
+        await asyncio.to_thread(
+            db.table("oauth_tokens")
+            .select("*")
+            .eq("provider", "whoop")
+            .eq("external_user_id", str(user_id) if user_id is not None else "")
+            .execute
+        )
     )
     if not token_record.data:
         print(f"[whoop.webhook] unknown user_id={user_id} — dropping")
@@ -864,12 +870,14 @@ async def whoop_webhook(request: Request, background_tasks: BackgroundTasks, db=
         # race — return the new token without attempting a second refresh.
         try:
             cur = (
-                db.table("oauth_tokens")
-                .select("access_token,refresh_token")
-                .eq("provider", "whoop")
-                .eq("external_user_id", str(user_id))
-                .single()
-                .execute()
+                await asyncio.to_thread(
+                    db.table("oauth_tokens")
+                    .select("access_token,refresh_token")
+                    .eq("provider", "whoop")
+                    .eq("external_user_id", str(user_id))
+                    .single()
+                    .execute
+                )
             )
             cur_data = decrypt_oauth_row(cur.data) or {}
         except Exception:
@@ -885,14 +893,14 @@ async def whoop_webhook(request: Request, background_tasks: BackgroundTasks, db=
             update: dict = {"access_token": new_access, "refresh_token": new_refresh}
             if new_expires:
                 update["expires_at"] = new_expires
-            db.table("oauth_tokens").update(encrypt_oauth_fields(update)).eq("provider", "whoop").eq("external_user_id", str(user_id)).execute()
+            await asyncio.to_thread(db.table("oauth_tokens").update(encrypt_oauth_fields(update)).eq("provider", "whoop").eq("external_user_id", str(user_id)).execute)
         return new_access
 
     try:
         if event_type == "recovery.updated":
             if not event_id:
                 return Response(status_code=200)
-            athlete_res = db.table("athletes").select("timezone_offset_min").eq("id", athlete_id).single().execute()
+            athlete_res = await asyncio.to_thread(db.table("athletes").select("timezone_offset_min").eq("id", athlete_id).single().execute)
             offset = (athlete_res.data.get("timezone_offset_min") or 0) if athlete_res.data else 0
 
             sleep_data_for_date: dict | None = None
@@ -966,7 +974,7 @@ async def whoop_webhook(request: Request, background_tasks: BackgroundTasks, db=
                 return round((ms / total_sleep_ms) * 100.0, 1)
 
             # Fetch athlete timezone for correct date mapping
-            athlete_res = db.table("athletes").select("timezone_offset_min").eq("id", athlete_id).single().execute()
+            athlete_res = await asyncio.to_thread(db.table("athletes").select("timezone_offset_min").eq("id", athlete_id).single().execute)
             offset = (athlete_res.data.get("timezone_offset_min") or 0) if athlete_res.data else 0
 
             # For WHOOP, the "biological day" is most consistently represented 
@@ -1086,11 +1094,13 @@ async def whoop_webhook(request: Request, background_tasks: BackgroundTasks, db=
             background_tasks.add_task(process_and_save_workout, workout_payload, athlete_id, db)
             if athlete_id and access_token and user_id is not None:
                 athlete_res = (
-                    db.table("athletes")
-                    .select("timezone_offset_min")
-                    .eq("id", athlete_id)
-                    .maybe_single()
-                    .execute()
+                    await asyncio.to_thread(
+                        db.table("athletes")
+                        .select("timezone_offset_min")
+                        .eq("id", athlete_id)
+                        .maybe_single()
+                        .execute
+                    )
                 )
                 offset = (
                     (athlete_res.data.get("timezone_offset_min") or 0)
@@ -1155,7 +1165,7 @@ async def _lookup_strava_owner_token(db, owner_strava_id: int):
     last_err: Exception | None = None
     for attempt in range(2):
         try:
-            return query.execute()
+            return await asyncio.to_thread(query.execute)
         except Exception as e:
             last_err = e
             if attempt == 0:
@@ -1234,9 +1244,11 @@ async def strava_webhook(
     elif obj_type == "activity" and aspect == "delete" and activity_id is not None:
         # Scope the delete to the verified athlete so a spoofed event cannot
         # null out strava_activity_id on another user's workout.
-        db.table("workouts").update({"strava_activity_id": None}).eq(
-            "athlete_id", athlete_id
-        ).eq("strava_activity_id", activity_id).execute()
+        await asyncio.to_thread(
+            db.table("workouts").update({"strava_activity_id": None}).eq(
+                "athlete_id", athlete_id
+            ).eq("strava_activity_id", activity_id).execute
+        )
 
     return Response(status_code=200)
 
@@ -1294,7 +1306,7 @@ async def whoop_oauth_callback(
             _upsert["expires_at"] = initial_expires
         # on_conflict: without it PostgREST conflicts on the `id` PK (absent here), so a
         # reconnect hit UNIQUE(athlete_id, provider) and always failed.
-        db.table("oauth_tokens").upsert(encrypt_oauth_fields(_upsert), on_conflict="athlete_id,provider").execute()
+        await asyncio.to_thread(db.table("oauth_tokens").upsert(encrypt_oauth_fields(_upsert), on_conflict="athlete_id,provider").execute)
         print(f"[whoop.oauth.callback] Token persistence SUCCESS")
 
         # Everything else in background.
@@ -1376,15 +1388,19 @@ async def strava_oauth_callback(
         if expires_iso is not None:
             token_row["expires_at"] = expires_iso
 
-        db.table("oauth_tokens").upsert(
-            encrypt_oauth_fields(token_row),
-            on_conflict="athlete_id,provider",
-        ).execute()
+        await asyncio.to_thread(
+            db.table("oauth_tokens").upsert(
+                encrypt_oauth_fields(token_row),
+                on_conflict="athlete_id,provider",
+            ).execute
+        )
 
         if strava_athlete_id is not None:
-            db.table("athletes").update({"strava_athlete_id": strava_athlete_id}).eq(
-                "id", athlete_id
-            ).execute()
+            await asyncio.to_thread(
+                db.table("athletes").update({"strava_athlete_id": strava_athlete_id}).eq(
+                    "id", athlete_id
+                ).execute
+            )
             await invalidate_athlete_caches(athlete_id, profile=True)
 
         if strava_athlete_id is not None:
@@ -1431,18 +1447,20 @@ async def intervals_icu_connect(
 
     await intervals_icu_service.verify_credentials(intervals_athlete_id, api_key)
 
-    admin_db.table("oauth_tokens").upsert(
-        encrypt_oauth_fields(
-            {
-                "athlete_id": athlete_id,
-                "provider": intervals_icu_service.PROVIDER,
-                "access_token": api_key,
-                "refresh_token": None,
-                "external_user_id": intervals_athlete_id,
-            }
-        ),
-        on_conflict="athlete_id,provider",
-    ).execute()
+    await asyncio.to_thread(
+        admin_db.table("oauth_tokens").upsert(
+            encrypt_oauth_fields(
+                {
+                    "athlete_id": athlete_id,
+                    "provider": intervals_icu_service.PROVIDER,
+                    "access_token": api_key,
+                    "refresh_token": None,
+                    "external_user_id": intervals_athlete_id,
+                }
+            ),
+            on_conflict="athlete_id,provider",
+        ).execute
+    )
 
     _schedule_intervals_backfill(
         background_tasks,
@@ -1580,12 +1598,14 @@ async def whoop_backfill_biometrics_now(
     """
     d = max(1, min(int(days), 365))
     tok = (
-        admin_db.table("oauth_tokens")
-        .select("access_token, refresh_token")
-        .eq("athlete_id", athlete_id)
-        .eq("provider", "whoop")
-        .maybe_single()
-        .execute()
+        await asyncio.to_thread(
+            admin_db.table("oauth_tokens")
+            .select("access_token, refresh_token")
+            .eq("athlete_id", athlete_id)
+            .eq("provider", "whoop")
+            .maybe_single()
+            .execute
+        )
     )
     row = decrypt_oauth_row(tok.data if tok else None)
     access_token = (row or {}).get("access_token")
@@ -1609,12 +1629,14 @@ async def whoop_backfill_now(
     """
     d = max(1, min(int(days), 365))
     tok = (
-        admin_db.table("oauth_tokens")
-        .select("access_token, refresh_token")
-        .eq("athlete_id", athlete_id)
-        .eq("provider", "whoop")
-        .maybe_single()
-        .execute()
+        await asyncio.to_thread(
+            admin_db.table("oauth_tokens")
+            .select("access_token, refresh_token")
+            .eq("athlete_id", athlete_id)
+            .eq("provider", "whoop")
+            .maybe_single()
+            .execute
+        )
     )
     row = decrypt_oauth_row(tok.data if tok else None)
     access_token = (row or {}).get("access_token")
@@ -1644,12 +1666,14 @@ async def strava_backfill_now(
         raise HTTPException(status_code=400, detail="Strava not connected")
 
     tok = (
-        admin_db.table("oauth_tokens")
-        .select("external_user_id")
-        .eq("athlete_id", athlete_id)
-        .eq("provider", "strava")
-        .maybe_single()
-        .execute()
+        await asyncio.to_thread(
+            admin_db.table("oauth_tokens")
+            .select("external_user_id")
+            .eq("athlete_id", athlete_id)
+            .eq("provider", "strava")
+            .maybe_single()
+            .execute
+        )
     )
     strava_athlete_id = (tok.data or {}).get("external_user_id") if tok else None
     if not strava_athlete_id:
@@ -1673,12 +1697,14 @@ async def intervals_icu_backfill_now(
     """Manually trigger an Intervals.icu biometrics and workouts backfill."""
     d = max(1, min(int(days), 365))
     tok = (
-        admin_db.table("oauth_tokens")
-        .select("access_token, external_user_id")
-        .eq("athlete_id", athlete_id)
-        .eq("provider", intervals_icu_service.PROVIDER)
-        .maybe_single()
-        .execute()
+        await asyncio.to_thread(
+            admin_db.table("oauth_tokens")
+            .select("access_token, external_user_id")
+            .eq("athlete_id", athlete_id)
+            .eq("provider", intervals_icu_service.PROVIDER)
+            .maybe_single()
+            .execute
+        )
     )
     row = decrypt_oauth_row(tok.data if tok else None)
     api_key = (row or {}).get("access_token")

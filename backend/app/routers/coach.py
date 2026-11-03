@@ -202,7 +202,7 @@ def _require_premium(config: UserConfig):
 
 
 @router.get("/conversations")
-async def list_conversations(
+def list_conversations(
     athlete_id: str = Depends(get_current_athlete),
     config: UserConfig = Depends(get_user_config),
     db = Depends(get_user_db),
@@ -295,7 +295,7 @@ async def create_conversation(
     return {"status": "success", "conversation": {"id": cid, "title": payload.title}}
 
 @router.get("/conversations/{conversation_id}/messages")
-async def get_conversation_messages(
+def get_conversation_messages(
     conversation_id: str,
     athlete_id: str = Depends(get_current_athlete),
     config: UserConfig = Depends(get_user_config),
@@ -341,7 +341,7 @@ async def get_conversation_progress(
 
 
 @router.delete("/conversations/{conversation_id}")
-async def delete_conversation(
+def delete_conversation(
     conversation_id: str,
     athlete_id: str = Depends(get_current_athlete),
     config: UserConfig = Depends(get_user_config),
@@ -860,7 +860,7 @@ async def stream_chat_with_coach(
                     chunk = ai_full[i : i + chunk_size]
                     yield f"data: {json.dumps({'text': chunk})}\n\n"
                 yield f"data: {json.dumps({'sources': ai_sources or []})}\n\n"
-                recent_history = _load_conversation_history(db, athlete_id, conversation_id, limit=10)
+                recent_history = await asyncio.to_thread(_load_conversation_history, db, athlete_id, conversation_id, limit=10)
                 mem_task = asyncio.create_task(
                     _run_memory_extraction(
                         athlete_id,

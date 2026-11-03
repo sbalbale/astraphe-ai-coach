@@ -25,7 +25,7 @@ async def get_training_plan(
         start_date = start_date or today
         end_date = end_date or (today + timedelta(days=7))
     
-    plan_res = db.table("training_plans").select("*").eq("athlete_id", athlete_id).gte("planned_date", start_date.isoformat()).lte("planned_date", end_date.isoformat()).order("planned_date").execute()
+    plan_res = await asyncio.to_thread(db.table("training_plans").select("*").eq("athlete_id", athlete_id).gte("planned_date", start_date.isoformat()).lte("planned_date", end_date.isoformat()).order("planned_date").execute)
 
     workouts = []
     plan_dict = {}

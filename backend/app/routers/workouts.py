@@ -174,7 +174,7 @@ async def ingest_workout(
     return {"status": "success", "message": "Workout ingestion and analysis queued."}
 
 @router.patch("/{workout_id}")
-async def update_workout(
+def update_workout(
     workout_id: str,
     payload: WorkoutUpdatePayload,
     background_tasks: BackgroundTasks,
@@ -244,7 +244,7 @@ async def update_workout(
         raise HTTPException(status_code=500, detail="Failed to update workout")
 
 @router.delete("/{workout_id}")
-async def delete_workout(
+def delete_workout(
     workout_id: str,
     background_tasks: BackgroundTasks,
     athlete_id: str = Depends(get_current_athlete),

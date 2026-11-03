@@ -16,7 +16,7 @@ class TokenPayload(BaseModel):
 
 
 @router.post("/token")
-async def register_token(
+def register_token(
     payload: TokenPayload,
     athlete_id: str = Depends(get_current_athlete),
     db=Depends(get_user_db),
@@ -39,7 +39,7 @@ async def register_token(
 
 
 @router.delete("/token")
-async def unregister_token(
+def unregister_token(
     payload: TokenPayload,
     athlete_id: str = Depends(get_current_athlete),
     db=Depends(get_user_db),

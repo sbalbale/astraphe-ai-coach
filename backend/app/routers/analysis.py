@@ -1126,8 +1126,8 @@ async def recovery_analysis(
     model_name: str = Depends(get_current_gemini_analysis_model),
     db: Client = Depends(get_user_db),
 ):
-    d = _parse_day(day, db, athlete_id)
-    ctx = _load_biometrics_context(db, athlete_id, d)
+    d = await asyncio.to_thread(_parse_day, day, db, athlete_id)
+    ctx = await asyncio.to_thread(_load_biometrics_context, db, athlete_id, d)
     analysis = await asyncio.to_thread(_get_or_compute, db, athlete_id, tier, "recovery", d.isoformat(), ctx, model_name=model_name, budget=_budget(athlete_id))
     return {"status": "success", "analysis": analysis}
 
@@ -1140,8 +1140,8 @@ async def sleep_analysis(
     model_name: str = Depends(get_current_gemini_analysis_model),
     db: Client = Depends(get_user_db),
 ):
-    d = _parse_day(day, db, athlete_id)
-    ctx = _load_biometrics_context(db, athlete_id, d)
+    d = await asyncio.to_thread(_parse_day, day, db, athlete_id)
+    ctx = await asyncio.to_thread(_load_biometrics_context, db, athlete_id, d)
     analysis = await asyncio.to_thread(_get_or_compute, db, athlete_id, tier, "sleep", d.isoformat(), ctx, model_name=model_name, budget=_budget(athlete_id))
     return {"status": "success", "analysis": analysis}
 
@@ -1154,8 +1154,8 @@ async def strain_analysis(
     model_name: str = Depends(get_current_gemini_analysis_model),
     db: Client = Depends(get_user_db),
 ):
-    d = _parse_day(day, db, athlete_id)
-    ctx = _load_strain_context(db, athlete_id, d)
+    d = await asyncio.to_thread(_parse_day, day, db, athlete_id)
+    ctx = await asyncio.to_thread(_load_strain_context, db, athlete_id, d)
     analysis = await asyncio.to_thread(_get_or_compute, db, athlete_id, tier, "strain", d.isoformat(), ctx, model_name=model_name, budget=_budget(athlete_id))
     return {"status": "success", "analysis": analysis}
 
@@ -1168,8 +1168,8 @@ async def training_load_analysis(
     model_name: str = Depends(get_current_gemini_analysis_model),
     db: Client = Depends(get_user_db),
 ):
-    d = _parse_day(end_day, db, athlete_id)
-    ctx = _load_training_load_context(db, athlete_id, d)
+    d = await asyncio.to_thread(_parse_day, end_day, db, athlete_id)
+    ctx = await asyncio.to_thread(_load_training_load_context, db, athlete_id, d)
     analysis = await asyncio.to_thread(_get_or_compute, db, athlete_id, tier, "training_load", d.isoformat(), ctx, model_name=model_name, budget=_budget(athlete_id))
     return {"status": "success", "analysis": analysis}
 
@@ -1208,13 +1208,13 @@ async def dashboard_summary_analysis(
     background regeneration. Worst case the user sees yesterday's wording for
     one extra page load.
     """
-    d = _parse_day(day, db, athlete_id)
+    d = await asyncio.to_thread(_parse_day, day, db, athlete_id)
     scope_key = d.isoformat()
-    ctx = _load_dashboard_context(db, athlete_id, d)
+    ctx = await asyncio.to_thread(_load_dashboard_context, db, athlete_id, d)
     budget = _budget(athlete_id)
     fp = _analysis_fingerprint("dashboard_summary", ctx)
 
-    cached = get_cached_analysis(db, athlete_id, "dashboard_summary", scope_key)
+    cached = await asyncio.to_thread(get_cached_analysis, db, athlete_id, "dashboard_summary", scope_key)
     flight_key = f"{athlete_id}:{scope_key}"
     if cached and cached.get("content"):
         stale = cached.get("fingerprint") != fp or is_retryable_failed_analysis(cached.get("model"))
@@ -1269,12 +1269,14 @@ async def workout_analysis(
     db: Client = Depends(get_user_db),
 ):
     res = (
-        db.table("workouts")
-        .select("*")
-        .eq("id", workout_id)
-        .eq("athlete_id", athlete_id)
-        .maybe_single()
-        .execute()
+        await asyncio.to_thread(
+            db.table("workouts")
+            .select("*")
+            .eq("id", workout_id)
+            .eq("athlete_id", athlete_id)
+            .maybe_single()
+            .execute
+        )
     )
     row = res.data if res else None
     if not row:
@@ -1318,15 +1320,15 @@ async def time_in_zones_analysis(
     model_name: str = Depends(get_current_gemini_analysis_model),
     db: Client = Depends(get_user_db),
 ):
-    end_d = _parse_day(window_end, db, athlete_id)
-    start_d = _parse_day(window_start) if window_start else (end_d - timedelta(days=7))
+    end_d = await asyncio.to_thread(_parse_day, window_end, db, athlete_id)
+    start_d = await asyncio.to_thread(_parse_day, window_start) if window_start else (end_d - timedelta(days=7))
     sport = (sport or "all").strip().lower()
     if sport not in _ZONE_SPORTS:
         raise HTTPException(status_code=422, detail="unknown sport")
     if start_d > end_d or (end_d - start_d).days > _MAX_ZONES_WINDOW_DAYS:
         raise HTTPException(status_code=422, detail="window is out of range")
     scope_key = f"{start_d.isoformat()}:{end_d.isoformat()}:{sport}"
-    ctx = _load_zones_context(db, athlete_id, start_d.isoformat(), end_d.isoformat(), sport)
+    ctx = await asyncio.to_thread(_load_zones_context, db, athlete_id, start_d.isoformat(), end_d.isoformat(), sport)
     analysis = await asyncio.to_thread(_get_or_compute, db, athlete_id, tier, "time_in_zones", scope_key, ctx, model_name=model_name, budget=_budget(athlete_id))
     return {"status": "success", "analysis": analysis}
 

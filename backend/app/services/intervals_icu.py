@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
+import asyncio
 import logging
 
 import httpx
@@ -621,7 +622,7 @@ async def backfill_historical_data(
             stream_count += 1
 
     await recompute_workout_tss_for_athlete(athlete_id, db)
-    recalculate_tss_history(athlete_id, db)
+    await asyncio.to_thread(recalculate_tss_history, athlete_id, db)
 
     biometrics = await fetch_biometrics(intervals_athlete_id, api_key, start_date, end_date)
     biometric_count = 0

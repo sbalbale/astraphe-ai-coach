@@ -93,7 +93,7 @@ def _to_workout_row(row: dict[str, Any]) -> dict[str, Any]:
 
 
 @router.get("")
-async def get_training_plans(
+def get_training_plans(
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
     athlete_id: str = Depends(get_current_athlete),
@@ -119,7 +119,7 @@ async def get_training_plans(
 
 
 @router.post("")
-async def create_training_plan(
+def create_training_plan(
     payload: WorkoutPayload,
     athlete_id: str = Depends(get_current_athlete),
     db=Depends(get_user_db),
@@ -155,7 +155,7 @@ async def create_training_plan(
 
 
 @router.put("/{training_plan_id}")
-async def update_training_plan(
+def update_training_plan(
     training_plan_id: str,
     payload: WorkoutPayload,
     athlete_id: str = Depends(get_current_athlete),
@@ -196,7 +196,7 @@ async def update_training_plan(
 
 
 @router.delete("/{training_plan_id}")
-async def delete_training_plan(
+def delete_training_plan(
     training_plan_id: str,
     athlete_id: str = Depends(get_current_athlete),
     db=Depends(get_user_db),
@@ -224,7 +224,7 @@ async def delete_training_plan(
 
 
 @router.delete("")
-async def delete_training_plans(
+def delete_training_plans(
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
     athlete_id: str = Depends(get_current_athlete),

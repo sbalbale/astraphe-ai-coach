@@ -79,7 +79,7 @@ async def _ensure_valid_whoop_access_token(
         # for it to land rather than racing our own refresh call.
         for _ in range(5):
             await asyncio.sleep(1.0)
-            access_token, refresh_token = _load_whoop_tokens(db, athlete_id)
+            access_token, refresh_token = await asyncio.to_thread(_load_whoop_tokens, db, athlete_id)
             if access_token:
                 try:
                     await whoop.fetch_profile(access_token)
@@ -152,7 +152,7 @@ async def _backfill_historical_data_impl(
     if db is None:
         db = get_admin_db()
 
-    stored_access, refresh_token = _load_whoop_tokens(db, athlete_id)
+    stored_access, refresh_token = await asyncio.to_thread(_load_whoop_tokens, db, athlete_id)
     if stored_access:
         access_token = stored_access
 
@@ -183,7 +183,7 @@ async def _backfill_historical_data_impl(
         # and startup backfill, and used to overwrite a chosen name, a measured max HR
         # (which drives HR zones) and height with WHOOP's values.
         current = (
-            db.table("athletes").select("display_name, height_cm, max_hr").eq("id", athlete_id).limit(1).execute()
+            await asyncio.to_thread(db.table("athletes").select("display_name, height_cm, max_hr").eq("id", athlete_id).limit(1).execute)
         )
         current_row = ((current.data if current else None) or [{}])[0] or {}
         profile_update = {}
@@ -196,12 +196,14 @@ async def _backfill_historical_data_impl(
 
         # Also update the oauth_token with the external_user_id
         if profile.get("user_id"):
-            db.table("oauth_tokens").update({
-                "external_user_id": str(profile.get("user_id"))
-            }).eq("athlete_id", athlete_id).eq("provider", "whoop").execute()
+            await asyncio.to_thread(
+                db.table("oauth_tokens").update({
+                    "external_user_id": str(profile.get("user_id"))
+                }).eq("athlete_id", athlete_id).eq("provider", "whoop").execute
+            )
 
         if profile_update:
-            db.table("athletes").update(profile_update).eq("id", athlete_id).execute()
+            await asyncio.to_thread(db.table("athletes").update(profile_update).eq("id", athlete_id).execute)
             await invalidate_athlete_caches(athlete_id, profile=True)
 
         # Weight/height into the athlete's *local* today, respecting source priority
@@ -209,7 +211,7 @@ async def _backfill_historical_data_impl(
         from app.services.processing import write_body_metrics
         from app.services.time_utils import athlete_local_date
 
-        today = athlete_local_date(db, athlete_id)
+        today = await asyncio.to_thread(athlete_local_date, db, athlete_id)
         fields = write_body_metrics(db, athlete_id, today, "whoop", weight_kg=weight_kg, height_cm=height_cm)
         if fields:
             print(f"[whoop.backfill] wrote body metrics date={today.isoformat()} fields={fields}")
@@ -229,11 +231,13 @@ async def _backfill_historical_data_impl(
     # Fetch athlete timezone for correct date mapping
     try:
         athlete_res = (
-            db.table("athletes")
-            .select("timezone_offset_min")
-            .eq("id", athlete_id)
-            .maybe_single()
-            .execute()
+            await asyncio.to_thread(
+                db.table("athletes")
+                .select("timezone_offset_min")
+                .eq("id", athlete_id)
+                .maybe_single()
+                .execute
+            )
         )
         offset = (athlete_res.data.get("timezone_offset_min") or 0) if (athlete_res and athlete_res.data) else 0
     except Exception:
@@ -360,10 +364,12 @@ async def _backfill_historical_data_impl(
             )
 
     bio_count_res = (
-        db.table("biometrics")
-        .select("id", count="exact")
-        .eq("athlete_id", athlete_id)
-        .execute()
+        await asyncio.to_thread(
+            db.table("biometrics")
+            .select("id", count="exact")
+            .eq("athlete_id", athlete_id)
+            .execute
+        )
     )
     bio_rows = bio_count_res.count if bio_count_res else 0
     print(
@@ -447,17 +453,19 @@ async def _backfill_historical_data_impl(
         if idx % 25 == 0 or idx == len(workouts):
             print(f"[whoop.backfill] workouts progress {idx}/{len(workouts)}")
 
-    recalculate_tss_history(athlete_id, db)
+    await asyncio.to_thread(recalculate_tss_history, athlete_id, db)
 
     # Refresh readiness scores now that PMC exists (skipped per-row during batch ingest).
     if bio_rows and bio_rows > 0:
         dates_res = (
-            db.table("biometrics")
-            .select("date,hrv_rmssd,resting_hr,recovery_score,sleep_score")
-            .eq("athlete_id", athlete_id)
-            .gte("date", start.date().isoformat())
-            .order("date")
-            .execute()
+            await asyncio.to_thread(
+                db.table("biometrics")
+                .select("date,hrv_rmssd,resting_hr,recovery_score,sleep_score")
+                .eq("athlete_id", athlete_id)
+                .gte("date", start.date().isoformat())
+                .order("date")
+                .execute
+            )
         )
         for row in dates_res.data or []:
             try:
@@ -487,10 +495,12 @@ async def backfill_recent(hours: int = 24) -> None:
     db = get_admin_db()
     try:
         res = (
-            db.table("oauth_tokens")
-            .select("athlete_id, access_token")
-            .eq("provider", "whoop")
-            .execute()
+            await asyncio.to_thread(
+                db.table("oauth_tokens")
+                .select("athlete_id, access_token")
+                .eq("provider", "whoop")
+                .execute
+            )
         )
         rows = [decrypt_oauth_row(r) for r in (res.data or [])]
     except Exception as e:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -29,11 +30,13 @@ async def revoke_provider_grants(admin_db: Any, athlete_id: str) -> dict[str, bo
     """
     try:
         res = (
-            admin_db.table("oauth_tokens")
-            .select("provider,access_token")
-            .eq("athlete_id", athlete_id)
-            .in_("provider", ["strava", "whoop"])
-            .execute()
+            await asyncio.to_thread(
+                admin_db.table("oauth_tokens")
+                .select("provider,access_token")
+                .eq("athlete_id", athlete_id)
+                .in_("provider", ["strava", "whoop"])
+                .execute
+            )
         )
         rows = res.data or []
     except Exception as e:  # noqa: BLE001
