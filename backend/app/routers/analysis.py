@@ -9,6 +9,7 @@ import numpy as np
 from fastapi import APIRouter, Depends, HTTPException, Query
 from supabase import Client
 
+from app.services.background import spawn as spawn_background
 from app.core.rate_limiter import RateLimiter
 
 from app.dependencies import (
@@ -1224,7 +1225,7 @@ async def dashboard_summary_analysis(
                     await asyncio.to_thread(_compute_and_store, db, athlete_id, tier, "dashboard_summary", scope_key, ctx, model_name, budget)
                 finally:
                     _regen_in_flight.discard(flight_key)
-            asyncio.ensure_future(_run_stale())
+            spawn_background(_run_stale())
         return {
             "status": "success",
             "analysis": {
@@ -1245,7 +1246,7 @@ async def dashboard_summary_analysis(
                 await asyncio.to_thread(_compute_and_store, db, athlete_id, tier, "dashboard_summary", scope_key, ctx, model_name, budget)
             finally:
                 _regen_in_flight.discard(flight_key)
-        asyncio.ensure_future(_run_cold())
+        spawn_background(_run_cold())
 
     fb = _fallback_content("dashboard_summary", ctx)
     return {

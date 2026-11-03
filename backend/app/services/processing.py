@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
+from app.services.background import spawn as spawn_background
 from app.models.workout import WorkoutPayload
 from app.models.biometrics import DailyBiometrics
 
@@ -1058,12 +1059,12 @@ async def process_and_save_workout(
     if not skip_tss_recalc:
         from app.services.messaging import maybe_text_workout
 
-        asyncio.ensure_future(maybe_text_workout(db, athlete_id, str(workout_id)))
+        spawn_background(maybe_text_workout(db, athlete_id, str(workout_id)))
     # In batch contexts (Strava/WHOOP backfill) the caller recalculates TSS once at the end.
     if not skip_tss_recalc:
-        asyncio.ensure_future(asyncio.to_thread(recalculate_tss_history, athlete_id, db))
+        spawn_background(asyncio.to_thread(recalculate_tss_history, athlete_id, db))
     if not skip_daily_strain_refresh:
-        asyncio.ensure_future(
+        spawn_background(
             asyncio.to_thread(_refresh_daily_strain_for_instant_sync, db, athlete_id, start_utc)
         )
     return str(workout_id)

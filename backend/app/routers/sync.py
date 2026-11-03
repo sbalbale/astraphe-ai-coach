@@ -11,6 +11,7 @@ from fastapi import APIRouter, Request, Response, HTTPException, Depends, Backgr
 from fastapi.responses import RedirectResponse, HTMLResponse
 from pydantic import BaseModel, Field
 from starlette.requests import ClientDisconnect
+from app.services.background import spawn as spawn_background
 from app.dependencies import get_current_athlete, get_user_db, get_admin_db, action_rate_limit, get_user_config, UserConfig
 from app.services import whoop
 from app.services import strava as strava_service
@@ -145,7 +146,7 @@ def _schedule_intervals_backfill(
             days,
         )
     else:
-        asyncio.create_task(
+        spawn_background(
             intervals_icu_service.backfill_historical_data(
                 athlete_id,
                 intervals_athlete_id,
@@ -1302,7 +1303,7 @@ async def whoop_oauth_callback(
         if background_tasks is not None:
             background_tasks.add_task(backfill_historical_data, athlete_id, access_token, None, 90)
         else:
-            asyncio.create_task(backfill_historical_data(athlete_id, access_token, None, 90))
+            spawn_background(backfill_historical_data(athlete_id, access_token, None, 90))
         print(f"[whoop.oauth.callback] Backfill scheduled")
         
         print(f"[whoop.oauth.callback] Sending HTML response...")
@@ -1393,7 +1394,7 @@ async def strava_oauth_callback(
                     90,
                 )
             else:
-                asyncio.create_task(
+                spawn_background(
                     strava_backfill(athlete_id, strava_athlete_id, access_token, db, 90)
                 )
         else:
@@ -1587,7 +1588,7 @@ async def whoop_backfill_biometrics_now(
     if not access_token:
         raise HTTPException(status_code=400, detail="WHOOP not connected")
 
-    asyncio.create_task(backfill_biometrics_only(athlete_id, access_token, admin_db, d))
+    spawn_background(backfill_biometrics_only(athlete_id, access_token, admin_db, d))
     return {"status": "success", "scheduled": True, "days": d, "mode": "biometrics_only"}
 
 
@@ -1616,7 +1617,7 @@ async def whoop_backfill_now(
     if not access_token:
         raise HTTPException(status_code=400, detail="WHOOP not connected")
 
-    asyncio.create_task(backfill_historical_data(athlete_id, access_token, admin_db, d))
+    spawn_background(backfill_historical_data(athlete_id, access_token, admin_db, d))
     return {"status": "success", "scheduled": True, "days": d}
 
 
@@ -1655,7 +1656,7 @@ async def strava_backfill_now(
     except (TypeError, ValueError):
         raise HTTPException(status_code=400, detail=f"Invalid Strava athlete ID: {strava_athlete_id}")
 
-    asyncio.create_task(strava_backfill(athlete_id, owner_strava_id, access_token, admin_db, d))
+    spawn_background(strava_backfill(athlete_id, owner_strava_id, access_token, admin_db, d))
     return {"status": "success", "scheduled": True, "days": d}
 
 
@@ -1681,7 +1682,7 @@ async def intervals_icu_backfill_now(
     if not api_key or not intervals_athlete_id:
         raise HTTPException(status_code=400, detail="Intervals.icu not connected")
 
-    asyncio.create_task(
+    spawn_background(
         intervals_icu_service.backfill_historical_data(
             athlete_id,
             str(intervals_athlete_id),

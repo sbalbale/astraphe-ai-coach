@@ -418,3 +418,21 @@ def test_detect_anomalies_hrv_suppressed():
     assert an.get("triggered") is True
     sigs = an.get("signals") or []
     assert any(s.get("metric") == "hrv_z" for s in sigs)
+
+
+def test_simulate_training_impact_starts_from_stored_ctl(monkeypatch):
+    """The projection continues from yesterday's stored CTL/ATL, not a re-seeded EWMA."""
+    import math
+
+    today = date(2026, 6, 15)
+    monkeypatch.setattr(coach_tools, "athlete_local_date", lambda *_a, **_k: today)
+    db = MockCoachDB()
+    db.tss_rows = [
+        {"date": (today - timedelta(days=2)).isoformat(), "daily_tss": 10.0, "ctl": 1.0, "atl": 1.0},
+        {"date": (today - timedelta(days=1)).isoformat(), "daily_tss": 10.0, "ctl": 80.0, "atl": 90.0},
+    ]
+    out = coach_tools.handle_simulate_training_impact(
+        {"target_tss": 0, "target_date": today.isoformat()}, athlete_id="ath-1", db=db  # type: ignore[arg-type]
+    )
+    assert out["projected_ctl"] == pytest.approx(80.0 * math.exp(-1 / 42), abs=0.01)
+    assert out["projected_atl"] == pytest.approx(90.0 * math.exp(-1 / 7), abs=0.01)

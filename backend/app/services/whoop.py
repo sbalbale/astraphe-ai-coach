@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import hmac
 import hashlib
@@ -285,6 +286,19 @@ def _v2_base() -> str:
     return "https://api.prod.whoop.com/developer/v2"
 
 
+_COLLECTION_429_RETRIES = 4
+
+
+def _retry_after_seconds(res: Any, default: float) -> float:
+    try:
+        v = float(res.headers.get("Retry-After"))
+        if v > 0:
+            return min(v, 300.0)
+    except (TypeError, ValueError, AttributeError):
+        pass
+    return default
+
+
 async def fetch_collection(
     access_token: str,
     path: str,
@@ -313,6 +327,13 @@ async def fetch_collection(
                 params["nextToken"] = next_token
 
             res = await client.get(url, headers=headers, params=params)
+            attempts = 0
+            while res.status_code == 429 and attempts < _COLLECTION_429_RETRIES:
+                # A long backfill hits WHOOP's per-minute limit; wait and retry the same
+                # page instead of failing the whole collection.
+                attempts += 1
+                await asyncio.sleep(_retry_after_seconds(res, default=30 * attempts))
+                res = await client.get(url, headers=headers, params=params)
             if res.status_code != 200:
                 raise HTTPException(status_code=res.status_code, detail=f"WHOOP collection fetch failed: {res.text}")
 

@@ -31,6 +31,7 @@ from garminconnect.exceptions import (
     GarminConnectTooManyRequestsError,
 )
 
+from app.services.background import spawn as spawn_background
 from app.config import settings
 from app.dependencies import get_admin_db
 from app.models.biometrics import DailyBiometrics
@@ -798,7 +799,7 @@ async def _save_one_activity(
     # notified_at itself, so history backfills and re-syncs never text.
     from app.services.messaging import maybe_text_workout
 
-    asyncio.ensure_future(maybe_text_workout(db, athlete_id, str(workout_id)))
+    spawn_background(maybe_text_workout(db, athlete_id, str(workout_id)))
 
     return True, streams_saved
 

@@ -16,6 +16,7 @@ import logging
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from app.services.background import spawn as spawn_background
 from app.config import settings
 from app.dependencies import get_current_athlete, get_admin_db, action_rate_limit
 from app.services import garmin as garmin_service
@@ -45,7 +46,7 @@ def _schedule_backfill(
             garmin_service.backfill_historical_data, athlete_id, db, days
         )
     else:
-        asyncio.create_task(garmin_service.backfill_historical_data(athlete_id, db, days))
+        spawn_background(garmin_service.backfill_historical_data(athlete_id, db, days))
 
 
 def _persist_and_schedule(
@@ -158,5 +159,5 @@ async def garmin_backfill_now(
             status_code=400, detail="Garmin not connected — try reconnecting Garmin"
         )
 
-    asyncio.create_task(garmin_service.backfill_historical_data(athlete_id, admin_db, d))
+    spawn_background(garmin_service.backfill_historical_data(athlete_id, admin_db, d))
     return {"status": "success", "scheduled": True, "days": d}

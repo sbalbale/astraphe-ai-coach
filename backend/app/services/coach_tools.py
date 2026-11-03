@@ -66,7 +66,7 @@ def _fetch_tss_history_rows(
     try:
         res = (
             db.table("tss_history")
-            .select("date,daily_tss")
+            .select("date,daily_tss,ctl,atl")
             .eq("athlete_id", athlete_id)
             .gte("date", start)
             .order("date", desc=False)
@@ -107,6 +107,18 @@ def handle_simulate_training_impact(
         return {"error": rows[0]["_error"]}
 
     by_day: dict[date, float] = {}
+    # Stored CTL/ATL for the latest day before today: project from these so the
+    # answer agrees with the CTL the athlete sees (re-running the EWMA over 120 days
+    # with a fresh seed drifts from the stored all-history value).
+    anchor: tuple[date, float, float] | None = None
+    for r in rows:
+        try:
+            rd = date.fromisoformat(str(r.get("date"))[:10])
+        except (TypeError, ValueError):
+            continue
+        c, a = _safe_float(r.get("ctl")), _safe_float(r.get("atl"))
+        if rd < today and c is not None and a is not None and (anchor is None or rd > anchor[0]):
+            anchor = (rd, float(c), float(a))
     for r in rows:
         d_raw = r.get("date")
         if not d_raw:
@@ -141,12 +153,22 @@ def handle_simulate_training_impact(
         else:
             tss_series.append(0.0)
 
-    arr = np.array(tss_series, dtype=float)
-    ctl_arr = compute_ctl(arr, time_constant=42)
-    atl_arr = compute_atl(arr, time_constant=7)
-    last_i = len(dates) - 1
-    projected_ctl = float(ctl_arr[last_i])
-    projected_atl = float(atl_arr[last_i])
+    if anchor is not None:
+        a_ctl = 1 - np.exp(-1 / 42)
+        a_atl = 1 - np.exp(-1 / 7)
+        projected_ctl, projected_atl = anchor[1], anchor[2]
+        for d, tss in zip(dates, tss_series):
+            if d <= anchor[0]:
+                continue
+            projected_ctl = projected_ctl * (1 - a_ctl) + tss * a_ctl
+            projected_atl = projected_atl * (1 - a_atl) + tss * a_atl
+    else:
+        arr = np.array(tss_series, dtype=float)
+        ctl_arr = compute_ctl(arr, time_constant=42)
+        atl_arr = compute_atl(arr, time_constant=7)
+        last_i = len(dates) - 1
+        projected_ctl = float(ctl_arr[last_i])
+        projected_atl = float(atl_arr[last_i])
     projected_tsb = round(projected_ctl - projected_atl, 2)
     days_out = (target_date - today).days
 
