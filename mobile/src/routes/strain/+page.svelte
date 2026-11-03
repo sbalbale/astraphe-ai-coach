@@ -15,6 +15,7 @@
   import DatePicker from '$lib/components/DatePicker.svelte';
   import Modal from '$lib/components/Modal.svelte';
   import { pageHeader, resetPageHeader } from '$lib/stores/pageHeader.svelte';
+  import { bodyDate, rememberBodyDate } from '$lib/stores/bodyDate.svelte';
   import { analysisNavEpoch } from '$lib/analysisNavEpoch.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { authStore } from '$lib/stores/authStore.svelte';
@@ -44,7 +45,7 @@
 
   // Rolling 7-day window (cannot go into the future).
   // Source of truth for the picker is a YYYY-MM-DD string.
-  let endPickerValue = $state('');
+  let endPickerValue = $state(bodyDate.value ?? '');
   let dayIndex = $state(6); // most recent on the right
   const isoDate = (value: unknown) => (typeof value === 'string' ? value.slice(0, 10) : '');
 
@@ -79,6 +80,11 @@
     pageHeader.dateMarks = Array.from(new Set([...(athleteStore.workouts ?? []).map((w: any) => String(w?.started_at ?? '').slice(0, 10)), ...(athleteStore.biometrics?.series ?? []).filter((r: any) => Number(r?.strain_score) > 0).map((r: any) => r.date)].filter(Boolean)));
     pageHeader.dateValue = format(clampedEndDay, "yyyy-MM-dd");
     return resetPageHeader;
+  });
+
+  // Share the picked day with the other Body sub-tabs (Recovery / Sleep / Strain).
+  $effect(() => {
+    rememberBodyDate(format(addDays(windowStart, dayIndex), 'yyyy-MM-dd'), todayStr);
   });
 
   // The header calendar writes pageHeader.dateValue; follow it.

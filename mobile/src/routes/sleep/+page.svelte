@@ -23,6 +23,7 @@
   import { calculateSleepScore, currentRecoveryState } from "$lib/utils/biometrics";
   import { onMount } from "svelte";
   import { pageHeader, resetPageHeader } from '$lib/stores/pageHeader.svelte';
+  import { bodyDate, rememberBodyDate } from '$lib/stores/bodyDate.svelte';
   import { page } from "$app/stores";
   import AddSleepModal from "$lib/components/AddSleepModal.svelte";
 
@@ -49,7 +50,7 @@
 
   // Rolling 7-day window (cannot go into the future).
   // Source of truth for the picker is a YYYY-MM-DD string.
-  let endPickerValue = $state("");
+  let endPickerValue = $state(bodyDate.value ?? "");
   let nightIndex = $state(6); // most recent on the right
 
   const today = $derived(new Date());
@@ -83,6 +84,11 @@
     pageHeader.dateMarks = (athleteStore.biometrics?.series ?? []).filter((r: any) => r?.date && (Number(r?.sleep_duration_min) > 0 || Number(r?.sleep_score) > 0)).map((r: any) => r.date);
     pageHeader.dateValue = format(clampedEndDay, "yyyy-MM-dd");
     return resetPageHeader;
+  });
+
+  // Share the picked day with the other Body sub-tabs (Recovery / Sleep / Strain).
+  $effect(() => {
+    rememberBodyDate(format(addDays(windowStart, nightIndex), "yyyy-MM-dd"), todayStr);
   });
 
   // The header calendar writes pageHeader.dateValue; follow it.
