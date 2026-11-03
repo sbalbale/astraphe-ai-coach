@@ -163,6 +163,11 @@ describe('initPushNotifications (native)', () => {
       expect(gotoMock).toHaveBeenCalledWith('/workouts/1');
       actionHandler({ notification: { data: {} } });
       expect(gotoMock).toHaveBeenCalledWith('/dashboard');
+      // never an absolute / protocol-relative URL from notification data
+      gotoMock.mockClear();
+      actionHandler({ notification: { data: { url: 'https://evil.example/x' } } });
+      actionHandler({ notification: { data: { url: '//evil.example/x' } } });
+      expect(gotoMock.mock.calls.every((c) => c[0] === '/dashboard')).toBe(true);
     })();
   });
 

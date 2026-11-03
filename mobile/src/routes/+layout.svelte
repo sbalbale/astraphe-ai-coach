@@ -16,6 +16,7 @@
   import { analysisNavEpoch } from '$lib/analysisNavEpoch.svelte';
   import { authStore } from '$lib/stores/authStore.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
+  import { clearUserScopedState } from '$lib/stores/userSession';
 
   afterNavigate(() => {
     analysisNavEpoch.bump();
@@ -37,6 +38,8 @@
   let innerWidth = $state(0);
   let wide = $derived(innerWidth >= 768);
   let pushInitialized = false;
+  // Plain (non-reactive) so writing it never re-runs the effect that reads it.
+  let lastUserId: string | null = null;
   
   let isAuthRoute = $derived($page.url.pathname.startsWith('/auth'));
   let isAuthFlowRoute = $derived(
@@ -135,8 +138,16 @@
     // Signed out: everything except /auth/* and /oauth/* requires signin. /oauth/consent
     // handles its own sign-in prompt (preserving ?authorization_id=) rather than being
     // bounced to /auth/signin here, which would drop it.
+    const uid = authStore.user?.id ?? null;
+    if (uid !== lastUserId) {
+      // Sign-out or a different account on this device: forget the previous user's
+      // data and register push for the new one.
+      if (lastUserId !== null) clearUserScopedState();
+      lastUserId = uid;
+      pushInitialized = false;
+    }
+
     if (!authStore.user) {
-      if (athleteStore.initialLoadDone) athleteStore.reset();
       if (!isAuthRoute && !isOAuthRoute) goto('/auth/signin', { replaceState: true });
       return;
     }

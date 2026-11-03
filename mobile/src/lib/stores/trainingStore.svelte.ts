@@ -60,6 +60,14 @@ export class TrainingState {
     return this.workouts.filter((w) => w.date.slice(0, 7) === monthPrefix);
   });
 
+  /** Forget the signed-in user's plan (sign-out / user switch). */
+  reset() {
+    this.fetchGeneration++; // drop any in-flight response
+    this.workouts = [];
+    this.isLoading = false;
+    this.selectedDate = format(new SvelteDate(), 'yyyy-MM-dd');
+  }
+
   async fetchWorkouts(startDate: string, endDate: string) {
     const generation = ++this.fetchGeneration;
     this.isLoading = true;

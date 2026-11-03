@@ -1,4 +1,5 @@
 import { supabase } from '../supabase';
+import { decodeJwtPayload } from '$lib/utils/jwt';
 import type { User, Session } from '@supabase/supabase-js';
 
 // The expected Supabase URL for this environment
@@ -139,15 +140,20 @@ class AuthState {
   }
 
   private parseJwt(token: string): Record<string, unknown> | null {
-    try {
-      return JSON.parse(atob(token.split('.')[1]));
-    } catch {
-      return null;
-    }
+    return decodeJwtPayload(token);
   }
 
   async signOut(opts?: { timeoutMs?: number }) {
     const timeoutMs = typeof opts?.timeoutMs === 'number' && opts.timeoutMs > 0 ? opts.timeoutMs : 4000;
+
+    // While the session is still valid, stop this device receiving the account's
+    // notifications. Bounded so a slow network never blocks sign-out.
+    try {
+      const { unregisterPushToken } = await import('$lib/services/pushNotifications');
+      await Promise.race([unregisterPushToken(), new Promise((r) => setTimeout(r, 1500))]);
+    } catch {
+      // best-effort
+    }
 
     // Fail-open: clear local auth state immediately so UI/guards can transition
     // even if Supabase signOut hangs or the network is flaky.

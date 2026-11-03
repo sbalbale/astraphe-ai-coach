@@ -20,6 +20,22 @@ const COACH_UPLOAD_SIGNED_URL_TTL_SECONDS = 60 * 60 * 24 * 365;
 let _initCache: { result: unknown; expiresAt: number; period: TimeOfDayPeriod; timezoneOffsetMin: number } | null = null;
 
 export const api = {
+  /** Drop per-user in-memory caches (sign-out / user switch). */
+  clearUserCaches() {
+    _initCache = null;
+  },
+
+  async deleteJson(path: string, payload: any): Promise<boolean> {
+    try {
+      const headers = await getAuthHeaders({ 'Content-Type': 'application/json' });
+      const res = await fetch(`${API_URL}${path}`, { method: 'DELETE', headers, body: JSON.stringify(payload) });
+      return res.ok;
+    } catch (e) {
+      console.warn(`Failed to DELETE ${path}.`, e);
+      return false;
+    }
+  },
+
   async getDashboardSummary(day?: string) {
     try {
       const headers = await getAuthHeaders();

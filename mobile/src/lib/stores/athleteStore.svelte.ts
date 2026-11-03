@@ -87,6 +87,17 @@ export class AthleteState {
   // duplicate background refreshes (layout effect + dashboard onMount fire in quick succession).
   private _refreshing = false;
   private _lastRefreshAt = 0; // timestamp of last completed background refresh
+  // Bumped by reset() (sign-out / user switch). Every async step captures it and drops
+  // its result if it changed, so a slow response for the previous user can never land
+  // in the store (or the cache) after someone else signs in on the same device.
+  private _gen = 0;
+  // A forced refresh requested while a load was running (e.g. after adding a workout).
+  private _forceQueued = false;
+
+  /** True when the store still belongs to the run that captured `gen`. */
+  private current(gen: number): boolean {
+    return gen === this._gen;
+  }
 
   update(data: Partial<AthleteState>) {
     if (data.ctl !== undefined) this.ctl = data.ctl;
@@ -100,6 +111,13 @@ export class AthleteState {
   }
 
   reset() {
+    this._gen++;
+    this.loading = false;
+    this._refreshing = false;
+    this._lastRefreshAt = 0;
+    this._forceQueued = false;
+    this.biometricsLoadingMore = false;
+    this.lastProfileSaveError = null;
     this.ctl = 0;
     this.atl = 0;
     this.tsb = 0;
@@ -146,6 +164,8 @@ export class AthleteState {
   }
 
   private persistCurrent(athleteId: string): void {
+    // Never write a cache for anyone but the signed-in user.
+    if (!athleteId || authStore.user?.id !== athleteId) return;
     saveCache({
       athleteId,
       savedAt: Date.now(),
@@ -167,9 +187,14 @@ export class AthleteState {
   }
 
   async fetchAll(force = false) {
-    if (this.loading) return;
+    if (this.loading) {
+      // Don't drop a forced refresh (new workout/sleep) just because a load is running.
+      if (force) this._forceQueued = true;
+      return;
+    }
 
     const athleteId = authStore.user?.id ?? null;
+    const gen = this._gen;
 
     // 1. Hydrate synchronously from cache so the dashboard can render immediately.
     this.hydrateFromCache(athleteId);
@@ -193,6 +218,7 @@ export class AthleteState {
         api.getSyncStatus()
       ]);
 
+      if (!this.current(gen)) return;
       const state = stateResult.status === 'fulfilled' ? stateResult.value : null;
       const profileData = profileResult.status === 'fulfilled' ? profileResult.value : null;
       const syncData = syncResult.status === 'fulfilled' ? syncResult.value : null;
@@ -212,6 +238,9 @@ export class AthleteState {
 
       this.initialLoadDone = true;
       this.loading = false;
+      // A full fetch is also a refresh: without this, the next fetchAll() saw
+      // staleness ≈ now and immediately refetched all seven endpoints.
+      this._lastRefreshAt = Date.now();
 
       console.log('[AthleteStore] Tier 1 complete — dashboard ready');
 
@@ -222,10 +251,15 @@ export class AthleteState {
       }
 
       // Tier 2 background enrichment + persist cache on completion.
-      this.loadTier2(athleteId, state);
+      this.loadTier2(athleteId, state, gen);
 
+      if (this._forceQueued) {
+        this._forceQueued = false;
+        void this.fetchAll(true);
+      }
     } catch (e) {
       console.error('[AthleteStore] Error in fetchAll:', e);
+      if (!this.current(gen)) return;
       this.loading = false;
       this.initialLoadDone = true;
     }
@@ -235,6 +269,7 @@ export class AthleteState {
     // Refresh both tiers silently. Does NOT touch `loading` so the UI keeps showing cached data.
     if (this._refreshing) return;
     this._refreshing = true;
+    const gen = this._gen;
     try {
       const [stateResult, profileResult, syncResult] = await Promise.allSettled([
         api.getAthleteState(),
@@ -242,6 +277,7 @@ export class AthleteState {
         api.getSyncStatus()
       ]);
 
+      if (!this.current(gen)) return;
       const state = stateResult.status === 'fulfilled' ? stateResult.value : null;
       const profileData = profileResult.status === 'fulfilled' ? profileResult.value : null;
       const syncData = syncResult.status === 'fulfilled' ? syncResult.value : null;
@@ -259,22 +295,25 @@ export class AthleteState {
       if (profileData) this.profile = profileData;
       if (syncData) this.syncStatus = syncData;
 
-      this.loadTier2(athleteId, state);
+      this.loadTier2(athleteId, state, gen);
     } catch (e) {
       console.error('[AthleteStore] Background refresh error:', e);
     } finally {
-      this._refreshing = false;
-      this._lastRefreshAt = Date.now();
+      if (this.current(gen)) {
+        this._refreshing = false;
+        this._lastRefreshAt = Date.now();
+      }
     }
   }
 
-  private loadTier2(athleteId: string | null, state: any) {
+  private loadTier2(athleteId: string | null, state: any, gen: number = this._gen) {
     Promise.allSettled([
       api.getAthleteMetrics(),
       api.getBiometricsPage({ limit: 60 }),
       api.getPlan(),
       api.getCompletedWorkouts(200)
     ]).then(([metricsResult, bioResult, planResult, workoutsResult]) => {
+      if (!this.current(gen)) return;
       const metricsData = metricsResult.status === 'fulfilled' ? metricsResult.value : null;
       const biometricsData = bioResult.status === 'fulfilled' ? bioResult.value : null;
       const planData = planResult.status === 'fulfilled' ? planResult.value : null;
@@ -317,9 +356,10 @@ export class AthleteState {
     if (!hasMore || !nextBefore) return false;
 
     this.biometricsLoadingMore = true;
+    const gen = this._gen;
     try {
       const more = await api.getBiometricsPage({ limit: 60, before: nextBefore });
-      if (!more?.series?.length) return false;
+      if (!this.current(gen) || !more?.series?.length) return false;
 
       const existing = Array.isArray(this.biometrics?.series) ? this.biometrics.series : [];
       const mergedSeries = [...more.series, ...existing];
@@ -340,7 +380,7 @@ export class AthleteState {
       console.error('[AthleteStore] loadMoreBiometrics error:', e);
       return false;
     } finally {
-      this.biometricsLoadingMore = false;
+      if (this.current(gen)) this.biometricsLoadingMore = false;
     }
   }
 
@@ -349,9 +389,10 @@ export class AthleteState {
    * that show or edit profile values always start from what's in the database.
    */
   async refreshProfile(): Promise<boolean> {
+    const gen = this._gen;
     try {
       const fresh = await api.getAthleteProfile();
-      if (!fresh) return false;
+      if (!fresh || !this.current(gen)) return false;
       this.profile = fresh;
       const athleteId = authStore.user?.id ?? null;
       if (athleteId) this.persistCurrent(athleteId);
@@ -363,7 +404,9 @@ export class AthleteState {
 
   async updateProfile(payload: any): Promise<boolean> {
     this.lastProfileSaveError = null;
+    const gen = this._gen;
     const res = await api.patchAthleteProfile(payload);
+    if (!this.current(gen)) return false;
     if (!res.ok) {
       this.lastProfileSaveError = res.error;
       return false;
@@ -371,13 +414,14 @@ export class AthleteState {
     const data = res.data as { status?: string };
     if (data?.status === 'success') {
       const fresh = await api.getAthleteProfile();
+      if (!this.current(gen)) return false;
       if (fresh) this.profile = fresh;
       if (payload && payload.weight_kg != null) {
         // The backend records a typed-in weight as today's reading; reload the series so
         // every screen that shows "latest weight" picks it up.
         try {
           const bio = await api.getBiometricsPage({ limit: 60 });
-          if (bio) this.biometrics = bio;
+          if (bio && this.current(gen)) this.biometrics = bio;
         } catch {
           // keep the old series; the profile copy is still current
         }
