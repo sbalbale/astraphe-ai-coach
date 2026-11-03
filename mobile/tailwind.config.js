@@ -19,6 +19,14 @@ export default {
         glass: 'rgba(255,255,255,0.03)',
         glass2: 'rgba(255,255,255,0.06)',
         border: '#26262B',
+        /** Wide (tablet / desktop) designs. */
+        rail: { DEFAULT: '#121214', border: '#222226', hover: '#1A1A1E' },
+        /** Popovers, menus, the command palette. */
+        popover: { DEFAULT: '#1B1B1F', border: '#2E2E34' },
+        /** Selected / highlighted surfaces tinted with the accent. */
+        'accent-surface': { DEFAULT: '#15212F', border: '#2E3B4C', avatar: '#1F2A38' },
+        /** Quietest text: shortcut hints, placeholders. */
+        text3: '#6A6A72',
         blue: {
           DEFAULT: '#7FB4FF',
           dim: 'rgba(127,180,255,0.14)',
