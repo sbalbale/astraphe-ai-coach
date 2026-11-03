@@ -561,13 +561,24 @@ jobs:
             # The supabase CLI ships as a `supabase` shim binary that forwards
             # to a co-located `supabase-go` binary — both must land in the
             # same directory, not just `supabase` copied out on its own.
-            if ! command -v supabase >/dev/null 2>&1; then
-              echo "Installing supabase CLI"
-              mkdir -p "${HOME}/.local/share/supabase"
-              curl -fsSL https://github.com/supabase/cli/releases/latest/download/supabase_linux_amd64.tar.gz \
-                | tar -xz -C "${HOME}/.local/share/supabase"
+            #
+            # Pinned version + checksum, not releases/latest: v3.0.0 (2026-11-02)
+            # rejects our config.toml's [inbucket] section and broke every deploy.
+            # Installed into a per-version directory so a bump re-downloads.
+            SUPABASE_CLI_VERSION=2.122.1
+            SUPABASE_CLI_SHA256=3e54b98e5ead7be0a3b0753526833d4cc9a55304e4d57da0d72f1efc342738ea
+            SUPABASE_CLI_DIR="${HOME}/.local/share/supabase-${SUPABASE_CLI_VERSION}"
+            if [ ! -x "${SUPABASE_CLI_DIR}/supabase" ]; then
+              echo "Installing supabase CLI ${SUPABASE_CLI_VERSION}"
+              mkdir -p "${SUPABASE_CLI_DIR}"
+              curl -fsSL -o /tmp/supabase-cli.tar.gz \
+                "https://github.com/supabase/cli/releases/download/v${SUPABASE_CLI_VERSION}/supabase_${SUPABASE_CLI_VERSION}_linux_amd64.tar.gz"
+              echo "${SUPABASE_CLI_SHA256}  /tmp/supabase-cli.tar.gz" | sha256sum -c -
+              tar -xzf /tmp/supabase-cli.tar.gz -C "${SUPABASE_CLI_DIR}"
+              rm -f /tmp/supabase-cli.tar.gz
             fi
-            export PATH="${HOME}/.local/share/supabase:${PATH}"
+            export PATH="${SUPABASE_CLI_DIR}:${PATH}"
+            supabase --version
 
             cd /root/ci-migrate
 
