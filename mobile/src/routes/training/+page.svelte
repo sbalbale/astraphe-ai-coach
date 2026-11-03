@@ -50,6 +50,25 @@
   import LapStrip from '$lib/components/workout/LapStrip.svelte';
   import DataSources from '$lib/components/workout/DataSources.svelte';
   import AddActivityModal from '$lib/components/AddActivityModal.svelte';
+  import WideTrainingList from '$lib/components/wide/training/WideTrainingList.svelte';
+  import WideWorkoutDetail from '$lib/components/wide/training/WideWorkoutDetail.svelte';
+  import { viewport } from '$lib/stores/viewport.svelte';
+  import {
+    activityMeta as formatActivityMeta,
+    formatAvgPower,
+    formatMMSS,
+    getDurationSecs,
+    getHrZonePcts,
+    getHrZonePctsTopDown,
+    getWorkoutLabel,
+    hasAnyHrZone,
+    sportGlyph,
+    splitDistance as formatSplitDistance,
+    splitPace,
+    splitSpeed as formatSplitSpeed,
+    splitTime,
+    weekEyebrow,
+  } from '$lib/utils/trainingFormat';
 
   let addActivityOpen = $state(false);
   // Deep link from other tabs' empty states: /training?log=1 opens the log form once.
@@ -246,6 +265,11 @@
       if (match) selectedWorkout = match;
       return;
     }
+    if (viewport.wide) {
+      // Master–detail: picking a row swaps the detail, it isn't a new page.
+      goto(target, { keepFocus: true, noScroll: true, replaceState: true });
+      return;
+    }
     // Push the detail on top of the list, so Back (incl. Android's) returns to the list.
     openedFromList = true;
     goto(target, { keepFocus: true, noScroll: true });
@@ -316,14 +340,6 @@
     });
   });
 
-  function getWorkoutLabel(type: string) {
-    const t = type?.toLowerCase();
-    if (t === 'strength_training' || t === 'strength' || t === 'gym') return 'Strength';
-    if (t === 'mobility') return 'Mobility';
-    if (t === 'other') return 'Other';
-    return t ? t.charAt(0).toUpperCase() + t.slice(1) : 'Workout';
-  }
-
   /** TSS from workouts started in the last 7 days — source of truth for the Weekly TSS card. */
   const weeklyTss = $derived.by(() => {
     const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
@@ -378,51 +394,6 @@
       pct: null as number | null
     };
   });
-
-  function getDurationSecs(w: any): number {
-    const direct = w?.duration_secs ?? w?.duration_seconds;
-    if (Number.isFinite(direct)) return Math.max(0, Math.floor(Number(direct)));
-
-    const start = w?.started_at ? new Date(w.started_at) : null;
-    const end = w?.ended_at ? new Date(w.ended_at) : null;
-    if (!start || !end) return 0;
-    const ms = end.getTime() - start.getTime();
-    if (!Number.isFinite(ms)) return 0;
-    return Math.max(0, Math.floor(ms / 1000));
-  }
-
-  function formatAvgPower(w: any): string {
-    const raw = w?.avg_power_w ?? w?.average_watts;
-    if (raw == null) return '--';
-    const watts = Number(raw);
-    return Number.isFinite(watts) ? String(Math.round(watts)) : '--';
-  }
-
-  function formatMMSS(totalSeconds: number): string {
-    const s = Math.max(0, Math.floor(totalSeconds || 0));
-    const m = Math.floor(s / 60);
-    const ss = String(s % 60).padStart(2, '0');
-    return `${m}:${ss}`;
-  }
-
-  function getHrZonePcts(w: any): Array<number | null> {
-    return [
-      w?.hr_zone_1_pct ?? null,
-      w?.hr_zone_2_pct ?? null,
-      w?.hr_zone_3_pct ?? null,
-      w?.hr_zone_4_pct ?? null,
-      w?.hr_zone_5_pct ?? null
-    ].map((v) => (v == null ? null : Number(v)));
-  }
-
-  function getHrZonePctsTopDown(w: any): Array<number | null> {
-    // Display order: Z5 (top) → Z1 (bottom); Astraphe model is always Z1–Z5 (no WHOOP Z0 bucket).
-    return getHrZonePcts(w).slice().reverse();
-  }
-
-  function hasAnyHrZone(w: any): boolean {
-    return getHrZonePcts(w).some((v) => v != null);
-  }
 
   async function deleteSelectedWorkout() {
     if (!selectedWorkout?.id) return;
@@ -624,20 +595,7 @@
       distanceUnit: imperial ? "mi" : "km"
     };
   });
-  const SPORT_GLYPHS: Record<string, string> = { bike: "BIKE", cycling: "BIKE", run: "RUN", running: "RUN", swim: "SWIM", swimming: "SWIM", strength: "GYM", gym: "GYM", row: "ROW", rowing: "ROW", mobility: "MOB" };
-  const sportGlyph = (sport: string) => SPORT_GLYPHS[String(sport ?? "").toLowerCase()] ?? "OTHER";
-  function activityMeta(w: any): string {
-    const parts: string[] = [];
-    const d = w?.started_at ? new Date(w.started_at) : null;
-    if (d && !Number.isNaN(d.getTime())) parts.push(format(d, "EEE d MMM"));
-    const secs = getDurationSecs(w);
-    if (secs > 0) { const h = Math.floor(secs / 3600); const m = Math.round((secs % 3600) / 60); parts.push(h > 0 ? `${h}h ${String(m).padStart(2, "0")}m` : `${m}m`); }
-    const meters = Number(w?.distance_m) || 0;
-    if (meters > 0) parts.push(measurementUnits === "imperial" ? `${(meters / 1609.344).toFixed(1)} mi` : `${(meters / 1000).toFixed(1)} km`);
-    const np = Number(w?.norm_power_w) || 0;
-    if (np > 0) parts.push(`${np} W NP`);
-    return parts.join(" · ");
-  }
+  const activityMeta = (w: any) => formatActivityMeta(w, measurementUnits);
   // A trailing 7-day window ending now, so it's labelled as such and only shown on the
   // current week (it read "This week is X TSS" next to a different week total, and
   // described the current week while browsing past ones).
@@ -649,10 +607,44 @@
     return `The last 7 days total ${ctx.weekSum} TSS, ${pct}% ${ctx.pct >= 0 ? "above" : "below"} your recent average of ${ctx.baseline}.`;
   });
 
+  // --- Wide (tablet / desktop): master–detail ---
+  const wideLayout = $derived(viewport.wide && hasWorkouts);
+  const wideListClass = $derived(viewport.width < 1100 ? 'w-[300px]' : 'w-[360px]');
+  /** Detail pane width: two card columns once it's wide enough (design: 2 × 350 px). */
+  const wideTwoColumn = $derived(
+    viewport.width - (viewport.railCollapsed ? 76 : 248) - (viewport.width < 1100 ? 300 : 360) >= 700
+  );
+  const startedMs = (w: any) => (w?.started_at ? new Date(w.started_at).getTime() : 0);
+  const newestFirst = (rows: any[]) => [...rows].sort((a, b) => startedMs(b) - startedMs(a));
+  const wideWeekWorkouts = $derived(newestFirst(weekWorkouts));
+  /** The detail only shows a workout from the week in the list (design). */
+  const wideSelected = $derived(
+    selectedWorkout && weekWorkouts.some((w: any) => String(w?.id) === String(selectedWorkout.id)) ? selectedWorkout : null
+  );
+  let wideAutoPicked = false;
+  $effect(() => {
+    if (!wideLayout || wideSelected) return;
+    const all = athleteStore.workouts || [];
+    // A deep link that is still resolving (?workout_id= matches a loaded workout).
+    if (workoutIdFromUrl && !selectedWorkout && all.some((w: any) => String(w?.id) === String(workoutIdFromUrl))) return;
+    const first = wideWeekWorkouts[0];
+    if (first) {
+      openWorkout(first);
+      return;
+    }
+    // First visit with nothing this week: jump to the most recent workout.
+    if (!workoutIdFromUrl && !wideAutoPicked) {
+      wideAutoPicked = true;
+      const latest = newestFirst(all)[0];
+      if (latest) openWorkout(latest);
+    }
+  });
+
   $effect(() => {
     pageHeader.eyebrow = weekRangeLabel;
     pageHeader.add = () => (addActivityOpen = true);
     pageHeader.addLabel = "Log activity";
+    pageHeader.hideOnWide = wideLayout;
     return resetPageHeader;
   });
 
@@ -661,28 +653,8 @@
   let showAllSplits = $state(false);
   $effect(() => { void selectedWorkout?.id; detailTab = 'overview'; showAllSplits = false; });
   // Splits table cells (units live in the column, not the cell).
-  function splitTime(secs: number): string {
-    const t = Math.max(0, Math.round(Number(secs) || 0));
-    const h = Math.floor(t / 3600);
-    const m = Math.floor((t % 3600) / 60);
-    const ss = String(t % 60).padStart(2, "0");
-    return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`;
-  }
-  function splitDistance(meters: number): string {
-    const m = Number(meters) || 0;
-    if (m <= 0) return "—";
-    return (measurementUnits === "imperial" ? m / 1609.344 : m / 1000).toFixed(m < 1000 ? 2 : 1);
-  }
-  function splitPace(secs: number | null): string {
-    const p = Number(secs);
-    if (!Number.isFinite(p) || p <= 0) return "—";
-    return `${Math.floor(p / 60)}:${String(Math.round(p % 60)).padStart(2, "0")}`;
-  }
-  function splitSpeed(r: any): string {
-    const v = Number(r?.average_speed) > 0 ? Number(r.average_speed) : Number(r?.distance) > 0 && Number(r?.elapsed_time) > 0 ? Number(r.distance) / Number(r.elapsed_time) : 0;
-    if (v <= 0) return "—";
-    return (measurementUnits === "imperial" ? v * 2.23694 : v * 3.6).toFixed(1);
-  }
+  const splitDistance = (meters: number) => formatSplitDistance(meters, measurementUnits);
+  const splitSpeed = (r: any) => formatSplitSpeed(r, measurementUnits);
 </script>
 
 {#if addActivityOpen}
@@ -705,6 +677,68 @@
   />
 {/if}
 
+{#if wideLayout}
+  {@const sel = wideSelected}
+  <div class="-mx-10 -my-8 flex-1 min-h-0 flex">
+    <WideTrainingList
+      bind:weekValue={weekPickerValue}
+      eyebrow={weekEyebrow(selectedWeekStart, isCurrentWeek)}
+      workouts={wideWeekWorkouts}
+      totals={weekTotals}
+      {weeklyTarget}
+      selectedId={sel?.id != null ? String(sel.id) : null}
+      {loadInsight}
+      units={measurementUnits}
+      widthClass={wideListClass}
+      onSelect={openWorkout}
+      onIntent={onWorkoutCardIntent}
+      onLog={() => (addActivityOpen = true)}
+    />
+    {#if sel && isManualWorkout(sel)}
+      <div class="flex-1 min-w-0 h-full overflow-y-auto px-6 pt-8 pb-12">
+        <ManualWorkoutDetail
+          workout={sel}
+          sportLabel={getWorkoutLabel(sel.sport)}
+          onEdit={openEditActivity}
+          onDelete={deleteSelectedWorkout}
+        />
+      </div>
+    {:else if sel}
+      <WideWorkoutDetail
+        workout={sel}
+        streams={detailStreams}
+        laps={detailLaps}
+        splits={detailSplits.splits}
+        zoneDefs={mergedHrZoneDefs}
+        units={measurementUnits}
+        use24h={(athleteStore.profile as any)?.time_format === '24h'}
+        lthr={Number((athleteStore.profile as any)?.lthr ?? (athleteStore.profile as any)?.threshold_hr) || 0}
+        twoColumn={wideTwoColumn}
+        loading={detailLoading}
+        hydrating={detailHydrating}
+        error={detailError}
+        missingPaceStream={detailMissingPaceStream}
+        analysis={{
+          premium: hasPremiumAccess(authStore.tier),
+          loading: workoutAnalysisLoading,
+          text: workoutAnalysisMemo.get(String(sel.id)) ?? null
+        }}
+        showRepull={showRepullDataButton}
+        repulling={detailRepulling}
+        onEdit={openEditActivity}
+        onDelete={deleteSelectedWorkout}
+        onRepull={() => repullWorkoutData()}
+      />
+    {:else if wideWeekWorkouts.length === 0}
+      <div class="flex-1 min-w-0 h-full flex flex-col items-center justify-center gap-2 text-text2 text-[14px]">
+        <span class="font-display text-[28px] text-text0">No activity selected</span>
+        <span>Pick one from the list, or log one by hand.</span>
+      </div>
+    {:else}
+      <div class="flex-1 min-w-0"></div>
+    {/if}
+  </div>
+{:else}
 <div class="flex flex-col gap-3">
   {#if showNoTrainingData}
     <EmptyStateCard
@@ -1035,3 +1069,4 @@
     {/if}
   {/if}
 </div>
+{/if}

@@ -174,6 +174,7 @@
     time = undefined,
     zones = undefined,
     hero = false,
+    heroHeightClass = 'h-[260px]',
   }: {
     latlng?: [number, number][];
     polyline?: string | null;
@@ -183,10 +184,12 @@
     zones?: ZoneDef[];
     /** Full-bleed header map (no card, title or legend) for the workout detail hero. */
     hero?: boolean;
+    /** Hero map height (Tailwind class); the wide Training log uses a taller hero. */
+    heroHeightClass?: string;
   } = $props();
 
   const PREVIEW_HEIGHT = $derived(
-    hero ? 'h-[260px]' : 'h-[240px] md:h-[min(28rem,52vh)] md:min-h-[22rem]'
+    hero ? heroHeightClass : 'h-[240px] md:h-[min(28rem,52vh)] md:min-h-[22rem]'
   );
 
   const routeLatLng = $derived<[number, number][]>(
