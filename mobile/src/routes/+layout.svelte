@@ -209,13 +209,13 @@
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m15 6-6 6 6 6"></path></svg>
               </button>
               <div class="min-w-[84px]">
-                <DatePicker bind:value={pageHeader.dateValue} max={pageHeader.dateMax} label={pageHeader.dateLabel} hideChevron ariaLabel="Pick a date" buttonClass="h-9 px-1 justify-center gap-1.5 rounded-[10px] bg-transparent border-0 text-[13px] font-semibold text-text0" popoverClass="!left-auto right-0" />
+                <DatePicker bind:value={pageHeader.dateValue} max={pageHeader.dateMax} label={pageHeader.dateLabel} marked={pageHeader.dateMarks} hideChevron ariaLabel="Pick a date" buttonClass="h-9 px-1 justify-center gap-1.5 rounded-[10px] bg-transparent border-0 text-[13px] font-semibold text-text0" popoverClass="!left-auto right-0" />
               </div>
               <button type="button" aria-label="Next day" disabled={!pageHeader.canNext} class="w-8 h-9 border-0 bg-transparent flex items-center justify-center {pageHeader.canNext ? 'text-text1 cursor-pointer' : 'text-text2/40 cursor-not-allowed'}" onclick={pageHeader.next}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m9 6 6 6-6 6"></path></svg>
               </button>
             </div>
-            <button type="button" disabled={!pageHeader.canNext} class="h-11 px-3 rounded-[14px] border border-border bg-transparent text-[13px] font-medium {pageHeader.canNext ? 'text-text0 cursor-pointer' : 'text-text2/60 cursor-default'}" onclick={pageHeader.today ?? undefined}>Today</button>
+            <button type="button" disabled={!pageHeader.canNext} class="h-11 px-3 rounded-[14px] text-[13px] font-semibold {pageHeader.canNext ? 'border-0 bg-blue text-[#0B1420] cursor-pointer' : 'border border-border bg-transparent text-text2/60 cursor-default'}" onclick={pageHeader.today ?? undefined}>Today</button>
           </div>
         {:else if pageHeader.add}
           <button type="button" aria-label={pageHeader.addLabel} class="w-11 h-11 rounded-[14px] border-0 bg-blue text-[#0B1420] flex items-center justify-center cursor-pointer" onclick={pageHeader.add}>

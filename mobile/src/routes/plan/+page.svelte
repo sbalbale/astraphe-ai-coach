@@ -5,6 +5,7 @@
   import { authStore } from '$lib/stores/authStore.svelte';
   import { trainingStore } from '$lib/stores/trainingStore.svelte';
   import { pageHeader, resetPageHeader } from '$lib/stores/pageHeader.svelte';
+  import MonthNavigator from '$lib/components/MonthNavigator.svelte';
   import {
     addDays,
     endOfMonth,
@@ -195,6 +196,15 @@
     }
   }
 
+  function onMonthChange(key: string) {
+    const [y, m] = key.split('-').map(Number);
+    if (key === format(new Date(), 'yyyy-MM')) {
+      selectDate(new Date());
+      return;
+    }
+    viewMonth = new Date(y, m - 1, 1);
+  }
+
   function jumpToToday() {
     selectDate(new Date());
   }
@@ -319,7 +329,15 @@
   // --- Design view (Week / Month / Session sheet) ---
   let planView = $state<'week' | 'month'>('week');
   const todayIso = format(new Date(), 'yyyy-MM-dd');
-  const weekStart = $derived(startOfWeek(selectedDate, { weekStartsOn: 1 }));
+  // Week view is always the current week.
+  const weekStart = startOfWeek(new Date(), { weekStartsOn: 1 });
+  $effect(() => {
+    if (planView !== 'week') return;
+    const iso = trainingStore.selectedDate;
+    const startIso = format(weekStart, 'yyyy-MM-dd');
+    const endIso = format(addDays(weekStart, 6), 'yyyy-MM-dd');
+    if (!iso || iso < startIso || iso > endIso) selectDate(new Date());
+  });
   const weekDays = $derived(Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)));
   const dayItems = $derived(workoutsByIso[selectedIso] ?? []);
   const laterThisWeek = $derived.by(() => {
@@ -429,16 +447,7 @@
   {#if authStore.tier !== 'premium'}
     <EmptyState title="Premium required" message="You must be a premium member to access the Training Plan feature." icon="🔒" />
   {:else if planView === 'week'}
-    <!-- Week strip -->
-    <div class="flex items-center justify-between -mb-1">
-      <button type="button" aria-label="Previous week" class="w-9 h-8 border-0 bg-transparent text-text2 flex items-center justify-start p-0 cursor-pointer" onclick={() => selectDate(addDays(weekStart, -7))}>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m15 6-6 6 6 6"></path></svg>
-      </button>
-      <span class="font-mono text-[11px] tracking-[0.14em] text-text2 uppercase">{format(weekStart, 'd MMM')} – {format(addDays(weekStart, 6), 'd MMM')}</span>
-      <button type="button" aria-label="Next week" class="w-9 h-8 border-0 bg-transparent text-text2 flex items-center justify-end p-0 cursor-pointer" onclick={() => selectDate(addDays(weekStart, 7))}>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m9 6 6 6-6 6"></path></svg>
-      </button>
-    </div>
+    <!-- Week strip (this week only) -->
     <div role="tablist" aria-label="Week" class="grid grid-cols-7 gap-1.5">
       {#each weekDays as d (d.toISOString())}
         {@const iso = format(d, 'yyyy-MM-dd')}
@@ -514,15 +523,7 @@
   {:else}
     <!-- Month -->
     <section aria-label={format(viewMonth, 'MMMM yyyy')} class="bg-bg2 border border-border rounded-[24px] px-3 pt-3 pb-3.5 flex flex-col gap-2">
-      <div class="flex justify-between items-center">
-        <button type="button" aria-label="Previous month" class="w-11 h-10 border-0 bg-transparent text-text1 flex items-center justify-center cursor-pointer" onclick={() => (viewMonth = new Date(viewMonth.getFullYear(), viewMonth.getMonth() - 1, 1))}>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m15 6-6 6 6 6"></path></svg>
-        </button>
-        <h2 class="m-0 font-display font-normal text-[22px]">{format(viewMonth, viewMonth.getFullYear() === new Date().getFullYear() ? 'MMMM' : 'MMMM yyyy')}</h2>
-        <button type="button" aria-label="Next month" class="w-11 h-10 border-0 bg-transparent text-text1 flex items-center justify-center cursor-pointer" onclick={() => (viewMonth = new Date(viewMonth.getFullYear(), viewMonth.getMonth() + 1, 1))}>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m9 6 6 6-6 6"></path></svg>
-        </button>
-      </div>
+      <MonthNavigator value={format(viewMonth, 'yyyy-MM')} onchange={onMonthChange} />
       <div aria-hidden="true" class="grid grid-cols-7 gap-1 text-center font-mono text-[10px] tracking-[0.08em] text-text2">
         {#each ['M', 'T', 'W', 'T', 'F', 'S', 'S'] as l, i (i)}<span>{l}</span>{/each}
       </div>

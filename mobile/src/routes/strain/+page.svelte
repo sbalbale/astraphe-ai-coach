@@ -75,7 +75,8 @@
     pageHeader.canNext = canGoForward;
     pageHeader.today = () => { endPickerValue = todayStr; dayIndex = 6; };
     pageHeader.dateMax = todayStr;
-    pageHeader.dateLabel = endPickerValue === todayStr || canGoForward === false ? 'Today' : format(clampedEndDay, 'MMM d');
+    pageHeader.dateLabel = canGoForward ? format(clampedEndDay, 'EEE d MMM') : 'Today';
+    pageHeader.dateMarks = Array.from(new Set([...(athleteStore.workouts ?? []).map((w: any) => String(w?.started_at ?? '').slice(0, 10)), ...(athleteStore.biometrics?.series ?? []).filter((r: any) => Number(r?.strain_score) > 0).map((r: any) => r.date)].filter(Boolean)));
     pageHeader.dateValue = format(clampedEndDay, "yyyy-MM-dd");
     return resetPageHeader;
   });

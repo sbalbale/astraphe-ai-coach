@@ -79,7 +79,8 @@
     pageHeader.canNext = canGoForward;
     pageHeader.today = () => { endPickerValue = todayStr; nightIndex = 6; };
     pageHeader.dateMax = todayStr;
-    pageHeader.dateLabel = endPickerValue === todayStr || canGoForward === false ? 'Today' : format(clampedEndDay, 'MMM d');
+    pageHeader.dateLabel = canGoForward ? format(clampedEndDay, 'EEE d MMM') : 'Today';
+    pageHeader.dateMarks = (athleteStore.biometrics?.series ?? []).filter((r: any) => r?.date && (Number(r?.sleep_duration_min) > 0 || Number(r?.sleep_score) > 0)).map((r: any) => r.date);
     pageHeader.dateValue = format(clampedEndDay, "yyyy-MM-dd");
     return resetPageHeader;
   });

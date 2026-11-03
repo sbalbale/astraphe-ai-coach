@@ -7,6 +7,8 @@
   import Card from '$lib/components/Card.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import { pageHeader, resetPageHeader } from '$lib/stores/pageHeader.svelte';
+  import MonthNavigator from '$lib/components/MonthNavigator.svelte';
+  import WeekNavigator from '$lib/components/WeekNavigator.svelte';
   import { analysisNavEpoch } from '$lib/analysisNavEpoch.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { authStore } from '$lib/stores/authStore.svelte';
@@ -20,8 +22,10 @@
     endOfMonth,
     format,
     isWithinInterval,
+    endOfWeek,
     startOfDay,
     startOfMonth,
+    startOfWeek,
     subDays
   } from 'date-fns';
 
@@ -82,7 +86,7 @@
   });
 
   const canGoForwardWeek = $derived(
-    toDateInputValue(addDays(parseDateInputLocal(selectedDay), 7)) <= todayDayMax
+    toDateInputValue(startOfWeek(addDays(parseDateInputLocal(selectedDay), 7), { weekStartsOn: 1 })) <= todayDayMax
   );
   const canGoForwardMonth = $derived(
     toMonthInputValue(addMonths(parseDateInputLocal(`${selectedMonth}-01`), 1)) <= todayMonthMax
@@ -185,9 +189,8 @@
 
   const windowStart = $derived.by(() => {
     if (windowMode === 'week') {
-      // Rolling 7-day window ending on the selected day (inclusive)
-      const anchor = parseDateInputLocal(selectedDay);
-      return startOfDay(subDays(anchor, 6));
+      // Monday–Sunday calendar week containing the selected day
+      return startOfDay(startOfWeek(parseDateInputLocal(selectedDay), { weekStartsOn: 1 }));
     }
     const monthDate = new Date(`${selectedMonth}-01T00:00:00`);
     return startOfMonth(monthDate);
@@ -195,8 +198,7 @@
 
   const windowEnd = $derived.by(() => {
     if (windowMode === 'week') {
-      const anchor = parseDateInputLocal(selectedDay);
-      return endOfDay(anchor);
+      return endOfDay(endOfWeek(parseDateInputLocal(selectedDay), { weekStartsOn: 1 }));
     }
     const monthDate = new Date(`${selectedMonth}-01T00:00:00`);
     return endOfMonth(monthDate);
@@ -344,7 +346,11 @@
         return { zone: z.zone, name: z.name, color: z.color, hr, watts, secs, time: fmtDuration(secs), pct: total > 0 ? Math.round((secs / total) * 100) : 0 };
       });
   });
-  const isCurrentWindow = $derived(windowMode === "week" ? selectedDay === todayDayMax : selectedMonth === todayMonthMax);
+  const isCurrentWindow = $derived(
+    windowMode === "week"
+      ? toDateInputValue(startOfWeek(parseDateInputLocal(selectedDay), { weekStartsOn: 1 })) === toDateInputValue(startOfWeek(new Date(), { weekStartsOn: 1 }))
+      : selectedMonth === todayMonthMax
+  );
   const windowTitle = $derived(
     windowMode === "month"
       ? format(windowStart, "MMMM")
@@ -391,18 +397,11 @@
   {:else}
     <!-- Distribution -->
     <section aria-label="Distribution" class="bg-bg2 border border-border rounded-[24px] px-[18px] py-4 flex flex-col gap-3">
-      <div class="flex items-center justify-between">
-        <button type="button" aria-label={windowMode === 'week' ? 'Previous 7 days' : 'Previous month'} class="w-11 h-9 border-0 bg-transparent text-text2 flex items-center justify-start p-0 cursor-pointer" onclick={stepWindow(-1)}>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m15 6-6 6 6 6"></path></svg>
-        </button>
-        <div class="flex flex-col items-center gap-1 text-center">
-          <h2 class="m-0 font-display font-normal text-[28px] leading-none">{windowTitle}</h2>
-          <span class="font-mono text-[11px] tracking-[0.14em] text-text2 uppercase">{windowSubtitle}</span>
-        </div>
-        <button type="button" aria-label={windowMode === 'week' ? 'Next 7 days' : 'Next month'} disabled={!canGoForward} class="w-11 h-9 border-0 bg-transparent flex items-center justify-end p-0 {canGoForward ? 'text-text2 cursor-pointer' : 'text-text2/40 cursor-not-allowed'}" onclick={stepWindow(1)}>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m9 6 6 6-6 6"></path></svg>
-        </button>
-      </div>
+      {#if windowMode === 'month'}
+        <MonthNavigator bind:value={selectedMonth} max={todayMonthMax} subtitle="This month · so far" />
+      {:else}
+        <WeekNavigator bind:value={selectedDay} max={todayDayMax} />
+      {/if}
       {#if zoneRows.every((z) => z.secs === 0)}
         <p class="m-0 text-[13px] text-text2">No heart-rate zone data for this period yet.</p>
       {/if}
