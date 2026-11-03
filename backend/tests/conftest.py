@@ -1,3 +1,12 @@
+import os
+
+# Before the app is imported: never start real background loops (WHOOP token refresh,
+# Garmin poll, startup backfills) from tests; they'd run against whatever database
+# backend/.env points at and could rotate real provider tokens. Tests also run as
+# development unless the environment says otherwise (the app default is production).
+os.environ["BACKGROUND_LOOPS_ENABLED"] = "false"
+os.environ.setdefault("APP_ENV", "development")
+
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 

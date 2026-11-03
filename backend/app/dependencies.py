@@ -1,4 +1,6 @@
 import asyncio
+import base64
+import json
 import logging
 from dataclasses import dataclass
 from typing import Callable, TypeVar
@@ -150,6 +152,42 @@ async def _auth_get_user(db: Client, token: str):
     return await _run_supabase_call(db.auth.get_user, token)
 
 
+def unverified_jwt_claims(token: str) -> dict:
+    """
+    Decode a JWT payload WITHOUT verifying it. Only call this after GoTrue has
+    verified the token (auth.get_user); it's for reading claims GoTrue doesn't
+    surface on the user object, such as the OAuth `client_id`.
+    """
+    try:
+        part = token.split(".")[1]
+        part += "=" * (-len(part) % 4)
+        data = json.loads(base64.urlsafe_b64decode(part))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def reject_third_party_oauth_token(token: str) -> None:
+    """
+    Tokens minted by Supabase's OAuth server for third-party (MCP) clients carry a
+    `client_id` claim and are otherwise ordinary user JWTs. They're meant for the
+    read-only MCP server, not this API, where they'd allow writes, account
+    deletion and (for admins) admin routes.
+    """
+    if unverified_jwt_claims(token).get("client_id"):
+        raise HTTPException(status_code=403, detail="Third-party app tokens can't be used with this API")
+
+
+def _dev_auth_fallback_allowed() -> bool:
+    """The TEST_ATHLETE_ID fallback only ever applies to a local Supabase in development."""
+    url = (settings.SUPABASE_URL or "").lower()
+    return (
+        settings.APP_ENV == "development"
+        and bool(settings.TEST_ATHLETE_ID)
+        and url.startswith(("http://127.0.0.1", "http://localhost"))
+    )
+
+
 async def _fetch_athlete_id_for_user(db: Client, user_id: str) -> str:
     athlete_res = await _run_supabase_call(
         lambda: db.table("athletes").select("id").eq("user_id", user_id).execute()
@@ -187,6 +225,7 @@ async def get_current_athlete(
             await asyncio.sleep(delay)
         try:
             user = await _auth_get_user(db, token)
+            reject_third_party_oauth_token(token)
             user_id = user.user.id
             if settings.APP_ENV == "development":
                 print(f"Auth DEBUG: user_id={user_id}")
@@ -211,7 +250,7 @@ async def get_current_athlete(
             status_code=503,
             detail="Database schema cache unavailable, please retry.",
         )
-    if settings.APP_ENV == "development" and settings.TEST_ATHLETE_ID:
+    if _dev_auth_fallback_allowed():
         print(f"WARNING: Falling back to TEST_ATHLETE_ID: {settings.TEST_ATHLETE_ID}")
         try:
             exists = await _run_supabase_call(
@@ -229,7 +268,7 @@ async def get_current_athlete(
             status_code=401,
             detail="Invalid or stale auth token (local Supabase was likely reset). Please sign out and sign in again.",
         )
-    raise HTTPException(status_code=401, detail=f"Invalid or missing token: {last_exc}")
+    raise HTTPException(status_code=401, detail="Invalid or missing token")
 
 
 # ---------------------------------------------------------------------------
@@ -265,6 +304,7 @@ async def get_user_config(
 
     try:
         user_res = await _auth_get_user(db, token)
+        reject_third_party_oauth_token(token)
         u = user_res.user
         app_meta = getattr(u, "app_metadata", None) or {}
 

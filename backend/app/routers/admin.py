@@ -2,9 +2,13 @@ from fastapi import APIRouter, HTTPException, Depends, Security
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, field_validator
 from typing import Optional
+import logging
+
 from supabase import Client
 
-from app.dependencies import get_user_db, get_admin_db, VALID_TIERS, TIER_DEFAULTS
+from app.dependencies import get_user_db, get_admin_db, VALID_TIERS, TIER_DEFAULTS, reject_third_party_oauth_token
+
+logger = logging.getLogger(__name__)
 
 security = HTTPBearer()
 router = APIRouter(prefix="/v1/admin", tags=["Admin"])
@@ -66,6 +70,8 @@ async def get_admin_user(
     token = credentials.credentials
     try:
         user_res = db.auth.get_user(token)
+        # Third-party (MCP) OAuth tokens never get admin access, even for an admin user.
+        reject_third_party_oauth_token(token)
         u = user_res.user
         app_meta = getattr(u, "app_metadata", None) or {}
         if not app_meta.get("is_admin"):
@@ -73,8 +79,9 @@ async def get_admin_user(
         return {"user_id": u.id}
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=401, detail=f"Authentication failed: {str(e)}")
+    except Exception:
+        logger.exception("admin auth failed")
+        raise HTTPException(status_code=401, detail="Authentication failed")
 
 
 # ---------------------------------------------------------------------------

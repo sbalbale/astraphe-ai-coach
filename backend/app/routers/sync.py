@@ -400,12 +400,16 @@ async def garmin_webhook(request: Request, background_tasks: BackgroundTasks, db
     body = await request.body()
     signature = request.headers.get("X-Garmin-Signature", "")
     garmin_secret = settings.GARMIN_WEBHOOK_SECRET
-    if garmin_secret:
-        expected = hmac.new(
-            garmin_secret.encode("utf-8"), body, hashlib.sha256
-        ).hexdigest()
-        if not hmac.compare_digest(signature, expected):
-            raise HTTPException(status_code=401, detail="Invalid Garmin signature")
+    if not garmin_secret:
+        # Fail closed. Garmin sync is poll-only (garmin.poll_loop); without a secret this
+        # endpoint would let anyone inject workouts or overwrite weight for a Garmin
+        # user by display name.
+        raise HTTPException(status_code=404, detail="Not found")
+    expected = hmac.new(
+        garmin_secret.encode("utf-8"), body, hashlib.sha256
+    ).hexdigest()
+    if not hmac.compare_digest(signature, expected):
+        raise HTTPException(status_code=401, detail="Invalid Garmin signature")
 
     try:
         payload = json.loads(body)
@@ -1177,6 +1181,14 @@ async def strava_webhook(
     obj_type = payload.get("object_type")
     activity_id = _webhook_int(payload.get("object_id"))
     owner_strava_id = _webhook_int(payload.get("owner_id"))
+
+    # Strava doesn't sign payloads, and owner/activity ids are public, so the
+    # subscription id (only Strava and we know it) is the check that the event is
+    # really from our subscription. Without it anyone could forge a `delete`.
+    expected_sub = int(settings.STRAVA_WEBHOOK_SUBSCRIPTION_ID or 0)
+    if expected_sub and _webhook_int(payload.get("subscription_id")) != expected_sub:
+        print("[strava.webhook] subscription_id mismatch — dropping")
+        return Response(status_code=200)
 
     # Strava does not sign webhook payloads, so we verify ownership against our
     # own database before acting on any event. This prevents unauthenticated

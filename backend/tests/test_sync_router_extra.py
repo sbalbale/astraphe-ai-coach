@@ -977,6 +977,30 @@ def test_strava_oauth_callback_unexpected_error_returns_error_dict():
 # ---------------------------------------------------------------------------
 
 
+def _garmin_signed_post(url, json=None, content=None, headers=None):
+    """POST to the Garmin webhook signed with the test secret ("shh")."""
+    import hashlib
+    import hmac as hmac_mod
+    import json as json_mod
+
+    body = content if content is not None else json_mod.dumps(json).encode("utf-8")
+    sig = hmac_mod.new(b"shh", body, hashlib.sha256).hexdigest()
+    h = {"content-type": "application/json", "X-Garmin-Signature": sig, **(headers or {})}
+    return client.post(url, content=body, headers=h)
+
+
+def test_garmin_webhook_without_secret_is_disabled():
+    admin_db = MagicMock()
+    app.dependency_overrides[get_admin_db] = lambda: admin_db
+    try:
+        with patch.object(sync_router.settings, "GARMIN_WEBHOOK_SECRET", None):
+            res = client.post("/v1/sync/garmin/webhook", json={"bodyComps": [{"userId": "x", "weightInGrams": 1}]})
+        assert res.status_code == 404
+        admin_db.table.assert_not_called()
+    finally:
+        _teardown()
+
+
 def test_garmin_webhook_invalid_signature_401():
     admin_db = MagicMock()
     app.dependency_overrides[get_admin_db] = lambda: admin_db
@@ -1017,8 +1041,8 @@ def test_garmin_webhook_invalid_json_400():
     admin_db = MagicMock()
     app.dependency_overrides[get_admin_db] = lambda: admin_db
     try:
-        with patch.object(sync_router.settings, "GARMIN_WEBHOOK_SECRET", None):
-            res = client.post(
+        with patch.object(sync_router.settings, "GARMIN_WEBHOOK_SECRET", "shh"):
+            res = _garmin_signed_post(
                 "/v1/sync/garmin/webhook",
                 content=b"not json",
                 headers={"content-type": "application/json"},
@@ -1035,8 +1059,8 @@ def test_garmin_webhook_activity_no_athlete_found_skipped():
     )
     app.dependency_overrides[get_admin_db] = lambda: admin_db
     try:
-        with patch.object(sync_router.settings, "GARMIN_WEBHOOK_SECRET", None):
-            res = client.post(
+        with patch.object(sync_router.settings, "GARMIN_WEBHOOK_SECRET", "shh"):
+            res = _garmin_signed_post(
                 "/v1/sync/garmin/webhook",
                 json={"activities": [{"userId": "g1", "startTimeInSeconds": 1_700_000_000}]},
             )
@@ -1055,10 +1079,10 @@ def test_garmin_webhook_activity_schedules_save():
     )
     app.dependency_overrides[get_admin_db] = lambda: admin_db
     try:
-        with patch.object(sync_router.settings, "GARMIN_WEBHOOK_SECRET", None), patch.object(
+        with patch.object(sync_router.settings, "GARMIN_WEBHOOK_SECRET", "shh"), patch.object(
             sync_router, "process_and_save_workout", AsyncMock()
         ):
-            res = client.post(
+            res = _garmin_signed_post(
                 "/v1/sync/garmin/webhook",
                 json={
                     "activities": [
@@ -1085,8 +1109,8 @@ def test_garmin_webhook_activity_processing_exception_is_swallowed():
     )
     app.dependency_overrides[get_admin_db] = lambda: admin_db
     try:
-        with patch.object(sync_router.settings, "GARMIN_WEBHOOK_SECRET", None):
-            res = client.post(
+        with patch.object(sync_router.settings, "GARMIN_WEBHOOK_SECRET", "shh"):
+            res = _garmin_signed_post(
                 "/v1/sync/garmin/webhook",
                 json={"activities": [{"userId": "g1", "startTimeInSeconds": 1_700_000_000}]},
             )
@@ -1102,8 +1126,8 @@ def test_garmin_webhook_body_comp_no_athlete_found_skipped():
     )
     app.dependency_overrides[get_admin_db] = lambda: admin_db
     try:
-        with patch.object(sync_router.settings, "GARMIN_WEBHOOK_SECRET", None):
-            res = client.post(
+        with patch.object(sync_router.settings, "GARMIN_WEBHOOK_SECRET", "shh"):
+            res = _garmin_signed_post(
                 "/v1/sync/garmin/webhook",
                 json={"bodyComps": [{"userId": "g1", "weightInGrams": 70000}]},
             )
@@ -1119,8 +1143,8 @@ def test_garmin_webhook_body_comp_updates_weight():
     )
     app.dependency_overrides[get_admin_db] = lambda: admin_db
     try:
-        with patch.object(sync_router.settings, "GARMIN_WEBHOOK_SECRET", None):
-            res = client.post(
+        with patch.object(sync_router.settings, "GARMIN_WEBHOOK_SECRET", "shh"):
+            res = _garmin_signed_post(
                 "/v1/sync/garmin/webhook",
                 json={"bodyComps": [{"userId": "g1", "weightInGrams": 70000}]},
             )
@@ -1137,8 +1161,8 @@ def test_garmin_webhook_body_comp_no_weight_skips_update():
     )
     app.dependency_overrides[get_admin_db] = lambda: admin_db
     try:
-        with patch.object(sync_router.settings, "GARMIN_WEBHOOK_SECRET", None):
-            res = client.post(
+        with patch.object(sync_router.settings, "GARMIN_WEBHOOK_SECRET", "shh"):
+            res = _garmin_signed_post(
                 "/v1/sync/garmin/webhook",
                 json={"bodyComps": [{"userId": "g1"}]},
             )
@@ -1155,8 +1179,8 @@ def test_garmin_webhook_body_comp_processing_exception_is_swallowed():
     )
     app.dependency_overrides[get_admin_db] = lambda: admin_db
     try:
-        with patch.object(sync_router.settings, "GARMIN_WEBHOOK_SECRET", None):
-            res = client.post(
+        with patch.object(sync_router.settings, "GARMIN_WEBHOOK_SECRET", "shh"):
+            res = _garmin_signed_post(
                 "/v1/sync/garmin/webhook",
                 json={"bodyComps": [{"userId": "g1", "weightInGrams": 70000}]},
             )

@@ -24,30 +24,43 @@ app = FastAPI(
     version=settings.APP_VERSION,
     docs_url="/docs" if _docs_enabled else None,
     redoc_url="/redoc" if _docs_enabled else None,
+    openapi_url="/openapi.json" if _docs_enabled else None,
 )
+
+
+# Strong references so the event loop can't garbage-collect running loops.
+_background_tasks: set[asyncio.Task] = set()
+
+
+def _spawn(coro) -> None:
+    task = asyncio.create_task(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
 
 
 @app.on_event("startup")
 async def start_token_refresh_loop():
-    asyncio.create_task(token_refresh_loop())
+    if not settings.BACKGROUND_LOOPS_ENABLED:
+        return
+    _spawn(token_refresh_loop())
 
 
 @app.on_event("startup")
 async def start_strava_startup_backfill():
-    if not settings.STRAVA_STARTUP_BACKFILL_ENABLED:
+    if not (settings.BACKGROUND_LOOPS_ENABLED and settings.STRAVA_STARTUP_BACKFILL_ENABLED):
         return
     from app.services.strava import backfill_recent
 
-    asyncio.create_task(backfill_recent(hours=settings.STRAVA_STARTUP_BACKFILL_HOURS))
+    _spawn(backfill_recent(hours=settings.STRAVA_STARTUP_BACKFILL_HOURS))
 
 
 @app.on_event("startup")
 async def start_whoop_startup_backfill():
-    if not settings.WHOOP_STARTUP_BACKFILL_ENABLED:
+    if not (settings.BACKGROUND_LOOPS_ENABLED and settings.WHOOP_STARTUP_BACKFILL_ENABLED):
         return
     from app.services.whoop_backfill import backfill_recent
 
-    asyncio.create_task(backfill_recent(hours=settings.WHOOP_STARTUP_BACKFILL_HOURS))
+    _spawn(backfill_recent(hours=settings.WHOOP_STARTUP_BACKFILL_HOURS))
 
 
 @app.on_event("startup")
@@ -55,7 +68,9 @@ async def start_garmin_poll_loop():
     # Garmin has no webhook (see docs/GARMIN_INTEGRATION.md), so this loop is
     # the only sync path — it also self-heals on restart since its first
     # tick runs immediately, before the first sleep.
-    asyncio.create_task(garmin_poll_loop())
+    if not settings.BACKGROUND_LOOPS_ENABLED:
+        return
+    _spawn(garmin_poll_loop())
 
 
 @app.on_event("shutdown")
@@ -82,6 +97,15 @@ async def validate_production_config():
             "TEST_ATHLETE_ID must not be set when APP_ENV=production. "
             "Remove it from your environment before starting the server."
         )
+    if settings.APP_ENV == "production":
+        # Without a valid key, provider refresh tokens would be written in plaintext.
+        from app.services.token_crypto import _fernet
+
+        if _fernet() is None:
+            raise RuntimeError(
+                "OAUTH_TOKEN_ENCRYPTION_KEY is missing or invalid; refusing to start in production "
+                "(provider tokens would be stored unencrypted)."
+            )
     # WHOOP uses the OAuth client secret as the HMAC key for webhook signatures.
     # WHOOP_WEBHOOK_SECRET must equal WHOOP_CLIENT_SECRET — this is correct by design.
     if settings.APP_ENV == "production" and not settings.WHOOP_WEBHOOK_SECRET:
@@ -96,8 +120,7 @@ async def validate_production_config():
     _hmac_key = _whoop_hmac_key()
     if _hmac_key:
         _source = "WHOOP_WEBHOOK_SECRET" if settings.WHOOP_WEBHOOK_SECRET else "WHOOP_CLIENT_SECRET"
-        _preview = _hmac_key[:4].decode("utf-8", errors="replace") + "..." + _hmac_key[-4:].decode("utf-8", errors="replace")
-        logger.info("[startup] WHOOP HMAC key from %s: '%s' (len=%s)", _source, _preview, len(_hmac_key))
+        logger.info("[startup] WHOOP HMAC key from %s (len=%s)", _source, len(_hmac_key))
         if settings.WHOOP_WEBHOOK_SECRET and settings.WHOOP_CLIENT_SECRET:
             ws = settings.WHOOP_WEBHOOK_SECRET.strip()
             cs = settings.WHOOP_CLIENT_SECRET.strip()
@@ -143,18 +166,29 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 
+def client_ip(request) -> str:
+    """
+    The caller's IP. X-Forwarded-For is client-controlled except for the entries our
+    own proxy appends, so take the right-most entry (added by the trusted proxy in
+    front of us), never the first, which anyone can forge.
+    """
+    forwarded_for = request.headers.get("X-Forwarded-For") or ""
+    hops = [h.strip() for h in forwarded_for.split(",") if h.strip()]
+    if hops:
+        return hops[-1]
+    return request.client.host if request.client else "unknown"
+
+
 class IPRateLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
-        # /health is exempt — uptime monitors shouldn't consume quota
-        if request.url.path == "/health":
+        # /health is exempt — uptime monitors shouldn't consume quota. Provider webhooks
+        # are exempt too: they come from a handful of provider IPs (so they'd hit the
+        # per-IP limit at scale and get dropped) and are verified by signature/ownership.
+        path = request.url.path
+        if path == "/health" or (path.startswith(f"{settings.API_PREFIX}/sync/") and path.endswith("/webhook")):
             return await call_next(request)
 
-        # Real IP: Cloud Run and ngrok both set X-Forwarded-For; take the first (client) address.
-        forwarded_for = request.headers.get("X-Forwarded-For")
-        if forwarded_for:
-            ip = forwarded_for.split(",")[0].strip()
-        else:
-            ip = request.client.host if request.client else "unknown"
+        ip = client_ip(request)
 
         allowed = await _ip_rate_limiter.check(ip, settings.IP_RATE_LIMIT_RPM, 60)
         if not allowed:
@@ -171,12 +205,18 @@ ALLOWED_ORIGINS = [
     "https://app.astrapheai.com",
     "capacitor://localhost",   # Capacitor iOS webview
     "http://localhost",        # Capacitor Android webview
-    "http://localhost:5173",   # local dev (vite)
-    "http://localhost:4173",   # local preview
-    "http://127.0.0.1:5173",
+    "https://astrapheai.web.app",
+    "https://astrapheai.firebaseapp.com",
     "https://astraphe-ai-coach.web.app",
     "https://astraphe-ai-coach.firebaseapp.com",
 ]
+_DEV_CORS = settings.APP_ENV != "production"
+if _DEV_CORS:
+    ALLOWED_ORIGINS += [
+        "http://localhost:5173",   # local dev (vite)
+        "http://localhost:4173",   # local preview
+        "http://127.0.0.1:5173",
+    ]
 
 # Middleware order matters — Starlette wraps in reverse add order, so the last
 # add_middleware call becomes the outermost layer (first to see incoming requests).
@@ -188,9 +228,9 @@ app.add_middleware(IPRateLimitMiddleware)        # middle
 app.add_middleware(                             # outermost
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
-    # Allow any LAN IP (192.168.x.x / 10.x.x.x) for local iOS/device testing.
-    # Private IPs are unreachable from the public internet so this is safe in prod.
-    allow_origin_regex=r'https?://(192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+)(:\d+)?',
+    # Any LAN IP (192.168.x.x / 10.x.x.x) for local iOS/device testing; dev only, since
+    # in production it would let any page on the user's own network call the API.
+    allow_origin_regex=r'https?://(192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+)(:\d+)?' if _DEV_CORS else None,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],

@@ -13,7 +13,12 @@ class Settings(BaseSettings):
     # --- General App Configuration ---
     APP_NAME: str = "ASTRAPHE-Backend"
     APP_VERSION: str = "1.0.0"
-    APP_ENV: str = "development" 
+    # Fail closed: a deployment that forgets APP_ENV runs as production (docs, debug
+    # routes and the TEST_ATHLETE_ID auth fallback off). Local dev opts in via backend/.env.
+    APP_ENV: str = "production"
+    # Background loops (WHOOP token refresh, Garmin poll, startup backfills). Tests turn
+    # these off so importing the app never syncs against a real database.
+    BACKGROUND_LOOPS_ENABLED: bool = True
     PORT: int = 8000
     APP_BASE_URL: str = "http://localhost:8000"
     API_PREFIX: str = "/v1"
