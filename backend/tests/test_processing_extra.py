@@ -510,3 +510,14 @@ def test_fetch_all_rows_pages_past_the_server_row_cap():
     out = processing._fetch_all_rows(lambda: _Q())
     assert out == rows
     assert calls == [(0, 999), (1000, 1999), (2000, 2999)]
+
+
+def test_local_day_helpers_use_the_athlete_offset():
+    from datetime import datetime as _dt, timezone as _tz
+
+    # 21:30 on Nov 2 in New York (UTC-5) is 02:30 UTC on Nov 3.
+    evening = _dt(2026, 11, 3, 2, 30, tzinfo=_tz.utc)
+    assert processing._local_day_of(evening, -300) == date(2026, 11, 2)
+    assert processing._local_day_of(evening, 0) == date(2026, 11, 3)
+    start, end = processing._local_day_window_utc(date(2026, 11, 2), -300)
+    assert start.startswith("2026-11-02T05:00:00") and end.startswith("2026-11-03T05:00:00")

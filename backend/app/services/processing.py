@@ -400,10 +400,42 @@ def _compute_sleep_score_without_architecture(actual_sleep_min: float, sleep_nee
 
 
 
-def _refresh_daily_strain_for_day_sync(db: Any, athlete_id: str, day: date) -> int:
-    """Recompute biometrics.strain_score for one calendar day from stored workout zones. Returns strain 0-100."""
-    day_start = day.isoformat()
-    day_end = (day + timedelta(days=1)).isoformat()
+def _local_day_window_utc(day: date, offset_min: int) -> tuple[str, str]:
+    """UTC ISO bounds [start, end) of the athlete's local calendar day."""
+    tz = timezone(timedelta(minutes=offset_min or 0))
+    start = datetime(day.year, day.month, day.day, tzinfo=tz).astimezone(timezone.utc)
+    return start.isoformat(), (start + timedelta(days=1)).isoformat()
+
+
+def _local_day_of(instant: datetime, offset_min: int) -> date:
+    """The athlete's local calendar day of a timestamp (naive timestamps are UTC)."""
+    if instant.tzinfo is None:
+        instant = instant.replace(tzinfo=timezone.utc)
+    return (instant.astimezone(timezone.utc) + timedelta(minutes=offset_min or 0)).date()
+
+
+def _refresh_daily_strain_for_instant_sync(db: Any, athlete_id: str, instant: datetime) -> int:
+    """Refresh strain for the local day a workout started on."""
+    from app.services.time_utils import fetch_athlete_timezone_offset_min
+
+    offset = fetch_athlete_timezone_offset_min(db, athlete_id)
+    return _refresh_daily_strain_for_day_sync(db, athlete_id, _local_day_of(instant, offset), offset_min=offset)
+
+
+def _refresh_daily_strain_for_day_sync(
+    db: Any, athlete_id: str, day: date, *, offset_min: int | None = None
+) -> int:
+    """
+    Recompute biometrics.strain_score for one of the athlete's *local* calendar days
+    from stored workout zones. Returns strain 0-100. (It used the UTC day, so an
+    evening workout west of UTC counted toward tomorrow, and biometrics rows are
+    keyed by local date.)
+    """
+    if offset_min is None:
+        from app.services.time_utils import fetch_athlete_timezone_offset_min
+
+        offset_min = fetch_athlete_timezone_offset_min(db, athlete_id)
+    day_start, day_end = _local_day_window_utc(day, offset_min)
     res = (
         db.table("workouts")
         .select(
@@ -423,12 +455,13 @@ def _refresh_daily_strain_for_day_sync(db: Any, athlete_id: str, day: date) -> i
     return strain
 
 
-def _workout_dates_for_athlete(rows: list[dict]) -> list[date]:
+def _workout_dates_for_athlete(rows: list[dict], offset_min: int = 0) -> list[date]:
+    """Local calendar days that have a workout."""
     dates: set[date] = set()
     for row in rows:
         started = _parse_workout_dt(row.get("started_at"))
         if started is not None:
-            dates.add(started.date())
+            dates.add(_local_day_of(started, offset_min))
     return sorted(dates)
 
 
@@ -458,9 +491,12 @@ def refresh_all_daily_strain_sync(db: Any, athlete_id: str) -> dict[str, int]:
     rows = _fetch_all_rows(
         lambda: db.table("workouts").select("started_at").eq("athlete_id", athlete_id).order("started_at")
     )
-    days = _workout_dates_for_athlete(rows)
+    from app.services.time_utils import fetch_athlete_timezone_offset_min
+
+    offset = fetch_athlete_timezone_offset_min(db, athlete_id)
+    days = _workout_dates_for_athlete(rows, offset)
     for d in days:
-        _refresh_daily_strain_for_day_sync(db, athlete_id, d)
+        _refresh_daily_strain_for_day_sync(db, athlete_id, d, offset_min=offset)
     return {"days": len(days)}
 
 
@@ -969,9 +1005,8 @@ async def process_and_save_workout(
     if not skip_tss_recalc:
         asyncio.ensure_future(asyncio.to_thread(recalculate_tss_history, athlete_id, db))
     if not skip_daily_strain_refresh:
-        workout_day = start_utc.date()
         asyncio.ensure_future(
-            asyncio.to_thread(_refresh_daily_strain_for_day_sync, db, athlete_id, workout_day)
+            asyncio.to_thread(_refresh_daily_strain_for_instant_sync, db, athlete_id, start_utc)
         )
     return str(workout_id)
 
@@ -1136,8 +1171,13 @@ def process_and_save_biometrics(
     athlete_data = athlete_res.data if athlete_res else {}
     
     if history_res and history_res.data:
-        rhrs = [row["resting_hr"] for row in history_res.data if row["resting_hr"] is not None]
-        hrvs = [float(row["hrv_rmssd"]) for row in history_res.data if row["hrv_rmssd"] is not None]
+        # Only days *before* this one: the query has no upper bound, so reprocessing an
+        # old date used to build its baseline from later days, and the stored copy of
+        # today was counted on top of the payload appended below (shrinking z-scores).
+        payload_iso = payload.date.isoformat()
+        prior_rows = [row for row in history_res.data if str(row.get("date") or "")[:10] < payload_iso]
+        rhrs = [row["resting_hr"] for row in prior_rows if row["resting_hr"] is not None]
+        hrvs = [float(row["hrv_rmssd"]) for row in prior_rows if row["hrv_rmssd"] is not None]
         
         # Include today's data in the baseline calculation
         if payload.resting_hr is not None: rhrs.append(payload.resting_hr)
@@ -1251,7 +1291,10 @@ def process_and_save_biometrics(
     if existing_res and existing_res.data:
         existing = existing_res.data
 
-    # 7.5 Calculate Daily Astraphe Strain from Workouts
+    # 7.5 Calculate Daily Astraphe Strain from Workouts (the athlete's local day)
+    _day_start_utc, _day_end_utc = _local_day_window_utc(
+        payload.date, int((athlete_data or {}).get("timezone_offset_min") or 0)
+    )
     day_workouts_res = (
         db.table("workouts")
         .select(
@@ -1259,8 +1302,8 @@ def process_and_save_biometrics(
             "duration_seconds,started_at,ended_at"
         )
         .eq("athlete_id", athlete_id)
-        .gte("started_at", payload.date.isoformat())
-        .lt("started_at", (payload.date + timedelta(days=1)).isoformat())
+        .gte("started_at", _day_start_utc)
+        .lt("started_at", _day_end_utc)
         .execute()
     )
     day_rows = (day_workouts_res.data if day_workouts_res else None) or []

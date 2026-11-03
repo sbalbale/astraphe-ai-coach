@@ -152,7 +152,7 @@ def test_process_and_save_workout_schedules_background_recalc_when_not_skipped()
     with p1, p2, p3, patch.object(
         processing, "recalculate_tss_history", MagicMock()
     ) as mock_recalc, patch.object(
-        processing, "_refresh_daily_strain_for_day_sync", MagicMock()
+        processing, "_refresh_daily_strain_for_instant_sync", MagicMock()
     ) as mock_strain:
 
         async def _run_and_drain():

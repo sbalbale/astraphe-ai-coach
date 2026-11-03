@@ -278,7 +278,7 @@ def test_delete_workout_success():
     _override(_DeleteDb(exists=True))
     try:
         with patch.object(workouts_router, "recalculate_tss_history") as recalc, patch.object(
-            workouts_router, "_refresh_daily_strain_for_day_sync"
+            workouts_router, "_refresh_daily_strain_for_instant_sync"
         ):
             with TestClient(app) as client:
                 res = client.delete("/v1/workouts/w1")

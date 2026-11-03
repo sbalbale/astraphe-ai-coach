@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Query
 from app.models.workout import WorkoutPayload, WorkoutUpdatePayload
 from app.services.algorithms import compute_tss_power
 from app.services.processing import (
-    _refresh_daily_strain_for_day_sync,
+    _refresh_daily_strain_for_instant_sync,
     normalize_sport,
     process_and_save_workout,
     recalculate_tss_history,
@@ -130,12 +130,13 @@ def _workout_update_data(payload: WorkoutUpdatePayload, existing: dict) -> dict:
     return update_data
 
 def _patch_refresh_days(existing: dict, updated: dict) -> set:
-    days = set()
+    """Start instants whose (local) day needs its strain refreshed."""
+    instants = set()
     for row in (existing, updated):
         started = _parse_dt(row.get("started_at"))
         if started:
-            days.add(started.date())
-    return days
+            instants.add(started)
+    return instants
 
 @router.get("")
 def get_workouts(
@@ -229,7 +230,7 @@ async def update_workout(
 
         background_tasks.add_task(recalculate_tss_history, athlete_id, db)
         for day in _patch_refresh_days(existing, updated):
-            background_tasks.add_task(_refresh_daily_strain_for_day_sync, db, athlete_id, day)
+            background_tasks.add_task(_refresh_daily_strain_for_instant_sync, db, athlete_id, day)
 
         return {"status": "success", "workout": updated}
     except HTTPException:
@@ -266,7 +267,7 @@ async def delete_workout(
         # (a deleted duplicate otherwise kept counting until some later sync).
         background_tasks.add_task(recalculate_tss_history, athlete_id, db)
         for day in _patch_refresh_days(existing.data, existing.data):
-            background_tasks.add_task(_refresh_daily_strain_for_day_sync, db, athlete_id, day)
+            background_tasks.add_task(_refresh_daily_strain_for_instant_sync, db, athlete_id, day)
         try:
             from app.services.ai_coach import invalidate_context_cache
 

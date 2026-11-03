@@ -387,3 +387,28 @@ def test_write_body_metrics_never_overrides_a_manual_weight():
     assert processing.write_body_metrics(db, "a", date(2026, 11, 2), "whoop", weight_kg=85.05) == ["weight_kg"]
     sent = db.table.return_value.upsert.call_args.args[0]
     assert sent["weight_kg"] == 85.05 and sent["metric_sources"]["weight_kg"] == "whoop"
+
+
+def test_baselines_use_only_prior_days_plus_todays_payload_once():
+    from unittest.mock import patch as _patch
+
+    history = [
+        {"date": "2026-05-18", "resting_hr": 50, "hrv_rmssd": 60.0, "skin_temp": None},
+        {"date": "2026-05-19", "resting_hr": 51, "hrv_rmssd": 61.0, "skin_temp": None},
+        {"date": "2026-05-20", "resting_hr": 70, "hrv_rmssd": 20.0, "skin_temp": None},  # stored copy of "today"
+        {"date": "2026-05-25", "resting_hr": 80, "hrv_rmssd": 10.0, "skin_temp": None},  # a later day
+    ]
+    db = _BioDb(_default_responses(biometrics=[
+        SimpleNamespace(data=None), SimpleNamespace(data=history), SimpleNamespace(data=None),
+    ]))
+    seen = []
+    real = processing.compute_ewma_stats
+
+    def _capture(arr, span):
+        seen.append(list(arr))
+        return real(arr, span)
+
+    with _patch.object(processing, "compute_ewma_stats", side_effect=_capture):
+        processing.process_and_save_biometrics(_payload(hrv_rmssd=55.0, resting_hr=48), "athlete-1", db, skip_pmc_recalc=True)
+    assert [50.0, 51.0, 48.0] in seen   # RHR: prior days + today's payload once
+    assert [60.0, 61.0, 55.0] in seen   # HRV likewise

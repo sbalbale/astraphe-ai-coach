@@ -19,6 +19,7 @@ from app.services.processing import (
     process_and_save_workout,
     recalculate_tss_history,
     _refresh_daily_strain_for_day_sync,
+    _refresh_daily_strain_for_instant_sync,
 )
 from app.services.stream_storage import fetch_stream_row_columns
 from app.services.time_utils import (
@@ -626,7 +627,7 @@ def update_workout_sync(db: Client, athlete_id: str, args: dict[str, Any]) -> di
         recalculate_tss_history(athlete_id, db)
         started = _parse_dt(update_data.get("started_at") or row.get("started_at"))
         if started:
-            _refresh_daily_strain_for_day_sync(db, athlete_id, started.date())
+            _refresh_daily_strain_for_instant_sync(db, athlete_id, started)
     except Exception as e:
         return {"error": f"update_workout_failed: {e}"}
 
