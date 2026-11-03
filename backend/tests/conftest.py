@@ -64,6 +64,14 @@ def ai_messages_use_test_db(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def oauth_state_secret(monkeypatch):
+    """OAuth state is HMAC-signed. Locally the signer falls back to the service-role
+    key from backend/.env, but CI has no secrets, so give every test a fixed one.
+    Tests about a missing secret clear it themselves."""
+    monkeypatch.setattr(settings, "OAUTH_STATE_SECRET", "test-oauth-state-secret")
+
+
+@pytest.fixture(autouse=True)
 def disable_startup_backfills(monkeypatch):
     """Prevent TestClient startup from scheduling real Strava/WHOOP API backfills."""
     monkeypatch.setattr(settings, "STRAVA_STARTUP_BACKFILL_ENABLED", False)
