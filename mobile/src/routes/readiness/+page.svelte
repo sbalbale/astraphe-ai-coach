@@ -38,8 +38,14 @@
   const row = $derived(current.row as Row | null);
   const score = $derived(readinessScoreFromRow(row));
   const recovery = $derived(firstPositiveFiniteNumber(row?.recovery_score));
-  const load = $derived(loadByDate.get(todayIso) ?? loadByDate.get(row?.date ?? '') ?? null);
-  const tsb = $derived(Number(load?.tsb ?? athleteStore.tsb ?? 0));
+  /** Form as the backend uses it for readiness: that day's fitness minus the previous day's fatigue. */
+  function formFor(dateIso: string): number | null {
+    const ctl = Number(loadByDate.get(dateIso)?.ctl);
+    const atl = Number(loadByDate.get(format(subDays(new Date(dateIso + 'T12:00:00'), 1), 'yyyy-MM-dd'))?.atl);
+    return Number.isFinite(ctl) && Number.isFinite(atl) ? ctl - atl : null;
+  }
+  const scoreDate = $derived(row?.date ?? todayIso);
+  const tsb = $derived(formFor(scoreDate) ?? Number(athleteStore.tsb ?? 0));
   const breakdown = $derived(readinessBreakdown(recovery, tsb));
   const band = $derived<ReadinessBand>(readinessBand(score ?? breakdown.total));
 
@@ -107,20 +113,24 @@
   );
 
   // --- 14-day readiness bars ---
-  const trend = $derived(last14.map((d) => ({ date: d, score: readinessScoreFromRow(byDate.get(d)) })));
+  const trend = $derived(
+    last14.map((d) => {
+      const r = byDate.get(d);
+      return {
+        date: d,
+        score: readinessScoreFromRow(r),
+        recovery: firstPositiveFiniteNumber(r?.recovery_score),
+        form: formFor(d),
+        workouts: (athleteStore.workouts ?? [])
+          .filter((w: any) => String(w?.started_at ?? '').slice(0, 10) === d)
+          .map((w: any) => w?.title || w?.sport || 'Workout') as string[]
+      };
+    })
+  );
+  let pickedDay = $state<number | null>(null);
+  const shownDay = $derived(trend[pickedDay ?? trend.length - 1]);
   const trendScores = $derived(trend.map((t) => t.score).filter((s): s is number => s != null));
   const trendAvg = $derived(trendScores.length ? Math.round(trendScores.reduce((a, b) => a + b, 0) / trendScores.length) : null);
-  const bigDay = $derived.by(() => {
-    let best: { date: string; tss: number } | null = null;
-    for (const d of last14.slice(0, -1)) {
-      const tss = Number(loadByDate.get(d)?.daily_tss) || 0;
-      if (tss > 0 && (!best || tss > best.tss)) best = { date: d, tss };
-    }
-    if (!best) return null;
-    const w = (athleteStore.workouts ?? []).find((x: any) => String(x?.started_at ?? '').slice(0, 10) === best!.date);
-    const label = `${format(new Date(best.date + 'T12:00:00'), 'EEE')}${w?.title ? ` · ${w.title}` : ' · biggest day'}`;
-    return { index: last14.indexOf(best.date), label };
-  });
   const bandColor = (s: number) => (s >= 67 ? 'var(--teal)' : s >= 34 ? 'var(--amber)' : 'var(--red)');
 
   const session = $derived(todaySessions[0] ?? null);
@@ -213,19 +223,42 @@
         <h2 class="m-0 font-display font-normal text-2xl">Last 14 days</h2>
         {#if trendAvg != null}<span class="font-mono text-[11px] text-text2">AVG {trendAvg}</span>{/if}
       </div>
-      <div role="img" aria-label="Readiness over 14 days: {trend.map((t) => t.score ?? 'no data').join(', ')}" class="flex items-end gap-[5px] h-[84px]">
+      {#if shownDay}
+        <div class="flex items-baseline justify-between gap-3" aria-live="polite">
+          <span class="font-mono text-[11px] text-text2 uppercase">{shownDay.date === todayIso ? 'Today' : format(new Date(shownDay.date + 'T12:00:00'), 'EEE d MMM')}</span>
+          <span class="flex gap-3 font-mono text-xs tabular-nums">
+            <span><span class="text-text2">Ready </span><span style="color: {shownDay.score != null ? bandColor(shownDay.score) : 'var(--text2)'}">{shownDay.score ?? '--'}</span></span>
+            <span><span class="text-text2">Rec </span>{shownDay.recovery != null ? `${Math.round(shownDay.recovery)}%` : '--'}</span>
+            <span><span class="text-text2">Form </span>{shownDay.form != null ? `${shownDay.form > 0 ? '+' : ''}${shownDay.form.toFixed(1)}` : '--'}</span>
+          </span>
+        </div>
+      {/if}
+      <div role="group" aria-label="Readiness over the last 14 days. Tap a day for details." class="flex items-end gap-[5px] h-[84px]">
         {#each trend as t, i (t.date)}
-          <span
-            class="flex-1 block rounded-[5px]"
-            style="height: {t.score != null ? Math.max(4, Math.round((t.score / 100) * 84)) : 4}px; background: {t.score != null ? bandColor(t.score) : 'var(--bg3)'}; opacity: {i === trend.length - 1 ? 1 : 0.4}"
-          ></span>
+          <button
+            type="button"
+            aria-label="{format(new Date(t.date + 'T12:00:00'), 'EEEE d MMMM')}: readiness {t.score ?? 'no data'}"
+            aria-pressed={i === (pickedDay ?? trend.length - 1)}
+            class="flex-1 h-full p-0 border-0 bg-transparent flex items-end cursor-pointer"
+            onclick={() => (pickedDay = pickedDay === i ? null : i)}
+            onpointerenter={(e) => { if (e.pointerType === 'mouse') pickedDay = i; }}
+            onpointerleave={(e) => { if (e.pointerType === 'mouse') pickedDay = null; }}
+          >
+            <span
+              class="block w-full rounded-[5px]"
+              style="height: {t.score != null ? Math.max(4, Math.round((t.score / 100) * 84)) : 4}px; background: {t.score != null ? bandColor(t.score) : 'var(--bg3)'}; opacity: {i === (pickedDay ?? trend.length - 1) ? 1 : 0.4}"
+            ></span>
+          </button>
         {/each}
       </div>
       <div class="flex justify-between font-mono text-[10px] text-text2 uppercase">
         <span>{format(new Date(last14[0] + 'T12:00:00'), 'dd MMM')}</span>
-        {#if bigDay}<span class="truncate px-2">{bigDay.label}</span>{/if}
+        <span>{format(new Date(last14[7] + 'T12:00:00'), 'dd MMM')}</span>
         <span class="text-text0">Today</span>
       </div>
+      {#if shownDay?.workouts.length}
+        <p class="m-0 text-xs text-text2 truncate">{shownDay.workouts.join(' · ')}</p>
+      {/if}
     </section>
 
     <!-- What it means today -->

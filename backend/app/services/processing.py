@@ -1137,7 +1137,13 @@ def process_and_save_biometrics(
     
     # 5. Fetch ATL Data for Readiness Modeling
     start_date_30d = (payload.date - timedelta(days=30)).isoformat()
-    atl_res = db.table("tss_history").select("atl").eq("athlete_id", athlete_id).gte("date", start_date_30d).order("date").execute()
+    # Only days before this one: "prior day" ATL must not pick up later (or today's) rows when
+    # an older day is re-processed.
+    atl_res = (
+        db.table("tss_history").select("atl").eq("athlete_id", athlete_id)
+        .gte("date", start_date_30d).lt("date", payload.date.isoformat())
+        .order("date").execute()
+    )
     
     prior_day_atl = 0.0
     prior_day_atl_max_30d = 1.0 
@@ -1326,8 +1332,8 @@ def process_and_save_biometrics(
         recovery_score = existing.get("recovery_score")
     
     # 9. Process Readiness (Capacity to Train)
-    # TSB based readiness
-    readiness_score = compute_readiness_score(current_ctl - prior_day_atl)
+    # 70% recovery + 30% form (TSB); form only when there is no recovery score yet.
+    readiness_score = compute_readiness_score(current_ctl - prior_day_atl, recovery_score)
     
     # 10. Save aggregated record to biometrics
     bio_upsert_payload = {

@@ -42,7 +42,7 @@ export function readinessBand(score: number): ReadinessBand {
 export const BAND_COPY: Record<ReadinessBand, { verdict: string; range: string; action: string; color: string }> = {
   low: { verdict: 'Take it easy', range: '< 34', action: 'Swap to easy', color: 'var(--red)' },
   mid: { verdict: 'Train as planned', range: '34–66', action: 'As planned', color: 'var(--amber)' },
-  high: { verdict: 'Ready to push', range: '≥ 67', action: 'Push if planned', color: 'var(--teal)' }
+  high: { verdict: 'Ready to push', range: '≥ 67', action: 'Push if possible', color: 'var(--teal)' }
 };
 
 /** Mean and sample SD of the finite values. */
