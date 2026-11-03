@@ -326,3 +326,46 @@ def test_process_and_save_biometrics_triggers_pmc_recalc_when_not_skipped():
         processing.process_and_save_biometrics(_payload(), "athlete-1", db, skip_pmc_recalc=False)
 
     mock_recalc.assert_called_once_with("athlete-1", db)
+
+
+# ---------------------------------------------------------------------------
+# Audit D-H1 / D-H2: one sleep source per night; no invented 0-minute nights
+# ---------------------------------------------------------------------------
+
+
+def test_periods_from_best_source_keeps_one_source():
+    garmin = {"source": "garmin", "in_bed_min": 440}
+    garmin_nap = {"source": "garmin", "in_bed_min": 30, "is_nap": True}
+    whoop = {"source": "whoop", "in_bed_min": 450}
+    kept = processing._periods_from_best_source([whoop, garmin, garmin_nap])
+    assert kept == [garmin, garmin_nap]  # garmin outranks whoop for sleep; its nap stays
+    assert processing._periods_from_best_source([whoop]) == [whoop]
+    assert processing._periods_from_best_source([]) == []
+
+
+def test_payload_without_sleep_does_not_write_a_zero_night():
+    db = _BioDb(
+        _default_responses(
+            biometrics=[
+                SimpleNamespace(data=None),
+                SimpleNamespace(data=[]),
+                SimpleNamespace(data={"sleep_duration_min": 420, "sleep_score": 81, "sleep_debt_min": 30,
+                                      "metric_sources": {"sleep_duration_min": "intervals_icu"}}),
+            ]
+        )
+    )
+    processing.process_and_save_biometrics(_payload(weight_kg=80.0), "athlete-1", db, skip_pmc_recalc=True)
+    row = db.upserts["biometrics"][0]
+    assert row["sleep_duration_min"] == 420  # the real night survives
+    # scored from the stored 420-minute night, not from an invented 0
+    assert row["sleep_score"] is not None and row["sleep_score"] > 50
+
+
+def test_recovery_without_sleep_is_not_dragged_down():
+    from app.services.algorithms import compute_recovery_score
+
+    args = dict(hrv_today=60, hrv_avg_30d=60, hrv_std_30d=5, rhr_today=50, rhr_avg_30d=50, rhr_std_30d=2,
+                prior_day_atl=30, prior_day_atl_max_30d=60)
+    no_sleep = compute_recovery_score(sleep_score=None, **args)
+    zero_sleep = compute_recovery_score(sleep_score=0, **args)
+    assert no_sleep > zero_sleep

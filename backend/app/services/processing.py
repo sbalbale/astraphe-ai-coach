@@ -251,6 +251,20 @@ def _choose_biometric_metric(
     return existing_value, str(existing_source) if existing_source else None
 
 
+def _periods_from_best_source(periods: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    Keep only the sleep periods (main sleep and naps) of the highest-priority source
+    that has any for this night, per _BIOMETRIC_FIELD_SOURCES["sleep_duration_min"].
+    """
+    by_source: dict[str, list[dict[str, Any]]] = {}
+    for p in periods or []:
+        by_source.setdefault(str(p.get("source") or "manual"), []).append(p)
+    if len(by_source) <= 1:
+        return list(periods or [])
+    best = min(by_source, key=lambda src: _biometric_source_quality_rank("sleep_duration_min", src))
+    return by_source[best]
+
+
 def _set_metric_source(metric_sources: dict[str, Any], field: str, source: str | None, value: Any) -> None:
     if _has_existing_metric_value(value) and source:
         metric_sources[field] = source
@@ -948,6 +962,9 @@ def process_and_save_biometrics(
     all_periods = []
     if all_periods_res and all_periods_res.data:
         all_periods = all_periods_res.data
+    # One source per night. With Garmin and WHOOP both connected each writes its own
+    # period for the same sleep, and summing them doubled time asleep / in bed.
+    all_periods = _periods_from_best_source(all_periods)
     
     total_sleep_min = 0
     total_in_bed_min = 0
@@ -987,6 +1004,12 @@ def process_and_save_biometrics(
 
     # Time Asleep MUST equal Time in Bed minus Awake Time
     total_sleep_min = int(round(total_in_bed_min - total_awake_min))
+    if not all_periods and payload.sleep_duration_min is None:
+        # No sleep input at all (e.g. an HRV-only or weight-only payload): leave the
+        # sleep fields unset so they can't overwrite a real night with 0.
+        total_sleep_min = None
+        total_in_bed_min = None
+        total_awake_min = 0.0
     if not all_periods and payload.sleep_duration_min is not None:
         total_sleep_min = int(max(0, payload.sleep_duration_min))
         total_in_bed_min = int(max(0, payload.sleep_in_bed_min or total_sleep_min))
@@ -1000,16 +1023,6 @@ def process_and_save_biometrics(
         agg_light = payload.sleep_light_pct
         agg_awake = payload.sleep_awake_pct
 
-    rem_sleep_min = (
-        (float(agg_rem) / 100.0) * total_in_bed_min
-        if agg_rem is not None and total_in_bed_min > 0
-        else 0.0
-    )
-    deep_sleep_min = (
-        (float(agg_deep) / 100.0) * total_in_bed_min
-        if agg_deep is not None and total_in_bed_min > 0
-        else 0.0
-    )
 
     # 3 + 4. Fetch prev day's biometrics, 42d history, and athlete profile in parallel.
     # These three reads are fully independent, so we fan them out across a small
@@ -1163,27 +1176,8 @@ def process_and_save_biometrics(
         current_debt_min=carried_debt,
     )
     
-    has_sleep_architecture = agg_rem is not None or agg_deep is not None
-    if not has_sleep_architecture:
-        # Backup score for providers like Intervals.icu that expose duration but no stage
-        # architecture. Do not copy the provider score; use a duration curve anchored to the
-        # baseline nightly need rather than accumulated sleep debt, so the backup approximates
-        # the observed wearable score while sleep debt is tracked separately.
-        sleep_score = _compute_sleep_score_without_architecture(
-            total_sleep_min,
-            DEFAULT_BASELINE_SLEEP_MIN,
-            total_awake_min,
-        )
-    else:
-        sleep_score = compute_sleep_score(
-            actual_sleep_min=total_sleep_min,
-            sleep_need_min=sleep_need,
-            rem_min=rem_sleep_min,
-            deep_min=deep_sleep_min,
-            awake_min=total_awake_min,
-        )
-
-    next_night_debt = float(np.clip(float(sleep_need) - float(total_sleep_min), 0.0, MAX_SLEEP_DEBT_MIN))
+    # (The sleep score and debt are computed below from the *merged* values, so the
+    # stored score/debt always describe the night that is actually stored.)
 
     # 7. Merge with existing Biometrics row (HRV/RHR/Strain)
     existing_res = db.table("biometrics").select("*").eq("athlete_id", athlete_id).eq("date", payload.date.isoformat()).maybe_single().execute()
@@ -1273,20 +1267,29 @@ def process_and_save_biometrics(
         if final_deep is not None and final_in_bed_for_score > 0
         else 0.0
     )
-    if final_rem is not None or final_deep is not None:
-        sleep_score = compute_sleep_score(
-            actual_sleep_min=final_sleep_for_score,
-            sleep_need_min=sleep_need,
-            rem_min=final_rem_min,
-            deep_min=final_deep_min,
-            awake_min=final_awake_min,
-        )
+    if final_sleep_duration is None:
+        # No night stored for this date (yet): don't score it as 0, which dragged
+        # recovery down; keep whatever the row already had.
+        sleep_score = existing.get("sleep_score")
+        next_night_debt = existing.get("sleep_debt_min")
     else:
-        sleep_score = _compute_sleep_score_without_architecture(
-            final_sleep_for_score,
-            DEFAULT_BASELINE_SLEEP_MIN,
-            final_awake_min,
-        )
+        if final_rem is not None or final_deep is not None:
+            sleep_score = compute_sleep_score(
+                actual_sleep_min=final_sleep_for_score,
+                sleep_need_min=sleep_need,
+                rem_min=final_rem_min,
+                deep_min=final_deep_min,
+                awake_min=final_awake_min,
+            )
+        else:
+            # Backup score for providers like Intervals.icu that expose duration but no
+            # stage architecture: a duration curve anchored to the baseline nightly need.
+            sleep_score = _compute_sleep_score_without_architecture(
+                final_sleep_for_score,
+                DEFAULT_BASELINE_SLEEP_MIN,
+                final_awake_min,
+            )
+        next_night_debt = float(np.clip(float(sleep_need) - float(final_sleep_for_score), 0.0, MAX_SLEEP_DEBT_MIN))
 
     for field, src, value in (
         ("hrv_rmssd", hrv_source, final_hrv),
@@ -1348,7 +1351,7 @@ def process_and_save_biometrics(
         "sleep_score": sleep_score, # Astraphe Score
         "recovery_score": recovery_score, # Astraphe Score
         "sleep_need_min": int(round(sleep_need)),
-        "sleep_debt_min": int(round(next_night_debt)),
+        "sleep_debt_min": int(round(next_night_debt)) if next_night_debt is not None else None,
         "readiness_score": readiness_score,
         "strain_score": astraphe_strain_score,
         "hrv_source": final_source,
