@@ -16,6 +16,7 @@
   import DonutChart from '$lib/components/charts/DonutChart.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import { confirm } from '$lib/confirm';
+  import WeekNavigator from '$lib/components/WeekNavigator.svelte';
   import { pageHeader, resetPageHeader } from '$lib/stores/pageHeader.svelte';
   import DatePicker from '$lib/components/DatePicker.svelte';
   import { analysisNavEpoch } from '$lib/analysisNavEpoch.svelte';
@@ -1011,24 +1012,7 @@
         <div class="flex flex-col gap-3.5">
           <!-- This week -->
           <section aria-label="This week" class="bg-bg2 border border-border rounded-[24px] px-[18px] py-4 flex flex-col gap-3.5">
-            <div class="flex justify-between items-center">
-              <button type="button" aria-label="Previous week" class="w-11 h-8 border-0 bg-transparent text-text2 flex items-center justify-start p-0 cursor-pointer"
-                onclick={() => (weekPickerValue = format(addDays(selectedWeekStart, -7), 'yyyy-MM-dd'))}>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m15 6-6 6 6 6"></path></svg>
-              </button>
-              <div class="flex items-center gap-1.5">
-                <div class="min-w-[120px]">
-                  <DatePicker bind:value={weekPickerValue} label={weekRangeLabel} hideChevron ariaLabel="Select week" buttonClass="h-8 px-2 justify-center gap-1.5 rounded-[10px] bg-transparent border-0 text-[14px] font-medium text-text0" popoverClass="!left-auto !right-1/2 translate-x-1/2" />
-                </div>
-                {#if !isCurrentWeek}
-                  <button type="button" class="h-8 px-2.5 rounded-[10px] border border-border bg-transparent text-xs font-medium text-text0 cursor-pointer" onclick={jumpToCurrentWeek}>Today</button>
-                {/if}
-              </div>
-              <button type="button" aria-label="Next week" disabled={isCurrentWeek} class="w-11 h-8 border-0 bg-transparent flex items-center justify-end p-0 {isCurrentWeek ? 'text-text2/40 cursor-not-allowed' : 'text-text2 cursor-pointer'}"
-                onclick={() => (weekPickerValue = format(addDays(selectedWeekStart, 7), 'yyyy-MM-dd'))}>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m9 6 6 6-6 6"></path></svg>
-              </button>
-            </div>
+            <WeekNavigator bind:value={weekPickerValue} max={format(new Date(), 'yyyy-MM-dd')} />
             <div class="grid grid-cols-3 gap-2">
               <div class="flex flex-col gap-0.5"><span class="text-[22px] font-medium tracking-[-0.02em]">{weekTotals.tss}{#if weeklyTarget}<span class="text-xs text-text2 font-normal"> / {weeklyTarget}</span>{/if}</span><span class="text-[11px] text-text2">TSS</span></div>
               <div class="flex flex-col gap-0.5"><span class="text-[22px] font-medium tracking-[-0.02em]">{weekTotals.time}</span><span class="text-[11px] text-text2">Time</span></div>

@@ -209,7 +209,7 @@
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m15 6-6 6 6 6"></path></svg>
               </button>
               <div class="min-w-[84px]">
-                <DatePicker bind:value={pageHeader.dateValue} max={pageHeader.dateMax} label={pageHeader.dateLabel} marked={pageHeader.dateMarks} hideChevron ariaLabel="Pick a date" buttonClass="h-9 px-1 justify-center gap-1.5 rounded-[10px] bg-transparent border-0 text-[13px] font-semibold text-text0" popoverClass="!left-auto right-0" />
+                <DatePicker bind:value={pageHeader.dateValue} max={pageHeader.dateMax} label={pageHeader.dateLabel} marked={pageHeader.dateMarks} hideChevron ariaLabel="Pick a date" buttonClass="h-9 px-1 justify-center gap-1.5 rounded-[10px] bg-transparent border-0 text-[13px] font-semibold text-text0" popoverClass="!fixed !left-1/2 -translate-x-1/2 !top-auto mt-2" />
               </div>
               <button type="button" aria-label="Next day" disabled={!pageHeader.canNext} class="w-8 h-9 border-0 bg-transparent flex items-center justify-center {pageHeader.canNext ? 'text-text1 cursor-pointer' : 'text-text2/40 cursor-not-allowed'}" onclick={pageHeader.next}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m9 6 6 6-6 6"></path></svg>
