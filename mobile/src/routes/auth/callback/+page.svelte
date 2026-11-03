@@ -3,6 +3,9 @@
   import type { Session } from '@supabase/supabase-js';
   import { supabase } from '$lib/supabase';
   import { completeAuthSession } from '$lib/utils/completeAuthSession';
+  import AuthShell from '$lib/components/ui/AuthShell.svelte';
+  import Spinner from '$lib/components/ui/Spinner.svelte';
+  import UiIcon from '$lib/components/ui/UiIcon.svelte';
 
   let sessionOk = $state<boolean | null>(null);
 
@@ -42,24 +45,24 @@
   });
 </script>
 
-<div class="min-h-full flex flex-col p-6 items-center justify-center relative">
-  <div class="absolute -top-[100px] -right-[100px] w-[300px] h-[300px] bg-teal rounded-full blur-[120px] opacity-20 pointer-events-none"></div>
-
-  <div class="w-full max-w-sm z-10">
-    {#if sessionOk === false}
-      <div class="p-3 bg-red-dim border-l-2 border-red rounded-lg text-xs text-text0 leading-relaxed text-center">
-        <p class="mb-4">Link expired or invalid</p>
-        <a href="/auth/signup" class="text-teal hover:underline font-mono text-[10px] uppercase tracking-widest">
-          Back to Sign Up
-        </a>
-      </div>
-    {:else}
-      <div class="text-center">
-        <div class="w-16 h-16 rounded-2xl bg-blue-dim border border-blue/30 flex items-center justify-center mx-auto mb-6">
-          <span class="text-3xl font-bold text-text0">A</span>
-        </div>
-        <p class="text-text2 text-sm animate-pulse">Confirming your account…</p>
-      </div>
-    {/if}
-  </div>
-</div>
+<AuthShell centered>
+  {#if sessionOk === false}
+    <div class="w-14 h-14 rounded-2xl bg-red-dim border border-red/20 text-red flex items-center justify-center mb-6">
+      <UiIcon name="link" size={24} />
+    </div>
+    <h1 class="font-display text-[36px] leading-[1.1] text-text0 mb-2">Link expired or invalid</h1>
+    <p class="text-[16px] text-text2 mb-8 max-w-[32ch]">
+      Confirmation links work once, on the device that requested them. Request a new one to continue.
+    </p>
+    <a
+      href="/auth/signup"
+      class="inline-flex items-center justify-center w-full h-14 rounded-[18px] border border-border text-text0 text-[16px] font-semibold no-underline hover:border-text2/60 transition-colors"
+    >
+      Back to sign up
+    </a>
+  {:else}
+    <Spinner label="Confirming your account" />
+    <h1 class="font-display text-[36px] leading-[1.1] text-text0 mt-8 mb-2">Confirming your account…</h1>
+    <p class="text-[16px] text-text2">This only takes a moment.</p>
+  {/if}
+</AuthShell>

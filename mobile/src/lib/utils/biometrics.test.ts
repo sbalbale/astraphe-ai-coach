@@ -75,3 +75,35 @@ describe('currentRecoveryState age without a wake time', () => {
     expect(state.isStale).toBe(true);
   });
 });
+
+describe('currentRecoveryState with rows that have no recovery', () => {
+  const now = new Date('2026-11-03T15:00:00');
+
+  it('ignores a weight-only row for today (no 0% recovery)', () => {
+    const state = currentRecoveryState(
+      [{ date: '2026-11-03', recovery_score: null, weight_kg: 68 } as any],
+      0,
+      now
+    );
+    expect(state.row).toBeNull();
+    expect(state.hasTodayRow).toBe(false);
+  });
+
+  it('carries forward the last real recovery past a weight-only today', () => {
+    const state = currentRecoveryState(
+      [
+        { date: '2026-11-02', recovery_score: 71 } as any,
+        { date: '2026-11-03', recovery_score: null, weight_kg: 68 } as any,
+      ],
+      0,
+      now
+    );
+    expect(state.row?.recovery_score).toBe(71);
+    expect(state.hasTodayRow).toBe(false);
+  });
+
+  it('still treats a real 0 as a score', () => {
+    const state = currentRecoveryState([{ date: '2026-11-03', recovery_score: 0 } as any], 0, now);
+    expect(state.hasTodayRow).toBe(true);
+  });
+});

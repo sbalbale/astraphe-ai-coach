@@ -52,7 +52,14 @@
 <script lang="ts">
   import Card from '$lib/components/Card.svelte';
   import Tag from '$lib/components/Tag.svelte';
-  import EmptyState from '$lib/components/EmptyState.svelte';
+  import EmptyStateCard from '$lib/components/ui/EmptyStateCard.svelte';
+  import DashedNote from '$lib/components/ui/DashedNote.svelte';
+  import Button from '$lib/components/ui/Button.svelte';
+  import UiIcon from '$lib/components/ui/UiIcon.svelte';
+  import GetSetUpCard, { type SetupStep } from '$lib/components/dashboard/GetSetUpCard.svelte';
+  import { pageHeader } from '$lib/stores/pageHeader.svelte';
+  import { firstName, isProfileComplete } from '$lib/utils/profile';
+  import { addDays } from 'date-fns';
   import CalibrationBadge from '$lib/components/CalibrationBadge.svelte';
   import { onMount } from 'svelte';
   import { analysisNavEpoch } from '$lib/analysisNavEpoch.svelte';
@@ -167,6 +174,59 @@
   // don't flash this while the sync status is still loading.
   const showConnectPrompt = $derived(athleteStore.syncStatus != null && !isConnected && !hasData);
 
+  // --- New account: "Get set up" checklist (design: empty states, page 1) ---
+  const greetingName = $derived(
+    firstName(athleteStore.profile?.display_name, authStore.user?.user_metadata?.full_name)
+  );
+  $effect(() => {
+    pageHeader.title = showConnectPrompt ? (greetingName ? `Welcome, ${greetingName}` : 'Welcome') : '';
+    return () => {
+      pageHeader.title = '';
+    };
+  });
+
+  /** Any planned session in the next four weeks counts as "has a plan". */
+  let hasUpcomingPlan = $state(false);
+  $effect(() => {
+    if (!showConnectPrompt) return;
+    const from = todayIso;
+    let cancelled = false;
+    api.getWorkouts(from, format(addDays(new Date(from + 'T12:00:00'), 28), 'yyyy-MM-dd')).then(
+      (rows) => {
+        if (!cancelled) hasUpcomingPlan = rows.length > 0;
+      },
+      () => {}
+    );
+    return () => {
+      cancelled = true;
+    };
+  });
+
+  const setupSteps = $derived<SetupStep[]>([
+    {
+      title: 'Create your profile',
+      detail: 'Sport, units and the basics your zones are built from',
+      done: isProfileComplete(athleteStore.profile),
+      actionLabel: 'Finish',
+      onAction: () => goto('/onboarding'),
+    },
+    {
+      title: 'Connect a wearable',
+      detail: 'Garmin, WHOOP or Strava · imports the last 90 days',
+      done: isConnected,
+      actionLabel: 'Connect',
+      onAction: () => goto('/profile/connections'),
+    },
+    {
+      title: 'Get your first plan',
+      detail: 'Tell your coach your goal — it builds week 1',
+      done: hasUpcomingPlan,
+      actionLabel: 'Start',
+      onAction: () => goto(`/chat?prompt=${encodeURIComponent('Build me a plan for my goal.')}`),
+    },
+  ]);
+
+
   const todayStr = $derived(todayIso);
   const isoDate = (v: unknown) => (typeof v === 'string' ? v.slice(0, 10) : '');
 
@@ -183,6 +243,32 @@
   );
 
   const currentRow = $derived(current.row);
+
+  // --- Waiting for last night's sleep (design: empty states, page 2) ---
+  /** Connected and has history, but today's row hasn't synced: readiness can't be computed yet. */
+  const waitingForSleep = $derived(isConnected && !!current.row && !current.hasTodayRow);
+  const sleepProvider = $derived.by(() => {
+    const i = athleteStore.syncStatus?.integrations ?? {};
+    if (i.whoop?.connected) return 'WHOOP';
+    if (i.garmin?.connected) return 'Garmin';
+    return 'your device';
+  });
+  /** The last readiness we do have, and how to name its day. */
+  const previousReadiness = $derived(waitingForSleep ? readinessScoreFromRow(current.row) : null);
+  const previousReadinessDay = $derived.by(() => {
+    if (!current.date) return 'Yesterday';
+    const yesterday = format(addDays(new Date(todayIso + 'T12:00:00'), -1), 'yyyy-MM-dd');
+    return current.date === yesterday ? 'Yesterday' : format(new Date(current.date + 'T12:00:00'), 'EEE d MMM');
+  });
+  let checking = $state(false);
+  async function checkAgain() {
+    checking = true;
+    try {
+      await athleteStore.fetchAll(true);
+    } finally {
+      checking = false;
+    }
+  }
 
   const todayReadiness = $derived(readinessScoreFromRow(currentRow));
   const todayRecoveryScore = $derived(
@@ -409,22 +495,82 @@
   </div>
 
   {#if showConnectPrompt}
-    <EmptyState 
-      title="No Apps Connected" 
-      message="Link Garmin, WHOOP, or Apple Health to see your training metrics and AI coaching."
-      actionLabel="Connect Now"
-      onAction={() => goto('/profile/connections')}
-      icon="⚡"
-    />
+    <GetSetUpCard steps={setupSteps} />
+
+    <p class="font-mono text-[12px] tracking-[0.2em] text-text2 uppercase mt-4 mb-1 px-1">Once you're connected</p>
+    <DashedNote>
+      <div class="flex items-center gap-5">
+        <div class="w-[72px] h-[72px] shrink-0 rounded-[22px] border-[6px] border-bg3" aria-hidden="true"></div>
+        <div>
+          <p class="m-0 text-[17px] font-medium text-text0">Daily readiness</p>
+          <p class="m-0 text-[15px] text-text1 leading-snug mt-1">Appears after your first night of sleep is synced.</p>
+        </div>
+      </div>
+    </DashedNote>
+    <DashedNote>
+      <div class="flex items-center gap-5">
+        <div class="w-[72px] h-[48px] shrink-0 flex items-end gap-1.5" aria-hidden="true">
+          {#each [10, 34, 10, 34, 6] as h, i (i)}
+            <div class="flex-1 rounded-[3px] bg-bg3" style="height: {h}px"></div>
+          {/each}
+        </div>
+        <div>
+          <p class="m-0 text-[17px] font-medium text-text0">Today's session</p>
+          <p class="m-0 text-[15px] text-text1 leading-snug mt-1">Your coach picks it from your plan and how recovered you are.</p>
+        </div>
+      </div>
+    </DashedNote>
   {:else if !hasData}
-    <EmptyState 
-      title="Waiting for Data" 
-      message="Your apps are connected. We're waiting for your first activity or biometric sync."
-      actionLabel="Check Sync Status"
-      onAction={() => goto('/profile/connections')}
-      icon="⏳"
+    <EmptyStateCard
+      icon="refresh"
+      tone="amber"
+      eyebrow="Waiting for sync"
+      title="Your first sync is on its way"
+      message="Your apps are connected. Workouts and sleep appear here after the first sync, usually within a few minutes."
+      actionLabel={checking ? 'Checking…' : 'Check again'}
+      onAction={checkAgain}
+      secondaryLabel="Connected apps"
+      onSecondary={() => goto('/profile/connections')}
     />
   {:else}
+
+    {#if waitingForSleep}
+      <!-- Readiness can't be scored until last night's sleep syncs -->
+      <section aria-label="Readiness" class="bg-bg2 border border-amber/25 rounded-card px-6 py-6">
+        <div class="flex gap-6">
+          <div class="flex flex-col min-w-[92px]">
+            <span class="font-mono text-[11px] tracking-[0.18em] text-text2">READINESS</span>
+            <span class="block w-8 h-[3px] rounded-full bg-text2/60 mt-8 mb-6" aria-label="No score yet"></span>
+            <span class="text-[15px] text-amber">Waiting for sleep</span>
+          </div>
+          <dl class="m-0 flex-1 grid grid-cols-2 gap-x-3 gap-y-4">
+            {#each [['Recovery', null], ['HRV', null], ['Sleep', null]] as [label] (label)}
+              <div>
+                <dt class="text-[14px] text-text2">{label}</dt>
+                <dd class="m-0 mt-2"><span class="block w-5 h-[2px] bg-text2/60" aria-label="Not yet"></span></dd>
+              </div>
+            {/each}
+            <div>
+              <dt class="text-[14px] text-text2">Form</dt>
+              <dd class="m-0 text-[20px] font-medium text-text0">{todayTsb === null ? '--' : (todayTsb > 0 ? `+${todayTsb.toFixed(1)}` : todayTsb.toFixed(1))}</dd>
+            </div>
+          </dl>
+        </div>
+        <p class="text-[16px] leading-relaxed text-text1 mt-5 mb-5">
+          Last night's sleep hasn't arrived from {sleepProvider} yet — it usually syncs within 30 minutes of waking.
+          {#if previousReadiness !== null}
+            {previousReadinessDay}'s readiness was <span class="text-text0">{previousReadiness}</span>.
+          {/if}
+        </p>
+        <div class="flex items-center gap-4">
+          <Button variant="secondary" full={false} size="sm" class="!h-12 !px-5" onclick={checkAgain} disabled={checking}>
+            <UiIcon name="refresh" size={16} />
+            {checking ? 'Checking…' : 'Check again'}
+          </Button>
+          <Button variant="ghost" full={false} size="sm" class="!h-12" onclick={() => goto('/sleep?log=1')}>Log sleep myself</Button>
+        </div>
+      </section>
+    {/if}
 
     <!-- Key session -->
     {#if keySession && sessionRange}
@@ -434,7 +580,7 @@
         class="bg-bg2 border border-border rounded-[24px] p-5 flex flex-col gap-3.5 text-text0"
       >
         <div class="flex justify-between items-center">
-          <span class="font-mono text-[11px] tracking-[0.14em] text-blue uppercase">Key session · {keySession.sport}</span>
+          <span class="font-mono text-[11px] tracking-[0.14em] text-blue uppercase">Key session · {keySession.sport}{waitingForSleep ? ' · provisional' : ''}</span>
           <span class="flex items-center gap-1 font-mono text-[11px] text-text2">
             {ZONE_LABEL[keySession.primary_zone] ?? ''}
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m9 6 6 6-6 6"></path></svg>
@@ -442,7 +588,11 @@
         </div>
         <div class="flex flex-col gap-1">
           <h2 class="m-0 font-display font-normal text-[34px] leading-[1.05]">{keySession.title}</h2>
-          {#if keySession.description}
+          {#if waitingForSleep}
+            <p class="m-0 text-sm leading-[1.45] text-text1">
+              Your coach will confirm or adjust this once recovery comes in. Training before then? Go by feel and ease off if it feels harder than it should.
+            </p>
+          {:else if keySession.description}
             <p class="m-0 text-sm leading-[1.45] text-text1">{keySession.description}</p>
           {/if}
         </div>
@@ -476,6 +626,7 @@
     {/if}
 
     <!-- Readiness Card -->
+    {#if !waitingForSleep}
     <Card class="!bg-bg2 !p-0">
       <a
         href={resolve('/readiness')}
@@ -530,6 +681,7 @@
         {/if}
       </a>
     </Card>
+    {/if}
 
     <!-- AI Summary -->
     <a href={resolve('/chat')} class="flex items-start gap-3 px-[18px] py-4 rounded-[20px] bg-bg1 border border-dashed border-border">

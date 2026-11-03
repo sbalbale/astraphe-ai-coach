@@ -1,20 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 36 36" fill="none">
-  <defs>
-    <linearGradient id="bg-grad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#0F0F1A" />
-      <stop offset="100%" stop-color="#141424" />
-    </linearGradient>
-    <linearGradient id="phi-grad" x1="0%" y1="0%" x2="60%" y2="100%">
-      <stop offset="0%" stop-color="#6B47FF" />
-      <stop offset="50%" stop-color="#4621FF" />
-      <stop offset="100%" stop-color="#00C8A8" />
-    </linearGradient>
-  </defs>
-
-  <rect x="1" y="1" width="34" height="34" rx="9" fill="url(#bg-grad)" stroke="#4621FF" stroke-opacity="0.3" stroke-width="1" />
-  
-  <g fill="url(#phi-grad)">
-    <rect x="16.75" y="8" width="2.5" height="20" rx="0.5" />
-    <path d="M18 10C13.58 10 10 13.58 10 18C10 22.42 13.58 26 18 26C22.42 26 26 22.42 26 18C26 13.58 22.42 10 18 10ZM18 23.5C14.96 23.5 12.5 21.04 12.5 18C12.5 14.96 14.96 12.5 18 12.5C21.04 12.5 23.5 14.96 23.5 18C23.5 21.04 21.04 23.5 18 23.5Z" />
-  </g>
+  <!-- Astraphe mark · "L / knocked-out cross" · Graphite + Sky -->
+  <rect x="1" y="1" width="34" height="34" rx="9" fill="#0E0E10" stroke="#2E2E34" stroke-width="0.75" />
+  <circle cx="18" cy="18" r="7.2" stroke="#EDEBE6" stroke-width="1.4" />
+  <!-- knock-out: tile-coloured stroke cuts the ring where the stem crosses -->
+  <path d="M18 7.5v21" stroke="#0E0E10" stroke-width="4.2" stroke-linecap="round" />
+  <path d="M18 7.5v21" stroke="#7FB4FF" stroke-width="1.4" stroke-linecap="round" />
 </svg>

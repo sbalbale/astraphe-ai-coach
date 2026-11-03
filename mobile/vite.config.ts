@@ -17,21 +17,28 @@ export default defineConfig({
 				start_url: '/dashboard',
 				scope: '/',
 				display: 'standalone',
-				theme_color: '#08080F',
-				background_color: '#08080F',
+				theme_color: '#0E0E10',
+				background_color: '#0E0E10',
 				icons: [
 					{
-						src: '/icons/icon-192.png',
+						src: '/android-chrome-192x192.png',
 						sizes: '192x192',
 						type: 'image/png',
 					},
 					{
-						src: '/icons/icon-512.png',
+						src: '/android-chrome-512x512.png',
 						sizes: '512x512',
 						type: 'image/png',
 					},
+					// Full-bleed variants: Android applies its own shape to maskable icons.
 					{
-						src: '/icons/icon-512-maskable.png',
+						src: '/icon-maskable-192x192.png',
+						sizes: '192x192',
+						type: 'image/png',
+						purpose: 'maskable',
+					},
+					{
+						src: '/icon-maskable-512x512.png',
 						sizes: '512x512',
 						type: 'image/png',
 						purpose: 'maskable',

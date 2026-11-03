@@ -3,7 +3,7 @@
   import { addDays, differenceInCalendarDays, format, startOfWeek, subDays } from 'date-fns';
   import { api } from '$lib/api';
   import type { Workout } from '$lib/types/training';
-  import EmptyState from '$lib/components/EmptyState.svelte';
+  import EmptyStateCard from '$lib/components/ui/EmptyStateCard.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { pageHeader, resetPageHeader } from '$lib/stores/pageHeader.svelte';
   import { formCssColor } from '$lib/scoreColors';
@@ -124,7 +124,7 @@
 
 <div class="flex flex-col gap-3.5">
   {#if athleteStore.initialLoadDone && rows.length === 0}
-    <EmptyState title="No trend data yet" message="Your fitness and fatigue trends appear once a few weeks of workouts have synced." icon="📈" />
+    <EmptyStateCard icon="pulse" eyebrow="Nothing yet" title="No trends yet" message="Fitness and fatigue trends appear once a few weeks of workouts have synced or been logged." />
   {:else}
     <dl class="m-0 grid grid-cols-4 gap-2">
       <div class="bg-bg2 border border-border rounded-2xl px-2.5 py-3 flex flex-col-reverse gap-0.5"><dt class="text-[11px] text-text2">Fitness</dt><dd class="m-0 text-[19px] font-medium tracking-[-0.02em]">{fmt1(latest?.ctl)}</dd></div>

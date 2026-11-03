@@ -2,6 +2,23 @@
   import { page } from '$app/stores';
   import { authStore } from '$lib/stores/authStore.svelte';
   import { ensureAuthSession } from '$lib/apiAuth';
+  import AuthShell from '$lib/components/ui/AuthShell.svelte';
+  import BrandMark from '$lib/components/ui/BrandMark.svelte';
+  import Button from '$lib/components/ui/Button.svelte';
+  import FormAlert from '$lib/components/ui/FormAlert.svelte';
+  import Spinner from '$lib/components/ui/Spinner.svelte';
+  import UiIcon from '$lib/components/ui/UiIcon.svelte';
+
+  /**
+   * What an approved client can read: the MCP server's read-only tools
+   * (mcp-server/astraphe_mcp/tools/read_tools.py). Keep in sync if tools change.
+   */
+  const ACCESS_ROWS = [
+    { title: 'Read your training', detail: 'Workouts, streams, load, form and zones.' },
+    { title: 'Read your recovery', detail: 'Recovery, sleep and HRV summaries.' },
+    { title: 'Read your plan', detail: 'Upcoming planned sessions.' },
+    { title: 'Read what your coach remembers', detail: 'Goals, preferences and notes your coach has saved.' },
+  ];
 
   // GoTrue's OAuth Server redirects here (site_url + authorization_url_path from
   // supabase/config.toml's [auth.oauth_server]) with only an opaque authorization_id —
@@ -133,72 +150,81 @@
   });
 </script>
 
-<div class="min-h-full flex flex-col p-6 items-center justify-center relative">
-  <div class="absolute -top-[100px] -right-[100px] w-[300px] h-[300px] bg-teal rounded-full blur-[120px] opacity-20 pointer-events-none"></div>
-
-  <div class="w-full max-w-sm z-10">
-    <div class="mb-8 text-center">
-      <div class="w-16 h-16 rounded-2xl bg-blue-dim border border-blue/30 flex items-center justify-center mx-auto mb-6">
-        <span class="text-3xl font-bold text-text0">A</span>
-      </div>
-      <h1 class="text-2xl font-bold tracking-tight mb-2">Connect to Astraphe</h1>
+{#if status === 'missing_id'}
+  <AuthShell centered>
+    <BrandMark size={56} class="mb-8" />
+    <h1 class="font-display text-[36px] leading-[1.1] text-text0 mb-4">Connect to Astraphe</h1>
+    <FormAlert>This link is missing its authorization request. Ask the app you're connecting to try again.</FormAlert>
+  </AuthShell>
+{:else if authStore.loading || (authStore.session && status === 'loading')}
+  <AuthShell centered>
+    <Spinner label="Loading" />
+    <p class="text-[16px] text-text2 mt-6">{authStore.loading ? 'Checking your session…' : 'Loading request…'}</p>
+  </AuthShell>
+{:else if !authStore.session}
+  <AuthShell brand title="Connect to Astraphe" subtitle="Sign in to Astraphe to approve this connection.">
+    <a
+      href={`/auth/signin?redirect=${encodeURIComponent($page.url.pathname + $page.url.search)}`}
+      class="inline-flex items-center justify-center w-full h-14 rounded-[18px] bg-blue text-on-accent text-[16px] font-semibold no-underline hover:bg-blue/90 transition-colors"
+    >
+      Sign in
+    </a>
+  </AuthShell>
+{:else if status === 'error'}
+  <AuthShell centered>
+    <BrandMark size={56} class="mb-8" />
+    <h1 class="font-display text-[36px] leading-[1.1] text-text0 mb-4">Couldn't connect</h1>
+    <FormAlert>{errorMsg}</FormAlert>
+  </AuthShell>
+{:else if details}
+  <AuthShell>
+    <div class="flex items-center gap-4 mt-12 mb-8" aria-hidden="true">
+      <div class="w-14 h-14 rounded-2xl bg-bg3 flex items-center justify-center font-mono text-[14px] text-text1">APP</div>
+      <div class="w-10 border-t-2 border-dashed border-border"></div>
+      <BrandMark size={56} />
     </div>
 
-    {#if status === 'missing_id'}
-      <div class="p-3 bg-red-dim border-l-2 border-red rounded-lg text-xs text-text0 leading-relaxed text-center">
-        This link is missing its authorization request. Ask the app you're connecting to try again.
-      </div>
-    {:else if authStore.loading}
-      <p class="text-text2 text-sm text-center animate-pulse">Checking your session…</p>
-    {:else if !authStore.session}
-      <div class="p-3 bg-glass border border-border rounded-lg text-xs text-text0 leading-relaxed text-center mb-4">
-        Sign in to Astraphe to approve this connection.
-      </div>
-      <a
-        href={`/auth/signin?redirect=${encodeURIComponent($page.url.pathname + $page.url.search)}`}
-        class="block w-full text-center px-4 py-3.5 bg-blue rounded-xl text-bg0 text-sm font-medium"
-      >
-        Sign In
-      </a>
-    {:else if status === 'loading'}
-      <p class="text-text2 text-sm text-center animate-pulse">Loading request…</p>
-    {:else if status === 'error'}
-      <div class="p-3 bg-red-dim border-l-2 border-red rounded-lg text-xs text-text0 leading-relaxed text-center">
-        {errorMsg}
-      </div>
-    {:else if details}
-      <div class="p-4 bg-glass border border-border rounded-xl mb-6">
-        <p class="text-text0 text-sm leading-relaxed">
-          <span class="font-semibold">{details.client.name}</span> wants to
-          {describeScope(details.scope)} for your Astraphe account
-          <span class="text-text2">({details.user.email})</span>.
-        </p>
-        <p class="text-text2 text-xs mt-3 leading-relaxed">
-          Access will be sent to <span class="font-mono text-text0">{hostOf(details.redirect_uri) || 'an unknown address'}</span>.
-          The app name is chosen by whoever registered it and isn't verified by Astraphe; only
-          allow this if you started the connection yourself.
-        </p>
-        <p class="text-text2 text-xs mt-2 leading-relaxed">
-          This connection is read-only: it can read your training data but can't change it.
-        </p>
-      </div>
+    <h1 class="font-display text-[40px] leading-[1.08] text-text0 mb-3">
+      {details.client.name} wants to connect to Astraphe
+    </h1>
+    <p class="text-[16px] text-text2 mb-8">Signed in as {details.user.email}</p>
 
-      <div class="flex flex-col gap-3">
-        <button
-          onclick={() => respond('approve')}
-          disabled={status === 'submitting'}
-          class="w-full px-4 py-3.5 bg-blue rounded-xl text-bg0 text-sm font-medium disabled:opacity-50"
-        >
-          {status === 'submitting' ? 'Connecting…' : 'Allow'}
-        </button>
-        <button
-          onclick={() => respond('deny')}
-          disabled={status === 'submitting'}
-          class="w-full px-4 py-3.5 bg-glass border border-border rounded-xl text-text2 text-sm font-medium disabled:opacity-50"
-        >
-          Deny
-        </button>
-      </div>
-    {/if}
-  </div>
-</div>
+    <section class="bg-bg2 border border-border rounded-card px-6 py-5">
+      <p class="font-mono text-[11px] tracking-[0.22em] uppercase text-text2 pb-3 border-b border-border">It will be able to</p>
+      <ul class="list-none m-0 p-0">
+        {#each ACCESS_ROWS as row (row.title)}
+          <li class="flex gap-4 py-4 border-b border-border">
+            <UiIcon name="check" size={18} class="text-blue shrink-0 mt-1" />
+            <div>
+              <p class="text-[16px] font-medium text-text0">{row.title}</p>
+              <p class="text-[14px] text-text2 leading-relaxed">{row.detail}</p>
+            </div>
+          </li>
+        {/each}
+        <li class="flex gap-4 pt-4">
+          <UiIcon name="check" size={18} class="text-blue shrink-0 mt-1" />
+          <div>
+            <p class="text-[16px] font-medium text-text0">Know who you are</p>
+            <p class="text-[14px] text-text2 leading-relaxed">It can {describeScope(details.scope)}.</p>
+          </div>
+        </li>
+      </ul>
+      <p class="text-[14px] text-text1 leading-relaxed mt-4">Read-only: it can't change anything in your account.</p>
+    </section>
+
+    <p class="text-[14px] text-text2 leading-relaxed mt-6">
+      Access will be sent to <span class="font-mono text-text0">{hostOf(details.redirect_uri) || 'an unknown address'}</span>.
+      The app name is chosen by whoever registered it and isn't verified by Astraphe; only
+      allow this if you started the connection yourself.
+    </p>
+
+    <div class="mt-auto pt-8 flex flex-col gap-3">
+      <Button onclick={() => respond('approve')} disabled={status === 'submitting'}>
+        {status === 'submitting' ? 'Connecting…' : 'Allow access'}
+      </Button>
+      <Button variant="secondary" onclick={() => respond('deny')} disabled={status === 'submitting'}>
+        Deny
+      </Button>
+    </div>
+  </AuthShell>
+{/if}

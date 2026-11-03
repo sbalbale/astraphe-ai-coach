@@ -52,6 +52,8 @@ export default {
           DEFAULT: '#6FCF97',
           dim: 'rgba(111,207,151,0.15)',
         },
+        /** Text on accent (sky) fills: buttons, selected chips. */
+        'on-accent': '#0B1420',
         text0: '#EDEBE6',
         text1: '#A9A69E',
         text2: '#8A877F',

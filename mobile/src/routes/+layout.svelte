@@ -10,6 +10,7 @@
   import BottomNav from '$lib/components/BottomNav.svelte';
   import { format } from 'date-fns';
   import { pageHeader } from '$lib/stores/pageHeader.svelte';
+  import { isProfileComplete } from '$lib/utils/profile';
   import DatePicker from '$lib/components/DatePicker.svelte';
   import { subtabsFor, titleFor } from '$lib/navTabs';
   import ConfirmHost from '$lib/components/ConfirmHost.svelte';
@@ -108,27 +109,7 @@
     };
   });
 
-  const profileComplete = $derived.by(() => {
-    const p = athleteStore.profile;
-    const sport0 = typeof p?.sport_focus?.[0] === 'string' ? p.sport_focus[0].trim() : '';
-    const mu = typeof p?.measurement_units === 'string' ? p.measurement_units.trim() : '';
-    const tf = typeof p?.time_format === 'string' ? p.time_format.trim() : '';
-    const dob = typeof p?.date_of_birth === 'string' ? p.date_of_birth.trim() : '';
-    const g = typeof p?.gender === 'string' ? p.gender.trim() : '';
-    const w = Number(p?.weight_kg);
-    const h = Number(p?.height_cm);
-    return (
-      !!sport0 &&
-      !!mu &&
-      !!tf &&
-      !!dob &&
-      !!g &&
-      Number.isFinite(w) &&
-      w > 0 &&
-      Number.isFinite(h) &&
-      h > 0
-    );
-  });
+  const profileComplete = $derived(isProfileComplete(athleteStore.profile));
 
   $effect(() => {
     if (authStore.loading) return;
@@ -210,7 +191,7 @@
           {:else if pageHeader.eyebrow}
             <span class="font-mono text-[11px] tracking-[0.14em] text-text2 uppercase">{pageHeader.eyebrow}</span>
           {/if}
-          <h1 class="font-display text-[36px] leading-none text-text0">{headerTitle}</h1>
+          <h1 class="font-display text-[36px] leading-none text-text0">{pageHeader.title || headerTitle}</h1>
         </div>
         {#if pageHeader.dateMax}
           <!-- Day stepper (‹ calendar · label ›) plus a Today shortcut, as in the Body designs. -->

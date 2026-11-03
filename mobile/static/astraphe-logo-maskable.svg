@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 36 36" fill="none">
+  <!-- Full-bleed variant for maskable / home-screen icons: the OS applies its own shape. -->
+  <rect width="36" height="36" fill="#0E0E10" />
+  <g transform="translate(18 18) scale(1.05) translate(-18 -18)">
+    <circle cx="18" cy="18" r="7.2" stroke="#EDEBE6" stroke-width="1.4" />
+    <path d="M18 7.5v21" stroke="#0E0E10" stroke-width="4.2" stroke-linecap="round" />
+    <path d="M18 7.5v21" stroke="#7FB4FF" stroke-width="1.4" stroke-linecap="round" />
+  </g>
+</svg>

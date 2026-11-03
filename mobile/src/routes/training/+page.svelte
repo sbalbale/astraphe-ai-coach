@@ -5,7 +5,9 @@
 </script>
 
 <script lang="ts">
-  import EmptyState from '$lib/components/EmptyState.svelte';
+  import EmptyStateCard from '$lib/components/ui/EmptyStateCard.svelte';
+  import ManualWorkoutDetail from '$lib/components/workout/ManualWorkoutDetail.svelte';
+  import { isManualWorkout } from '$lib/utils/manualWorkout';
   import { confirm } from '$lib/confirm';
   import WeekNavigator from '$lib/components/WeekNavigator.svelte';
   import { pageHeader, resetPageHeader } from '$lib/stores/pageHeader.svelte';
@@ -49,6 +51,14 @@
   import AddActivityModal from '$lib/components/AddActivityModal.svelte';
 
   let addActivityOpen = $state(false);
+  // Deep link from other tabs' empty states: /training?log=1 opens the log form once.
+  $effect(() => {
+    if ($page.url.searchParams.get('log') !== '1') return;
+    addActivityOpen = true;
+    const url = new URL($page.url);
+    url.searchParams.delete('log');
+    history.replaceState(history.state, '', url.pathname + url.search + url.hash);
+  });
   let editActivityOpen = $state(false);
   let editingWorkout = $state<any>(null);
 
@@ -91,6 +101,15 @@
       ? Object.values(athleteStore.syncStatus?.integrations || {}).some((i: any) => i.connected)
       : true
   );
+  let checkingSync = $state(false);
+  async function checkSync() {
+    checkingSync = true;
+    try {
+      await athleteStore.fetchAll(true);
+    } finally {
+      checkingSync = false;
+    }
+  }
   const showNoTrainingData = $derived(athleteStore.initialLoadDone && !athleteStore.loading && !isConnected && !hasWorkouts);
 
   let selectedWorkout = $state<any>(null);
@@ -687,21 +706,42 @@
 
 <div class="flex flex-col gap-3">
   {#if showNoTrainingData}
-    <EmptyState
-      title="No Training Data"
-      message="Connect your training apps to analyze your performance trends and history."
-      secondaryLabel="Log Activity"
-      onSecondaryAction={() => (addActivityOpen = true)}
+    <EmptyStateCard
+      icon="link"
+      tone="blue"
+      eyebrow="Not set up"
+      title="Connect a training app"
+      message="Rides and runs from Garmin and Strava land here automatically. You can also log a session by hand."
+      actionLabel="Connect an app"
+      onAction={() => goto('/profile/connections')}
+      secondaryLabel="Log an activity"
+      onSecondary={() => (addActivityOpen = true)}
     />
   {:else if !hasWorkouts}
-    <EmptyState 
-      title="Waiting for Workouts" 
-      message="We're waiting for your training history to sync from your connected services."
-      icon="⏳"
+    <EmptyStateCard
+      icon="refresh"
+      tone="amber"
+      eyebrow="Waiting for sync"
+      title="Your workouts are on their way"
+      message="Your apps are connected. Recent workouts appear here after the first sync, usually within a few minutes."
+      actionLabel={checkingSync ? 'Checking…' : 'Check sync now'}
+      onAction={checkSync}
+      secondaryLabel="Log an activity"
+      onSecondary={() => (addActivityOpen = true)}
     />
   {:else}
     {#if metric === 'history'}
       {#if selectedWorkout}
+        {#if isManualWorkout(selectedWorkout)}
+          <!-- Logged by hand: no streams, map, laps or HR (design: empty states, page 9) -->
+          <ManualWorkoutDetail
+            workout={selectedWorkout}
+            sportLabel={getWorkoutLabel(selectedWorkout.sport)}
+            onBack={closeWorkout}
+            onEdit={openEditActivity}
+            onDelete={deleteSelectedWorkout}
+          />
+        {:else}
         <!-- Detailed Workout View (map hero + tabs) -->
         {@const sel = selectedWorkout}
         {@const selTss = Number.isFinite(Number(sel?.tss)) && Number(sel.tss) > 0 ? Math.round(Number(sel.tss)) : null}
@@ -927,6 +967,7 @@
             {/if}
           </div>
         </div>
+        {/if}
       {:else}
         <div class="flex flex-col gap-3.5">
           <!-- This week -->
@@ -934,20 +975,32 @@
             <WeekNavigator bind:value={weekPickerValue} max={format(new Date(), 'yyyy-MM-dd')} />
             <div class="grid grid-cols-3 gap-2">
               <div class="flex flex-col gap-0.5"><span class="text-[22px] font-medium tracking-[-0.02em]">{weekTotals.tss}{#if weeklyTarget}<span class="text-xs text-text2 font-normal"> / {weeklyTarget}</span>{/if}</span><span class="text-[11px] text-text2">TSS</span></div>
-              <div class="flex flex-col gap-0.5"><span class="text-[22px] font-medium tracking-[-0.02em]">{weekTotals.time}</span><span class="text-[11px] text-text2">Time</span></div>
-              <div class="flex flex-col gap-0.5"><span class="text-[22px] font-medium tracking-[-0.02em]">{weekTotals.distance}<span class="text-xs text-text2 font-normal"> {weekTotals.distanceUnit}</span></span><span class="text-[11px] text-text2">Distance</span></div>
+              <div class="flex flex-col gap-0.5"><span class="text-[22px] font-medium tracking-[-0.02em]">{weekWorkouts.length ? weekTotals.time : '—'}</span><span class="text-[11px] text-text2">Time</span></div>
+              <div class="flex flex-col gap-0.5"><span class="text-[22px] font-medium tracking-[-0.02em]">{#if weekWorkouts.length}{weekTotals.distance}<span class="text-xs text-text2 font-normal"> {weekTotals.distanceUnit}</span>{:else}—{/if}</span><span class="text-[11px] text-text2">Distance</span></div>
             </div>
             {#if weeklyTarget}
               <div aria-hidden="true" class="h-1.5 rounded-[3px] bg-border overflow-hidden"><div class="h-1.5 rounded-[3px] bg-blue" style="width: {Math.min(100, Math.round((weekTotals.tss / weeklyTarget) * 100))}%"></div></div>
             {/if}
           </section>
 
+          {#if weekWorkouts.length === 0}
+            <EmptyStateCard
+              icon="bike"
+              eyebrow="Nothing yet"
+              title={isCurrentWeek ? 'No workouts yet this week' : 'No workouts this week'}
+              message={isCurrentWeek
+                ? 'Rides and runs from Garmin and Strava land here automatically, usually within a few minutes of finishing.'
+                : 'Nothing was recorded or logged in this week.'}
+              actionLabel={isCurrentWeek ? "See today's session" : 'Log an activity'}
+              onAction={() => (isCurrentWeek ? goto('/dashboard') : (addActivityOpen = true))}
+              secondaryLabel={isCurrentWeek ? 'Log an activity' : undefined}
+              onSecondary={() => (addActivityOpen = true)}
+            />
+          {/if}
+
           <!-- Activities -->
-          <section aria-label="Activities" class="flex flex-col gap-2">
+          <section aria-label="Activities" class="flex flex-col gap-2 {weekWorkouts.length === 0 ? 'hidden' : ''}">
             <span class="font-mono text-[11px] tracking-[0.14em] text-text2">{isCurrentWeek ? 'RECENT ACTIVITIES' : 'ACTIVITIES'}</span>
-            {#if weekWorkouts.length === 0}
-              <div class="px-4 py-3.5 rounded-[18px] bg-bg1 border border-border text-[13px] text-text2">No workouts logged in this week.</div>
-            {/if}
             {#each weekWorkouts as w, i (w?.id ?? w?.started_at)}
               {@const tssVal = Number.isFinite(Number(w?.tss)) && Number(w.tss) > 0 ? Math.round(Number(w.tss)) : null}
               <button

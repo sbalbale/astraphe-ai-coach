@@ -13,6 +13,10 @@
   import { authStore } from '$lib/stores/authStore.svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
+  import AuthShell from '$lib/components/ui/AuthShell.svelte';
+  import TextField from '$lib/components/ui/TextField.svelte';
+  import Button from '$lib/components/ui/Button.svelte';
+  import FormAlert from '$lib/components/ui/FormAlert.svelte';
 
   let resetSuccess = $derived($page.url.searchParams.get('reset') === 'success');
 
@@ -25,7 +29,7 @@
     e.preventDefault();
     loading = true;
     errorMsg = '';
-    
+
     const { data, error } = await supabase.auth.signInWithPassword({
       email,
       password,
@@ -58,70 +62,48 @@
   }
 </script>
 
-<div class="min-h-full flex flex-col p-6 items-center justify-center relative">
-  <!-- Decor elements -->
-  <div class="absolute -top-[100px] -right-[100px] w-[300px] h-[300px] bg-teal rounded-full blur-[120px] opacity-20 pointer-events-none"></div>
+<AuthShell brand title="Welcome back." subtitle="Sign in to sync your coaching data.">
+  {#if resetSuccess}
+    <FormAlert tone="success" class="mb-6">Password updated. Sign in with your new password.</FormAlert>
+  {/if}
 
-  <div class="w-full max-w-sm z-10">
-    <div class="mb-10 text-center">
-      <div class="w-16 h-16 rounded-2xl bg-blue-dim border border-blue/30 flex items-center justify-center mx-auto mb-6">
-        <span class="text-3xl font-bold text-text0">A</span>
-      </div>
-      <h1 class="text-3xl font-bold tracking-tight mb-2">Welcome Back</h1>
-      <p class="text-text2 text-sm">Sign in to sync your AI coaching data</p>
-    </div>
+  {#if errorMsg}
+    <FormAlert class="mb-6">{errorMsg}</FormAlert>
+  {/if}
 
-    {#if resetSuccess}
-      <div class="p-3 bg-teal-dim border-l-2 border-teal rounded-lg mb-6 text-xs text-text0 leading-relaxed">
-        Password updated. Sign in with your new password.
-      </div>
-    {/if}
+  <form onsubmit={handleSignIn} class="flex flex-col gap-6">
+    <TextField
+      id="email"
+      label="Email"
+      type="email"
+      autocomplete="email"
+      bind:value={email}
+      required
+      placeholder="athlete@example.com"
+    />
 
-    {#if errorMsg}
-      <div class="p-3 bg-red-dim border-l-2 border-red rounded-lg mb-6 text-xs text-text0 leading-relaxed">
-        {errorMsg}
-      </div>
-    {/if}
+    <TextField
+      id="password"
+      label="Password"
+      type="password"
+      autocomplete="current-password"
+      bind:value={password}
+      required
+      placeholder="••••••••"
+    >
+      {#snippet labelAside()}
+        <a href="/auth/forgot-password" class="text-[14px] text-blue no-underline hover:underline">Forgot?</a>
+      {/snippet}
+    </TextField>
 
-    <form onsubmit={handleSignIn} class="flex flex-col gap-4">
-      <div>
-        <label for="email" class="block text-[10px] text-text2 font-mono uppercase tracking-widest mb-1.5 ml-1">Email</label>
-        <input 
-          id="email" 
-          type="email" 
-          bind:value={email} 
-          required
-          class="w-full px-4 py-3.5 bg-glass border border-border rounded-xl text-text0 text-sm outline-none focus:border-blue focus:bg-glass2 transition-colors placeholder:text-text2"
-          placeholder="athlete@example.com"
-        />
-      </div>
-      
-      <div>
-        <div class="flex justify-between items-baseline ml-1 mb-1.5">
-          <label for="password" class="block text-[10px] text-text2 font-mono uppercase tracking-widest">Password</label>
-          <button type="button" onclick={() => goto('/auth/forgot-password')} class="text-[10px] text-teal hover:underline font-mono bg-transparent border-none cursor-pointer">Forgot?</button>
-        </div>
-        <input 
-          id="password" 
-          type="password" 
-          bind:value={password} 
-          required
-          class="w-full px-4 py-3.5 bg-glass border border-border rounded-xl text-text0 text-sm outline-none focus:border-blue focus:bg-glass2 transition-colors placeholder:text-text2"
-          placeholder="••••••••"
-        />
-      </div>
+    <Button type="submit" disabled={loading} class="mt-2">
+      {loading ? 'Signing in…' : 'Sign in'}
+    </Button>
+  </form>
 
-      <button 
-        type="submit" 
-        disabled={loading}
-        class="w-full mt-4 py-3.5 bg-blue text-text0 font-semibold rounded-xl hover:bg-blue/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-      >
-        {loading ? 'Signing In...' : 'Sign In'}
-      </button>
-    </form>
-
-    <p class="text-center text-xs text-text2 mt-8">
-      Don't have an account? <a href="/auth/signup" class="text-text0 hover:text-teal transition-colors">Sign up</a>
+  {#snippet footer()}
+    <p class="text-[16px] text-text2">
+      New to Astraphe? <a href="/auth/signup" class="text-text0 font-medium no-underline hover:text-blue">Create an account</a>
     </p>
-  </div>
-</div>
+  {/snippet}
+</AuthShell>
