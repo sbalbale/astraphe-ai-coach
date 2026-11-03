@@ -11,6 +11,8 @@ from fastapi.testclient import TestClient
 from app.dependencies import get_admin_db, get_current_athlete, get_user_db
 from app.main import app
 from app.routers import sync as sync_router
+from app.services.oauth_state import sign_state, verify_state
+from urllib.parse import parse_qs, urlparse
 from app.services import strava as strava_service
 from app.services import whoop as whoop_service
 from app.services import intervals_icu as intervals_icu_service
@@ -72,16 +74,48 @@ def test_get_clean_strava_redirect_url():
 
 
 def test_oauth_state_without_web_return():
-    assert sync_router._oauth_state("ath-1", None) == "ath-1"
+    parsed = verify_state(sync_router._oauth_state("ath-1", None, "whoop"), "whoop")
+    assert parsed.athlete_id == "ath-1" and parsed.web_return is None
 
 
 def test_oauth_state_with_safe_web_return():
-    state = sync_router._oauth_state("ath-1", "https://app.astrapheai.com/x")
-    assert state == "ath-1|https://app.astrapheai.com/x"
+    state = sync_router._oauth_state("ath-1", "https://app.astrapheai.com/x", "strava")
+    assert verify_state(state, "strava").web_return == "https://app.astrapheai.com/x"
 
 
 def test_oauth_state_with_unsafe_web_return_omits_it():
-    assert sync_router._oauth_state("ath-1", "https://evil.com/x") == "ath-1"
+    state = sync_router._oauth_state("ath-1", "https://evil.com/x", "whoop")
+    assert verify_state(state, "whoop").web_return is None
+
+
+def test_oauth_callback_rejects_raw_athlete_id_state():
+    # The old format (raw athlete id) must no longer attach tokens to anyone.
+    admin_db = MagicMock()
+    app.dependency_overrides[get_admin_db] = lambda: admin_db
+    try:
+        with patch.object(strava_service, "exchange_oauth_code", AsyncMock()) as exch:
+            res = client.get("/v1/sync/oauth/strava/callback", params={"code": "abc", "state": "ath-1"})
+        assert res.status_code == 400
+        exch.assert_not_awaited()
+        admin_db.table.assert_not_called()
+    finally:
+        _teardown()
+
+
+def test_whoop_callback_upserts_on_athlete_and_provider():
+    admin_db = MagicMock()
+    app.dependency_overrides[get_admin_db] = lambda: admin_db
+    try:
+        with patch.object(
+            whoop_service, "exchange_oauth_code", AsyncMock(return_value={"access_token": "tok", "refresh_token": "r"})
+        ), patch.object(whoop_service, "fetch_profile", AsyncMock(return_value={"user_id": "wu-1"})), patch.object(
+            sync_router, "backfill_historical_data", AsyncMock()
+        ):
+            client.get("/v1/sync/oauth/whoop/callback", params={"code": "abc", "state": sign_state("ath-1", "whoop")})
+        upsert = admin_db.table.return_value.upsert
+        assert upsert.call_args.kwargs.get("on_conflict") == "athlete_id,provider"
+    finally:
+        _teardown()
 
 
 def test_clean_intervals_athlete_id_strips():
@@ -104,13 +138,16 @@ def test_clean_intervals_api_key_empty_raises():
 
 def test_build_whoop_oauth_authorize_url_contains_state():
     url = sync_router.build_whoop_oauth_authorize_url("ath-1", None)
-    assert "state=ath-1" in url
+    state = parse_qs(urlparse(url).query)["state"][0]
+    assert verify_state(state, "whoop").athlete_id == "ath-1"
     assert "client_id=" in url
 
 
 def test_build_strava_oauth_authorize_url_contains_state():
     url = sync_router.build_strava_oauth_authorize_url("ath-1", None)
-    assert "state=ath-1" in url
+    state = parse_qs(urlparse(url).query)["state"][0]
+    assert verify_state(state, "strava").athlete_id == "ath-1"
+    assert "approval_prompt=force" in url
     assert "strava.com/oauth/authorize" in url
 
 
@@ -764,8 +801,7 @@ def test_whoop_oauth_callback_missing_athlete_id_returns_error_dict():
             res = client.get(
                 "/v1/sync/oauth/whoop/callback", params={"code": "abc", "state": "undefined"}
             )
-        assert res.status_code == 200
-        assert res.json()["status"] == "error"
+        assert res.status_code == 400
     finally:
         _teardown()
 
@@ -780,7 +816,7 @@ def test_whoop_oauth_callback_success_html_response():
             whoop_service, "fetch_profile", AsyncMock(return_value={"user_id": "wu-1"})
         ), patch.object(sync_router, "backfill_historical_data", AsyncMock()):
             res = client.get(
-                "/v1/sync/oauth/whoop/callback", params={"code": "abc", "state": "ath-1"}
+                "/v1/sync/oauth/whoop/callback", params={"code": "abc", "state": sign_state("ath-1", "whoop")}
             )
         assert res.status_code == 200
         assert b"WHOOP connected" in res.content
@@ -799,7 +835,7 @@ def test_whoop_oauth_callback_success_with_web_return_redirects():
         ), patch.object(sync_router, "backfill_historical_data", AsyncMock()):
             res = client.get(
                 "/v1/sync/oauth/whoop/callback",
-                params={"code": "abc", "state": "ath-1|https://app.astrapheai.com/done"},
+                params={"code": "abc", "state": sign_state("ath-1", "whoop", "https://app.astrapheai.com/done")},
                 follow_redirects=False,
             )
         assert res.status_code in (302, 307)
@@ -816,7 +852,7 @@ def test_whoop_oauth_callback_exchange_failure_returns_error_dict():
             whoop_service, "exchange_oauth_code", AsyncMock(side_effect=RuntimeError("exchange failed"))
         ):
             res = client.get(
-                "/v1/sync/oauth/whoop/callback", params={"code": "abc", "state": "ath-1"}
+                "/v1/sync/oauth/whoop/callback", params={"code": "abc", "state": sign_state("ath-1", "whoop")}
             )
         assert res.status_code == 200
         assert res.json()["status"] == "error"
@@ -853,7 +889,7 @@ def test_strava_oauth_callback_success():
             strava_service, "strava_oauth_expires_at_iso", return_value=None
         ), patch.object(sync_router, "strava_backfill", AsyncMock()):
             res = client.get(
-                "/v1/sync/oauth/strava/callback", params={"code": "abc", "state": "ath-1"}
+                "/v1/sync/oauth/strava/callback", params={"code": "abc", "state": sign_state("ath-1", "strava")}
             )
         assert res.status_code == 200
         assert b"Strava connected" in res.content
@@ -875,7 +911,7 @@ def test_strava_oauth_callback_resolves_athlete_id_when_missing_from_token():
             strava_service, "strava_oauth_expires_at_iso", return_value=None
         ), patch.object(sync_router, "strava_backfill", AsyncMock()) as mock_backfill:
             res = client.get(
-                "/v1/sync/oauth/strava/callback", params={"code": "abc", "state": "ath-1"}
+                "/v1/sync/oauth/strava/callback", params={"code": "abc", "state": sign_state("ath-1", "strava")}
             )
         assert res.status_code == 200
         mock_backfill.assert_awaited_once()
@@ -891,7 +927,7 @@ def test_strava_oauth_callback_no_access_token_raises_400():
             strava_service, "exchange_oauth_code", AsyncMock(return_value={"access_token": None})
         ):
             res = client.get(
-                "/v1/sync/oauth/strava/callback", params={"code": "abc", "state": "ath-1"}
+                "/v1/sync/oauth/strava/callback", params={"code": "abc", "state": sign_state("ath-1", "strava")}
             )
         assert res.status_code == 400
     finally:
@@ -912,7 +948,7 @@ def test_strava_oauth_callback_unresolved_athlete_id_skips_backfill():
             strava_service, "strava_oauth_expires_at_iso", return_value=None
         ), patch.object(sync_router, "strava_backfill", AsyncMock()) as mock_backfill:
             res = client.get(
-                "/v1/sync/oauth/strava/callback", params={"code": "abc", "state": "ath-1"}
+                "/v1/sync/oauth/strava/callback", params={"code": "abc", "state": sign_state("ath-1", "strava")}
             )
         assert res.status_code == 200
         mock_backfill.assert_not_awaited()
@@ -928,7 +964,7 @@ def test_strava_oauth_callback_unexpected_error_returns_error_dict():
             strava_service, "exchange_oauth_code", AsyncMock(side_effect=RuntimeError("boom"))
         ):
             res = client.get(
-                "/v1/sync/oauth/strava/callback", params={"code": "abc", "state": "ath-1"}
+                "/v1/sync/oauth/strava/callback", params={"code": "abc", "state": sign_state("ath-1", "strava")}
             )
         assert res.status_code == 200
         assert res.json()["status"] == "error"

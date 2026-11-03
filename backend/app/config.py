@@ -116,6 +116,9 @@ class Settings(BaseSettings):
     # Existing plaintext rows keep working after the key is introduced (read
     # path accepts plaintext); new writes are encrypted immediately.
     OAUTH_TOKEN_ENCRYPTION_KEY: Optional[str] = None
+    # HMAC secret for the signed OAuth `state` (app/services/oauth_state.py). Falls back to
+    # OAUTH_TOKEN_ENCRYPTION_KEY, then SUPABASE_SERVICE_ROLE_KEY, when unset.
+    OAUTH_STATE_SECRET: Optional[str] = None
 
     # --- Strava API ---
     STRAVA_CLIENT_ID: str = ""

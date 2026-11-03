@@ -30,6 +30,7 @@ from app.services.processing import (
 )
 from app.services.ai_coach import invalidate_context_cache
 from app.services.token_crypto import decrypt_oauth_row, encrypt_oauth_fields
+from app.services.oauth_state import OAuthStateError, consume_nonce, sign_state, verify_state
 from fastapi import status
 from typing import Optional, Tuple
 
@@ -40,21 +41,40 @@ router = APIRouter(prefix=f"{settings.API_PREFIX}/sync", tags=["Sync & Webhooks"
 _ALLOWED_RETURN_HOSTS: frozenset[str] = frozenset({
     "astrapheai.com",
     "app.astrapheai.com",
-    "localhost",
-    "127.0.0.1",
 })
+_DEV_RETURN_HOSTS: frozenset[str] = frozenset({"localhost", "127.0.0.1"})
+
 
 def _safe_web_return(url: str | None) -> str | None:
-    """Returns the URL only if its host is on the allowlist, else None."""
-    if not url:
+    """
+    Returns a normalised URL only if it points at an allowlisted host, else None.
+
+    Rejects backslashes and control characters (browsers treat `\\` as `/`, so
+    `https://evil.com\\@app.astrapheai.com/` parses as app.astrapheai.com here but
+    navigates to evil.com), credentials, and non-https schemes. Localhost is only
+    allowed outside production. The URL is rebuilt from its parsed parts.
+    """
+    if not url or len(url) > 2048:
+        return None
+    if any(c in url for c in "\\\r\n\t"):
         return None
     try:
-        host = urlparse(url).hostname or ""
-        if host in _ALLOWED_RETURN_HOSTS or host.endswith(".astrapheai.com"):
-            return url
+        p = urlparse(url)
     except Exception:
-        pass
-    return None
+        return None
+    if p.username or p.password:
+        return None
+    host = (p.hostname or "").lower()
+    is_dev_host = host in _DEV_RETURN_HOSTS and settings.APP_ENV != "production"
+    if is_dev_host:
+        if p.scheme not in ("http", "https"):
+            return None
+    elif p.scheme != "https" or not (host in _ALLOWED_RETURN_HOSTS or host.endswith(".astrapheai.com")):
+        return None
+    rebuilt = f"{p.scheme}://{p.netloc}{p.path or '/'}"
+    if p.query:
+        rebuilt += f"?{p.query}"
+    return rebuilt
 
 
 def get_clean_redirect_url():
@@ -69,11 +89,21 @@ def get_clean_strava_redirect_url():
     return f"{base}{settings.API_PREFIX}/sync/oauth/strava/callback"
 
 
-def _oauth_state(athlete_id: str, web_return: str | None) -> str:
-    state = athlete_id
-    if web_return and _safe_web_return(web_return):
-        state = f"{state}|{web_return}"
-    return state
+def _oauth_state(athlete_id: str, web_return: str | None, provider: str) -> str:
+    """Signed, expiring, single-use state (see app/services/oauth_state.py)."""
+    return sign_state(athlete_id, provider, _safe_web_return(web_return))
+
+
+async def _athlete_from_oauth_state(state: str | None, provider: str) -> tuple[str, str | None]:
+    """Verify the callback's state; raises 400 for forged, expired or reused states."""
+    try:
+        parsed = verify_state(state, provider)
+    except OAuthStateError as exc:
+        print(f"[{provider}.oauth.callback] rejected state: {exc}")
+        raise HTTPException(status_code=400, detail="This connect link is invalid or has expired. Please try again.")
+    if not await consume_nonce(parsed.nonce):
+        raise HTTPException(status_code=400, detail="This connect link was already used. Please try again.")
+    return parsed.athlete_id, parsed.web_return
 
 
 class IntervalsIcuConnectPayload(BaseModel):
@@ -127,7 +157,7 @@ def _schedule_intervals_backfill(
 
 def build_whoop_oauth_authorize_url(athlete_id: str, web_return: str | None = None) -> str:
     redirect_url = get_clean_redirect_url()
-    state = _oauth_state(athlete_id, web_return)
+    state = _oauth_state(athlete_id, web_return, "whoop")
     params = {
         "response_type": "code",
         "client_id": settings.WHOOP_CLIENT_ID,
@@ -140,12 +170,14 @@ def build_whoop_oauth_authorize_url(athlete_id: str, web_return: str | None = No
 
 def build_strava_oauth_authorize_url(athlete_id: str, web_return: str | None = None) -> str:
     callback_url = get_clean_strava_redirect_url()
-    state = _oauth_state(athlete_id, web_return)
+    state = _oauth_state(athlete_id, web_return, "strava")
     params = {
         "client_id": settings.STRAVA_CLIENT_ID,
         "response_type": "code",
         "redirect_uri": callback_url,
-        "approval_prompt": "auto",
+        # "force" so Strava always shows the consent screen: no silent redirect for
+        # someone who authorised the app before.
+        "approval_prompt": "force",
         "scope": "activity:read_all,profile:read_all",
         "state": state,
     }
@@ -1196,11 +1228,7 @@ async def whoop_oauth_authorize(
     athlete_id: str = Depends(get_current_athlete),
 ):
     """Step 1: Redirect authenticated user to WHOOP for authorization."""
-    redirect_url = get_clean_redirect_url()
-    state = _oauth_state(athlete_id, web_return)
-    print(f"[whoop.oauth.authorize] redirect_uri={redirect_url} state={state}")
     auth_url = build_whoop_oauth_authorize_url(athlete_id, web_return)
-    print(f"[whoop.oauth.authorize] auth_url={auth_url}")
     if json_url:
         return {"url": auth_url}
     return RedirectResponse(url=auth_url)
@@ -1213,22 +1241,15 @@ async def whoop_oauth_callback(
     db = Depends(get_admin_db),
 ):
     """Step 2: WHOOP redirects back here with a code."""
-    print(f"[whoop.oauth.callback] !!! COLD START callback reached !!! state={state}")
     redirect_url = get_clean_redirect_url()
+    # Verify the state before spending the code: a forged or replayed state never
+    # gets to attach tokens to an athlete.
+    athlete_id, web_return = await _athlete_from_oauth_state(state, "whoop")
     try:
         print(f"[whoop.oauth.callback] Exchanging code for tokens... redirect_uri={redirect_url}")
         token_data = await whoop.exchange_oauth_code(code, redirect_url)
         access_token = token_data.get("access_token")
         print(f"[whoop.oauth.callback] Token exchange SUCCESS")
-        
-        web_return = None
-        if state and "|" in state:
-            athlete_id, web_return = state.split("|", 1)
-        else:
-            athlete_id = state if state != "undefined" else None
-        if not athlete_id:
-             print(f"[whoop.oauth.callback] ERROR: athlete_id is missing or undefined")
-             raise HTTPException(status_code=400, detail="Missing athlete_id")
 
         # Fetch WHOOP user_id so webhook lookups can find this token record.
         whoop_user_id = None
@@ -1251,7 +1272,9 @@ async def whoop_oauth_callback(
         }
         if initial_expires:
             _upsert["expires_at"] = initial_expires
-        db.table("oauth_tokens").upsert(encrypt_oauth_fields(_upsert)).execute()
+        # on_conflict: without it PostgREST conflicts on the `id` PK (absent here), so a
+        # reconnect hit UNIQUE(athlete_id, provider) and always failed.
+        db.table("oauth_tokens").upsert(encrypt_oauth_fields(_upsert), on_conflict="athlete_id,provider").execute()
         print(f"[whoop.oauth.callback] Token persistence SUCCESS")
 
         # Everything else in background.
@@ -1303,15 +1326,8 @@ async def strava_oauth_callback(
 ):
     """Exchange code for tokens, store, and kick off backfill."""
     callback_url = get_clean_strava_redirect_url()
+    athlete_id, web_return = await _athlete_from_oauth_state(state, "strava")
     try:
-        web_return = None
-        if state and "|" in state:
-            athlete_id, web_return = state.split("|", 1)
-        else:
-            athlete_id = state
-        if not athlete_id or athlete_id == "undefined":
-            raise HTTPException(status_code=400, detail="Missing athlete_id in state")
-
         token_data = await strava_service.exchange_oauth_code(code, callback_url)
         access_token = token_data.get("access_token")
         refresh_token = token_data.get("refresh_token")
