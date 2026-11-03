@@ -65,7 +65,6 @@
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"></circle><path d="m20 20-4-4"></path></svg>
     {#if !collapsed}
       <span class="flex-1 text-left">Search or ask…</span>
-      <span class="font-mono text-[10px] text-text3">⌘K</span>
     {/if}
   </button>
 
@@ -85,7 +84,6 @@
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="flex-none {on ? 'text-blue' : ''}"><path d={item.icon}></path></svg>
           {#if !collapsed}
             <span class="flex-1">{item.label}</span>
-            {#if !on}<span class="font-mono text-[10px] text-text3">{item.key}</span>{/if}
           {/if}
         </a>
         {#if !collapsed && on && item.subs.length}

@@ -79,6 +79,7 @@
           color: HR_ZONE_HEX[z.zone] ?? 'var(--text2)',
           range: basis === 'hr' ? hr : watts,
           pct: pcts[i] ?? 0,
+          secs: secs[i] ?? 0,
           time: fmtZoneTime(secs[i] ?? 0)
         };
       })
@@ -120,7 +121,8 @@
 
   <div aria-hidden="true" class="flex gap-[3px] h-3">
     {#if total > 0}
-      {#each rows as z (z.zone)}<span class="block h-3 rounded-[3px]" style="flex: {Math.max(z.pct, 1)} 1 0; background: {z.color}"></span>{/each}
+      <!-- Only zones with recorded time; widths are the real share of time. -->
+      {#each rows.filter((r) => r.secs > 0) as z (z.zone)}<span class="block h-3 rounded-[3px] min-w-[3px]" style="flex: {z.secs} 1 0; background: {z.color}"></span>{/each}
     {:else}
       <span class="block h-3 flex-1 rounded-[3px] bg-bg3"></span>
     {/if}
