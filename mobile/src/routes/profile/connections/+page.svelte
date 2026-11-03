@@ -260,11 +260,13 @@
 
   type AppId = 'strava' | 'whoop' | 'garmin' | 'apple';
   const APPS: { id: AppId; name: string; mono: string; desc: string }[] = [
-    { id: 'strava', name: 'Strava', mono: 'ST', desc: 'Activities & routes' },
     { id: 'whoop', name: 'WHOOP', mono: 'WH', desc: 'Recovery & HRV · sleep' },
     { id: 'garmin', name: 'Garmin Connect', mono: 'GC', desc: 'Wearables & training log' },
+    { id: 'strava', name: 'Strava', mono: 'ST', desc: 'Activities & routes' },
     { id: 'apple', name: 'Apple Health', mono: 'AH', desc: 'Sleep & workouts' }
   ];
+  /** Not offered yet: Strava's API needs a paid plan. Someone already linked can still unlink. */
+  const COMING_SOON: ReadonlySet<AppId> = new Set(['strava', 'apple']);
 
   const field =
     'w-full h-12 px-3.5 bg-bg0 border border-border rounded-[14px] text-sm text-text0 outline-none focus:border-blue';
@@ -298,7 +300,7 @@
         <span class="text-base font-medium">{app.name}</span>
         <span class="text-[13px] text-text2 truncate">{app.desc}</span>
       </span>
-      {#if app.id === 'apple'}
+      {#if COMING_SOON.has(app.id) && !connected}
         <span class="shrink-0 h-10 px-3 rounded-xl border border-border text-[13px] text-text2 flex items-center">Soon</span>
       {:else if connected}
         <button

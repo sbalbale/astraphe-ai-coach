@@ -52,3 +52,23 @@ def test_apply_trial_expiry_downgrades_and_schedules_write_back():
     assert tier == "free" and again == "free"
     assert spawn.call_count == 1  # written back once per process
     spawn.call_args.args[0].close()
+
+
+def test_trial_and_premium_get_premium_features():
+    assert tiers.has_premium_access("premium")
+    assert tiers.has_premium_access("trial")
+    assert not tiers.has_premium_access("free")
+    assert not tiers.has_premium_access(None)
+
+
+def test_coach_allows_trial_and_blocks_free():
+    import pytest
+    from fastapi import HTTPException
+
+    from app.routers import coach
+
+    coach._require_premium(SimpleNamespace(tier="trial"))
+    coach._require_premium(SimpleNamespace(tier="premium"))
+    with pytest.raises(HTTPException) as exc:
+        coach._require_premium(SimpleNamespace(tier="free"))
+    assert exc.value.status_code == 403

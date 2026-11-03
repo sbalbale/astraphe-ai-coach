@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { effectiveTier, trialEndsAtMs } from './tier';
+import { effectiveTier, hasPremiumAccess, trialEndsAtMs } from './tier';
 
 const NOW = Date.parse('2026-11-20T00:00:00Z');
 
@@ -18,5 +18,13 @@ describe('effectiveTier', () => {
   it('leaves premium and free alone; unknown is free', () => {
     expect(effectiveTier({ tier: 'premium', trial_ends_at: '2000-01-01T00:00:00Z' }, null, NOW)).toBe('premium');
     expect(effectiveTier({ tier: 'gold' }, null, NOW)).toBe('free');
+  });
+});
+
+describe('hasPremiumAccess', () => {
+  it('opens premium features to premium and an active trial', () => {
+    expect(hasPremiumAccess('premium')).toBe(true);
+    expect(hasPremiumAccess('trial')).toBe(true);
+    expect(hasPremiumAccess('free')).toBe(false);
   });
 });

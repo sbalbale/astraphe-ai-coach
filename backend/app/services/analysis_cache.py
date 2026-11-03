@@ -167,7 +167,7 @@ def upsert_analysis(
 
 def generate_gemini_analysis(prompt: str, model_name: str) -> Tuple[str, str]:
     requested = (model_name or settings.GEMINI_ANALYSIS_MODEL).strip()
-    fallback = (settings.GEMINI_ANALYSIS_MODEL or "gemini-flash-lite-latest").strip()
+    fallback = (settings.GEMINI_ANALYSIS_MODEL or "gemini-3.1-flash-lite").strip()
     candidates = [requested]
     if fallback and fallback not in candidates:
         candidates.append(fallback)

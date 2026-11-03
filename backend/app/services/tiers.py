@@ -50,3 +50,12 @@ def persist_trial_expiry(admin_db: Any, user_id: str) -> None:
     session and admin views show free too. Idempotent; errors are the caller's to log."""
     admin_db.auth.admin.update_user_by_id(user_id, {"app_metadata": {"tier": "free"}})
     admin_db.table("athletes").update({"tier": "free"}).eq("user_id", user_id).execute()
+
+
+PREMIUM_ACCESS_TIERS = frozenset({"trial", "premium"})
+
+
+def has_premium_access(tier: str | None) -> bool:
+    """Premium features (coach, plan, AI analysis) are open to premium and to an active trial.
+    Pass the effective tier, so an expired trial is already free."""
+    return (tier or "") in PREMIUM_ACCESS_TIERS

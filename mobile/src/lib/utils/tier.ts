@@ -37,3 +37,8 @@ export function effectiveTier(
   const ends = trialEndsAtMs(meta, createdAt);
   return ends != null && nowMs >= ends ? 'free' : 'trial';
 }
+
+/** Premium features (coach, plan, AI analysis) are open to premium and to an active trial. */
+export function hasPremiumAccess(tier: AccountTier): boolean {
+  return tier === 'premium' || tier === 'trial';
+}

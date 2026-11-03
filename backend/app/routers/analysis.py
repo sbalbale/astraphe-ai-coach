@@ -11,6 +11,7 @@ from supabase import Client
 
 from app.services.background import spawn as spawn_background
 from app.core.rate_limiter import RateLimiter
+from app.services.tiers import has_premium_access
 
 from app.dependencies import (
     get_current_athlete,
@@ -1025,7 +1026,7 @@ def _get_or_compute(
         return {"content": cached.get("content"), "fingerprint": fp, "cached": True}
 
     # Only trial/premium get Gemini-generated narrative analysis.
-    if tier not in ("trial", "premium"):
+    if not has_premium_access(tier):
         fb = _fallback_content(analysis_type, context)
         upsert_analysis(
             db=db,
@@ -1218,7 +1219,7 @@ async def dashboard_summary_analysis(
     flight_key = f"{athlete_id}:{scope_key}"
     if cached and cached.get("content"):
         stale = cached.get("fingerprint") != fp or is_retryable_failed_analysis(cached.get("model"))
-        if stale and tier in ("trial", "premium") and flight_key not in _regen_in_flight:
+        if stale and has_premium_access(tier) and flight_key not in _regen_in_flight:
             _regen_in_flight.add(flight_key)
             async def _run_stale():
                 try:
@@ -1239,7 +1240,7 @@ async def dashboard_summary_analysis(
     # No cached content yet. Return a fast fallback now and let the LLM warm the
     # cache for the next page load — never block the dashboard for ~2-5s on a
     # first-time Gemini call.
-    if tier in ("trial", "premium") and flight_key not in _regen_in_flight:
+    if has_premium_access(tier) and flight_key not in _regen_in_flight:
         _regen_in_flight.add(flight_key)
         async def _run_cold():
             try:

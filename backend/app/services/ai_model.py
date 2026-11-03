@@ -7,5 +7,5 @@ def resolve_default_gemini_model() -> str:
     """
     Backend fallback Gemini model name (from .env / settings).
     """
-    return (settings.GEMINI_MODEL or "").strip() or "gemma-4-31b-it"
+    return (settings.GEMINI_MODEL or "").strip() or "gemini-3.5-flash-lite"
 

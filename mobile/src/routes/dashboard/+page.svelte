@@ -212,7 +212,7 @@
     },
     {
       title: 'Connect a wearable',
-      detail: 'Garmin, WHOOP or Strava · imports the last 90 days',
+      detail: 'Garmin or WHOOP · imports the last 90 days',
       done: isConnected,
       actionLabel: 'Connect',
       onAction: () => goto('/profile/connections'),

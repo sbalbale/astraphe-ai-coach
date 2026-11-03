@@ -404,6 +404,34 @@ def test_agentic_fails_over_to_the_fallback_model_after_one_transient_error():
     mock_sleep.assert_not_called()
 
 
+def test_agentic_fails_over_when_the_primary_request_times_out():
+    """Production: gemini-3.5-flash-lite hung for the 45 s request timeout and httpx raised
+    ReadTimeout("The read operation timed out"), which was not matched as transient."""
+    import httpx
+
+    db = MagicMock()
+    calls: list[str] = []
+
+    def _side_effect(*, model, contents, config):
+        calls.append(model)
+        if model == "primary-model":
+            raise httpx.ReadTimeout("The read operation timed out")
+        return _response([_text_part("<response>fallback ok</response>")])
+
+    with _db_patches(), patch.object(
+        ai_coach._client.models, "generate_content", side_effect=_side_effect
+    ), patch.object(ai_coach.settings, "GEMINI_FALLBACK_MODEL", "fallback-model"):
+        text, _sources = ai_coach.get_coach_response_agentic("ath-1", "hi", db=db, model_name="primary-model")
+    assert text == "fallback ok"
+    assert calls == ["primary-model", "fallback-model"]
+
+
+def test_should_fallback_chat_model_on_timeouts():
+    assert ai_coach._should_fallback_chat_model("The read operation timed out")
+    assert ai_coach._should_fallback_chat_model("504 Gateway Timeout")
+    assert not ai_coach._should_fallback_chat_model("400 INVALID_ARGUMENT")
+
+
 def test_agentic_still_retries_when_there_is_no_fallback_model():
     db = MagicMock()
     calls = {"n": 0}

@@ -65,10 +65,10 @@ class Settings(BaseSettings):
     # for minutes (seen: 233s for a single hop); with a cap, the coach loop treats it as
     # transient and fails over to GEMINI_FALLBACK_MODEL instead of hanging.
     GEMINI_REQUEST_TIMEOUT_SEC: int = 45
-    GEMINI_MODEL: str = "gemma-4-26b-a4b-it"
+    GEMINI_MODEL: str = "gemini-3.5-flash-lite"
     # Fallback chat model when the primary model is overloaded (e.g. 503 UNAVAILABLE).
-    GEMINI_FALLBACK_MODEL: str = "gemma-4-26b-a4b-it"
-    GEMINI_ANALYSIS_MODEL: str = "gemini-flash-lite-latest"
+    GEMINI_FALLBACK_MODEL: str = "gemini-3.1-flash-lite"
+    GEMINI_ANALYSIS_MODEL: str = "gemini-3.1-flash-lite"
     GEMINI_EMBEDDING_MODEL: str = "gemini-embedding-2"
 
     # --- Google Cloud ---

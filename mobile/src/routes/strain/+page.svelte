@@ -17,6 +17,7 @@
   import { bodyDate, rememberBodyDate } from '$lib/stores/bodyDate.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { authStore } from '$lib/stores/authStore.svelte';
+  import { hasPremiumAccess } from '$lib/utils/tier';
   import { api } from '$lib/api';
   import { goto } from '$app/navigation';
   import { resolve } from '$app/paths';
@@ -293,7 +294,7 @@
 
   let workoutAnalysisLoading = $state(false);
   async function loadWorkoutAnalysis(workoutId: string) {
-    if (authStore.tier !== 'premium') return;
+    if (!hasPremiumAccess(authStore.tier)) return;
     if (workoutAnalysisMemo.has(workoutId)) return;
     workoutAnalysisLoading = true;
     try {
@@ -330,7 +331,7 @@
       tone="blue"
       eyebrow="Not set up"
       title="Track your strain"
-      message="Strain is how hard your day was, built from your workouts' heart-rate zones. Connect Garmin, WHOOP or Strava, or log sessions by hand."
+      message="Strain is how hard your day was, built from your workouts' heart-rate zones. Connect Garmin or WHOOP, or log sessions by hand."
       actionLabel="Connect an app"
       onAction={() => goto('/profile/connections')}
       secondaryLabel="Log an activity"
@@ -495,7 +496,7 @@
         View full workout
       </button>
 
-      {#if authStore.tier === 'premium'}
+      {#if hasPremiumAccess(authStore.tier)}
         <div class="mt-4 pt-4 border-t border-border/40 rounded-xl p-3 bg-bg1">
           <div class="flex items-center gap-1.5 mb-2">
             <span class="text-[11px] font-mono uppercase tracking-[0.08em] text-blue">AI Insight</span>
