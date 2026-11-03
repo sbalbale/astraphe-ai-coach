@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   cmToFtIn,
+  isValidPace,
   cmToIn,
   convertPace,
   elevationFromMeters,
@@ -218,5 +219,14 @@ describe('cm/in conversions', () => {
   });
   it('ftInToCm clamps negative inputs to 0', () => {
     expect(ftInToCm(-1, -5)).toBe(0);
+  });
+});
+
+describe('isValidPace', () => {
+  it('accepts m:ss and mm:ss paces', () => {
+    for (const p of ['5:00', '8:00', '12:45', ' 4:30 ']) expect(isValidPace(p)).toBe(true);
+  });
+  it('rejects anything else', () => {
+    for (const p of ['', '5', '5:0', '5:60', 'd:dd', '5:00/km', '123:00']) expect(isValidPace(p)).toBe(false);
   });
 });

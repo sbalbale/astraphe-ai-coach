@@ -15,7 +15,7 @@ import {
 const TODAY = new Date(2026, 10, 4, 12);
 
 describe('weeklyBuckets', () => {
-  it('buckets Monday-start weeks, keeps end-of-week load and flags recovery weeks', () => {
+  it('buckets Monday-start weeks, keeps end-of-week load', () => {
     const rows = [
       { date: '2026-10-19', daily_tss: 100, ctl: 50, atl: 55 },
       { date: '2026-10-25', daily_tss: 300, ctl: 52, atl: 60 },
@@ -26,8 +26,6 @@ describe('weeklyBuckets', () => {
     const b = weeklyBuckets(rows, planned, 3, TODAY);
     expect(b.map((w) => w.tss)).toEqual([400, 200, 80]);
     expect(b[0].ctl).toBe(52);
-    expect(b[1].recovery).toBe(true); // 200 < 0.75 × 400
-    expect(b[2].recovery).toBe(false); // current week never counts
     expect(b[2].current).toBe(true);
     expect(b[2].planned).toBe(120);
     expect(rangeStart(TODAY, 3).getDate()).toBe(19);

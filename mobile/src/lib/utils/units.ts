@@ -177,3 +177,7 @@ export function ftInToCm(ft: number, inch: number): number {
   return inToCm(f * 12 + i);
 }
 
+/** A pace like "5:00" or "12:45" (minutes:seconds, per km or per mile). */
+export function isValidPace(pace: string): boolean {
+  return /^\d{1,2}:[0-5]\d$/.test(pace.trim());
+}

@@ -1,6 +1,6 @@
 /**
  * Pure helpers for the wide Trends & zones page (design: WTrends): weekly buckets of
- * training load, ramp rate, recovery weeks, and time-in-zone for a week or month.
+ * training load, ramp rate, and time-in-zone for a week or month.
  */
 import { addDays, addMonths, differenceInCalendarDays, endOfMonth, format, startOfMonth, startOfWeek } from 'date-fns';
 import { workoutDurationSecs } from '$lib/utils/workoutDuration';
@@ -16,7 +16,6 @@ export type WeekBucket = {
   ctl: number | null;
   atl: number | null;
   current: boolean;
-  recovery: boolean;
 };
 
 const num = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : 0);
@@ -27,10 +26,7 @@ export function rangeStart(today: Date, weeks: number): Date {
   return addDays(startOfWeek(today, { weekStartsOn: 1 }), -(weeks - 1) * 7);
 }
 
-/**
- * `weeks` Monday-start buckets ending with the current week, oldest first. A week is a
- * recovery week when its TSS is under 75% of the week before (current week excluded).
- */
+/** `weeks` Monday-start buckets ending with the current week, oldest first. */
 export function weeklyBuckets(rows: LoadRow[], planned: PlannedRow[], weeks: number, today: Date): WeekBucket[] {
   const first = rangeStart(today, weeks);
   const buckets: WeekBucket[] = Array.from({ length: weeks }, (_, i) => ({
@@ -39,8 +35,7 @@ export function weeklyBuckets(rows: LoadRow[], planned: PlannedRow[], weeks: num
     planned: 0,
     ctl: null,
     atl: null,
-    current: i === weeks - 1,
-    recovery: false
+    current: i === weeks - 1
   }));
   // Calendar days, not ms: a week with a DST change is an hour short.
   const indexOf = (d: Date) => Math.floor(differenceInCalendarDays(d, first) / 7);
@@ -61,8 +56,6 @@ export function weeklyBuckets(rows: LoadRow[], planned: PlannedRow[], weeks: num
     const b = buckets[i];
     b.tss = Math.round(b.tss);
     b.planned = Math.round(b.planned);
-    const prev = buckets[i - 1];
-    b.recovery = !b.current && !!prev && prev.tss > 0 && b.tss < 0.75 * prev.tss;
   }
   return buckets;
 }

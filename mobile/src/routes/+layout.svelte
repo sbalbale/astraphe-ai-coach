@@ -296,7 +296,12 @@
             ? 'overflow-y-auto px-4 pb-3 pt-0'
             : 'overflow-y-auto p-3 px-4'}"
     >
-      {@render props.children()}
+      {#if wide && $page.url.pathname.startsWith('/profile')}
+        <!-- Settings forms read best at a phone-like width rather than stretched across the screen. -->
+        <div class="w-full max-w-[720px] mx-auto">{@render props.children()}</div>
+      {:else}
+        {@render props.children()}
+      {/if}
     </div>
 
       {#if !wide}
