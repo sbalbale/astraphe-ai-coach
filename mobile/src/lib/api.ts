@@ -691,7 +691,12 @@ export const api = {
       }
     }
     } finally {
-      reader.cancel().catch(() => {});
+      // Best-effort release; never let cleanup mask the real error.
+      try {
+        void Promise.resolve(reader.cancel?.()).catch(() => {});
+      } catch {
+        // ignore
+      }
     }
 
     if (!conversationId) {
