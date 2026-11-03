@@ -66,11 +66,11 @@ describe('planWide', () => {
     expect(toWideSession(wk({ projected_tss: 0 })).tss).toBeNull();
   });
 
-  it('builds Monday-first month weeks', () => {
+  it('builds Sunday-first month weeks', () => {
     const weeks = monthWeeks(new Date(2026, 10, 1)); // November 2026 starts on a Sunday
-    expect(format(weeks[0][0], 'yyyy-MM-dd')).toBe('2026-10-26');
+    expect(format(weeks[0][0], 'yyyy-MM-dd')).toBe('2026-11-01');
     expect(weeks.every((w) => w.length === 7)).toBe(true);
-    expect(format(weeks[weeks.length - 1][6], 'yyyy-MM-dd')).toBe('2026-12-06');
+    expect(format(weeks[weeks.length - 1][6], 'yyyy-MM-dd')).toBe('2026-12-05');
   });
 
   it('totals a week', () => {

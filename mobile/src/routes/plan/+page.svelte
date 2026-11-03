@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { WEEKDAY_LETTERS } from '$lib/utils/week';
+  import { WEEK_STARTS_ON } from '$lib/utils/week';
   import type { Action } from 'svelte/action';
   import EmptyStateCard from '$lib/components/ui/EmptyStateCard.svelte';
   import { api } from '$lib/api';
@@ -70,7 +72,7 @@
     date: Date;
   };
 
-  const dow = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
 
   let agendaView = $state<AgendaView>('day');
   let selectedWorkout = $state<PlannedWorkout | null>(null);
@@ -149,8 +151,8 @@
       const end = start;
       return { start, end };
     }
-    const start = startOfWeek(selectedDate, { weekStartsOn: 1 });
-    const end = endOfWeek(selectedDate, { weekStartsOn: 1 });
+    const start = startOfWeek(selectedDate, { weekStartsOn: WEEK_STARTS_ON });
+    const end = endOfWeek(selectedDate, { weekStartsOn: WEEK_STARTS_ON });
     return { start, end };
   });
 
@@ -165,8 +167,8 @@
     return out;
   });
 
-  const gridStart = $derived(startOfWeek(startOfMonth(viewMonth), { weekStartsOn: 1 }));
-  const gridEnd = $derived(endOfWeek(endOfMonth(viewMonth), { weekStartsOn: 1 }));
+  const gridStart = $derived(startOfWeek(startOfMonth(viewMonth), { weekStartsOn: WEEK_STARTS_ON }));
+  const gridEnd = $derived(endOfWeek(endOfMonth(viewMonth), { weekStartsOn: WEEK_STARTS_ON }));
   const monthDays = $derived.by(() => {
     const out: Date[] = [];
     for (let d = gridStart; d <= gridEnd; d = addDays(d, 1)) out.push(d);
@@ -379,7 +381,7 @@
   let planView = $state<'week' | 'month'>('week');
   const todayIso = format(new Date(), 'yyyy-MM-dd');
   // Week view is always the current week.
-  const weekStart = startOfWeek(new Date(), { weekStartsOn: 1 });
+  const weekStart = startOfWeek(new Date(), { weekStartsOn: WEEK_STARTS_ON });
   $effect(() => {
     // Phone week view only: the wide week view navigates to any week itself.
     if (planView !== 'week' || viewport.wide) return;
@@ -571,7 +573,7 @@
 
   /** Other sessions in the same Monday–Sunday week, for Swap. */
   function swapCandidates(w: PlannedWorkout): PlannedWorkout[] {
-    const start = startOfWeek(w.date, { weekStartsOn: 1 });
+    const start = startOfWeek(w.date, { weekStartsOn: WEEK_STARTS_ON });
     const out: PlannedWorkout[] = [];
     for (let i = 0; i < 7; i++) {
       const iso = format(addDays(start, i), 'yyyy-MM-dd');
@@ -707,7 +709,7 @@
     return unique.map((w) => toWideSession(w, planFtp));
   });
   const wideByIso = $derived(groupByIso(wideSessions));
-  const wideWeekStart = $derived(startOfWeek(selectedDate, { weekStartsOn: 1 }));
+  const wideWeekStart = $derived(startOfWeek(selectedDate, { weekStartsOn: WEEK_STARTS_ON }));
   const wideWeekDays = $derived(weekDaysFrom(wideWeekStart));
   const wideMonthWeeks = $derived(monthWeeks(viewMonth));
   const wideDaySessions = $derived(wideByIso[selectedIso] ?? []);
@@ -1046,7 +1048,7 @@
     <section aria-label={format(viewMonth, 'MMMM yyyy')} class="bg-bg2 border border-border rounded-[24px] px-3 pt-3 pb-3.5 flex flex-col gap-2">
       <MonthNavigator value={format(viewMonth, 'yyyy-MM')} onchange={onMonthChange} />
       <div aria-hidden="true" class="grid grid-cols-7 gap-1 text-center font-mono text-[10px] tracking-[0.08em] text-text2">
-        {#each ['M', 'T', 'W', 'T', 'F', 'S', 'S'] as l, i (i)}<span>{l}</span>{/each}
+        {#each WEEKDAY_LETTERS as l, i (i)}<span>{l}</span>{/each}
       </div>
       <div class="grid grid-cols-7 gap-1">
         {#each monthDays as d (d.toISOString())}

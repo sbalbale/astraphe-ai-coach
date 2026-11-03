@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { WEEK_STARTS_ON } from '$lib/utils/week';
   /**
    * Today on tablets / desktop (designs: WToday landscape, WTodayPortrait).
    * Landscape: session + week on the left, readiness + coach on the right.
@@ -40,7 +41,7 @@
     onPlanChanged?: () => void;
   } = $props();
 
-  const weekStart = $derived(startOfWeek(new Date(todayIso + 'T12:00:00'), { weekStartsOn: 1 }));
+  const weekStart = $derived(startOfWeek(new Date(todayIso + 'T12:00:00'), { weekStartsOn: WEEK_STARTS_ON }));
   const days = $derived(Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)));
   const startIso = $derived(format(days[0], 'yyyy-MM-dd'));
   const endIso = $derived(format(days[6], 'yyyy-MM-dd'));

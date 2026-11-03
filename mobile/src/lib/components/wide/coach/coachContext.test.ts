@@ -35,8 +35,8 @@ describe('filterConversations', () => {
 
 describe('weekLoad', () => {
   const range = weekRange(NOW);
-  it('uses a Monday-first week', () => {
-    expect(range).toEqual({ start: '2026-11-02', end: '2026-11-08' });
+  it('uses a Sunday-first week', () => {
+    expect(range).toEqual({ start: '2026-11-01', end: '2026-11-07' });
   });
   it('sums done and planned TSS inside the week only', () => {
     const done = [

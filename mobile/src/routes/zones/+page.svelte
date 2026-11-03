@@ -1,4 +1,5 @@
 <script module lang="ts">
+  import { WEEK_STARTS_ON } from '$lib/utils/week';
   import { SvelteMap } from 'svelte/reactivity';
   const zonesAnalysisMemo = new SvelteMap<string, string | null>();
 </script>
@@ -131,7 +132,7 @@
   const windowStart = $derived.by(() => {
     if (windowMode === 'week') {
       // Monday–Sunday calendar week containing the selected day
-      return startOfDay(startOfWeek(parseDateInputLocal(selectedDay), { weekStartsOn: 1 }));
+      return startOfDay(startOfWeek(parseDateInputLocal(selectedDay), { weekStartsOn: WEEK_STARTS_ON }));
     }
     const monthDate = new Date(`${selectedMonth}-01T00:00:00`);
     return startOfMonth(monthDate);
@@ -139,7 +140,7 @@
 
   const windowEnd = $derived.by(() => {
     if (windowMode === 'week') {
-      return endOfDay(endOfWeek(parseDateInputLocal(selectedDay), { weekStartsOn: 1 }));
+      return endOfDay(endOfWeek(parseDateInputLocal(selectedDay), { weekStartsOn: WEEK_STARTS_ON }));
     }
     const monthDate = new Date(`${selectedMonth}-01T00:00:00`);
     return endOfMonth(monthDate);

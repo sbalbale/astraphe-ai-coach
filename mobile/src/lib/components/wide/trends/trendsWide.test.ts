@@ -15,11 +15,11 @@ import {
 const TODAY = new Date(2026, 10, 4, 12);
 
 describe('weeklyBuckets', () => {
-  it('buckets Monday-start weeks, keeps end-of-week load', () => {
+  it('buckets Sunday-start weeks, keeps end-of-week load', () => {
     const rows = [
-      { date: '2026-10-19', daily_tss: 100, ctl: 50, atl: 55 },
-      { date: '2026-10-25', daily_tss: 300, ctl: 52, atl: 60 },
-      { date: '2026-10-26', daily_tss: 200, ctl: 51, atl: 50 },
+      { date: '2026-10-18', daily_tss: 100, ctl: 50, atl: 55 }, // Sun: first day of week 1
+      { date: '2026-10-24', daily_tss: 300, ctl: 52, atl: 60 }, // Sat: last day of week 1
+      { date: '2026-10-25', daily_tss: 200, ctl: 51, atl: 50 }, // Sun: week 2
       { date: '2026-11-03', daily_tss: 80, ctl: 50, atl: 48 }
     ];
     const planned = [{ date: '2026-11-06', projected_tss: 120 }];
@@ -28,7 +28,7 @@ describe('weeklyBuckets', () => {
     expect(b[0].ctl).toBe(52);
     expect(b[2].current).toBe(true);
     expect(b[2].planned).toBe(120);
-    expect(rangeStart(TODAY, 3).getDate()).toBe(19);
+    expect(rangeStart(TODAY, 3).getDate()).toBe(18);
   });
 
   it('averages only completed weeks with load', () => {
@@ -53,8 +53,8 @@ describe('rampRatePerWeek', () => {
 
 describe('zones', () => {
   it('windows weeks and months relative to today', () => {
-    expect(zoneWindow('week', 0, TODAY).start.getDate()).toBe(2);
-    expect(zoneWindow('week', -1, TODAY).start.getDate()).toBe(26);
+    expect(zoneWindow('week', 0, TODAY).start.getDate()).toBe(1);
+    expect(zoneWindow('week', -1, TODAY).start.getDate()).toBe(25);
     expect(zoneWindow('month', -1, TODAY).start.getMonth()).toBe(9);
   });
 

@@ -1,5 +1,6 @@
 /** Pure helpers for the wide Coach screen (conversation list + "What I can see" pane). */
 import { addDays, differenceInCalendarDays, format, startOfWeek } from 'date-fns';
+import { WEEK_STARTS_ON } from '$lib/utils/week';
 
 /** "Today", a weekday within the last 6 days, else "27 Oct" (or "27 Oct 2025" in another year). */
 export function conversationWhen(iso: string | undefined | null, now: Date = new Date()): string {
@@ -22,7 +23,7 @@ export function filterConversations<T extends { title?: string | null }>(rows: T
 
 /** Monday–Sunday ISO dates of the week containing `now`. */
 export function weekRange(now: Date = new Date()): { start: string; end: string } {
-  const start = startOfWeek(now, { weekStartsOn: 1 });
+  const start = startOfWeek(now, { weekStartsOn: WEEK_STARTS_ON });
   return { start: format(start, 'yyyy-MM-dd'), end: format(addDays(start, 6), 'yyyy-MM-dd') };
 }
 

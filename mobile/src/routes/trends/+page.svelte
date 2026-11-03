@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { WEEK_STARTS_ON } from '$lib/utils/week';
   import { onMount } from 'svelte';
   import { addDays, differenceInCalendarDays, format, startOfWeek, subDays } from 'date-fns';
   import { api } from '$lib/api';
@@ -12,12 +13,12 @@
   import { rangeStart, sportsLabel } from '$lib/components/wide/trends/trendsWide';
 
   let planned = $state<Workout[]>([]);
-  const weeksStart = () => startOfWeek(subDays(new Date(), 11 * 7), { weekStartsOn: 1 });
+  const weeksStart = () => startOfWeek(subDays(new Date(), 11 * 7), { weekStartsOn: WEEK_STARTS_ON });
 
   onMount(async () => {
     athleteStore.fetchAll();
     const start = format(weeksStart(), 'yyyy-MM-dd');
-    const end = format(addDays(startOfWeek(new Date(), { weekStartsOn: 1 }), 6), 'yyyy-MM-dd');
+    const end = format(addDays(startOfWeek(new Date(), { weekStartsOn: WEEK_STARTS_ON }), 6), 'yyyy-MM-dd');
     planned = await api.getWorkouts(start, end);
   });
 
@@ -60,7 +61,7 @@
     return Math.round((latest.ctl - then.ctl) * 10) / 10;
   });
 
-  /** Weekly actual and planned TSS for the last 12 Monday-start weeks, oldest first. */
+  /** Weekly actual and planned TSS for the last 12 Sunday-start weeks, oldest first. */
   const weeks = $derived.by(() => {
     const start = weeksStart();
     const buckets = Array.from({ length: 12 }, (_, i) => ({
