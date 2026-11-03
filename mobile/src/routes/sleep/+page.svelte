@@ -8,8 +8,6 @@
   import Card from "$lib/components/Card.svelte";
   import Tag from "$lib/components/Tag.svelte";
   import EmptyState from "$lib/components/EmptyState.svelte";
-  import Modal from "$lib/components/Modal.svelte";
-  import RadialProgress from "$lib/components/RadialProgress.svelte";
   import {
     boundedScoreCssColor,
     sleepDebtCssColor,
@@ -464,13 +462,8 @@
     await athleteStore.addSleep(payload);
   }
 
-  let selectedPeriod = $state<any>(null);
-  let showPeriodModal = $state(false);
-
-  function openPeriodDetails(period: any) {
-    selectedPeriod = period;
-    showPeriodModal = true;
-  }
+  // Naps for the selected night (the main sleep is already the page's subject).
+  const naps = $derived(((nightData?.periods ?? []) as any[]).filter((p) => p?.is_nap));
 
   let analysisText = $state<string | null>(null);
   let analysisLoading = $state(false);
@@ -592,14 +585,14 @@
       {/if}
     </section>
 
-    {#if nightData.periods && nightData.periods.length > 1}
-      <section aria-label="Sleep sessions" class="flex flex-col gap-2">
-        <span class="font-mono text-[11px] tracking-[0.14em] text-text2">SESSIONS</span>
-        {#each nightData.periods as period (period?.id ?? period?.started_at ?? period?.ended_at ?? period?.label)}
-          <button type="button" class="flex items-center justify-between px-4 py-3 rounded-[18px] bg-bg1 border border-border text-left w-full cursor-pointer" onclick={() => openPeriodDetails(period)}>
-            <span class="flex flex-col gap-0.5"><span class="text-[14px] font-medium">{period.label}</span><span class="font-mono text-[11px] text-text2">{period.timeRange}</span></span>
-            <span class="font-mono text-[12px] text-text1">{period.duration}</span>
-          </button>
+    {#if naps.length}
+      <section aria-label="Naps" class="flex flex-col gap-2">
+        <span class="font-mono text-[11px] tracking-[0.14em] text-text2">{naps.length > 1 ? 'NAPS' : 'NAP'}</span>
+        {#each naps as nap (nap?.id ?? nap?.started_at)}
+          <div class="flex items-center justify-between px-4 py-3 rounded-[18px] bg-bg1 border border-border">
+            <span class="font-mono text-[12px] text-text2">{nap.timeRange}</span>
+            <span class="font-mono text-[13px] text-text0">{nap.duration}</span>
+          </div>
         {/each}
       </section>
     {/if}
@@ -621,72 +614,3 @@
     </div>
   {/if}
 </div>
-
-<Modal
-  show={showPeriodModal}
-  title={selectedPeriod?.label || "Sleep Details"}
-  onClose={() => (showPeriodModal = false)}
->
-  {#if selectedPeriod}
-    <div class="flex flex-col gap-6">
-      <div class="flex items-center justify-between">
-        <div>
-          <p class="text-[22px] font-bold">{selectedPeriod.duration}</p>
-          <p class="text-[10px] text-text2 font-mono uppercase tracking-widest">Time Asleep</p>
-          
-          <div class="mt-2">
-            <p class="text-[16px] font-semibold text-text1">{selectedPeriod.inBed}</p>
-            <p class="text-[9px] text-text2 font-mono uppercase tracking-widest">Time in Bed</p>
-          </div>
-          
-          <p class="text-[10px] text-text2 font-mono uppercase mt-3">{selectedPeriod.timeRange}</p>
-        </div>
-        {#if selectedPeriod.score}
-          <RadialProgress
-            value={selectedPeriod.score}
-            max={100}
-            size={64}
-            color={getSleepColor(selectedPeriod.score)}
-            label={selectedPeriod.score.toString()}
-            sub="SCORE"
-          />
-        {/if}
-      </div>
-
-      <div class="flex flex-col gap-4">
-        <p class="text-[13px] font-semibold">Stage Breakdown</p>
-        <div class="flex h-6 rounded-lg overflow-hidden gap-0.5">
-          {#each [["deep", selectedPeriod.deep], ["rem", selectedPeriod.rem], ["light", selectedPeriod.light], ["awake", selectedPeriod.awake]] as [k, v] (k)}
-            <div
-              style="flex: {v || 1}; background: {stageColors[k as string]}"
-            ></div>
-          {/each}
-        </div>
-
-        <div class="grid grid-cols-2 gap-3">
-          {#each [{ key: "deep", label: "Deep", pct: selectedPeriod.deep, mins: Math.round((selectedPeriod.inBedRaw * selectedPeriod.deep) / 100) }, { key: "rem", label: "REM", pct: selectedPeriod.rem, mins: Math.round((selectedPeriod.inBedRaw * selectedPeriod.rem) / 100) }, { key: "light", label: "Light", pct: selectedPeriod.light, mins: Math.round((selectedPeriod.inBedRaw * selectedPeriod.light) / 100) }, { key: "awake", label: "Awake", pct: selectedPeriod.awake, mins: selectedPeriod.awakeMins }] as s (s.key)}
-            <div class="p-3 rounded-xl bg-glass border border-border/50">
-              <div class="flex items-center gap-2 mb-1">
-                <div class="w-2 h-2 rounded-full" style="background: {stageColors[s.key]}"></div>
-                <span class="text-xs font-medium text-text1">{s.label}</span>
-              </div>
-              <div class="flex items-baseline gap-1.5">
-                <span class="text-lg font-bold" style="color: {stageColors[s.key]}">{s.pct}%</span>
-                <span class="text-[10px] text-text2 font-mono">{formatHoursMinutesFromMinutes(s.mins)}</span>
-              </div>
-            </div>
-          {/each}
-        </div>
-      </div>
-
-      {#if selectedPeriod.is_nap}
-        <div class="p-4 rounded-xl bg-blue/5 border border-blue/20">
-          <p class="text-[12px] text-blue font-semibold mb-1">💡 Coaching Tip</p>
-          <p class="text-[11px] text-text1 leading-relaxed">
-            Naps contribute to your total recovery but can interfere with nighttime sleep if taken too late in the day.
-          </p>
-        </div>
-      {/if}
-    </div>
-  {/if}
-</Modal>
