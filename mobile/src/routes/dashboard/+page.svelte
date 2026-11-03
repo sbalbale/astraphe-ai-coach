@@ -65,7 +65,7 @@
   import { api } from '$lib/api';
   import { goto } from '$app/navigation';
   import { resolve } from '$app/paths';
-  import { addDays, format } from 'date-fns';
+  import { format } from 'date-fns';
   import type { Workout } from '$lib/types/training';
   import { boundedScoreCssColor } from '$lib/colorSystem';
   import { CHART_ATL_STROKE, CHART_CTL_STROKE, formCssColor } from '$lib/scoreColors';
@@ -97,12 +97,7 @@
     athleteStore.days_on_platform > 0 &&
     athleteStore.days_on_platform < 42
   );
-  // --- Key session (planned workout for yesterday / today / tomorrow) ---
-  const DAY_TABS = [
-    { offset: -1, label: 'Yesterday' },
-    { offset: 0, label: 'Today' },
-    { offset: 1, label: 'Tomorrow' }
-  ];
+  // --- Key session (today's planned workout) ---
   const ZONE_LABEL: Record<string, string> = {
     Recovery: 'Z1',
     Endurance: 'Z2',
@@ -111,15 +106,15 @@
     VO2Max: 'Z5',
     Anaerobic: 'Z6'
   };
-  let dayOffset = $state(0);
   let plannedWorkouts = $state<Workout[]>([]);
-  const isoDay = (offset: number) => format(addDays(greetingNow, offset), 'yyyy-MM-dd');
+  const todayIso = $derived(format(greetingNow, 'yyyy-MM-dd'));
 
   onMount(async () => {
-    plannedWorkouts = await api.getWorkouts(isoDay(-1), isoDay(1));
+    const iso = format(new Date(), 'yyyy-MM-dd');
+    plannedWorkouts = await api.getWorkouts(iso, iso);
   });
 
-  const keySession = $derived(plannedWorkouts.find((w) => w.date === isoDay(dayOffset)) ?? null);
+  const keySession = $derived(plannedWorkouts.find((w) => w.date === todayIso) ?? null);
   const ftp = $derived(Number(athleteStore.profile?.ftp_watts) || 0);
   const sessionRange = $derived.by(() => {
     const w = keySession;
@@ -407,18 +402,6 @@
       icon="⏳"
     />
   {:else}
-    <!-- Day switcher -->
-    <div role="tablist" aria-label="Day" class="grid grid-cols-3 gap-1 p-1 bg-bg2 border border-border rounded-[14px]">
-      {#each DAY_TABS as t (t.offset)}
-        <button
-          type="button"
-          role="tab"
-          aria-selected={dayOffset === t.offset}
-          class="h-9 rounded-[10px] border-0 text-[13px] font-medium cursor-pointer {dayOffset === t.offset ? 'bg-border text-text0' : 'bg-transparent text-text2'}"
-          onclick={() => (dayOffset = t.offset)}
-        >{t.label}</button>
-      {/each}
-    </div>
 
     <!-- Key session -->
     <section aria-label="Key session" class="bg-bg2 border border-border rounded-[24px] p-5 flex flex-col gap-3.5">
