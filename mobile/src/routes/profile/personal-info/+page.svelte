@@ -1,11 +1,10 @@
 <script lang="ts">
-  import Card from '$lib/components/Card.svelte';
+  import SubpageHeader from '$lib/components/SubpageHeader.svelte';
   import DatePicker from '$lib/components/DatePicker.svelte';
   import SelectMenu from '$lib/components/SelectMenu.svelte';
   import { authStore } from '$lib/stores/authStore.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { normalizeUnits, kgToLbRoundedHalf, lbToKg, cmToFtIn, ftInToCm, type Units } from '$lib/utils/units';
-  import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
 
   let units = $derived<Units>(normalizeUnits((athleteStore.profile as any)?.measurement_units));
@@ -80,9 +79,6 @@
     lastSyncedSig = sig;
   });
 
-  function goBack() {
-    goto('/profile');
-  }
 
   async function handleSave(e: Event) {
     e.preventDefault();
@@ -111,136 +107,79 @@
       saveError = athleteStore.lastProfileSaveError ?? 'Failed to save changes. Please try again.';
     }
   }
+
+  const field =
+    'w-full h-14 px-4 bg-bg2 border border-border rounded-[14px] text-base text-text0 outline-none focus:border-blue disabled:opacity-100';
 </script>
 
-<div class="flex flex-col gap-3">
-  <div class="flex items-center gap-3">
-    <button onclick={goBack} class="w-8 h-8 flex items-center justify-center bg-glass border border-border rounded-lg text-text2 hover:text-text0 transition-colors cursor-pointer">
-      ←
-    </button>
-    <div>
-      <p class="text-xs text-text2 font-mono uppercase tracking-[0.1em]">Account</p>
-      <h1 class="text-[22px] font-bold tracking-[-0.02em]">Personal Info</h1>
+<form onsubmit={handleSave} class="flex flex-col gap-4 pb-6">
+  <SubpageHeader title="Personal info" />
+
+  <div class="flex flex-col gap-1.5">
+    <label for="name" class="text-[13px] text-text2">Full name</label>
+    <input id="name" type="text" autocomplete="name" bind:value={name} class={field} />
+  </div>
+  <div class="flex flex-col gap-1.5">
+    <label for="email" class="text-[13px] text-text2">Email</label>
+    <input id="email" type="email" bind:value={email} class="{field} text-text2" disabled />
+  </div>
+  <div class="grid grid-cols-2 gap-3">
+    <div class="flex flex-col gap-1.5">
+      <label for="dob" class="text-[13px] text-text2">Date of birth</label>
+      <DatePicker
+        id="dob"
+        bind:value={dob}
+        ariaLabel="Date of birth"
+        placeholder="YYYY-MM-DD"
+        buttonClass="w-full h-14 px-4 pr-3 bg-bg2 border border-border rounded-[14px] text-base text-text0 outline-none focus:border-blue"
+      />
+    </div>
+    <div class="flex flex-col gap-1.5">
+      <label for="gender" class="text-[13px] text-text2">Gender</label>
+      <SelectMenu
+        id="gender"
+        bind:value={gender}
+        options={genderOptions}
+        ariaLabel="Gender"
+        buttonClass="w-full h-14 px-4 pr-3 bg-bg2 border border-border rounded-[14px] text-base text-text0 outline-none focus:border-blue"
+      />
     </div>
   </div>
 
-  <form onsubmit={handleSave} class="flex flex-col gap-3 mt-2">
-    {#if saved}
-      <div class="px-3 py-2 rounded-xl border text-[12px] bg-teal-dim border-teal/30 text-teal">
-        Saved successfully.
-      </div>
-    {/if}
-    {#if saveError}
-      <div class="px-3 py-2 rounded-xl border text-[12px] bg-red-dim border-red/30 text-red">
-        {saveError}
-      </div>
-    {/if}
-    <Card>
-      <div class="flex flex-col gap-4">
-        <div>
-          <label for="name" class="block text-[11px] text-text2 mb-1">Full Name</label>
-          <input id="name" type="text" bind:value={name} class="w-full p-2.5 bg-glass2 border border-border rounded-lg text-sm text-text0 outline-none focus:border-blue" />
+  <span class="mt-1 font-mono text-[11px] tracking-[0.14em] text-text2">BIOMETRICS</span>
+  <div class="grid grid-cols-2 gap-3">
+    <div class="flex flex-col gap-1.5">
+      {#if units === 'imperial'}
+        <label for="height-ft" class="text-[13px] text-text2">Height (ft / in)</label>
+        <div class="grid grid-cols-2 gap-2">
+          <input id="height-ft" type="number" step="1" min="0" placeholder="ft" bind:value={heightFt} oninput={() => (dirty = true)} class="{field} font-mono" />
+          <input id="height-in" type="number" step="1" min="0" max="11" placeholder="in" aria-label="Height inches" bind:value={heightIn} oninput={() => (dirty = true)} class="{field} font-mono" />
         </div>
-        <div>
-          <label for="email" class="block text-[11px] text-text2 mb-1">Email</label>
-          <input id="email" type="email" bind:value={email} class="w-full p-2.5 bg-glass2 border border-border rounded-lg text-sm text-text0 outline-none focus:border-blue opacity-50" disabled />
-        </div>
-        <div>
-          <label for="dob" class="block text-[11px] text-text2 mb-1">Date of Birth</label>
-          <DatePicker
-            id="dob"
-            bind:value={dob}
-            ariaLabel="Date of Birth"
-            buttonClass="w-full p-2.5 pr-2 bg-glass2 border border-border rounded-lg text-sm text-text0 outline-none focus:border-blue"
-            placeholder="YYYY-MM-DD"
-          />
-        </div>
-        <div>
-          <label for="gender" class="block text-[11px] text-text2 mb-1">Gender</label>
-          <SelectMenu
-            id="gender"
-            bind:value={gender}
-            options={genderOptions}
-            ariaLabel="Gender"
-            buttonClass="w-full p-2.5 pr-2 bg-glass2 border border-border rounded-lg text-sm text-text0 outline-none focus:border-blue"
-          />
-        </div>
-      </div>
-    </Card>
+      {:else}
+        <label for="height-cm" class="text-[13px] text-text2">Height (cm)</label>
+        <input id="height-cm" type="number" step="0.1" bind:value={heightCm} oninput={() => (dirty = true)} class="{field} font-mono" />
+      {/if}
+    </div>
+    <div class="flex flex-col gap-1.5">
+      {#if units === 'imperial'}
+        <label for="weight-lb" class="text-[13px] text-text2">Weight (lb)</label>
+        <input id="weight-lb" type="number" step="0.1" bind:value={weightLb} oninput={() => (dirty = true)} class="{field} font-mono" />
+      {:else}
+        <label for="weight-kg" class="text-[13px] text-text2">Weight (kg)</label>
+        <input id="weight-kg" type="number" step="0.1" bind:value={weightKg} oninput={() => (dirty = true)} class="{field} font-mono" />
+      {/if}
+    </div>
+  </div>
+  <p class="m-0 text-xs leading-[1.45] text-text2">Weight updates automatically when a connected scale syncs.</p>
 
-    <Card>
-      <p class="text-[13px] font-semibold mb-3">Biometrics</p>
-      <div class="flex gap-3">
-        <div class="flex-1">
-          {#if units === 'imperial'}
-            <label for="weight-lb" class="block text-[11px] text-text2 mb-1">Weight (lb)</label>
-            <input
-              id="weight-lb"
-              type="number"
-              step="0.1"
-              bind:value={weightLb}
-              oninput={() => (dirty = true)}
-              class="w-full p-2.5 bg-glass2 border border-border rounded-lg text-sm text-text0 font-mono outline-none focus:border-blue"
-            />
-          {:else}
-            <label for="weight-kg" class="block text-[11px] text-text2 mb-1">Weight (kg)</label>
-            <input
-              id="weight-kg"
-              type="number"
-              step="0.1"
-              bind:value={weightKg}
-              oninput={() => (dirty = true)}
-              class="w-full p-2.5 bg-glass2 border border-border rounded-lg text-sm text-text0 font-mono outline-none focus:border-blue"
-            />
-          {/if}
-        </div>
-        <div class="flex-1">
-          {#if units === 'imperial'}
-            <label for="height-ft" class="block text-[11px] text-text2 mb-1">Height</label>
-            <div class="flex gap-2">
-              <div class="flex-1">
-                <input
-                  id="height-ft"
-                  type="number"
-                  step="1"
-                  min="0"
-                  bind:value={heightFt}
-                  oninput={() => (dirty = true)}
-                  placeholder="ft"
-                  class="w-full p-2.5 bg-glass2 border border-border rounded-lg text-sm text-text0 font-mono outline-none focus:border-blue"
-                />
-              </div>
-              <div class="flex-1">
-                <input
-                  id="height-in"
-                  type="number"
-                  step="1"
-                  min="0"
-                  max="11"
-                  bind:value={heightIn}
-                  oninput={() => (dirty = true)}
-                  placeholder="in"
-                  class="w-full p-2.5 bg-glass2 border border-border rounded-lg text-sm text-text0 font-mono outline-none focus:border-blue"
-                />
-              </div>
-            </div>
-          {:else}
-            <label for="height-cm" class="block text-[11px] text-text2 mb-1">Height (cm)</label>
-            <input
-              id="height-cm"
-              type="number"
-              step="0.1"
-              bind:value={heightCm}
-              oninput={() => (dirty = true)}
-              class="w-full p-2.5 bg-glass2 border border-border rounded-lg text-sm text-text0 font-mono outline-none focus:border-blue"
-            />
-          {/if}
-        </div>
-      </div>
-    </Card>
+  {#if saved}
+    <p class="m-0 px-4 py-3 rounded-[14px] bg-teal-dim border border-teal/30 text-[13px] text-teal">Saved.</p>
+  {/if}
+  {#if saveError}
+    <p class="m-0 px-4 py-3 rounded-[14px] bg-red-dim border border-red/30 text-[13px] text-red">{saveError}</p>
+  {/if}
 
-    <button type="submit" disabled={saving} class="w-full py-3.5 bg-blue text-text0 font-semibold rounded-xl hover:bg-blue/90 transition-colors mt-2 disabled:opacity-50">
-      {saving ? 'Saving...' : 'Save Changes'}
-    </button>
-  </form>
-</div>
+  <button type="submit" disabled={saving} class="mt-4 h-14 rounded-[16px] border-0 bg-blue text-[#0B1420] text-base font-semibold cursor-pointer disabled:opacity-50">
+    {saving ? 'Saving…' : 'Save'}
+  </button>
+</form>
