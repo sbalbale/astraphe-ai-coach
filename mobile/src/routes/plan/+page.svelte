@@ -6,6 +6,8 @@
   import { trainingStore } from '$lib/stores/trainingStore.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import DatePicker from '$lib/components/DatePicker.svelte';
+  import { page } from '$app/stores';
+  import { goto } from '$app/navigation';
   import { pageHeader, resetPageHeader } from '$lib/stores/pageHeader.svelte';
   import MonthNavigator from '$lib/components/MonthNavigator.svelte';
   import {
@@ -460,6 +462,19 @@
     sheetExpanded = false;
     sheetMode = 'none';
     planActionError = null;
+  });
+
+  // Deep link from Today: /plan?session=<id> selects that day and opens the session.
+  let openedFromLink: string | null = null;
+  $effect(() => {
+    const wanted = $page.url.searchParams.get('session');
+    if (!wanted || wanted === openedFromLink) return;
+    const match = plannedWorkouts.find((w) => backendTrainingPlanId(w) === wanted);
+    if (!match) return;
+    openedFromLink = wanted;
+    selectDate(match.date);
+    openWorkout(match);
+    goto('/plan', { replaceState: true, keepFocus: true, noScroll: true });
   });
 
   /** Other sessions in the same Monday–Sunday week, for Swap. */

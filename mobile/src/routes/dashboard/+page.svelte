@@ -57,7 +57,6 @@
   import TrendBars from '$lib/components/charts/TrendBars.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import CalibrationBadge from '$lib/components/CalibrationBadge.svelte';
-  import Modal from '$lib/components/Modal.svelte';
   import { onMount } from 'svelte';
   import { analysisNavEpoch } from '$lib/analysisNavEpoch.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
@@ -77,7 +76,6 @@
 
   const props = $props();
 
-  let showReadinessModal = $state(false);
   let greetingNow = $state(new Date());
   const currentDateLabel = $derived(format(greetingNow, 'EEEE, MMM d'));
   const currentGreeting = $derived(getTimeOfDayGreeting(greetingNow));
@@ -404,11 +402,18 @@
   {:else}
 
     <!-- Key session -->
-    <section aria-label="Key session" class="bg-bg2 border border-border rounded-[24px] p-5 flex flex-col gap-3.5">
-      {#if keySession && sessionRange}
+    {#if keySession && sessionRange}
+      <a
+        href={resolve(`/plan?session=${encodeURIComponent(keySession.id)}`)}
+        aria-label="Open {keySession.title} in your plan"
+        class="bg-bg2 border border-border rounded-[24px] p-5 flex flex-col gap-3.5 text-text0"
+      >
         <div class="flex justify-between items-center">
           <span class="font-mono text-[11px] tracking-[0.14em] text-blue uppercase">Key session · {keySession.sport}</span>
-          <span class="font-mono text-[11px] text-text2">{ZONE_LABEL[keySession.primary_zone] ?? ''}</span>
+          <span class="flex items-center gap-1 font-mono text-[11px] text-text2">
+            {ZONE_LABEL[keySession.primary_zone] ?? ''}
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m9 6 6 6-6 6"></path></svg>
+          </span>
         </div>
         <div class="flex flex-col gap-1">
           <h2 class="m-0 font-display font-normal text-[34px] leading-[1.05]">{keySession.title}</h2>
@@ -436,26 +441,21 @@
             {/each}
           </div>
         {/if}
-        <div class="flex gap-2">
-          <button type="button" class="flex-1 h-[46px] border-0 rounded-[14px] bg-blue text-[#0B1420] font-semibold text-sm cursor-pointer">Send to Garmin</button>
-          <a href={resolve('/plan')} aria-label="Swap session" class="w-[46px] h-[46px] border border-border rounded-[14px] text-text0 flex items-center justify-center">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4 3 8l4 4"></path><path d="M3 8h14"></path><path d="m17 20 4-4-4-4"></path><path d="M21 16H7"></path></svg>
-          </a>
-        </div>
-      {:else}
+      </a>
+    {:else}
+      <section aria-label="Key session" class="bg-bg2 border border-border rounded-[24px] p-5 flex flex-col gap-3.5">
         <span class="font-mono text-[11px] tracking-[0.14em] text-text2">NO SESSION PLANNED</span>
         <h2 class="m-0 font-display font-normal text-[34px] leading-[1.05]">Rest day</h2>
         <p class="m-0 text-sm leading-[1.45] text-text1">Nothing on the plan. Ask your coach if you want to add something.</p>
-      {/if}
-    </section>
+      </section>
+    {/if}
 
     <!-- Readiness Card -->
     <Card class="!bg-bg2 !p-0">
-      <button
-        type="button"
-        class="w-full text-left px-5 py-[18px] cursor-pointer focus:outline-none"
-        onclick={() => showReadinessModal = true}
-        aria-label="Explain readiness score"
+      <a
+        href={resolve('/readiness')}
+        class="block w-full text-left px-5 py-[18px] text-text0"
+        aria-label="Readiness details"
       >
         <div class="flex items-center gap-[18px]">
           <div class="flex flex-col gap-0.5 min-w-[92px]">
@@ -492,6 +492,7 @@
               <dd class="m-0 text-[15px] font-medium">{todayTsb === null ? '--' : (todayTsb > 0 ? `+${todayTsb.toFixed(1)}` : todayTsb.toFixed(1))}</dd>
             </div>
           </dl>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true" class="shrink-0 text-text2"><path d="m9 6 6 6-6 6"></path></svg>
         </div>
         {#if isCalibrating || carryOverLabel || current.isStale}
           <div class="flex flex-wrap items-center gap-2 mt-3 text-[10px] text-text2 font-mono">
@@ -502,7 +503,7 @@
             {/if}
           </div>
         {/if}
-      </button>
+      </a>
     </Card>
 
     <!-- AI Summary -->
@@ -515,34 +516,4 @@
   {/if}
 </div>
 
-<Modal 
-  show={showReadinessModal} 
-  title="Readiness vs. Recovery" 
-  onClose={() => showReadinessModal = false}
->
-  <div class="space-y-4">
-    <p class="text-[14px] leading-relaxed text-text1">
-      While often used interchangeably, <span class="font-bold text-text0">Readiness</span> and <span class="font-bold text-text0">Recovery</span> measure two different aspects of your training capacity in Astraphe.
-    </p>
 
-    <div class="space-y-3">
-      <div class="p-4 rounded-2xl bg-glass border border-border">
-        <h3 class="text-[13px] font-bold text-text0 mb-1">Recovery (Physiological)</h3>
-        <p class="text-[12px] text-text1 leading-relaxed">
-          Driven by your Autonomic Nervous System. We combine your <strong>Heart Rate Variability (HRV)</strong>, <strong>Resting Heart Rate</strong>, and <strong>Sleep Quality</strong> against your 30-day baselines to determine how your body bounced back from yesterday's strain.
-        </p>
-      </div>
-
-      <div class="p-4 rounded-2xl bg-glass border border-border">
-        <h3 class="text-[13px] font-bold text-text0 mb-1">Readiness (Training Load)</h3>
-        <p class="text-[12px] text-text1 leading-relaxed">
-          Also known as "Form," this is driven by your Training Stress Balance (TSB). It compares your long-term <strong>Fitness</strong> against your short-term <strong>Fatigue</strong>. You can be fully <em>recovered</em> (slept well) but have low <em>readiness</em> if you are deep in a heavy training block.
-        </p>
-      </div>
-    </div>
-
-    <p class="text-[12px] text-text2 italic border-t border-border pt-4">
-      Your dashboard highlights whichever score provides the clearest signal for your daily training capacity. Scores above 67 indicate an optimal state for hard training, while scores below 34 suggest focusing on active recovery.
-    </p>
-  </div>
-</Modal>

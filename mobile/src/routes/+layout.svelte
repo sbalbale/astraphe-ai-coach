@@ -52,7 +52,7 @@
   let isNoShellRoute = $derived(isAuthRoute || isOnboardingRoute || isOAuthRoute);
   /** Workout detail (map hero) and Me pages draw their own header, so the page header steps aside. */
   let hidePageHeader = $derived(
-    ($page.url.pathname === '/training' && $page.url.searchParams.has('workout_id')) || $page.url.pathname.startsWith('/profile')
+    ($page.url.pathname === '/training' && $page.url.searchParams.has('workout_id')) || $page.url.pathname.startsWith('/profile') || $page.url.pathname === '/readiness'
   );
   let mobileSubtabs = $derived(subtabsFor($page.url.pathname));
   let headerTitle = $derived(titleFor($page.url.pathname));

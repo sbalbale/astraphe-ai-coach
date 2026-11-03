@@ -8,7 +8,7 @@
 export type NavTab = { id: string; label: string; title: string; routes: string[] };
 
 export const NAV_TABS: NavTab[] = [
-  { id: '/dashboard', label: 'Today', title: 'Today', routes: ['/', '/dashboard'] },
+  { id: '/dashboard', label: 'Today', title: 'Today', routes: ['/', '/dashboard', '/readiness'] },
   { id: '/training', label: 'Training', title: 'Training', routes: ['/training', '/trends', '/zones'] },
   { id: '/recovery', label: 'Body', title: 'Body', routes: ['/recovery', '/sleep', '/strain'] },
   { id: '/plan', label: 'Plan', title: 'Plan', routes: ['/plan'] },
