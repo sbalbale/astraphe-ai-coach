@@ -389,3 +389,22 @@ describe('unlinkIntegration', () => {
     expect(result).toBe(false);
   });
 });
+
+
+describe('refreshProfile', () => {
+  it('replaces the cached profile with the API copy', async () => {
+    athleteStore.profile = { id: 'ath-1', ftp_watts: 280 } as any;
+    apiMock.getAthleteProfile.mockResolvedValue({ id: 'ath-1', ftp_watts: 295 });
+    await expect(athleteStore.refreshProfile()).resolves.toBe(true);
+    expect((athleteStore.profile as any).ftp_watts).toBe(295);
+  });
+
+  it('keeps the current profile when the API returns nothing or throws', async () => {
+    athleteStore.profile = { id: 'ath-1', ftp_watts: 280 } as any;
+    apiMock.getAthleteProfile.mockResolvedValue(null);
+    await expect(athleteStore.refreshProfile()).resolves.toBe(false);
+    apiMock.getAthleteProfile.mockRejectedValue(new Error('down'));
+    await expect(athleteStore.refreshProfile()).resolves.toBe(false);
+    expect((athleteStore.profile as any).ftp_watts).toBe(280);
+  });
+});

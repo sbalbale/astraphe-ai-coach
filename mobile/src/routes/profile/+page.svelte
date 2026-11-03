@@ -5,6 +5,13 @@
   import { navTo } from '$lib/nav';
   import { latestWeightKg } from '$lib/utils/biometrics';
   import { normalizeUnits, kgToLbRoundedHalf, type Units } from '$lib/utils/units';
+  import { onMount } from 'svelte';
+
+  // Always show what's in the database, not a cached profile from an earlier session.
+  onMount(() => {
+    void athleteStore.refreshProfile();
+    void athleteStore.fetchAll();
+  });
 
   const units = $derived<Units>(normalizeUnits((athleteStore.profile as any)?.measurement_units));
   const thresholdPaceUnit = $derived(units === 'imperial' ? '/mi' : '/km');

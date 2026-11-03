@@ -53,6 +53,8 @@
   onMount(async () => {
     try {
       await athleteStore.fetchAll();
+      // The form starts from the database values, not a cached profile.
+      await athleteStore.refreshProfile();
     } catch {
       // ignore
     }
