@@ -967,8 +967,9 @@ async def ingest_strava_activity(
         laps = await get_activity_laps(activity_id, access_token, delay=delay)
 
     hr_stream = (streams.get("heartrate") or {}).get("data", [])
+    time_stream = (streams.get("time") or {}).get("data")
     zones = get_athlete_zones(athlete)
-    zone_dist = compute_zone_distribution(hr_stream, zones) if hr_stream else {}
+    zone_dist = compute_zone_distribution(hr_stream, zones, time_stream) if hr_stream else {}
 
     embedded_list = activity.get("laps") if isinstance(activity.get("laps"), list) else []
     if is_rowing:
@@ -1359,7 +1360,11 @@ def reprocess_rowing_intervals_from_stored_data(db: Any, workout_id: str) -> tup
 
         hr_stream = (streams.get("heartrate") or {}).get("data", [])
         zones = get_athlete_zones(athlete)
-        zone_dist = compute_zone_distribution(hr_stream, zones) if hr_stream else {}
+        zone_dist = (
+            compute_zone_distribution(hr_stream, zones, (streams.get("time") or {}).get("data"))
+            if hr_stream
+            else {}
+        )
 
         update: dict[str, Any] = {
             "intervals": intervals,
@@ -1524,7 +1529,7 @@ async def hydrate_workout_streams(
         )
         athlete = _supabase_single_row(ares) or {}
         zones = get_athlete_zones(athlete)
-        zone_dist = compute_zone_distribution(hr_stream, zones)
+        zone_dist = compute_zone_distribution(hr_stream, zones, (streams.get("time") or {}).get("data"))
         zone_cols = _hr_stream_zone_dist_to_workout_columns(zone_dist)
         if zone_cols:
             db.table("workouts").update(zone_cols).eq("id", workout_id).execute()

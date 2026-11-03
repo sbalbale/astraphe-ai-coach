@@ -157,7 +157,9 @@ def compute_hrss_from_zones(
                 int(threshold_hr * 1.08) if threshold_hr > resting_hr else resting_hr
             )
         else:
-            zone_midpoint_hr[z.zone] = (z.min_bpm + z.max_bpm) // 2
+            # Zone 1 starts at 0 bpm in some methods; never put its midpoint below resting HR.
+            lo = max(z.min_bpm, resting_hr)
+            zone_midpoint_hr[z.zone] = (lo + max(z.max_bpm, lo)) // 2
 
     hrr_denom = float(max_hr - resting_hr)
     if hrr_denom <= 0:

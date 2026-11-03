@@ -64,6 +64,13 @@ async def _get_zones_version(athlete_id: str) -> str:
         return "0"
 
 
+def _time_from_time_series(time_series: dict | None) -> list | None:
+    if not isinstance(time_series, dict):
+        return None
+    t = time_series.get("time")
+    return t if isinstance(t, list) else None
+
+
 def _hr_from_time_series(time_series: dict | None) -> list:
     if not isinstance(time_series, dict):
         return []
@@ -144,6 +151,7 @@ async def _build_zones_result(
     athlete_id: str,
     *,
     hr_stream: list | None = None,
+    time_stream: list | None = None,
     athlete: dict | None = None,
     zones: list | None = None,
 ) -> dict:
@@ -152,7 +160,7 @@ async def _build_zones_result(
 
     hr_stream = hr_stream if hr_stream is not None else []
     source = "stream"
-    distribution = compute_zone_distribution(hr_stream, zones)
+    distribution = compute_zone_distribution(hr_stream, zones, time_stream)
     data_points = len(hr_stream)
 
     if not hr_stream:
@@ -227,15 +235,17 @@ async def get_activity_detail(
 
         streams_payload = stream_row
         hr_stream: list = []
+        time_stream: list | None = None
         if stream_row:
             hr_stream = _hr_from_time_series(stream_row.get("time_series"))
+            time_stream = _time_from_time_series(stream_row.get("time_series"))
 
         zones_cached = await _cache_get(zones_cache_key)
         if zones_cached:
             zones_payload = zones_cached
         else:
             zones_payload = await _build_zones_result(
-                db, workout_id, athlete_id, hr_stream=hr_stream
+                db, workout_id, athlete_id, hr_stream=hr_stream, time_stream=time_stream
             )
             await _cache_set(zones_cache_key, zones_payload, _ZONES_CACHE_TTL)
 
@@ -355,7 +365,9 @@ async def get_workout_zones(
         return cached
 
     stream_row = await _fetch_stream_row(db, workout_id, athlete_id)
-    hr_stream = _hr_from_time_series(stream_row.get("time_series") if stream_row else None)
-    result = await _build_zones_result(db, workout_id, athlete_id, hr_stream=hr_stream)
+    ts = stream_row.get("time_series") if stream_row else None
+    result = await _build_zones_result(
+        db, workout_id, athlete_id, hr_stream=_hr_from_time_series(ts), time_stream=_time_from_time_series(ts)
+    )
     await _cache_set(cache_key, result, _ZONES_CACHE_TTL)
     return result
