@@ -235,7 +235,8 @@ async def update_workout(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to update workout: {str(e)}")
+        print(f"[workouts] Failed to update workout: {e!r}")
+        raise HTTPException(status_code=500, detail="Failed to update workout")
 
 @router.delete("/{workout_id}")
 async def delete_workout(
@@ -264,7 +265,8 @@ async def delete_workout(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to delete workout: {str(e)}")
+        print(f"[workouts] Failed to delete workout: {e!r}")
+        raise HTTPException(status_code=500, detail="Failed to delete workout")
 
 @router.post("/calculate-tss")
 async def process_workout(

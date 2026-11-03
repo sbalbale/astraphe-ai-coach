@@ -710,7 +710,7 @@ async def chat_with_coach(
         print("--- AI COACH CRASH LOG ---")
         traceback.print_exc()
         print("--------------------------")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="The coach couldn't reply. Please try again.") from e
 
 
 _SSE_HEADERS = {
@@ -881,7 +881,8 @@ async def stream_chat_with_coach(
                 mem_task.add_done_callback(_stream_bg_tasks.discard)
                 title_task.add_done_callback(_stream_bg_tasks.discard)
         except Exception as e:
-            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            print(f"[coach.stream] failed: {e!r}")
+            yield f"data: {json.dumps({'error': 'The coach could not reply. Please try again.'})}\n\n"
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(

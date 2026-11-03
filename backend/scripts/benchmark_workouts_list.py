@@ -8,6 +8,7 @@ Uses local Supabase by default (settings from .env). Does not print secrets.
 
 from __future__ import annotations
 
+import os
 import statistics
 import subprocess
 import sys
@@ -29,7 +30,10 @@ USER_ID = "61cd603a-819e-459f-9524-50579eb53873"
 LIMIT = 20
 ROUNDS = 10
 DOCKER_DB = "supabase_db_astraphe-ai-coach"
-JWT_SECRET = "super-secret-jwt-token-with-at-least-32-characters-long"
+# Local Supabase CLI stack only (its well-known default secret). Read from the
+# environment so a real secret is never written here, and the default isn't
+# mistaken for something that should exist in any deployed environment.
+JWT_SECRET = os.environ.get("LOCAL_SUPABASE_JWT_SECRET", "super-secret-jwt-token-with-at-least-32-characters-long")
 
 RLS_FIXED = (
     "athlete_id IN (SELECT id FROM public.athletes "

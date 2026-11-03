@@ -209,7 +209,7 @@ class _AthleteDb:
         return self.queries[name]
 
 
-def test_onboard_athlete_seeds_biometrics_and_plan():
+def test_onboard_athlete_writes_no_sample_data():
     db = _AthleteDb()
     _override(db)
     with patch.object(athlete_router, "get_redis", return_value=None):
@@ -221,6 +221,7 @@ def test_onboard_athlete_seeds_biometrics_and_plan():
 
     assert res.status_code == 200
     assert res.json()["status"] == "success"
+    assert "biometrics" not in db.queries and "training_plans" not in db.queries
 
 
 # ---------------------------------------------------------------------------

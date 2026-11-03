@@ -134,7 +134,8 @@ async def list_users(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to list users: {str(e)}")
+        print(f"[admin] Failed to list users: {e!r}")
+        raise HTTPException(status_code=500, detail="Failed to list users")
 
 
 @router.get("/users/{user_id}")
@@ -153,7 +154,8 @@ async def get_user(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get user: {str(e)}")
+        print(f"[admin] Failed to get user: {e!r}")
+        raise HTTPException(status_code=500, detail="Failed to get user")
 
 
 @router.patch("/users/{user_id}")
@@ -199,7 +201,8 @@ async def update_user_config(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to update user: {str(e)}")
+        print(f"[admin] Failed to update user: {e!r}")
+        raise HTTPException(status_code=500, detail="Failed to update user")
 
 
 @router.delete("/users/{user_id}/config/{field}")
@@ -223,7 +226,8 @@ async def clear_user_config_field(
         admin_db.auth.admin.update_user_by_id(user_id, {"app_metadata": {field: None}})
         return {"status": "success", "cleared": field, "user_id": user_id}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to clear field: {str(e)}")
+        print(f"[admin] Failed to clear field: {e!r}")
+        raise HTTPException(status_code=500, detail="Failed to clear field")
 
 
 def _normalize_memory_content_for_dedupe(text: str | None) -> str:
@@ -336,7 +340,8 @@ def merge_coach_memory_duplicates(
                 admin_db.table("coach_memories").delete().in_("id", chunk).execute()
                 deleted += len(chunk)
             except Exception as e:
-                raise HTTPException(status_code=500, detail=f"Delete failed after deleting {deleted}: {str(e)}")
+                print(f"[admin] delete failed after deleting {deleted}: {e!r}")
+                raise HTTPException(status_code=500, detail=f"Delete failed after deleting {deleted}")
 
     return {
         "status": "success",

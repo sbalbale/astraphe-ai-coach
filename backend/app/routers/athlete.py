@@ -49,33 +49,15 @@ def _calc_biometrics_streak_days(bio_rows: list) -> int:
     return streak
 
 @router.post("/onboard")
-async def onboard_athlete(athlete_id: str = Depends(get_current_athlete), db = Depends(get_user_db)):
-    """Seeds initial sample data for a newly registered athlete."""
-    today = date.today()
-    
-    # Seed today's biometrics
-    db.table("biometrics").upsert([{
-        "athlete_id": athlete_id,
-        "date": today.isoformat(),
-        "hrv_rmssd": 78.0,
-        "resting_hr": 52,
-        "sleep_duration_min": 450,
-        "sleep_score": 94,
-        "recovery_score": 78,
-        "spo2_pct": 98.0
-    }]).execute()
-    
-    # Seed upcoming training plan
-    plan_entries = [
-        {"athlete_id": athlete_id, "planned_date": (today + timedelta(days=1)).isoformat(), "sport": "Run", "title": "Easy Recovery Run", "description": "Aerobic base. Keep HR in Z2.", "duration_min": 45, "target_tss": 38, "status": "planned"},
-        {"athlete_id": athlete_id, "planned_date": (today + timedelta(days=2)).isoformat(), "sport": "Bike", "title": "Threshold Intervals", "description": "5x8min @FTP. 3min recovery.", "duration_min": 90, "target_tss": 95, "status": "planned"},
-        {"athlete_id": athlete_id, "planned_date": (today + timedelta(days=3)).isoformat(), "sport": "Run", "title": "Rest Day", "description": "Full recovery. Optional walk.", "duration_min": 0, "target_tss": 0, "status": "planned"},
-        {"athlete_id": athlete_id, "planned_date": (today + timedelta(days=4)).isoformat(), "sport": "Run", "title": "Tempo Run", "description": "20min tempo in Z3-Z4.", "duration_min": 55, "target_tss": 68, "status": "planned"},
-        {"athlete_id": athlete_id, "planned_date": (today + timedelta(days=5)).isoformat(), "sport": "Bike", "title": "Long Endurance Ride", "description": "Z2 only. High cadence focus.", "duration_min": 180, "target_tss": 95, "status": "planned"},
-    ]
-    db.table("training_plans").upsert(plan_entries).execute()
-    
-    return {"status": "success", "message": "Athlete onboarded with sample data"}
+async def onboard_athlete(athlete_id: str = Depends(get_current_athlete)):
+    """
+    Post-signup hook. It used to seed fake HRV, sleep and a week of sample workouts
+    into the new (real) account, which then fed readiness, the coach and the plan as
+    if they were the athlete's own data, and duplicated the plan on every call. Real
+    data now comes only from the athlete and their connected apps; the endpoint stays
+    so existing app versions keep working.
+    """
+    return {"status": "success", "message": "Athlete onboarded"}
 
 
 
@@ -502,7 +484,8 @@ async def update_zones(
         )
     except Exception as e:
         print(f"[athlete.zones.put] update failed: {repr(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to update zones: {str(e)}")
+        print(f"[athlete] Failed to update zones: {e!r}")
+        raise HTTPException(status_code=500, detail="Failed to update zones")
     if getattr(update_res, "data", None) == []:
         raise HTTPException(status_code=403, detail="Zones update was not permitted")
     await _cache_del(f"zones:{athlete_id}")
@@ -591,7 +574,8 @@ async def update_athlete_profile(
         )
     except Exception as e:
         print(f"[athlete.profile.patch] update failed: {repr(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to update athlete profile: {str(e)}")
+        print(f"[athlete] Failed to update athlete profile: {e!r}")
+        raise HTTPException(status_code=500, detail="Failed to update athlete profile")
 
     # If RLS blocks the update, some clients won't raise but data may be empty.
     if getattr(update_res, "data", None) == []:
@@ -603,7 +587,8 @@ async def update_athlete_profile(
         )
     except Exception as e:
         print(f"[athlete.profile.patch] fetch after update failed: {repr(e)}")
-        raise HTTPException(status_code=500, detail=f"Updated profile but failed to re-fetch: {str(e)}")
+        print(f"[athlete] Updated profile but failed to re-fetch: {e!r}")
+        raise HTTPException(status_code=500, detail="Updated profile but failed to re-fetch")
 
     if not getattr(fresh, "data", None):
         raise HTTPException(status_code=500, detail="Updated profile but could not load updated record")
