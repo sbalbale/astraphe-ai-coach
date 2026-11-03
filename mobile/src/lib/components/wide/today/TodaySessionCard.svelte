@@ -7,6 +7,7 @@
   import { resolve } from '$app/paths';
   import { format } from 'date-fns';
   import { navTo } from '$lib/nav';
+  import { sessionNotesSummary } from '$lib/utils/sessionNotes';
   import type { Workout } from '$lib/types/training';
   import {
     ZONE_RANGE_LABEL,
@@ -119,7 +120,7 @@
         {:else if provisional && isToday}
           Your coach will confirm or adjust this once recovery comes in. Training before then? Go by feel and ease off if it feels harder than it should.
         {:else}
-          {workout.description}
+          {sessionNotesSummary(workout.description)}
         {/if}
       </p>
     </div>

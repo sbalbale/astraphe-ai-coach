@@ -76,6 +76,7 @@
   import { boundedScoreCssColor } from '$lib/colorSystem';
   import { CHART_ATL_STROKE, CHART_CTL_STROKE, formCssColor } from '$lib/scoreColors';
   import { getTimeOfDayGreeting } from '$lib/utils/greeting';
+  import { sessionNotesSummary } from '$lib/utils/sessionNotes';
   import { currentRecoveryState, firstPositiveFiniteNumber, readinessScoreFromRow } from '$lib/utils/biometrics';
 
   const CTL_IDENTITY_HEX = CHART_CTL_STROKE;
@@ -606,8 +607,8 @@
             <p class="m-0 text-sm leading-[1.45] text-text1">
               Your coach will confirm or adjust this once recovery comes in. Training before then? Go by feel and ease off if it feels harder than it should.
             </p>
-          {:else if keySession.description}
-            <p class="m-0 text-sm leading-[1.45] text-text1">{keySession.description}</p>
+          {:else if sessionNotesSummary(keySession.description)}
+            <p class="m-0 text-sm leading-[1.45] text-text1">{sessionNotesSummary(keySession.description)}</p>
           {/if}
         </div>
         <div class="grid grid-cols-2 gap-3 border-t border-border">

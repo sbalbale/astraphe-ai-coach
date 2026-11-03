@@ -7,7 +7,13 @@ def normalize_markdown_notes(text: str | None) -> str:
     """Convert literal ``\\n`` sequences to real newlines for GFM pipe tables."""
     if not isinstance(text, str) or not text:
         return ""
-    return text.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\r", "\r").strip()
+    text = text.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\r", "\r").strip()
+    # A table written on one line ("| A | B | | :--- | :--- | | 1 | 2 |"): put each row on its
+    # own line so it renders as a table instead of showing raw pipes.
+    return _ONE_LINE_TABLE.sub(lambda m: re.sub(r"\|\s+\|", "|\n|", m.group(0)), text)
+
+
+_ONE_LINE_TABLE = re.compile(r"\|[^\n]*\|\s*\|\s*:?-{3,}:?\s*\|[^\n]*\|")
 
 _FENCED_CODE = re.compile(r"```[\s\S]*?```", re.MULTILINE)
 _INLINE_CODE = re.compile(r"`([^`]+)`")
