@@ -135,8 +135,8 @@
   <div role="img" aria-label={workout ? `${workout.title} workout profile` : 'No session'} class="flex items-end gap-[3px] h-24">
     {#each bars as b, i (i)}
       <span
-        class="block rounded-[5px] {b.tone === 'hard' ? 'bg-blue' : b.tone === 'mid' ? 'bg-steel' : 'bg-text3/50'}"
-        style="flex: {b.grow} 1 0; height: {b.pct}%;{b.ramp ? ' clip-path: polygon(0 40%, 100% 0, 100% 100%, 0 100%);' : ''}"
+        class="block rounded-[5px]"
+        style="flex: {b.grow} 1 0; height: {b.pct}%; background: {b.zone > 0 ? `var(--zone-${b.zone})` : 'var(--text2)'}"
         title={b.name || undefined}
       ></span>
     {/each}

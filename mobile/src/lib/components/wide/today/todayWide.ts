@@ -29,8 +29,6 @@ const SPORT_LABEL: Record<Workout['sport'], string> = {
   other: 'WORKOUT'
 };
 
-/** Rough %FTP per zone, for intervals that only carry an HR zone. */
-const ZONE_PCT: Record<number, number> = { 1: 52, 2: 68, 3: 82, 4: 92, 5: 100 };
 
 export function zoneNumber(zone: WorkoutZone | undefined | null): number {
   return zone ? (ZONE_NUMBER[zone] ?? 0) : 0;
@@ -40,28 +38,46 @@ export function sportLabel(sport: Workout['sport'] | undefined): string {
   return sport ? (SPORT_LABEL[sport] ?? 'WORKOUT') : 'WORKOUT';
 }
 
-export type ProfileBar = { grow: number; pct: number; ramp: boolean; tone: 'hard' | 'mid' | 'easy'; name: string };
+/** `pct` is the bar height as % of the chart; `zone` 0 = no target (neutral colour). */
+export type ProfileBar = { grow: number; pct: number; zone: number; name: string };
 
-function intervalPct(i: Interval): number {
-  if (typeof i.target_power_percent_ftp === 'number' && i.target_power_percent_ftp > 0) return i.target_power_percent_ftp;
-  if (typeof i.target_hr_zone === 'number' && i.target_hr_zone > 0) return ZONE_PCT[Math.min(5, i.target_hr_zone)] ?? 60;
-  return 50;
+/** Coggan zone for a %FTP target (same cut-offs as the Plan session sheet). */
+export function zoneForFtpPct(p: number): number {
+  return p < 56 ? 1 : p < 76 ? 2 : p < 91 ? 3 : p < 106 ? 4 : 5;
 }
 
-/** One bar per interval: width ∝ duration, height ∝ intensity, warm-up / cool-down drawn as ramps. */
+// Same geometry as the Plan session sheet's profile (96 px chart, 100% FTP line 14 px from
+// the top), as percentages so the Today card draws the same shapes at any height.
+const PROFILE_H = 96;
+const PROFILE_TOP = 14;
+const pctOfChart = (px: number) => Math.min(100, Math.round((px / PROFILE_H) * 1000) / 10);
+
+function barFor(i: Interval): { pct: number; zone: number } {
+  const ftp = typeof i.target_power_percent_ftp === 'number' && i.target_power_percent_ftp > 0 ? i.target_power_percent_ftp : null;
+  const hrZone = typeof i.target_hr_zone === 'number' && i.target_hr_zone > 0 ? Math.min(5, i.target_hr_zone) : null;
+  if (ftp != null) {
+    return {
+      pct: pctOfChart(Math.max(8, Math.round((Math.min(ftp, 130) / 100) * (PROFILE_H - PROFILE_TOP)))),
+      zone: zoneForFtpPct(ftp)
+    };
+  }
+  if (hrZone != null) return { pct: pctOfChart(14 + hrZone * 12), zone: hrZone };
+  return { pct: pctOfChart(20), zone: 0 };
+}
+
+/** One block per interval, drawn exactly like the Plan session sheet: width ∝ duration,
+ * height ∝ %FTP (or HR zone), coloured by zone. */
 export function profileBars(w: Pick<Workout, 'structure' | 'duration_minutes' | 'primary_zone'> | null): ProfileBar[] {
   if (!w) return [];
   const steps = w.structure ?? [];
-  const raw =
-    steps.length > 0
-      ? steps.map((i) => ({ grow: Math.max(i.duration_minutes || 0, 1), pct: intervalPct(i), name: i.name || '', ramp: /warm|cool/i.test(i.name || '') }))
-      : w.duration_minutes > 0
-        ? [{ grow: w.duration_minutes, pct: ZONE_PCT[zoneNumber(w.primary_zone)] ?? 60, name: '', ramp: false }]
-        : [];
-  return raw.map((b) => {
-    const pct = Math.max(20, Math.min(100, Math.round(b.pct)));
-    return { ...b, pct, tone: pct > 85 ? 'hard' : pct > 75 ? 'mid' : 'easy' };
-  });
+  if (steps.length > 0) {
+    return steps.map((i) => ({ grow: Math.max(i.duration_minutes || 0, 1), name: i.name || '', ...barFor(i) }));
+  }
+  if (w.duration_minutes > 0) {
+    const zone = zoneNumber(w.primary_zone);
+    return [{ grow: w.duration_minutes, name: '', pct: pctOfChart(zone > 0 ? 14 + zone * 12 : 20), zone }];
+  }
+  return [];
 }
 
 /** "45′", "1h", "1h 25m" (design: week strip / menus). */

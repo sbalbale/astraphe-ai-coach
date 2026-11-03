@@ -10,7 +10,7 @@ import {
 } from './todayWide';
 
 describe('profileBars', () => {
-  it('sizes bars by duration and intensity, ramps warm-up and cool-down', () => {
+  it('draws blocks like the Plan sheet: width by duration, height by %FTP, colour by zone', () => {
     const bars = profileBars({
       duration_minutes: 50,
       primary_zone: 'Threshold',
@@ -22,10 +22,10 @@ describe('profileBars', () => {
         { name: 'Cool down', duration_minutes: 10 }
       ]
     });
-    expect(bars.map((b) => b.tone)).toEqual(['easy', 'hard', 'easy', 'mid', 'easy']);
-    expect(bars[0].ramp).toBe(true);
-    expect(bars[4].ramp).toBe(true);
-    expect(bars[1]).toMatchObject({ grow: 12, pct: 95, ramp: false });
+    expect(bars.map((b) => b.zone)).toEqual([2, 4, 1, 3, 0]);
+    // 95% FTP → 78 px of the 96 px chart, as on the Plan sheet.
+    expect(bars[1]).toMatchObject({ grow: 12, pct: 81.3 });
+    expect(bars[0].pct).toBeLessThan(bars[3].pct);
   });
 
   it('falls back to one bar at the session zone, and none for no session', () => {

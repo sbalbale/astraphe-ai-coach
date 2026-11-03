@@ -1280,20 +1280,20 @@
         {#if planActionError}
           <p class="m-0 text-[13px] text-red">{planActionError}</p>
         {/if}
-        {#if backendTrainingPlanId(sw) && sw.isoDate <= todayIso}
+        {#if backendTrainingPlanId(sw)}
           {@const swDone = isPlanDone(sw)}
           <button
             type="button"
             aria-pressed={swDone}
             disabled={togglingDone}
-            class="mt-auto h-12 rounded-[14px] text-sm font-medium cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50 {swDone ? 'border border-green/40 bg-green-dim text-green' : 'border border-border bg-transparent text-text0'}"
+            class="mt-auto shrink-0 h-12 rounded-[14px] text-sm font-medium cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50 {swDone ? 'border border-green/40 bg-green-dim text-green' : 'border border-border bg-transparent text-text0'}"
             onclick={toggleSelectedDone}
           >
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 5 5 9-10"></path></svg>
             {swDone ? 'Done · tap to undo' : 'Mark as done'}
           </button>
         {/if}
-        <div class="{backendTrainingPlanId(sw) && sw.isoDate <= todayIso ? '' : 'mt-auto'} flex gap-2">
+        <div class="{backendTrainingPlanId(sw) ? '' : 'mt-auto'} shrink-0 flex gap-2">
           <button type="button" class="flex-1 h-12 rounded-[14px] border border-border bg-transparent text-text0 text-sm font-medium cursor-pointer {sheetMode === 'move' ? 'bg-bg3' : ''}" onclick={() => { moveDate = sw.isoDate; sheetMode = sheetMode === 'move' ? 'none' : 'move'; }}>Move</button>
           <button type="button" class="flex-1 h-12 rounded-[14px] border border-border bg-transparent text-text0 text-sm font-medium cursor-pointer {sheetMode === 'swap' ? 'bg-bg3' : ''}" onclick={() => (sheetMode = sheetMode === 'swap' ? 'none' : 'swap')}>Swap</button>
           <button
