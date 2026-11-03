@@ -4,6 +4,7 @@
 
 <script lang="ts">
   import EmptyStateCard from '$lib/components/ui/EmptyStateCard.svelte';
+  import BaselineBar from '$lib/components/BaselineBar.svelte';
   import DashedNote from '$lib/components/ui/DashedNote.svelte';
   import { goto } from '$app/navigation';
   import { boundedScoreCssColor, zScoreCssColor } from '$lib/scoreColors';
@@ -385,19 +386,7 @@
         { name: 'Resting HR', val: rhrToday === null ? '--' : `${rhrToday} bpm`, delta: formatSignedInt(rhrDelta), z: rhrZ, inverted: true },
         { name: 'Sleep', val: sleepScoreToday === null ? '--' : `${sleepScoreToday}%`, delta: formatSignedInt(sleepDelta), z: sleepDelta === null ? null : sleepDelta / 8, inverted: false }
       ] as f (f.name)}
-        {@const c = f.z === null ? 'var(--text2)' : zScoreCssColor(f.z, f.inverted)}
-        {@const pos = f.z === null ? 50 : 50 + Math.max(-2, Math.min(2, f.z)) * 25}
-        <div class="grid grid-cols-[84px_1fr_72px] gap-3 items-center py-2 border-t border-border">
-          <span class="text-[13px] text-text1">{f.name}</span>
-          <div aria-hidden="true" class="relative h-1.5 rounded-[3px] bg-border">
-            <span class="absolute left-1/2 -top-1 w-px h-3.5 bg-text2/50"></span>
-            <span class="absolute -top-[3px] w-3 h-3 rounded-full -translate-x-1/2" style="left: {pos}%; background: {c}"></span>
-          </div>
-          <span class="text-right flex flex-col gap-px">
-            <span class="font-mono text-[13px]">{f.val}</span>
-            <span class="text-[11px]" style="color: {c}">{f.delta}</span>
-          </span>
-        </div>
+        <BaselineBar name={f.name} value={f.val} delta={f.delta} z={f.z} color={f.z === null ? 'var(--text2)' : zScoreCssColor(f.z, f.inverted)} />
       {/each}
     </section>
 

@@ -6,9 +6,7 @@ import {
   hourTicks,
   nightWindowLabel,
   recoveryWhy,
-  seriesWindow,
   sourcesLabel,
-  sparkline,
   workoutMeta
 } from './bodyWide';
 
@@ -29,28 +27,6 @@ describe('nightWindowLabel / sourcesLabel / bodyEyebrow', () => {
   });
 });
 
-describe('sparkline', () => {
-  it('needs two values', () => {
-    expect(sparkline([null, 5, null])).toBeNull();
-  });
-
-  it('skips gaps and keeps points inside the box', () => {
-    const s = sparkline([50, null, 60, 55])!;
-    const pts = s.points.split(' ').map((p) => p.split(',').map(Number));
-    expect(pts).toHaveLength(3);
-    for (const [x, y] of pts) {
-      expect(x).toBeGreaterThanOrEqual(0);
-      expect(x).toBeLessThanOrEqual(200);
-      expect(y).toBeGreaterThanOrEqual(0);
-      expect(y).toBeLessThanOrEqual(40);
-    }
-    expect(s.bandH).toBeGreaterThan(0);
-  });
-
-  it('handles a flat series', () => {
-    expect(sparkline([4, 4, 4])).not.toBeNull();
-  });
-});
 
 const series = [
   { date: '2026-10-27', hrv_rmssd: 50, resting_hr: 50 },
@@ -63,11 +39,6 @@ describe('baselines', () => {
   it('averages the days before, excluding the day itself', () => {
     expect(baselineBefore(series, '2026-11-02', 'hrv_rmssd')).toBe(50);
     expect(baselineBefore(series, '2026-10-27', 'hrv_rmssd')).toBeNull();
-  });
-
-  it('windows a field oldest first with nulls for gaps', () => {
-    const w = seriesWindow(series, '2026-11-02', 'hrv_rmssd', 7);
-    expect(w).toEqual([50, 50, 50, null, null, null, 55]);
   });
 
   it('explains a day from its own numbers', () => {

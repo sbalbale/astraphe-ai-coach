@@ -61,41 +61,6 @@ export function bodyEyebrow(day: string, row: Row): string {
   return [nightWindowLabel(day), sourcesLabel(row)].filter(Boolean).join(' · ');
 }
 
-export type Spark = { points: string; bandY: number; bandH: number };
-
-/**
- * Sparkline for a 200×40 box (design: "vs your baseline"), with the normal band at
- * mean ± 1 SD of the values. Gaps (null) are skipped; null when fewer than 2 values.
- */
-export function sparkline(values: (number | null)[], width = 200, height = 40, pad = 2): Spark | null {
-  const pts = values
-    .map((v, i) => ({ v, i }))
-    .filter((p): p is { v: number; i: number } => p.v !== null && Number.isFinite(p.v));
-  if (pts.length < 2) return null;
-  const vals = pts.map((p) => p.v);
-  const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
-  const sd = Math.sqrt(vals.reduce((a, b) => a + (b - mean) ** 2, 0) / vals.length);
-  const lo = mean - sd;
-  const hi = mean + sd;
-  let min = Math.min(...vals, lo);
-  let max = Math.max(...vals, hi);
-  if (max - min < 1e-9) {
-    min -= 1;
-    max += 1;
-  }
-  const span = Math.max(values.length - 1, 1);
-  const innerH = height - pad * 2;
-  const y = (v: number) => Math.round((height - pad - ((v - min) / (max - min)) * innerH) * 10) / 10;
-  const x = (i: number) => Math.round((pad + (i / span) * (width - pad * 2)) * 10) / 10;
-  const yHi = y(hi);
-  const yLo = y(lo);
-  return {
-    points: pts.map((p) => `${x(p.i)},${y(p.v)}`).join(' '),
-    bandY: yHi,
-    bandH: Math.max(yLo - yHi, 2)
-  };
-}
-
 /** Mean of the `days` values before `day` (the day itself excluded), ignoring gaps and zeros. */
 export function baselineBefore(series: Row[] | undefined, day: string, field: string, days = 7): number | null {
   if (!series?.length) return null;
@@ -107,19 +72,6 @@ export function baselineBefore(series: Row[] | undefined, day: string, field: st
     .map((r) => finite(r?.[field]))
     .filter((v): v is number => v !== null && v !== 0);
   return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
-}
-
-/** `field` for each of the `days` days ending on `day` (oldest first; null when missing). */
-export function seriesWindow(series: Row[] | undefined, day: string, field: string, days = 14): (number | null)[] {
-  const end = parseISO(day);
-  if (Number.isNaN(end.getTime())) return [];
-  const byDate = new Map<string, Row>();
-  for (const r of series ?? []) if (typeof r?.date === 'string') byDate.set(r.date, r);
-  return Array.from({ length: days }, (_, i) => {
-    const d = format(subDays(end, days - 1 - i), 'yyyy-MM-dd');
-    const v = finite(byDate.get(d)?.[field]);
-    return v !== null && v !== 0 ? v : null;
-  });
 }
 
 /** A workout's share of daily strain: its own strain score, else TSS scaled so 150 TSS = 100. */
