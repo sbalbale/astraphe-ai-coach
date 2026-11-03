@@ -2,8 +2,8 @@
   import { App } from '@capacitor/app';
   import { Browser } from '@capacitor/browser';
   import { Capacitor } from '@capacitor/core';
-  import Icon from '@iconify/svelte';
-  import Card from '$lib/components/Card.svelte';
+  import SubpageHeader from '$lib/components/SubpageHeader.svelte';
+  import { confirm } from '$lib/confirm';
   import Modal from '$lib/components/Modal.svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
@@ -21,8 +21,6 @@
   let intervalsError = $state('');
   const intervalsFormReady = $derived(intervalsAthleteId.trim().length > 0 && intervalsApiKey.trim().length > 0);
 
-  // Garmin Connect brand blue (matches DataSources.svelte)
-  const GARMIN_BLUE = '#009CDE';
 
   let showGarminModal = $state(false);
   let garminStep = $state<'credentials' | 'mfa'>('credentials');
@@ -44,9 +42,6 @@
     intervals_icu: athleteStore.syncStatus?.integrations?.intervals_icu || { connected: false }
   });
 
-  function goBack() {
-    goto('/profile');
-  }
 
   function isOAuthConnectedDeepLink(url: string): boolean {
     try {
@@ -258,320 +253,154 @@
 
     syncing = '';
   }
+
+  type AppId = 'strava' | 'whoop' | 'garmin' | 'apple';
+  const APPS: { id: AppId; name: string; mono: string; desc: string }[] = [
+    { id: 'strava', name: 'Strava', mono: 'ST', desc: 'Activities & routes' },
+    { id: 'whoop', name: 'WHOOP', mono: 'WH', desc: 'Recovery & HRV · sleep' },
+    { id: 'garmin', name: 'Garmin Connect', mono: 'GC', desc: 'Wearables & training log' },
+    { id: 'apple', name: 'Apple Health', mono: 'AH', desc: 'Sleep & workouts' }
+  ];
+
+  const field =
+    'w-full h-12 px-3.5 bg-bg0 border border-border rounded-[14px] text-sm text-text0 outline-none focus:border-blue';
+
+  async function unlinkApp(id: string, name: string) {
+    const ok = await confirm({
+      title: `Unlink ${name}?`,
+      message: `Astraphe stops syncing from ${name}. Data already imported stays.`,
+      confirmText: 'Unlink',
+      cancelText: 'Cancel',
+      confirmTone: 'danger'
+    });
+    if (ok) await toggleIntegration(id);
+  }
 </script>
 
-<div class="flex flex-col gap-3">
-  <div class="flex items-center gap-3">
-    <button
-      onclick={goBack}
-      class="w-8 h-8 flex items-center justify-center bg-glass border border-border rounded-lg text-text2 hover:text-text0 transition-colors cursor-pointer"
-    >
-      ←
-    </button>
-    <div>
-      <p class="text-xs text-text2 font-mono uppercase tracking-[0.1em]">Account</p>
-      <h1 class="text-[22px] font-bold tracking-[-0.02em]">Connected Apps</h1>
+<div class="flex flex-col gap-3 pb-6">
+  <SubpageHeader
+    title="Connected apps"
+    subtitle="Where Astraphe reads your training and body data. When two sources overlap, the more accurate sensor wins."
+  />
+
+  {#each APPS as app (app.id)}
+    {@const connected = integrations[app.id].connected}
+    <div class="flex items-center gap-3 p-3.5 rounded-[20px] bg-bg2 border border-border">
+      <span aria-hidden="true" class="shrink-0 w-11 h-11 rounded-xl bg-bg3 flex items-center justify-center font-mono text-[13px] text-text1">{app.mono}</span>
+      <span class="flex-1 min-w-0 flex flex-col gap-0.5">
+        <span class="text-base font-medium">{app.name}</span>
+        <span class="text-[13px] text-text2 truncate">{app.desc}</span>
+      </span>
+      {#if app.id === 'apple'}
+        <span class="shrink-0 h-10 px-3 rounded-xl border border-border text-[13px] text-text2 flex items-center">Soon</span>
+      {:else if connected}
+        <button
+          type="button"
+          aria-label="Unlink {app.name}"
+          class="shrink-0 h-10 px-2 flex items-center gap-1.5 border-0 bg-transparent text-[13px] text-green cursor-pointer disabled:opacity-50"
+          disabled={syncing !== ''}
+          onclick={() => unlinkApp(app.id, app.name)}
+        >
+          <span aria-hidden="true" class="w-1.5 h-1.5 rounded-full bg-green"></span>{syncing === app.id ? 'Unlinking…' : 'Connected'}
+        </button>
+      {:else}
+        <button
+          type="button"
+          class="shrink-0 h-10 px-3.5 rounded-xl border border-border bg-transparent text-blue text-[13px] font-medium cursor-pointer disabled:opacity-50"
+          disabled={syncing !== ''}
+          onclick={() => toggleIntegration(app.id)}
+        >{syncing === app.id ? 'Connecting…' : 'Connect'}</button>
+      {/if}
     </div>
-  </div>
+  {/each}
 
-  <div class="flex flex-col gap-3 mt-2">
-    <Card>
-      <p class="text-[13px] font-semibold mb-3">Connected Apps</p>
-      <div class="flex flex-col gap-4">
-        <!-- Apple Health -->
-        <div class="flex items-center justify-between gap-2">
-          <div class="flex items-center gap-3 min-w-0">
-            <div
-              class="w-9 h-9 rounded-xl flex items-center justify-center border border-border bg-glass shrink-0"
-            >
-              <!-- Iconify + Simple Icons: https://iconify.design/ -->
-              <Icon icon="simple-icons:apple" width={22} height={22} color="#FFFFFF" aria-hidden="true" />
-            </div>
-            <div class="min-w-0">
-              <p class="text-[13px] font-medium">Apple Health</p>
-              <p class="text-[10px] text-text2">Sleep & Workouts</p>
-              {#if integrations.apple.connected}
-                <span
-                  class="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono uppercase tracking-wide bg-teal-dim text-teal border border-teal/30"
-                >
-                  <Icon icon="simple-icons:apple" width={12} height={12} color="#FFFFFF" aria-hidden="true" />
-                  Connected
-                </span>
-              {/if}
-            </div>
-          </div>
-          <span
-            class="px-3 py-1 rounded-full text-[10px] font-mono uppercase tracking-wide shrink-0 border border-border bg-glass text-text2"
-          >
-            Coming soon
-          </span>
+  <!-- Intervals.icu: credentials inline -->
+  <div class="flex flex-col gap-3 p-4 rounded-[20px] bg-bg2 border {integrations.intervals_icu.connected ? 'border-border' : 'border-blue/25'}">
+    <div class="flex items-center gap-3">
+      <span aria-hidden="true" class="shrink-0 w-11 h-11 rounded-xl bg-blue-dim flex items-center justify-center font-mono text-[13px] text-blue">IC</span>
+      <span class="flex-1 min-w-0 flex flex-col gap-0.5">
+        <span class="text-base font-medium">Intervals.icu</span>
+        <span class="text-[13px] text-text2 truncate">Workouts & recovery · plan sync</span>
+      </span>
+      {#if integrations.intervals_icu.connected}
+        <button
+          type="button"
+          aria-label="Unlink Intervals.icu"
+          class="shrink-0 h-10 px-2 flex items-center gap-1.5 border-0 bg-transparent text-[13px] text-green cursor-pointer disabled:opacity-50"
+          disabled={syncing !== ''}
+          onclick={() => unlinkApp('intervals_icu', 'Intervals.icu')}
+        >
+          <span aria-hidden="true" class="w-1.5 h-1.5 rounded-full bg-green"></span>{syncing === 'intervals_icu' ? 'Unlinking…' : 'Connected'}
+        </button>
+      {/if}
+    </div>
+    {#if !integrations.intervals_icu.connected}
+      <form class="flex flex-col gap-3" onsubmit={submitIntervalsIcu}>
+        <div class="grid grid-cols-2 gap-2.5">
+          <label class="flex flex-col gap-1.5">
+            <span class="text-xs text-text2">Athlete ID</span>
+            <input class={field} bind:value={intervalsAthleteId} placeholder="i12345" autocomplete="off" />
+          </label>
+          <label class="flex flex-col gap-1.5">
+            <span class="text-xs text-text2">API key</span>
+            <input class={field} bind:value={intervalsApiKey} type="password" placeholder="••••••••" autocomplete="off" />
+          </label>
         </div>
-
-        <!-- Garmin -->
-        <div class="flex items-center justify-between gap-2">
-          <div class="flex items-center gap-3 min-w-0">
-            <div
-              class="w-9 h-9 rounded-xl flex items-center justify-center border shrink-0"
-              style="background: rgba(0, 156, 222, 0.14); border-color: rgba(0, 156, 222, 0.28)"
-            >
-              <!-- Garmin Connect brand blue -->
-              <Icon icon="simple-icons:garmin" width={22} height={22} color={GARMIN_BLUE} aria-hidden="true" />
-            </div>
-            <div class="min-w-0">
-              <p class="text-[13px] font-medium">Garmin Connect</p>
-              <p class="text-[10px] text-text2">Workouts & recovery</p>
-              {#if integrations.garmin.connected}
-                <span
-                  class="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono uppercase tracking-wide bg-teal-dim text-teal border border-teal/30"
-                >
-                  <Icon icon="simple-icons:garmin" width={12} height={12} color={GARMIN_BLUE} aria-hidden="true" />
-                  Connected
-                </span>
-              {/if}
-            </div>
-          </div>
-          <button
-            class="px-3 py-1 rounded-full text-[11px] font-medium cursor-pointer transition-all duration-200 shrink-0 border {integrations.garmin.connected
-              ? 'bg-red-dim text-red border-red/30'
-              : 'border-[rgba(0,156,222,0.32)] bg-[rgba(0,156,222,0.14)] text-[#009CDE]'}"
-            onclick={() => toggleIntegration('garmin')}
-          >
-            {syncing === 'garmin' ? '...' : integrations.garmin.connected ? 'Unlink' : 'Connect'}
-          </button>
-        </div>
-
-        <!-- Intervals.icu -->
-        <div class="flex items-center justify-between gap-2">
-          <div class="flex items-center gap-3 min-w-0">
-            <div
-              class="w-9 h-9 rounded-xl flex items-center justify-center border shrink-0"
-              style="background: rgba(221, 4, 71, 0.12); border-color: rgba(221, 4, 71, 0.28)"
-            >
-              <img src="/intervals-icu-logo.svg" alt="" class="w-[23px] h-[23px]" aria-hidden="true" />
-            </div>
-            <div class="min-w-0">
-              <p class="text-[13px] font-medium">Intervals.icu</p>
-              <p class="text-[10px] text-text2">Wearables & training log</p>
-              {#if integrations.intervals_icu.connected}
-                <span
-                  class="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono uppercase tracking-wide bg-teal-dim text-teal border border-teal/30"
-                >
-                  <img src="/intervals-icu-logo.svg" alt="" class="w-3 h-3" aria-hidden="true" />
-                  Connected
-                </span>
-              {/if}
-            </div>
-          </div>
-          <button
-            class="px-3 py-1 rounded-full text-[11px] font-medium cursor-pointer transition-all duration-200 shrink-0 border {integrations.intervals_icu.connected
-              ? 'bg-red-dim text-red border-red/30'
-              : 'border-[rgba(221,4,71,0.32)] bg-[rgba(221,4,71,0.14)] text-[#DD0447]'}"
-            onclick={() => toggleIntegration('intervals_icu')}
-          >
-            {syncing === 'intervals_icu' ? '...' : integrations.intervals_icu.connected ? 'Unlink' : 'Connect'}
-          </button>
-        </div>
-
-        <!-- WHOOP -->
-        <div class="flex items-center justify-between gap-2">
-          <div class="flex items-center gap-3 min-w-0">
-            <div
-              class="w-9 h-9 rounded-xl flex items-center justify-center border shrink-0 bg-bg2"
-              style="border-color: rgba(255,255,255,0.12)"
-            >
-              <Icon icon="arcticons:whoop" width={22} height={22} color="#FFFFFF" aria-hidden="true" />
-            </div>
-            <div class="min-w-0">
-              <p class="text-[13px] font-medium">WHOOP</p>
-              <p class="text-[10px] text-text2">Recovery & HRV</p>
-              {#if integrations.whoop.connected}
-                <span
-                  class="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono uppercase tracking-wide bg-teal-dim text-teal border border-teal/30"
-                >
-                  <Icon icon="arcticons:whoop" width={12} height={12} color="#FFFFFF" aria-hidden="true" />
-                  Connected
-                </span>
-              {/if}
-            </div>
-          </div>
-          <button
-            class="px-3 py-1 rounded-full text-[11px] font-medium cursor-pointer transition-all duration-200 shrink-0 border {integrations.whoop.connected
-              ? 'bg-red-dim text-red border-red/30'
-              : 'bg-amber-dim text-amber border-amber/30'}"
-            onclick={() => toggleIntegration('whoop')}
-          >
-            {syncing === 'whoop' ? '...' : integrations.whoop.connected ? 'Unlink' : 'Connect'}
-          </button>
-        </div>
-
-        <!-- Strava -->
-        <div class="flex items-center justify-between gap-2">
-          <div class="flex items-center gap-3 min-w-0">
-            <div
-              class="w-9 h-9 rounded-xl flex items-center justify-center border shrink-0"
-              style="background: rgba(252,76,2,0.12); border-color: rgba(252,76,2,0.28)"
-            >
-              <Icon icon="simple-icons:strava" width={22} height={22} color="#FC4C02" aria-hidden="true" />
-            </div>
-            <div class="min-w-0">
-              <p class="text-[13px] font-medium">Strava</p>
-              <p class="text-[10px] text-text2">Activities & routes</p>
-              {#if integrations.strava.connected}
-                <span
-                  class="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono uppercase tracking-wide bg-teal-dim text-teal border border-teal/30"
-                >
-                  <Icon icon="simple-icons:strava" width={12} height={12} color="#FC4C02" aria-hidden="true" />
-                  Connected
-                </span>
-              {/if}
-            </div>
-          </div>
-          <button
-            class="px-3 py-1 rounded-full text-[11px] font-medium cursor-pointer transition-all duration-200 shrink-0 border {integrations.strava.connected
-              ? 'bg-red-dim text-red border-red/30'
-              : 'border-[rgba(252,76,2,0.3)] bg-[rgba(252,76,2,0.15)] text-[#FC4C02]'}"
-            onclick={() => toggleIntegration('strava')}
-          >
-            {syncing === 'strava' ? '...' : integrations.strava.connected ? 'Unlink' : 'Connect'}
-          </button>
-        </div>
-      </div>
-    </Card>
+        {#if intervalsError}<p class="m-0 text-xs text-red">{intervalsError}</p>{/if}
+        <button
+          type="submit"
+          disabled={!intervalsFormReady || syncing === 'intervals_icu'}
+          class="h-12 rounded-[14px] border-0 bg-blue text-[#0B1420] text-sm font-semibold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+        >{syncing === 'intervals_icu' ? 'Connecting…' : 'Connect Intervals.icu'}</button>
+      </form>
+    {/if}
   </div>
 </div>
 
-<Modal show={showIntervalsModal} title="Intervals.icu" onClose={closeIntervalsModal}>
-  <form class="flex flex-col gap-4" onsubmit={submitIntervalsIcu}>
-    <label class="flex flex-col gap-1.5">
-      <span class="text-[11px] font-mono uppercase tracking-wide text-text2">Athlete ID</span>
-      <input
-        class="w-full bg-bg2 border border-border rounded-xl px-3 py-2 text-[14px] outline-none focus:border-teal"
-        bind:value={intervalsAthleteId}
-        placeholder="i12345"
-        autocomplete="off"
-      />
-    </label>
-
-    <label class="flex flex-col gap-1.5">
-      <span class="text-[11px] font-mono uppercase tracking-wide text-text2">API key</span>
-      <input
-        class="w-full bg-bg2 border border-border rounded-xl px-3 py-2 text-[14px] outline-none focus:border-teal"
-        bind:value={intervalsApiKey}
-        type="password"
-        autocomplete="off"
-      />
-    </label>
-
-    {#if intervalsError}
-      <p class="text-[12px] text-red">{intervalsError}</p>
-    {/if}
-
-    <div class="flex gap-2 justify-end pt-1">
-      <button
-        type="button"
-        class="px-4 py-2 rounded-xl border border-border bg-glass text-[13px] text-text1"
-        onclick={closeIntervalsModal}
-      >
-        Cancel
-      </button>
-      <button
-        type="submit"
-        disabled={!intervalsFormReady || syncing === 'intervals_icu'}
-        class="px-4 py-2 rounded-xl border border-teal/30 bg-teal-dim text-[13px] font-medium text-teal disabled:opacity-50 disabled:cursor-not-allowed"
-      >
-        {syncing === 'intervals_icu' ? 'Connecting...' : 'Connect'}
-      </button>
-    </div>
-  </form>
-</Modal>
-
 <Modal
   show={showGarminModal}
-  title={garminStep === 'mfa' ? 'Garmin MFA' : 'Garmin Connect'}
+  title={garminStep === 'mfa' ? 'Garmin verification' : 'Garmin Connect'}
   onClose={closeGarminModal}
 >
   {#if garminStep === 'credentials'}
     <form class="flex flex-col gap-4" onsubmit={submitGarminCredentials}>
-      <p class="text-[12px] text-text1 leading-relaxed">
-        Sign in with your Garmin account. Your password is not stored — only a session token is kept.
-        You can invalidate a session by changing your Garmin password.
+      <p class="m-0 text-[13px] text-text1 leading-relaxed">
+        Sign in with your Garmin account. Your password isn't stored — only a session token is kept.
+        Changing your Garmin password ends that session.
       </p>
-
       <label class="flex flex-col gap-1.5">
-        <span class="text-[11px] font-mono uppercase tracking-wide text-text2">Email or username</span>
-        <input
-          class="w-full bg-bg2 border border-border rounded-xl px-3 py-2 text-[14px] outline-none focus:border-teal"
-          bind:value={garminUsername}
-          autocomplete="username"
-        />
+        <span class="text-xs text-text2">Email or username</span>
+        <input class={field} bind:value={garminUsername} autocomplete="username" />
       </label>
-
       <label class="flex flex-col gap-1.5">
-        <span class="text-[11px] font-mono uppercase tracking-wide text-text2">Password</span>
-        <input
-          class="w-full bg-bg2 border border-border rounded-xl px-3 py-2 text-[14px] outline-none focus:border-teal"
-          bind:value={garminPassword}
-          type="password"
-          autocomplete="current-password"
-        />
+        <span class="text-xs text-text2">Password</span>
+        <input class={field} bind:value={garminPassword} type="password" autocomplete="current-password" />
       </label>
-
-      {#if garminError}
-        <p class="text-[12px] text-red">{garminError}</p>
-      {/if}
-
-      <div class="flex gap-2 justify-end pt-1">
-        <button
-          type="button"
-          class="px-4 py-2 rounded-xl border border-border bg-glass text-[13px] text-text1"
-          onclick={closeGarminModal}
-        >
-          Cancel
-        </button>
+      {#if garminError}<p class="m-0 text-xs text-red">{garminError}</p>{/if}
+      <div class="flex gap-2">
+        <button type="button" class="flex-1 h-12 rounded-[14px] border border-border bg-transparent text-sm text-text0 cursor-pointer" onclick={closeGarminModal}>Cancel</button>
         <button
           type="submit"
           disabled={!garminCredentialsReady || syncing === 'garmin'}
-          class="px-4 py-2 rounded-xl border border-teal/30 bg-teal-dim text-[13px] font-medium text-teal disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {syncing === 'garmin' ? 'Connecting...' : 'Connect'}
-        </button>
+          class="flex-1 h-12 rounded-[14px] border-0 bg-blue text-[#0B1420] text-sm font-semibold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+        >{syncing === 'garmin' ? 'Connecting…' : 'Connect'}</button>
       </div>
     </form>
   {:else}
     <form class="flex flex-col gap-4" onsubmit={submitGarminMfa}>
-      <p class="text-[12px] text-text1 leading-relaxed">
-        Enter the verification code from your Garmin MFA method to finish connecting.
-      </p>
-
+      <p class="m-0 text-[13px] text-text1 leading-relaxed">Enter the verification code from your Garmin MFA method to finish connecting.</p>
       <label class="flex flex-col gap-1.5">
-        <span class="text-[11px] font-mono uppercase tracking-wide text-text2">MFA code</span>
-        <input
-          class="w-full bg-bg2 border border-border rounded-xl px-3 py-2 text-[14px] outline-none focus:border-teal"
-          bind:value={garminMfaCode}
-          inputmode="numeric"
-          autocomplete="one-time-code"
-        />
+        <span class="text-xs text-text2">Verification code</span>
+        <input class="{field} font-mono" bind:value={garminMfaCode} inputmode="numeric" autocomplete="one-time-code" />
       </label>
-
-      {#if garminError}
-        <p class="text-[12px] text-red">{garminError}</p>
-      {/if}
-
-      <div class="flex gap-2 justify-end pt-1">
-        <button
-          type="button"
-          class="px-4 py-2 rounded-xl border border-border bg-glass text-[13px] text-text1"
-          onclick={closeGarminModal}
-        >
-          Cancel
-        </button>
+      {#if garminError}<p class="m-0 text-xs text-red">{garminError}</p>{/if}
+      <div class="flex gap-2">
+        <button type="button" class="flex-1 h-12 rounded-[14px] border border-border bg-transparent text-sm text-text0 cursor-pointer" onclick={closeGarminModal}>Cancel</button>
         <button
           type="submit"
           disabled={!garminMfaReady || syncing === 'garmin'}
-          class="px-4 py-2 rounded-xl border border-teal/30 bg-teal-dim text-[13px] font-medium text-teal disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {syncing === 'garmin' ? 'Verifying...' : 'Verify'}
-        </button>
+          class="flex-1 h-12 rounded-[14px] border-0 bg-blue text-[#0B1420] text-sm font-semibold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+        >{syncing === 'garmin' ? 'Verifying…' : 'Verify'}</button>
       </div>
     </form>
   {/if}
