@@ -565,10 +565,15 @@ def test_delete_athlete_account_404_when_missing():
 class _StateQuery:
     """Chainable fake that returns different rows depending on the selected columns."""
 
-    def __init__(self, response):
+    def __init__(self, response, by_columns=None):
         self._response = response
+        self._by_columns = by_columns or {}
 
-    def select(self, *_a, **_k):
+    def select(self, columns="*", *_a, **_k):
+        # get_athlete_state runs its biometrics queries concurrently, so answer by
+        # which columns were selected, not by call order.
+        if columns in self._by_columns:
+            self._response = self._by_columns[columns]
         return self
 
     def eq(self, *_a, **_k):
@@ -601,14 +606,14 @@ class _StateDb:
             data = [self._tss_row] if self._tss_row else []
             return _StateQuery(SimpleNamespace(data=data))
         if name == "biometrics":
-            self._biometrics_call += 1
-            if self._biometrics_call == 1:
-                data = [self._bio_row] if self._bio_row else []
-            elif self._biometrics_call == 2:
-                data = self._window_rows
-            else:
-                data = self._hist_rows
-            return _StateQuery(SimpleNamespace(data=data))
+            return _StateQuery(
+                SimpleNamespace(data=[]),
+                by_columns={
+                    "*": SimpleNamespace(data=[self._bio_row] if self._bio_row else []),
+                    "date,hrv_rmssd,resting_hr": SimpleNamespace(data=self._window_rows),
+                    "date": SimpleNamespace(data=self._hist_rows),
+                },
+            )
         raise AssertionError(f"unexpected table {name}")
 
 

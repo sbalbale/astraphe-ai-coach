@@ -92,8 +92,11 @@ class _Insert:
         return _Exec([{"id": "mock-plan-id"}])
 
 
-def test_simulate_training_impact_projection():
-    today = date.today()
+def test_simulate_training_impact_projection(monkeypatch):
+    # The handler takes "today" from the athlete's local date; pin it so the test
+    # doesn't depend on the machine's clock vs UTC (it failed every US evening).
+    today = date(2026, 6, 15)
+    monkeypatch.setattr(coach_tools, "athlete_local_date", lambda *_a, **_k: today)
     # History: 10 days ending yesterday at 40 TSS/day
     hist: list[dict[str, Any]] = []
     for i in range(10, 0, -1):
