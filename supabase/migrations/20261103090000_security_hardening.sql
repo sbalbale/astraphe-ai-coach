@@ -12,6 +12,7 @@
 --    nothing else; unlink runs through the backend.
 -- ---------------------------------------------------------------------------
 drop policy if exists "oauth_tokens_athlete_access" on public.oauth_tokens;
+drop policy if exists "oauth_tokens_select_own" on public.oauth_tokens;
 
 create policy "oauth_tokens_select_own" on public.oauth_tokens
   for select to authenticated
@@ -109,10 +110,19 @@ create trigger protect_athlete_server_columns
 alter table public.workouts drop constraint if exists workouts_strava_activity_id_key;
 alter table public.workouts drop constraint if exists workouts_garmin_activity_id_key;
 alter table public.workouts drop constraint if exists workouts_external_id_unique;
-alter table public.workouts
-  add constraint workouts_athlete_strava_activity_uniq unique (athlete_id, strava_activity_id),
-  add constraint workouts_athlete_garmin_activity_uniq unique (athlete_id, garmin_activity_id),
-  add constraint workouts_athlete_source_external_uniq unique (athlete_id, source, external_id);
+-- Idempotent so a re-run (or a reset after a manual apply) doesn't fail.
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'workouts_athlete_strava_activity_uniq') then
+    alter table public.workouts add constraint workouts_athlete_strava_activity_uniq unique (athlete_id, strava_activity_id);
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'workouts_athlete_garmin_activity_uniq') then
+    alter table public.workouts add constraint workouts_athlete_garmin_activity_uniq unique (athlete_id, garmin_activity_id);
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'workouts_athlete_source_external_uniq') then
+    alter table public.workouts add constraint workouts_athlete_source_external_uniq unique (athlete_id, source, external_id);
+  end if;
+end $$;
 
 -- ---------------------------------------------------------------------------
 -- 5. sleep_periods: key per athlete. (Audit D-C1)
@@ -124,8 +134,13 @@ alter table public.workouts
 --    FOLLOW-UP (after this release is deployed):
 --      alter table public.sleep_periods drop constraint sleep_periods_external_id_unique;
 -- ---------------------------------------------------------------------------
-alter table public.sleep_periods
-  add constraint sleep_periods_athlete_source_external_uniq unique (athlete_id, source, external_id);
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'sleep_periods_athlete_source_external_uniq') then
+    alter table public.sleep_periods
+      add constraint sleep_periods_athlete_source_external_uniq unique (athlete_id, source, external_id);
+  end if;
+end $$;
 
 -- ---------------------------------------------------------------------------
 -- 6. Storage. (Audit X-M3, X-M4)
