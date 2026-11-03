@@ -70,7 +70,7 @@ self.addEventListener('push', (event) => {
 		self.registration.showNotification(payload.title ?? 'ASTRAPHE', {
 			body: payload.body ?? '',
 			icon: '/astraphe-logo.png',
-			badge: '/icons/icon-192.png',
+			badge: '/android-chrome-192x192.png',
 			data: payload.data ?? {},
 		})
 	);
