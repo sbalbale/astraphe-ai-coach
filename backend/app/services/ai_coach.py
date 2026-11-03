@@ -1442,6 +1442,31 @@ def _wrap_up_after_tool_budget(contents: list[types.Content], system_instruction
     return ""
 
 
+# "I've scheduled / added / cleared / moved …", "… into your calendar", "synced to your app".
+_PLAN_CHANGE_CLAIM_RE = re.compile(
+    r"\b(i(?:'| ha)ve|i just|i)\s+(?:\w+\s+){0,3}?"
+    r"(scheduled|added|cleared|populated|loaded|moved|swapped|replaced|updated|built|mapped out|put|deleted|removed|logged|rescheduled)\b"
+    r"|\b(synced|saved|added|scheduled|loaded|populated)\s+(?:\w+\s+){0,3}?(to|into|in|on)\s+(your\s+)?(calendar|plan|app|training plan)\b"
+    r"|\bcheck your calendar\b",
+    re.IGNORECASE,
+)
+
+_UNSAVED_CLAIM_NOTE = (
+    "[SYSTEM] Your reply says you changed the athlete's calendar or plan, but you did not call "
+    "any tool this turn, so NOTHING was saved. If the athlete asked for that change, call the tools "
+    "now to actually make it (clear_training_plans for the range if replacing, then "
+    "schedule_workouts with every session) and reply with what was really saved. If they didn't, "
+    "rewrite your reply so it doesn't say anything was changed."
+)
+_UNSAVED_CLAIM_DISCLAIMER = (
+    "_Note: nothing was actually saved to your calendar this time. Ask me again and I'll schedule it._"
+)
+
+
+def _claims_plan_change(text: str) -> bool:
+    return bool(_PLAN_CHANGE_CLAIM_RE.search(text or ""))
+
+
 _MUTATING_TOOL_NAMES = frozenset({
     "schedule_workout",
     "schedule_workouts",
@@ -1578,6 +1603,9 @@ def get_coach_response_agentic(
 
     last_response = None
     planned_dates_from_tools: list[str] = []
+    # Tools that change data and actually ran this turn (any result, including errors).
+    mutations_run: list[str] = []
+    claim_nudged = False
     last_tool_names: list[str] = []
     max_hops = _agentic_max_tool_hops(message, has_images=history_has_images)
     for _hop in range(max_hops):
@@ -1708,6 +1736,8 @@ def get_coach_response_agentic(
                 if fc is None or not fc.name:
                     continue
                 name = fc.name
+                if name in _MUTATING_TOOL_NAMES:
+                    mutations_run.append(name)
                 _coach_progress(progress_callback, "tool", tool=name)
                 args = coach_tools.parse_function_args(fc)
                 args = _normalize_relative_tool_dates(name, args, message=message, calendar=calendar)
@@ -1749,6 +1779,17 @@ def get_coach_response_agentic(
         if joined.strip():
             final_text = _extract_athlete_message_from_text(joined)
             if not _is_failed_extraction(final_text):
+                # The reply says the calendar/plan was changed, but no write tool ran this turn:
+                # nothing was saved. Push back once so the model makes the calls for real.
+                if tools_enabled and not mutations_run and _claims_plan_change(final_text):
+                    if not claim_nudged and _hop < max_hops - 1:
+                        claim_nudged = True
+                        logger.warning("[coach] reply claimed a plan change without tool calls; nudging")
+                        contents.append(cand.content)
+                        contents.append(types.Content(role="user", parts=[types.Part.from_text(text=_UNSAVED_CLAIM_NOTE)]))
+                        continue
+                    logger.warning("[coach] reply still claims a plan change without tool calls")
+                    final_text = f"{final_text}\n\n{_UNSAVED_CLAIM_DISCLAIMER}"
                 return (
                     _correct_relative_date_language(final_text, planned_dates_from_tools, calendar),
                     _extract_grounding_sources(last_response),
