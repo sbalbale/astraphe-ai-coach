@@ -1,6 +1,7 @@
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta, datetime, timezone
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -271,6 +272,51 @@ def _set_metric_source(metric_sources: dict[str, Any], field: str, source: str |
     else:
         metric_sources.pop(field, None)
 
+def write_body_metrics(
+    db: Any,
+    athlete_id: str,
+    day: date,
+    source: str,
+    *,
+    weight_kg: float | None = None,
+    height_cm: float | None = None,
+) -> list[str]:
+    """
+    Write weight/height for one day without overriding a higher-priority source
+    (manual entries outrank every device, see _BIOMETRIC_FIELD_SOURCES). Returns the
+    fields written. Provider body syncs used to upsert weight_kg directly, so a WHOOP
+    sync overwrote the weight the athlete had just typed in.
+    """
+    res = (
+        db.table("biometrics")
+        .select("weight_kg, height_cm, metric_sources")
+        .eq("athlete_id", athlete_id)
+        .eq("date", day.isoformat())
+        .limit(1)
+        .execute()
+    )
+    existing = ((res.data if res else None) or [{}])[0] or {}
+    sources = dict(existing.get("metric_sources") or {})
+    update: dict[str, Any] = {}
+    for field, value in (("weight_kg", weight_kg), ("height_cm", height_cm)):
+        if value is None:
+            continue
+        current_src = sources.get(field)
+        if (
+            existing.get(field) is not None
+            and current_src
+            and _biometric_source_quality_rank(field, source) > _biometric_source_quality_rank(field, current_src)
+        ):
+            continue
+        update[field] = round(float(value), 2 if field == "weight_kg" else 1)
+        sources[field] = source
+    if update:
+        _upsert_biometrics_sync(
+            db, {"athlete_id": athlete_id, "date": day.isoformat(), **update, "metric_sources": sources}
+        )
+    return list(update)
+
+
 def _upsert_biometrics_sync(db: Any, payload: dict[str, Any]) -> None:
     try:
         db.table("biometrics").upsert(payload, on_conflict="athlete_id,date").execute()
@@ -386,15 +432,33 @@ def _workout_dates_for_athlete(rows: list[dict]) -> list[date]:
     return sorted(dates)
 
 
+# PostgREST returns at most this many rows per request (supabase/config.toml max_rows).
+_PAGE_SIZE = 1000
+
+
+def _fetch_all_rows(build_query: Any, page_size: int = _PAGE_SIZE) -> list[dict[str, Any]]:
+    """
+    Read every row of an (ordered) query, a page at a time. Without paging, PostgREST
+    silently caps a select at max_rows, so an athlete with more than 1000 workouts lost
+    their newest ones from CTL/ATL. ``build_query`` returns a fresh query builder.
+    """
+    rows: list[dict[str, Any]] = []
+    start = 0
+    while True:
+        res = build_query().range(start, start + page_size - 1).execute()
+        batch = (res.data if res else None) or []
+        rows.extend(batch)
+        if len(batch) < page_size:
+            return rows
+        start += page_size
+
+
 def refresh_all_daily_strain_sync(db: Any, athlete_id: str) -> dict[str, int]:
     """Fast path: refresh biometrics.strain_score for every day that has a workout."""
-    res = (
-        db.table("workouts")
-        .select("started_at")
-        .eq("athlete_id", athlete_id)
-        .execute()
+    rows = _fetch_all_rows(
+        lambda: db.table("workouts").select("started_at").eq("athlete_id", athlete_id).order("started_at")
     )
-    days = _workout_dates_for_athlete((res.data if res else None) or [])
+    days = _workout_dates_for_athlete(rows)
     for d in days:
         _refresh_daily_strain_for_day_sync(db, athlete_id, d)
     return {"days": len(days)}
@@ -680,8 +744,10 @@ def recalculate_tss_history(athlete_id: str, db):
     date (avoiding bogus CTL = 0 and collapsed readiness scores on rest days).
     """
     # 1. Fetch all workouts with TSS
-    res = db.table("workouts").select("started_at, tss").eq("athlete_id", athlete_id).order("started_at").execute()
-    if not res or not res.data:
+    workout_rows = _fetch_all_rows(
+        lambda: db.table("workouts").select("started_at, tss").eq("athlete_id", athlete_id).order("started_at")
+    )
+    if not workout_rows:
         return
 
     # 1.5 Fetch athlete timezone for correct date mapping
@@ -690,7 +756,7 @@ def recalculate_tss_history(athlete_id: str, db):
 
     # 2. Aggregate TSS by date
     daily_tss = {}
-    for w in res.data:
+    for w in workout_rows:
         # Parse ISO string and adjust for athlete's local offset
         utc_start = datetime.fromisoformat(w["started_at"].replace("Z", "+00:00"))
         local_start = utc_start + timedelta(minutes=offset)
@@ -1416,7 +1482,9 @@ async def recompute_workout_tss_for_athlete(athlete_id: str, db) -> int:
 
 async def reprocess_athlete_metrics(athlete_id: str, db) -> dict[str, int]:
     """Rebuild workout TSS, biometrics aggregates, and PMC (CTL/ATL/TSB) for one athlete."""
-    workouts_res = db.table("workouts").select("*").eq("athlete_id", athlete_id).order("started_at").execute()
+    workouts_res = SimpleNamespace(data=_fetch_all_rows(
+        lambda: db.table("workouts").select("*").eq("athlete_id", athlete_id).order("started_at")
+    ))
     workout_count = 0
     for row in workouts_res.data or []:
         await process_and_save_workout(
@@ -1428,7 +1496,9 @@ async def reprocess_athlete_metrics(athlete_id: str, db) -> dict[str, int]:
         )
         workout_count += 1
 
-    biometrics_res = db.table("biometrics").select("*").eq("athlete_id", athlete_id).order("date").execute()
+    biometrics_res = SimpleNamespace(data=_fetch_all_rows(
+        lambda: db.table("biometrics").select("*").eq("athlete_id", athlete_id).order("date")
+    ))
     bio_count = 0
     for b in biometrics_res.data or []:
         payload = DailyBiometrics(

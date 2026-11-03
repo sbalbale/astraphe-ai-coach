@@ -194,6 +194,9 @@ class _ImplQuery:
     def order(self, *_a, **_k):
         return self
 
+    def limit(self, *_a, **_k):
+        return self
+
     def maybe_single(self):
         self._single = True
         return self

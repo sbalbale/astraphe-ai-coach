@@ -178,12 +178,19 @@ async def _backfill_historical_data_impl(
                      else round(float(raw_height_m) * 100.0, 1) if raw_height_m
                      else None)
 
+        # Only fill profile fields the athlete hasn't set: this runs on every connect
+        # and startup backfill, and used to overwrite a chosen name, a measured max HR
+        # (which drives HR zones) and height with WHOOP's values.
+        current = (
+            db.table("athletes").select("display_name, height_cm, max_hr").eq("id", athlete_id).limit(1).execute()
+        )
+        current_row = ((current.data if current else None) or [{}])[0] or {}
         profile_update = {}
-        if profile.get("first_name"):
+        if profile.get("first_name") and not current_row.get("display_name"):
             profile_update["display_name"] = profile["first_name"]
-        if height_cm is not None:
+        if height_cm is not None and not current_row.get("height_cm"):
             profile_update["height_cm"] = height_cm
-        if measurements.get("max_heart_rate"):
+        if measurements.get("max_heart_rate") and not current_row.get("max_hr"):
             profile_update["max_hr"] = measurements["max_heart_rate"]
 
         # Also update the oauth_token with the external_user_id
@@ -195,16 +202,15 @@ async def _backfill_historical_data_impl(
         if profile_update:
             db.table("athletes").update(profile_update).eq("id", athlete_id).execute()
 
-        # Upsert weight/height into today's biometrics row
-        today = datetime.now(timezone.utc).date()
-        bio_update: dict = {"athlete_id": athlete_id, "date": today.isoformat()}
-        if weight_kg is not None:
-            bio_update["weight_kg"] = weight_kg
-        if height_cm is not None:
-            bio_update["height_cm"] = height_cm
-        if len(bio_update) > 2:
-            db.table("biometrics").upsert(bio_update, on_conflict="athlete_id,date").execute()
-            print(f"[whoop.backfill] wrote body metrics to biometrics date={today.isoformat()} fields={[k for k in bio_update if k not in ('athlete_id','date')]}")
+        # Weight/height into the athlete's *local* today, respecting source priority
+        # (a manual entry outranks WHOOP).
+        from app.services.processing import write_body_metrics
+        from app.services.time_utils import athlete_local_date
+
+        today = athlete_local_date(db, athlete_id)
+        fields = write_body_metrics(db, athlete_id, today, "whoop", weight_kg=weight_kg, height_cm=height_cm)
+        if fields:
+            print(f"[whoop.backfill] wrote body metrics date={today.isoformat()} fields={fields}")
     except Exception as e:
         print(f"[whoop.backfill] Failed to update profile/measurements: {e}")
 

@@ -369,3 +369,21 @@ def test_recovery_without_sleep_is_not_dragged_down():
     no_sleep = compute_recovery_score(sleep_score=None, **args)
     zero_sleep = compute_recovery_score(sleep_score=0, **args)
     assert no_sleep > zero_sleep
+
+
+def test_write_body_metrics_never_overrides_a_manual_weight():
+    from unittest.mock import MagicMock
+
+    db = MagicMock()
+    db.table.return_value.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value = (
+        SimpleNamespace(data=[{"weight_kg": 83.91, "metric_sources": {"weight_kg": "manual"}}])
+    )
+    assert processing.write_body_metrics(db, "a", date(2026, 11, 2), "whoop", weight_kg=85.05) == []
+    db.table.return_value.upsert.assert_not_called()
+
+    db.table.return_value.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value = (
+        SimpleNamespace(data=[{"weight_kg": 85.0, "metric_sources": {"weight_kg": "intervals_icu"}}])
+    )
+    assert processing.write_body_metrics(db, "a", date(2026, 11, 2), "whoop", weight_kg=85.05) == ["weight_kg"]
+    sent = db.table.return_value.upsert.call_args.args[0]
+    assert sent["weight_kg"] == 85.05 and sent["metric_sources"]["weight_kg"] == "whoop"

@@ -23,6 +23,7 @@ from app.services.token_refresh import token_expires_at
 from app.models.workout import WorkoutPayload
 from app.models.biometrics import DailyBiometrics
 from app.services.processing import (
+    write_body_metrics,
     process_and_save_workout,
     process_and_save_biometrics,
     reprocess_athlete_metrics,
@@ -640,14 +641,15 @@ async def _whoop_sync_whoop_body_measurements(
         height_cm = None if have_height else _parse_whoop_height_cm(profile, body)
         weight_kg = _parse_whoop_weight_kg(profile, body) if sync_weight_kg else None
 
-        bio_update: dict = {"athlete_id": athlete_id, "date": bio_date.isoformat()}
-        if sync_weight_kg and weight_kg is not None:
-            bio_update["weight_kg"] = round(float(weight_kg), 2)
-        if height_cm is not None and not have_height:
-            bio_update["height_cm"] = round(float(height_cm), 1)
-        if len(bio_update.keys()) > 2:
-            db.table("biometrics").upsert(bio_update, on_conflict="athlete_id,date").execute()
-            fields = [k for k in bio_update if k not in ("athlete_id", "date")]
+        fields = write_body_metrics(
+            db,
+            athlete_id,
+            bio_date,
+            "whoop",
+            weight_kg=weight_kg if sync_weight_kg else None,
+            height_cm=height_cm if not have_height else None,
+        )
+        if fields:
             print(f"[whoop.body] biometrics athlete_id={athlete_id} date={bio_date.isoformat()} fields={fields}")
 
         if height_cm is not None and not have_height:

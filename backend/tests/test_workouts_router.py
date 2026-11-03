@@ -277,13 +277,17 @@ def test_delete_workout_404_when_missing():
 def test_delete_workout_success():
     _override(_DeleteDb(exists=True))
     try:
-        with TestClient(app) as client:
-            res = client.delete("/v1/workouts/w1")
+        with patch.object(workouts_router, "recalculate_tss_history") as recalc, patch.object(
+            workouts_router, "_refresh_daily_strain_for_day_sync"
+        ):
+            with TestClient(app) as client:
+                res = client.delete("/v1/workouts/w1")
     finally:
         _teardown()
 
     assert res.status_code == 200
     assert res.json() == {"status": "success", "deleted_id": "w1"}
+    recalc.assert_called_once()  # the deleted TSS leaves CTL/ATL/TSB
 
 
 def test_delete_workout_500_on_query_error():

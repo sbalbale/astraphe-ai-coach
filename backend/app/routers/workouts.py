@@ -241,6 +241,7 @@ async def update_workout(
 @router.delete("/{workout_id}")
 async def delete_workout(
     workout_id: str,
+    background_tasks: BackgroundTasks,
     athlete_id: str = Depends(get_current_athlete),
     db = Depends(get_user_db),
 ):
@@ -251,7 +252,7 @@ async def delete_workout(
     try:
         existing = (
             db.table("workouts")
-            .select("id")
+            .select("id, started_at")
             .eq("id", workout_id)
             .eq("athlete_id", athlete_id)
             .maybe_single()
@@ -261,6 +262,17 @@ async def delete_workout(
             raise HTTPException(status_code=404, detail="Workout not found")
 
         db.table("workouts").delete().eq("id", workout_id).eq("athlete_id", athlete_id).execute()
+        # Like PATCH: the deleted TSS must leave CTL/ATL/TSB and that day's strain
+        # (a deleted duplicate otherwise kept counting until some later sync).
+        background_tasks.add_task(recalculate_tss_history, athlete_id, db)
+        for day in _patch_refresh_days(existing.data, existing.data):
+            background_tasks.add_task(_refresh_daily_strain_for_day_sync, db, athlete_id, day)
+        try:
+            from app.services.ai_coach import invalidate_context_cache
+
+            invalidate_context_cache(athlete_id)
+        except Exception:
+            pass
         return {"status": "success", "deleted_id": workout_id}
     except HTTPException:
         raise
