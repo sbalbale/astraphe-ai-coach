@@ -30,7 +30,11 @@ export function firstPositiveFiniteNumber(...candidates: unknown[]): number | nu
 
 function finiteRecoveryScore(row: BiometricsRow | null | undefined): number | null {
   if (!row) return null;
-  const n = Number(row.recovery_score);
+  // Number(null) is 0: a row with no recovery (e.g. only a weight saved in Personal
+  // info or onboarding) used to count as "recovery 0" and showed a red 0% score.
+  const v = row.recovery_score as unknown;
+  if (v === null || v === undefined || (typeof v === 'string' && v.trim() === '')) return null;
+  const n = Number(v);
   return Number.isFinite(n) ? n : null;
 }
 
