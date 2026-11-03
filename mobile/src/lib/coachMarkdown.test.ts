@@ -124,3 +124,38 @@ describe('renderCoachMarkdownToSafeHtml', () => {
     expect(html).toContain('<strong>The Drill:</strong>');
   });
 });
+
+describe('renderCoachMarkdownToSafeHtml security', () => {
+  if (typeof window.matchMedia !== 'function') {
+    (window as any).matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
+  }
+
+  it('never runs event handlers from raw HTML in the reply', async () => {
+    (window as any).__xss = 0;
+    const html = renderCoachMarkdownToSafeHtml('Hi <img src=x onerror="window.__xss=1"> there');
+    await new Promise((r) => setTimeout(r, 20));
+    expect((window as any).__xss).toBe(0);
+    expect(html).not.toMatch(/onerror/i);
+  });
+
+  it('strips handlers inside a table whose postscript row gets lifted', () => {
+    const md =
+      '| A | B |\n| --- | --- |\n| 1 | 2 |\n| <img src=x onerror="window.__xss=2"> a long trailing paragraph that marked pulled into the table |  |\n';
+    const html = renderCoachMarkdownToSafeHtml(md);
+    expect(html).not.toMatch(/onerror/i);
+  });
+
+  it('drops javascript: links and overlay styles', () => {
+    const html = renderCoachMarkdownToSafeHtml(
+      '[x](javascript:alert(1)) <div style="position:fixed;inset:0;z-index:9999">fake login</div>'
+    );
+    expect(html).not.toMatch(/javascript:/i);
+    expect(html).not.toMatch(/position\s*:\s*fixed/i);
+  });
+
+  it('keeps safe external links with rel=noopener', () => {
+    const html = renderCoachMarkdownToSafeHtml('[docs](https://example.com)');
+    expect(html).toMatch(/href="https:\/\/example\.com"/);
+    expect(html).toMatch(/rel="noopener noreferrer"/);
+  });
+});
