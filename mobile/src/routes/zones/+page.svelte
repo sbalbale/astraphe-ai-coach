@@ -5,7 +5,9 @@
 
 <script lang="ts">
   import { workoutDurationSecs } from '$lib/utils/workoutDuration';
-  import EmptyState from '$lib/components/EmptyState.svelte';
+  import EmptyStateCard from '$lib/components/ui/EmptyStateCard.svelte';
+  import DashedNote from '$lib/components/ui/DashedNote.svelte';
+  import { goto } from '$app/navigation';
   import { pageHeader, resetPageHeader } from '$lib/stores/pageHeader.svelte';
   import MonthNavigator from '$lib/components/MonthNavigator.svelte';
   import WeekNavigator from '$lib/components/WeekNavigator.svelte';
@@ -301,10 +303,28 @@
       <div class="w-6 h-6 border-2 border-blue border-t-transparent rounded-full animate-spin mb-4"></div>
       <p class="text-[10px] font-mono tracking-widest uppercase">Syncing Biometrics...</p>
     </div>
-  {:else if !hasProfile}
-    <EmptyState title="No Profile Data" message="Complete your athlete profile to compute personalized training zones." actionLabel="Go to Profile" icon="👤" />
-  {:else if !hasZoneDefinitions}
-    <EmptyState title="Incomplete HR Data" message="Add at least a max heart rate (or a manual lactate threshold HR) in training settings to display zones." actionLabel="Training settings" icon="📈" />
+  {:else if !hasProfile || !hasZoneDefinitions}
+    <EmptyStateCard
+      icon="gauge"
+      tone="blue"
+      eyebrow="Not set up"
+      title="Set your thresholds"
+      message="Zones need your max or lactate-threshold heart rate, plus FTP for power zones. Not sure? Your coach can estimate them from your recent rides."
+      actionLabel="Estimate from my rides"
+      onAction={() => goto(`/chat?prompt=${encodeURIComponent('Estimate my max heart rate, threshold heart rate and FTP from my last 6 weeks of rides.')}`)}
+      secondaryLabel="Enter them myself"
+      onSecondary={() => goto('/profile/training-settings')}
+    />
+    <DashedNote>
+      <div class="flex flex-col gap-3.5 py-1" aria-hidden="true">
+        {#each [1, 2, 3, 4, 5] as zn (zn)}
+          <div class="flex items-center gap-4">
+            <span class="w-6 font-mono text-[13px] text-text2">Z{zn}</span>
+            <div class="flex-1 h-2.5 rounded-full bg-bg3"></div>
+          </div>
+        {/each}
+      </div>
+    </DashedNote>
   {:else}
     <!-- Distribution -->
     <section aria-label="Distribution" class="bg-bg2 border border-border rounded-[24px] px-[18px] py-4 flex flex-col gap-3">

@@ -9,7 +9,7 @@
   import Card from '$lib/components/Card.svelte';
   import RadialProgress from '$lib/components/RadialProgress.svelte';
   import Tag from '$lib/components/Tag.svelte';
-  import EmptyState from '$lib/components/EmptyState.svelte';
+  import EmptyStateCard from '$lib/components/ui/EmptyStateCard.svelte';
   import DatePicker from '$lib/components/DatePicker.svelte';
   import Modal from '$lib/components/Modal.svelte';
   import { pageHeader, resetPageHeader } from '$lib/stores/pageHeader.svelte';
@@ -308,9 +308,9 @@
 
 <div class="flex flex-col gap-3.5">
   {#if showConnectPrompt}
-    <EmptyState title="No Strain Data" message="Connect WHOOP, Garmin, or Apple Health to track your daily strain." />
+    <EmptyStateCard icon="link" tone="blue" eyebrow="Not set up" title="Track your strain" message="Strain is built from your workouts' heart rate. Connect Garmin, WHOOP or Strava, or log sessions by hand." actionLabel="Connect an app" onAction={() => goto('/profile/connections')} />
   {:else if !hasData}
-    <EmptyState title="Waiting for Data" message="We're waiting for your first activity to compute strain." icon="⏳" />
+    <EmptyStateCard icon="refresh" tone="amber" eyebrow="Waiting for sync" title="No strain yet" message="Strain appears after your first workout syncs, usually within a few minutes of finishing." />
   {:else}
     <!-- Score -->
     <section aria-label="Strain score" class="bg-bg2 border border-border rounded-[24px] px-5 py-[18px] flex gap-[18px] items-center">

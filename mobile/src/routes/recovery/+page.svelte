@@ -3,7 +3,9 @@
 </script>
 
 <script lang="ts">
-  import EmptyState from '$lib/components/EmptyState.svelte';
+  import EmptyStateCard from '$lib/components/ui/EmptyStateCard.svelte';
+  import DashedNote from '$lib/components/ui/DashedNote.svelte';
+  import { goto } from '$app/navigation';
   import { boundedScoreCssColor, zScoreCssColor } from '$lib/scoreColors';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { normalizeUnits, type Units } from '$lib/utils/units';
@@ -182,6 +184,22 @@
   // manual-only athletes (logged sleep/workouts) see their data, and connected users
   // don't flash this while the sync status is still loading.
   const showConnectPrompt = $derived(athleteStore.syncStatus != null && !isConnected && !hasData);
+  /** Recovery needs an overnight wearable; Strava/Intervals alone never produce it. */
+  const hasRecoveryWearable = $derived.by(() => {
+    const i = athleteStore.syncStatus?.integrations ?? {};
+    return !!(i.whoop?.connected || i.garmin?.connected);
+  });
+  const showRecoverySetup = $derived(athleteStore.syncStatus != null && !hasRecoveryWearable && !hasData);
+
+  let checking = $state(false);
+  async function checkSync() {
+    checking = true;
+    try {
+      await athleteStore.fetchAll(true);
+    } finally {
+      checking = false;
+    }
+  }
 
   // Recovery only: readiness mixes in training form, so it isn't a recovery score.
   // The hero only renders when headlineRow carries a recovery_score.
@@ -272,15 +290,41 @@
 </script>
 
 <div class="flex flex-col gap-3.5">
-  {#if showConnectPrompt}
-    <EmptyState title="No Recovery Data" message="Connect WHOOP, Garmin, or Apple Health to see your recovery analysis." />
+  {#if showConnectPrompt || showRecoverySetup}
+    <EmptyStateCard
+      icon="link"
+      tone="blue"
+      eyebrow="Not set up"
+      title="Connect a recovery wearable"
+      message="Recovery is built from your overnight HRV, resting heart rate and sleep. WHOOP or a Garmin watch worn to bed both work."
+      actionLabel="Connect WHOOP"
+      onAction={() => goto('/profile/connections')}
+      secondaryLabel="Connect Garmin"
+      onSecondary={() => goto('/profile/connections')}
+    />
+    <DashedNote label="Meanwhile" layout="inline">
+      Strain still works from your workouts, and training load — fitness, fatigue and form — doesn't need a wearable.
+    </DashedNote>
   {:else if !hasData}
-    <EmptyState title="Waiting for Sync" message="We're waiting for your biometric data to compute your recovery score." icon="⏳" />
+    <EmptyStateCard
+      icon="refresh"
+      tone="amber"
+      eyebrow="Waiting for sync"
+      title="No recovery yet"
+      message="Your wearable is connected. Recovery appears after your first night of sleep syncs, usually within 30 minutes of waking."
+      actionLabel={checking ? 'Checking…' : 'Check sync now'}
+      onAction={checkSync}
+    />
   {:else if !showRecoveryHero}
-    <section class="bg-bg2 border border-dashed border-border rounded-[24px] p-6 text-center">
-      <p class="m-0 text-[14px] font-semibold mb-1">No recovery data for {d.label}</p>
-      <p class="m-0 text-[12px] text-text2">We couldn't find any biometric records for this day. Make sure your device synced recently.</p>
-    </section>
+    <EmptyStateCard
+      icon="refresh"
+      tone="amber"
+      eyebrow="Waiting for sync"
+      title="No recovery for {d.label}"
+      message="There's no overnight HRV or resting heart rate for this day yet. Your watch may not have synced, or it wasn't worn that night."
+      actionLabel={checking ? 'Checking…' : 'Check sync now'}
+      onAction={checkSync}
+    />
   {:else}
     <!-- Score -->
     <section aria-label="Recovery score" class="bg-bg2 border border-border rounded-[24px] px-5 py-[18px] flex gap-[18px] items-center">
