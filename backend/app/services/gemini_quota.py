@@ -44,6 +44,9 @@ _DEFAULT_RPM = 10
 _MODEL_RPM: dict[str, int] = {
     "gemini-3.1-flash-lite": 13,
     "gemini-3.5-flash-lite": 13,
+    # Plan import models: 5 RPM (and ~20/day) on the free tier.
+    "gemini-3.8-flash": 4,
+    "gemini-3.6-flash": 4,
     "gemma-4-31b-it": 27,
     "gemma-4-26b-a4b-it": 27,
     "gemini-embedding-2": 90,

@@ -48,6 +48,7 @@
   } from '$lib/coachMarkdown';
   import type { Workout } from '$lib/types/training';
   import { modalDialog } from '$lib/actions/modalDialog';
+  import { sessionNotesSummary } from '$lib/utils/sessionNotes';
 
   type AgendaView = 'day' | 'week';
 
@@ -467,17 +468,6 @@
         color: z > 0 ? `var(--zone-${z})` : 'var(--bg3)'
       };
     });
-  }
-  /** One-line summary from the coach's markdown context. */
-  function plainText(md?: string): string {
-    return String(md ?? '')
-      .split('\n')
-      .filter((l) => !l.trim().startsWith('|'))
-      .join(' ')
-      .replace(/[#*_>`]/g, '')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .slice(0, 240);
   }
 
   const periodSummary = $derived.by(() => {
@@ -1025,7 +1015,7 @@
           </div>
           <div class="flex flex-col gap-1">
             <h2 class="m-0 font-display font-normal text-[32px] leading-[1.05]">{w.title ?? w.type ?? 'Session'}</h2>
-            {#if w.context}<p class="m-0 text-sm leading-[1.45] text-text1 line-clamp-3">{plainText(w.context)}</p>{/if}
+            {#if sessionNotesSummary(w.context)}<p class="m-0 text-sm leading-[1.45] text-text1 line-clamp-3">{sessionNotesSummary(w.context)}</p>{/if}
           </div>
           {#if steps.length > 0}
             <ol aria-label="Steps" class="list-none m-0 p-0 flex flex-col border-t border-border">

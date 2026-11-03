@@ -2,6 +2,7 @@ from google.genai import types
 from app.config import settings
 from app.services import coach_tools
 from app.services import gemini_quota
+from app.services import plan_import
 from app.services.coach_workout_data import recent_workouts_teaser
 from app.services.algorithms import compute_z_score
 from app.services.llm_provider import get_llm_client
@@ -1458,7 +1459,7 @@ _PLAN_CHANGE_CLAIM_RE = re.compile(
 # A claim needs one of these to have actually run (a clear alone doesn't fill a calendar).
 _CALENDAR_CHANGE_TOOLS = frozenset({
     "schedule_workout", "schedule_workouts", "update_planned_workout", "delete_planned_workout",
-    "clear_training_plans",
+    "clear_training_plans", "import_plan",
 })
 _CALENDAR_NOW_MAX_DAYS = 62
 _CALENDAR_NOW_MAX_LINES = 90
@@ -1539,7 +1540,7 @@ def _calendar_now_note(db: Any, athlete_id: str, dates: list[str]) -> str | None
 
 _PLAN_WRITE_TOOLS = frozenset({
     "schedule_workout", "schedule_workouts", "update_planned_workout", "delete_planned_workout",
-    "log_workout", "update_workout",
+    "log_workout", "update_workout", "import_plan",
 })
 
 # The athlete asked for sessions to go (clear / delete / start over): clears run as asked.
@@ -1660,6 +1661,7 @@ def _claims_plan_change(text: str) -> bool:
 
 
 _MUTATING_TOOL_NAMES = frozenset({
+    "import_plan",
     "schedule_workout",
     "schedule_workouts",
     "log_workout",
@@ -1960,6 +1962,15 @@ def get_coach_response_agentic(
                 try:
                     if name == "clear_training_plans" and not explicit_clear:
                         result = _defer_clear(args, pending_clears)
+                    elif name == "import_plan":
+                        result = plan_import.run_import(
+                            args,
+                            athlete_id=athlete_id,
+                            db=db,
+                            history=history,
+                            current_message=message,
+                            load_images=lambda urls: _load_image_parts(db, urls),
+                        )
                     else:
                         if name in ("schedule_workout", "schedule_workouts") and pending_clears:
                             _apply_pending_clears(db, athlete_id, args, name, pending_clears)

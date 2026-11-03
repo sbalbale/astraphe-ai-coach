@@ -1287,8 +1287,9 @@ _schedule_many_item = types.Schema(
 _schedule_many_decl = types.FunctionDeclaration(
     name="schedule_workouts",
     description=(
-        "Schedule several planned sessions in one call, e.g. when importing a multi-week plan "
-        "from the athlete's photo or document. Use this instead of many schedule_workout calls "
+        "Schedule several planned sessions in one call (a few sessions or a short block you are "
+        "writing yourself; to put a plan the athlete shared into the calendar, use import_plan). "
+        "Use this instead of many schedule_workout calls "
         f"whenever there are more than 2 sessions. Up to {SCHEDULE_MANY_MAX} per call; call it "
         "again for the rest. Each item takes the same fields as schedule_workout. Leave rest "
         "days out (don't schedule a 'Rest' session); keep the plan's own session names as title."
@@ -1390,6 +1391,39 @@ _clear_training_plans_decl = types.FunctionDeclaration(
             "end_date": types.Schema(type=types.Type.STRING, description="ISO date YYYY-MM-DD (inclusive)"),
         },
         required=["start_date", "end_date"],
+    ),
+)
+
+_import_plan_decl = types.FunctionDeclaration(
+    name="import_plan",
+    description=(
+        "Put a training plan the athlete shared in this chat (Word, Excel, PDF or photo) into their "
+        "calendar, all at once: a dedicated reader turns the whole plan into sessions, checks them "
+        "and saves them, replacing planned (not done) sessions on the dates the plan covers. Use it "
+        "whenever the athlete asks to add / import / fill in / redo weeks from a plan they shared, "
+        "including follow-ups like 'now do December' or 'it's still wrong, redo it'. Call it right "
+        "away; don't ask for confirmation and don't use schedule_workouts for this. Up to 62 days "
+        "per call. The result says what was saved; describe only that."
+    ),
+    parameters=types.Schema(
+        type=types.Type.OBJECT,
+        properties={
+            "start_date": types.Schema(type=types.Type.STRING, description="First date to fill, YYYY-MM-DD."),
+            "end_date": types.Schema(type=types.Type.STRING, description="Last date to fill, YYYY-MM-DD."),
+            "rules": types.Schema(
+                type=types.Type.STRING,
+                description=(
+                    "Every instruction the athlete gave about how to read the plan, in their words, from "
+                    "the whole chat: e.g. 'Cat 1 / cross-train = 90 min cycling on the smart trainer; "
+                    "strength is Mon, Tue, Thu only; speed work is rowing'. Include corrections they made."
+                ),
+            ),
+            "document_name": types.Schema(
+                type=types.Type.STRING,
+                description="Optional: which attached document, when several were shared.",
+            ),
+        },
+        required=["start_date", "end_date", "rules"],
     ),
 )
 
@@ -1714,6 +1748,7 @@ TOOLS: list[types.Tool] = [
         _schedule_many_decl,
         _nutrition_decl, 
         _clear_training_plans_decl,
+        _import_plan_decl,
         _list_workouts_decl,
         _get_workout_summary_decl,
         _get_workout_streams_window_decl,
@@ -1784,6 +1819,12 @@ def tools_for_models(models: list[str]) -> list[types.Tool]:
 
 ToolHandler = Callable[[dict[str, Any], str, Client], dict[str, Any]]
 
+
+def _import_plan_without_conversation(args: dict[str, Any], athlete_id: str, db: Client) -> dict[str, Any]:
+    from app.services import plan_import  # plan_import imports this module
+
+    return plan_import.run_import(args, athlete_id=athlete_id, db=db, history=[], current_message="")
+
 TOOL_HANDLERS: dict[str, ToolHandler] = {
     "simulate_training_impact": lambda args, aid, db: handle_simulate_training_impact(args, athlete_id=aid, db=db),
     "schedule_workout": lambda args, aid, db: handle_schedule_workout(args, athlete_id=aid, db=db),
@@ -1791,6 +1832,9 @@ TOOL_HANDLERS: dict[str, ToolHandler] = {
     "calculate_nutrition": lambda args, aid, db: handle_calculate_nutrition(args, athlete_id=aid, db=db),
     "web_search": lambda args, aid, db: handle_web_search(args, athlete_id=aid, db=db),
     "clear_training_plans": lambda args, aid, db: handle_clear_training_plans(args, athlete_id=aid, db=db),
+    # The coach loop calls plan_import.run_import itself (it passes the conversation, where the
+    # plan document lives); this entry is for callers without one.
+    "import_plan": lambda args, aid, db: _import_plan_without_conversation(args, aid, db),
     "list_workouts": lambda args, aid, db: handle_list_workouts(args, athlete_id=aid, db=db),
     "get_workout_summary": lambda args, aid, db: handle_get_workout_summary(args, athlete_id=aid, db=db),
     "get_workout_streams_window": lambda args, aid, db: handle_get_workout_streams_window(args, athlete_id=aid, db=db),
