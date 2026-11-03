@@ -107,13 +107,6 @@
     }
   }
 
-  function closeIntervalsModal() {
-    if (syncing === 'intervals_icu') return;
-    showIntervalsModal = false;
-    intervalsError = '';
-    intervalsApiKey = '';
-  }
-
   function closeGarminModal() {
     if (syncing === 'garmin') return;
     showGarminModal = false;

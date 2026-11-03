@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { addDays, format, startOfWeek, subDays } from 'date-fns';
+  import { addDays, differenceInCalendarDays, format, startOfWeek, subDays } from 'date-fns';
   import { api } from '$lib/api';
   import type { Workout } from '$lib/types/training';
   import EmptyState from '$lib/components/EmptyState.svelte';
@@ -49,7 +49,9 @@
       tss: 0,
       planned: 0
     }));
-    const indexOf = (d: Date) => Math.floor((d.getTime() - buckets[0].start.getTime()) / (7 * 24 * 3600 * 1000));
+    // Calendar-day difference, not milliseconds: a week containing a DST change
+    // is an hour short, which moved every later Monday into the previous week.
+    const indexOf = (d: Date) => Math.floor(differenceInCalendarDays(d, buckets[0].start) / 7);
     for (const r of rows) {
       const idx = indexOf(new Date(r.date + "T00:00:00"));
       if (idx >= 0 && idx < 12) buckets[idx].tss += Number(r.daily_tss) || 0;

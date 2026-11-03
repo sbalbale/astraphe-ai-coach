@@ -1,5 +1,6 @@
 <script lang="ts">
   import { fade, slide } from 'svelte/transition';
+  import { modalDialog } from '$lib/actions/modalDialog';
   
   interface Props {
     show: boolean;
@@ -10,25 +11,8 @@
 
   let { show, title, onClose, children }: Props = $props();
 
-  function handleKeydown(event: KeyboardEvent) {
-    if (event.key === 'Escape' && show) {
-      onClose();
-    }
-  }
-
-  $effect(() => {
-    if (show) {
-      document.body.classList.add('modal-open');
-    } else {
-      document.body.classList.remove('modal-open');
-    }
-    return () => {
-      document.body.classList.remove('modal-open');
-    };
-  });
+  const titleId = `modal-title-${Math.random().toString(36).slice(2, 9)}`;
 </script>
-
-<svelte:window onkeydown={handleKeydown} />
 
 {#if show}
   <div 
@@ -44,13 +28,17 @@
     ></button>
 
     <!-- Modal Content -->
-    <div 
-      class="relative w-full max-w-lg bg-bg1 border-t sm:border border-border rounded-t-3xl sm:rounded-3xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col"
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={titleId}
+      use:modalDialog={{ onEscape: onClose }}
+      class="relative w-full max-w-lg outline-none bg-bg1 border-t sm:border border-border rounded-t-3xl sm:rounded-3xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col"
       transition:slide={{ axis: 'y', duration: 300 }}
     >
       <!-- Header -->
       <div class="px-6 py-4 flex items-center justify-between border-b border-border shrink-0">
-        <h2 class="text-[17px] font-bold tracking-tight">{title || 'Details'}</h2>
+        <h2 id={titleId} class="text-[17px] font-bold tracking-tight">{title || 'Details'}</h2>
         <button 
           type="button" 
           class="w-8 h-8 rounded-full bg-glass flex items-center justify-center text-text2 hover:text-text0 transition-colors"
@@ -68,10 +56,3 @@
     </div>
   </div>
 {/if}
-
-<style>
-  /* Prevent scrolling when modal is open */
-  :global(body.modal-open) {
-    overflow: hidden;
-  }
-</style>

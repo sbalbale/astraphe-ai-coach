@@ -25,6 +25,7 @@
     renderCoachMarkdownToSafeHtml
   } from '$lib/coachMarkdown';
   import type { Workout } from '$lib/types/training';
+  import { modalDialog } from '$lib/actions/modalDialog';
 
   type AgendaView = 'day' | 'week';
 
@@ -762,7 +763,8 @@
   <div class="fixed inset-0 z-50 flex flex-col justify-end" role="dialog" aria-modal="true" aria-labelledby="sess-title">
     <button type="button" class="absolute inset-0 bg-black/60" aria-label="Close" onclick={closeWorkout}></button>
     <div
-      class="relative overflow-y-auto bg-bg1 border-t border-border px-5 pt-2.5 flex flex-col gap-4 transition-[max-height,border-radius] duration-300 ease-out {sheetExpanded ? 'rounded-none' : 'rounded-t-[28px]'}"
+      use:modalDialog={{ onEscape: closeWorkout }}
+      class="relative overflow-y-auto outline-none bg-bg1 border-t border-border px-5 pt-2.5 flex flex-col gap-4 transition-[max-height,border-radius] duration-300 ease-out {sheetExpanded ? 'rounded-none' : 'rounded-t-[28px]'}"
       style="max-height: {sheetExpanded ? '100dvh' : '88dvh'}; height: {sheetExpanded ? '100dvh' : 'auto'}; padding-bottom: max(28px, env(safe-area-inset-bottom, 0px)); padding-top: {sheetExpanded ? 'max(10px, env(safe-area-inset-top, 0px))' : '10px'};"
       onscroll={(e) => { if (!sheetExpanded && (e.currentTarget as HTMLElement).scrollTop > 8) sheetExpanded = true; }}
     >

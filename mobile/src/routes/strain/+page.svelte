@@ -7,11 +7,9 @@
 <script lang="ts">
   import { localDay } from '$lib/utils/localDay';
   import Card from '$lib/components/Card.svelte';
-  import MetricBadge from '$lib/components/MetricBadge.svelte';
   import RadialProgress from '$lib/components/RadialProgress.svelte';
   import Tag from '$lib/components/Tag.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
-  import Pill from '$lib/components/Pill.svelte';
   import DatePicker from '$lib/components/DatePicker.svelte';
   import Modal from '$lib/components/Modal.svelte';
   import { pageHeader, resetPageHeader } from '$lib/stores/pageHeader.svelte';
@@ -26,6 +24,7 @@
   import { CHART_ATL_STROKE, CHART_CTL_STROKE, formCssColor } from '$lib/scoreColors';
   import { canonicalHrZoneShortName, formatHrZoneTitle } from '$lib/hrZoneDisplay';
   import { normalizeUnits, workoutDistanceParts } from '$lib/utils/units';
+  import { workoutDurationSecs } from '$lib/utils/workoutDuration';
 
   const CTL_IDENTITY_HEX = CHART_CTL_STROKE;
   const ATL_IDENTITY_HEX = CHART_ATL_STROKE;
@@ -213,9 +212,7 @@
   }
 
   function getDurationSecs(w: any): number {
-    const direct = w?.duration_secs ?? w?.duration_seconds;
-    if (Number.isFinite(direct)) return Math.max(0, Math.floor(Number(direct)));
-    return 0;
+    return workoutDurationSecs(w) ?? 0;
   }
 
   type ZoneBreakdown = {

@@ -51,10 +51,7 @@
 
 <script lang="ts">
   import Card from '$lib/components/Card.svelte';
-  import MetricBadge from '$lib/components/MetricBadge.svelte';
   import Tag from '$lib/components/Tag.svelte';
-  import MultiLineChart from '$lib/components/charts/MultiLineChart.svelte';
-  import TrendBars from '$lib/components/charts/TrendBars.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import CalibrationBadge from '$lib/components/CalibrationBadge.svelte';
   import { onMount } from 'svelte';
@@ -82,12 +79,25 @@
 
   onMount(() => {
     athleteStore.fetchAll();
-    greetingNow = new Date();
-    const greetingTimer = window.setInterval(() => {
-      greetingNow = new Date();
-    }, 60_000);
+    // Keep "today" current: the app can sit open (or backgrounded) across
+    // midnight, and the summary, key session and load all key off today's date.
+    const refreshClock = () => {
+      const now = new Date();
+      const dayChanged = format(now, 'yyyy-MM-dd') !== format(greetingNow, 'yyyy-MM-dd');
+      greetingNow = now;
+      if (dayChanged) athleteStore.fetchAll(true);
+    };
+    refreshClock();
+    const greetingTimer = window.setInterval(refreshClock, 60_000);
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') refreshClock();
+    };
+    document.addEventListener('visibilitychange', onVisible);
 
-    return () => window.clearInterval(greetingTimer);
+    return () => {
+      window.clearInterval(greetingTimer);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   });
 
   const isCalibrating = $derived(
@@ -107,9 +117,18 @@
   let plannedWorkouts = $state<Workout[]>([]);
   const todayIso = $derived(format(greetingNow, 'yyyy-MM-dd'));
 
-  onMount(async () => {
-    const iso = format(new Date(), 'yyyy-MM-dd');
-    plannedWorkouts = await api.getWorkouts(iso, iso);
+  $effect(() => {
+    const iso = todayIso; // re-fetch when the day rolls over
+    let cancelled = false;
+    api.getWorkouts(iso, iso).then(
+      (rows) => {
+        if (!cancelled) plannedWorkouts = rows;
+      },
+      (e) => console.warn('[Dashboard] planned workouts failed:', e)
+    );
+    return () => {
+      cancelled = true;
+    };
   });
 
   const keySession = $derived(plannedWorkouts.find((w) => w.date === todayIso) ?? null);
@@ -148,7 +167,7 @@
   // don't flash this while the sync status is still loading.
   const showConnectPrompt = $derived(athleteStore.syncStatus != null && !isConnected && !hasData);
 
-  const todayStr = $derived(format(new Date(), 'yyyy-MM-dd'));
+  const todayStr = $derived(todayIso);
   const isoDate = (v: unknown) => (typeof v === 'string' ? v.slice(0, 10) : '');
 
   const todayLoad = $derived(athleteStore.metrics?.trainingLoadData?.find((m: any) => isoDate(m?.date) === todayStr));

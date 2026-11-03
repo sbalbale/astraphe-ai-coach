@@ -11,6 +11,7 @@
   import { normalizeLeadingTimeOfDayGreeting } from '$lib/utils/greeting';
   import { pageHeader, resetPageHeader } from '$lib/stores/pageHeader.svelte';
   import { buildCoachSteps, coachStatusText, type CoachStep } from '$lib/coachProgress';
+  import { COACH_REPLY_WAIT_MS, remainingReplyWaitMs } from '$lib/utils/coachReply';
 
   type Conversation = { id: string; title?: string | null; created_at?: string; updated_at?: string };
   type Message = {
@@ -97,11 +98,15 @@
       // last turn is still the athlete's own message means an async reply
       // (see send()) is still being generated server-side — resume waiting
       // for it instead of leaving the screen looking like nothing happened.
-      if (messages[messages.length - 1].role === 'user') {
+      // Only while a reply can still be coming: an old unanswered message (the
+      // reply failed) must not lock the input for another 3 minutes.
+      const last = messages[messages.length - 1];
+      const waitMs = last.role === 'user' ? remainingReplyWaitMs(last.created_at) : 0;
+      if (waitMs > 0) {
         const aiMsgId = `local-ai-${Date.now()}`;
         messages.push({ id: aiMsgId, role: 'ai', text: '', streaming: true });
         loading = true; // keep send/attach disabled until the resumed poll resolves
-        pollForCoachReply(cid, aiMsgId, rows.length);
+        pollForCoachReply(cid, aiMsgId, rows.length, waitMs);
       }
     }
     await scrollToBottom();
@@ -129,10 +134,15 @@
    * timeout) clears it, gated the same way as the UI update right above it
    * so a stale/superseded poll never touches the wrong conversation's state.
    */
-  function pollForCoachReply(cid: string, aiMsgId: string, knownMessageCount: number) {
+  function pollForCoachReply(
+    cid: string,
+    aiMsgId: string,
+    knownMessageCount: number,
+    waitMs: number = COACH_REPLY_WAIT_MS
+  ) {
     const token = ++activePollToken;
     const POLL_INTERVAL_MS = 1200;
-    const MAX_ATTEMPTS = 150; // ~3 minutes
+    const MAX_ATTEMPTS = Math.max(1, Math.ceil(waitMs / POLL_INTERVAL_MS)); // ~3 minutes for a new send
     let attempt = 0;
 
     const tickPoll = async () => {

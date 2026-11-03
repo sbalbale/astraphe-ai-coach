@@ -5,35 +5,23 @@
 </script>
 
 <script lang="ts">
-  import Card from '$lib/components/Card.svelte';
-  import MetricBadge from '$lib/components/MetricBadge.svelte';
-  import Tag from '$lib/components/Tag.svelte';
-  import Pill from '$lib/components/Pill.svelte';
-  import RadialProgress from '$lib/components/RadialProgress.svelte';
-  import MultiLineChart from '$lib/components/charts/MultiLineChart.svelte';
-  import LineChart from '$lib/components/charts/LineChart.svelte';
-  import DonutChart from '$lib/components/charts/DonutChart.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import { confirm } from '$lib/confirm';
   import WeekNavigator from '$lib/components/WeekNavigator.svelte';
   import { pageHeader, resetPageHeader } from '$lib/stores/pageHeader.svelte';
-  import DatePicker from '$lib/components/DatePicker.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { authStore } from '$lib/stores/authStore.svelte';
   import { api } from '$lib/api';
   import { goto } from '$app/navigation';
   import { resolve } from '$app/paths';
   import { page } from '$app/stores';
-  import { addDays, endOfWeek, format, startOfWeek } from 'date-fns';
-  import { boundedScoreCssColor } from '$lib/colorSystem';
+  import { endOfWeek, format, startOfWeek } from 'date-fns';
   import {
     mergeWorkoutZoneDefs,
     HR_ZONE_HEX,
     formatZoneBpmRange,
     canonicalHrZoneShortName,
   } from '$lib/hrZoneDisplay';
-  import { CHART_ATL_STROKE, CHART_CTL_STROKE, formCssColor, getWeeklyLoadDeltaColor } from '$lib/scoreColors';
-  import { Lightbulb } from '@lucide/svelte';
   import {
     getActivityDetail,
     hydrateActivityStreams,
@@ -55,14 +43,10 @@
   import { supportsPaceChart } from '$lib/utils/paceChart';
   import { intervalsToSplits, lapsToSplits } from '$lib/utils/lapSplits';
   import StreamCharts from '$lib/components/workout/StreamCharts.svelte';
-  import IntervalsTable from '$lib/components/workout/IntervalsTable.svelte';
   import GpsTrace from '$lib/components/workout/GpsTrace.svelte';
   import LapStrip from '$lib/components/workout/LapStrip.svelte';
   import DataSources from '$lib/components/workout/DataSources.svelte';
   import AddActivityModal from '$lib/components/AddActivityModal.svelte';
-
-  const CTL_IDENTITY_HEX = CHART_CTL_STROKE;
-  const ATL_IDENTITY_HEX = CHART_ATL_STROKE;
 
   let addActivityOpen = $state(false);
   let editActivityOpen = $state(false);
@@ -208,12 +192,6 @@
     return { splits: [], source: 'laps' };
   });
 
-  /** Lap bar charts only when streams lack per-second HR or pace/speed. */
-  const hasPerSecondStreamCharts = $derived(
-    Boolean(detailStreams) &&
-      (streamsHaveHeartrate(detailStreams) || streamsHaveVelocity(detailStreams))
-  );
-
 
   const showSplitsTable = $derived(detailSplits.splits.length >= 2);
 
@@ -289,10 +267,6 @@
 
   const selectedWeekStart = $derived.by(() => startOfWeek(parseDateInputLocal(weekPickerValue), { weekStartsOn: 1 }));
   const selectedWeekEnd = $derived(endOfWeek(selectedWeekStart, { weekStartsOn: 1 }));
-  const selectedWeekEndStr = $derived(format(selectedWeekEnd, 'yyyy-MM-dd'));
-  function jumpToCurrentWeek() {
-    weekPickerValue = format(new Date(), 'yyyy-MM-dd');
-  }
 
   const workoutIdFromUrl = $derived($page.url.searchParams.get('workout_id'));
 
@@ -322,43 +296,12 @@
     });
   });
 
-  function getWorkoutIcon(type: string) {
-    const t = type?.toLowerCase();
-    if (t === 'run' || t === 'running') return '🏃';
-    if (t === 'bike' || t === 'cycling') return '🚴';
-    if (t === 'row' || t === 'rowing') return '🚣';
-    if (t === 'swim' || t === 'swimming') return '🏊';
-    if (t === 'strength' || t === 'strength_training' || t === 'gym') return '💪';
-    if (t === 'mobility') return '🧘';
-    return '⭐';
-  }
-
   function getWorkoutLabel(type: string) {
     const t = type?.toLowerCase();
     if (t === 'strength_training' || t === 'strength' || t === 'gym') return 'Strength';
     if (t === 'mobility') return 'Mobility';
     if (t === 'other') return 'Other';
     return t ? t.charAt(0).toUpperCase() + t.slice(1) : 'Workout';
-  }
-
-  function getWorkoutColor(type: string) {
-    const t = type?.toLowerCase();
-    if (t === 'run' || t === 'running') return 'var(--blue)';
-    if (t === 'bike' || t === 'cycling') return 'var(--teal)';
-    if (t === 'row' || t === 'rowing') return 'var(--amber)';
-    if (t === 'mobility') return '#a855f7'; // sport-type color, no design token
-    if (t === 'other') return 'var(--amber)';
-    return 'var(--text2)';
-  }
-
-  function getWorkoutBg(type: string) {
-    const t = type?.toLowerCase();
-    if (t === 'run' || t === 'running') return 'bg-blue-dim border-blue-glow';
-    if (t === 'bike' || t === 'cycling') return 'bg-teal-dim border-teal/30';
-    if (t === 'row' || t === 'rowing') return 'bg-amber-dim border-amber/30';
-    if (t === 'mobility') return 'bg-glass border-[rgba(168,85,247,0.35)]';
-    if (t === 'other') return 'bg-glass border-[rgba(234,179,8,0.35)]';
-    return 'bg-glass border-border';
   }
 
   /** TSS from workouts started in the last 7 days — source of truth for the Weekly TSS card. */

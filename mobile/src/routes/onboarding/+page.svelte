@@ -221,10 +221,11 @@
           </div>
 
           <div>
-            <label for="units" class="block text-[11px] text-text2 mb-1">Measurement Units</label>
-            <div class="flex p-1 bg-glass2 rounded-lg border border-border">
+            <span id="units-label" class="block text-[11px] text-text2 mb-1">Measurement Units</span>
+            <div role="group" aria-labelledby="units-label" class="flex p-1 bg-glass2 rounded-lg border border-border">
               <button
                 type="button"
+                aria-pressed={units === 'metric'}
                 class="flex-1 py-1.5 text-xs rounded-md transition-colors {units === 'metric' ? 'bg-blue text-text0' : 'text-text2 hover:text-text0'}"
                 onclick={() => setUnits('metric')}
               >
@@ -232,6 +233,7 @@
               </button>
               <button
                 type="button"
+                aria-pressed={units === 'imperial'}
                 class="flex-1 py-1.5 text-xs rounded-md transition-colors {units === 'imperial' ? 'bg-blue text-text0' : 'text-text2 hover:text-text0'}"
                 onclick={() => setUnits('imperial')}
               >
@@ -241,10 +243,11 @@
           </div>
 
           <div>
-            <label for="timeformat" class="block text-[11px] text-text2 mb-1">Time Format</label>
-            <div class="flex p-1 bg-glass2 rounded-lg border border-border">
+            <span id="timeformat-label" class="block text-[11px] text-text2 mb-1">Time Format</span>
+            <div role="group" aria-labelledby="timeformat-label" class="flex p-1 bg-glass2 rounded-lg border border-border">
               <button
                 type="button"
+                aria-pressed={timeFormat === '12h'}
                 class="flex-1 py-1.5 text-xs rounded-md transition-colors {timeFormat === '12h' ? 'bg-blue text-text0' : 'text-text2 hover:text-text0'}"
                 onclick={() => (timeFormat = '12h')}
               >
@@ -252,6 +255,7 @@
               </button>
               <button
                 type="button"
+                aria-pressed={timeFormat === '24h'}
                 class="flex-1 py-1.5 text-xs rounded-md transition-colors {timeFormat === '24h' ? 'bg-blue text-text0' : 'text-text2 hover:text-text0'}"
                 onclick={() => (timeFormat = '24h')}
               >

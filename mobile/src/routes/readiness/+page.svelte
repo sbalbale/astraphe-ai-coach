@@ -47,7 +47,11 @@
   }
   const scoreDate = $derived(row?.date ?? todayIso);
   // The store's current form only stands in for *today's* score, never an older day's.
-  const tsb = $derived(formFor(scoreDate) ?? (scoreDate === todayIso ? Number(athleteStore.tsb) : NaN));
+  // Before the store has loaded, its tsb is a placeholder 0, not a real form value.
+  const tsb = $derived(
+    formFor(scoreDate) ??
+      (scoreDate === todayIso && athleteStore.initialLoadDone ? Number(athleteStore.tsb) : NaN)
+  );
   const breakdown = $derived(readinessBreakdown(recovery, tsb));
   const band = $derived<ReadinessBand>(readinessBand(score ?? breakdown.total));
 
@@ -186,7 +190,7 @@
         {/if}
         <div class="grid grid-cols-[10px_1fr_auto] gap-2.5 items-center py-2.5 border-t border-border">
           <span aria-hidden="true" class="w-2.5 h-2.5 rounded-[3px] bg-text2"></span>
-          <span class="flex flex-col gap-0.5"><span class="text-sm font-medium">Form · {Number.isFinite(tsb) ? `${tsb > 0 ? '+' : ''}${tsb.toFixed(1)}` : '--'} → {Math.round(breakdown.formScore)}</span><span class="text-xs text-text2">Fitness minus fatigue, scaled 0–100{breakdown.recovery != null ? ` · weighted ${FORM_WEIGHT * 100}%` : ''}</span></span>
+          <span class="flex flex-col gap-0.5"><span class="text-sm font-medium">Form · {Number.isFinite(tsb) ? `${tsb > 0 ? '+' : ''}${tsb.toFixed(1)}` : '--'} → {Number.isFinite(tsb) ? Math.round(breakdown.formScore) : '--'}</span><span class="text-xs text-text2">Fitness minus fatigue, scaled 0–100{breakdown.recovery != null ? ` · weighted ${FORM_WEIGHT * 100}%` : ''}</span></span>
           <span class="font-mono text-sm">{breakdown.formPart.toFixed(1)}</span>
         </div>
         <div class="flex justify-between pt-2.5 border-t border-border text-[13px]">

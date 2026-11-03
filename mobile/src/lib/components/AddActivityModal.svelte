@@ -48,8 +48,8 @@
     sport: string;
     date: string;
     startTime: string;
-    durationHrs: number;
-    durationMins: number;
+    durationHrs: NumericInputValue;
+    durationMins: NumericInputValue;
     title: string;
     distanceRaw: NumericInputValue;
     avgHr: NumericInputValue;
@@ -76,16 +76,16 @@
     return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
   }
 
-  function getWorkoutDurationSecs(w: any): number {
+  function getWorkoutDurationSecs(w: any): number | null {
     const direct = w?.duration_seconds ?? w?.duration_secs;
     if (Number.isFinite(Number(direct)) && Number(direct) > 0) return Math.floor(Number(direct));
 
     const start = w?.started_at ? new Date(w.started_at) : null;
     const end = w?.ended_at ? new Date(w.ended_at) : null;
-    if (!start || !end) return 30 * 60;
+    if (!start || !end) return null;
 
     const seconds = Math.floor((end.getTime() - start.getTime()) / 1000);
-    return Number.isFinite(seconds) && seconds > 0 ? seconds : 30 * 60;
+    return Number.isFinite(seconds) && seconds > 0 ? seconds : null;
   }
 
   function formatOptionalNumber(value: unknown) {
@@ -181,8 +181,8 @@
       sport: 'run',
       date: todayStr(),
       startTime: currentTimeStr(),
-      durationHrs: 0,
-      durationMins: 30,
+      durationHrs: '',
+      durationMins: '',
       title: '',
       distanceRaw: '',
       avgHr: '',
@@ -195,14 +195,16 @@
   function workoutFormValues(w: any): ActivityFormValues {
     const started = w?.started_at ? new Date(w.started_at) : new Date();
     const startedAt = Number.isNaN(started.getTime()) ? new Date() : started;
-    const durationMinutes = Math.max(1, Math.round(getWorkoutDurationSecs(w) / 60));
+    // Unknown duration stays blank (the user must enter one) rather than a made-up 30 min.
+    const durationSecs = getWorkoutDurationSecs(w);
+    const durationMinutes = durationSecs == null ? null : Math.max(1, Math.round(durationSecs / 60));
 
     return {
       sport: w?.sport || 'run',
       date: formatDateInput(startedAt),
       startTime: formatTimeInput(startedAt),
-      durationHrs: Math.floor(durationMinutes / 60),
-      durationMins: durationMinutes % 60,
+      durationHrs: durationMinutes == null ? '' : Math.floor(durationMinutes / 60),
+      durationMins: durationMinutes == null ? '' : durationMinutes % 60,
       title: w?.title ?? '',
       distanceRaw: formatDistanceInput(w?.distance_m, w?.sport),
       avgHr: formatOptionalNumber(w?.avg_hr),
@@ -224,7 +226,9 @@
   const isEditMode = $derived(mode === 'edit');
   const modalTitle = $derived(isEditMode ? 'Edit Activity' : 'Log Activity');
   const submitText = $derived(isEditMode ? 'Save Changes' : 'Log Activity');
-  const totalDurationSecs = $derived((form.durationHrs || 0) * 3600 + (form.durationMins || 0) * 60);
+  const totalDurationSecs = $derived(
+    (Number(form.durationHrs) || 0) * 3600 + (Number(form.durationMins) || 0) * 60
+  );
   const distanceUnit = $derived(effectiveDistanceUnit(form.sport));
   const distanceLabel = $derived(distanceUnit);
   const distanceStep = $derived(distanceUnit === 'm' || distanceUnit === 'yd' ? 1 : 0.01);
@@ -308,8 +312,11 @@
   }
 
   function validateDuration() {
-    const hrs = Number(form.durationHrs);
-    const mins = Number(form.durationMins);
+    if (isBlankOptionalNumber(form.durationHrs) && isBlankOptionalNumber(form.durationMins)) {
+      return 'Enter a duration.';
+    }
+    const hrs = isBlankOptionalNumber(form.durationHrs) ? 0 : Number(form.durationHrs);
+    const mins = isBlankOptionalNumber(form.durationMins) ? 0 : Number(form.durationMins);
     const isValid =
       Number.isInteger(hrs) &&
       Number.isInteger(mins) &&
@@ -494,6 +501,8 @@
             type="number"
             min="0"
             max="23"
+            placeholder="0"
+            aria-label="Duration hours"
             bind:value={form.durationHrs}
             class="w-full p-2.5 pr-8 bg-glass2 border border-border rounded-lg text-sm text-text0 font-mono outline-none focus:border-blue"
           />
@@ -505,6 +514,8 @@
             type="number"
             min="0"
             max="59"
+            placeholder="0"
+            aria-label="Duration minutes"
             bind:value={form.durationMins}
             class="w-full p-2.5 pr-8 bg-glass2 border border-border rounded-lg text-sm text-text0 font-mono outline-none focus:border-blue"
           />
