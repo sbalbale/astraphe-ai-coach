@@ -1456,6 +1456,87 @@ _PLAN_CHANGE_CLAIM_RE = re.compile(
 )
 
 # A claim needs one of these to have actually run (a clear alone doesn't fill a calendar).
+_CALENDAR_CHANGE_TOOLS = frozenset({
+    "schedule_workout", "schedule_workouts", "update_planned_workout", "delete_planned_workout",
+    "clear_training_plans",
+})
+_CALENDAR_NOW_MAX_DAYS = 62
+_CALENDAR_NOW_MAX_LINES = 90
+
+
+def _dates_touched(args: dict[str, Any], result: Any) -> list[str]:
+    out: list[str] = []
+    for k in ("date", "start_date", "end_date", "planned_date", "new_date"):
+        v = args.get(k)
+        if isinstance(v, str) and len(v) >= 10:
+            out.append(v[:10])
+    for w in args.get("workouts") or []:
+        if isinstance(w, dict) and isinstance(w.get("date"), str):
+            out.append(w["date"][:10])
+    if isinstance(result, dict):
+        for k in ("planned_date", "start_date", "end_date"):
+            v = result.get(k)
+            if isinstance(v, str) and len(v) >= 10:
+                out.append(v[:10])
+    return out
+
+
+def _calendar_now_note(db: Any, athlete_id: str, dates: list[str]) -> str | None:
+    """What is actually saved for the days just changed: by weekday, then by date. The model
+    describes the plan from this instead of from its own idea of what it scheduled (prod:
+    'strength on Mon/Wed/Thu' when Wednesday never had one)."""
+    try:
+        ds = sorted({date.fromisoformat(d) for d in dates})
+    except ValueError:
+        return None
+    if not ds:
+        return None
+    start = ds[0]
+    end = min(ds[-1], start + timedelta(days=_CALENDAR_NOW_MAX_DAYS - 1))
+    try:
+        rows = (
+            db.table("training_plans")
+            .select("planned_date,title,sport,duration_min,status")
+            .eq("athlete_id", athlete_id)
+            .gte("planned_date", start.isoformat())
+            .lte("planned_date", end.isoformat())
+            .order("planned_date")
+            .execute()
+        ).data or []
+    except Exception:
+        return None
+    if not isinstance(rows, list):
+        return None
+    by_weekday: dict[str, dict[str, int]] = {}
+    lines: list[str] = []
+    for r in rows:
+        try:
+            d = date.fromisoformat(str(r.get("planned_date"))[:10])
+        except ValueError:
+            continue
+        title = str(r.get("title") or "Session")
+        wd = d.strftime("%A")
+        by_weekday.setdefault(wd, {})
+        by_weekday[wd][title] = by_weekday[wd].get(title, 0) + 1
+        if len(lines) < _CALENDAR_NOW_MAX_LINES:
+            lines.append(f"{d:%a} {d.isoformat()}: {title} ({r.get('sport')}, {r.get('duration_min')} min)")
+    order = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+    pattern = [
+        f"{wd}: " + "; ".join(f"{t} x{n}" for t, n in sorted(by_weekday[wd].items(), key=lambda x: -x[1]))
+        if wd in by_weekday
+        else f"{wd}: nothing"
+        for wd in order
+    ]
+    more = f"\n… {len(rows) - len(lines)} more" if len(rows) > len(lines) else ""
+    return (
+        f"[CALENDAR NOW: what is actually saved for {start.isoformat()} to {end.isoformat()} after your changes "
+        f"({len(rows)} sessions). When you tell the athlete what the plan looks like, describe only this; "
+        "never mention a session or weekday that isn't listed. If it doesn't match what they asked for, fix it "
+        "with tools before replying.]\n"
+        "By weekday:\n" + "\n".join(pattern) + "\n\nBy date:\n" + "\n".join(lines) + more
+    )
+
+
 _PLAN_WRITE_TOOLS = frozenset({
     "schedule_workout", "schedule_workouts", "update_planned_workout", "delete_planned_workout",
     "log_workout", "update_workout",
@@ -1497,22 +1578,81 @@ def _defer_clear(args: dict[str, Any], pending: list[tuple[str, str]]) -> dict[s
     }
 
 
+def _plan_sport(raw: Any) -> str:
+    s = str(raw or "other").strip().lower()
+    return {
+        "cycling": "bike", "ride": "bike", "biking": "bike", "running": "run", "rowing": "row", "erg": "row",
+        "gym": "strength", "weights": "strength", "lifting": "strength", "yoga": "mobility", "swimming": "swim",
+    }.get(s, s)
+
+
 def _apply_pending_clears(db: Any, athlete_id: str, args: dict[str, Any], name: str, pending: list[tuple[str, str]]) -> int:
-    """Delete not-done sessions on the days about to get new ones, within a deferred clear range."""
+    """Like-for-like replacement within a deferred clear range: on each day about to get a new
+    session, delete only the not-done sessions of the same sport. Rescheduling Tuesday's
+    strength replaces the old strength session but leaves Tuesday's rowing alone."""
     items = args.get("workouts") if name == "schedule_workouts" else [args]
-    days = sorted({str(i.get("date") or "")[:10] for i in (items or []) if isinstance(i, dict)})
-    targets = [d for d in days if any(s <= d <= e for s, e in pending)]
-    if not targets:
+    wanted: dict[str, set[str]] = {}
+    for i in items or []:
+        if not isinstance(i, dict):
+            continue
+        d = str(i.get("date") or "")[:10]
+        if d and any(s <= d <= e for s, e in pending):
+            wanted.setdefault(d, set()).add(_plan_sport(i.get("sport")))
+    if not wanted:
         return 0
-    res = (
+    existing = (
         db.table("training_plans")
-        .delete()
+        .select("id,planned_date,sport")
         .eq("athlete_id", athlete_id)
         .in_("status", ["planned", "modified"])
-        .in_("planned_date", targets)
+        .in_("planned_date", sorted(wanted))
         .execute()
-    )
+    ).data or []
+    if not isinstance(existing, list):
+        return 0
+    ids = [
+        r["id"]
+        for r in existing
+        if isinstance(r, dict) and _plan_sport(r.get("sport")) in wanted.get(str(r.get("planned_date"))[:10], set())
+    ]
+    if not ids:
+        return 0
+    res = db.table("training_plans").delete().eq("athlete_id", athlete_id).in_("id", ids).execute()
     return len(res.data or [])
+
+
+_PLAN_TALK_RE = re.compile(
+    r"\b(plan|calendar|schedul\w*|session|workout|week|weeks|month|months|today|tomorrow|monday|tuesday|"
+    r"wednesday|thursday|friday|saturday|sunday|missing|fix|move|swap|add|remove|delete|clear|replace|"
+    r"strength|tank|cat ?[12]|cross.?train|speed|erg|ride|run|swim)\b",
+    re.IGNORECASE,
+)
+
+
+def _calendar_before_note(db: Any, athlete_id: str, calendar: dict[str, Any], message: str) -> str | None:
+    """What is already on the calendar, from the start of this week through four weeks out, so
+    the model edits what is there instead of guessing (prod: 'fix this week' rebuilt it blind)."""
+    if not _PLAN_TALK_RE.search(message or ""):
+        return None
+    try:
+        today = date.fromisoformat(str(calendar.get("current_local_date"))[:10])
+    except ValueError:
+        return None
+    week_start = today - timedelta(days=(today.weekday() + 1) % 7)  # Sunday
+    note = _calendar_now_note(db, athlete_id, [week_start.isoformat(), (week_start + timedelta(days=34)).isoformat()])
+    if not note:
+        return None
+    return note.replace(
+        "[CALENDAR NOW: what is actually saved for",
+        "[CALENDAR BEFORE THIS MESSAGE: what is already saved for",
+    ).replace(
+        "after your changes", "before you change anything"
+    ).replace(
+        "When you tell the athlete what the plan looks like, describe only this; never mention a session or "
+        "weekday that isn't listed. If it doesn't match what they asked for, fix it with tools before replying.",
+        "Read this before changing anything: keep what is already right, change only what the athlete asked "
+        "for, and never re-create sessions that are already here. Use list_planned_workouts for other dates.",
+    )
 
 
 def _claims_plan_change(text: str) -> bool:
@@ -1618,6 +1758,9 @@ def get_coach_response_agentic(
     last_user = next((r for r in reversed(history) if r.get("role") == "user"), None)
     history_has_images = bool(last_user and last_user.get("image_urls"))
     # Always append the current user message (history alone is not sufficient).
+    before = _calendar_before_note(db, athlete_id, calendar, message) if (tools_enabled and db is not None) else None
+    if before:
+        contents.append(types.Content(role="user", parts=[types.Part.from_text(text=before)]))
     contents.append(types.Content(role="user", parts=[types.Part.from_text(text=_calendar_preface(message, calendar))]))
     # If there was no history, `contents` is now a 1-item list with the current message.
 
@@ -1650,6 +1793,20 @@ def get_coach_response_agentic(
         )
     else:
         config = types.GenerateContentConfig(system_instruction=system_for_models, temperature=0.4)
+    # After a "you said you changed the calendar but didn't" nudge, the next call must call a
+    # function (mode ANY) instead of answering in text again. Function tools only: ANY can't
+    # be combined with server-side search.
+    forced_config = None
+    if tools_enabled:
+        fn_tools = [t for t in (config.tools or []) if getattr(t, "function_declarations", None)]
+        forced_config = types.GenerateContentConfig(
+            system_instruction=system_for_models,
+            tools=fn_tools,
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+            tool_config=types.ToolConfig(function_calling_config=types.FunctionCallingConfig(mode="ANY")),
+            temperature=0.4,
+        )
+    force_tools_next = False
     if is_thinking_model:
         config.thinking_config = types.ThinkingConfig(include_thoughts=False)
 
@@ -1688,7 +1845,7 @@ def get_coach_response_agentic(
                     last_response = _client.models.generate_content(
                         model=effective_model,
                         contents=contents,
-                        config=config,
+                        config=forced_config if (force_tools_next and forced_config is not None) else config,
                     )
                     _hop_error = None
                     break
@@ -1732,6 +1889,7 @@ def get_coach_response_agentic(
             # Otherwise don't keep iterating candidates.
             break
 
+        force_tools_next = False
         logger.info(
             "[perf] coach_hop hop=%s duration_ms=%s",
             _hop,
@@ -1788,6 +1946,7 @@ def get_coach_response_agentic(
             contents.append(types.Content(role="model", parts=fc_parts))
 
             fr_parts: list[types.Part] = []
+            hop_dates: list[str] = []
             for fc in fcs:
                 if fc is None or not fc.name:
                     continue
@@ -1822,9 +1981,15 @@ def get_coach_response_agentic(
                 print(f"\n--- [TOOL EXECUTED: {name}] ---")
                 print(f"Args: {args}")
                 print(f"Result: {result}\n")
+                if name in _CALENDAR_CHANGE_TOOLS:
+                    hop_dates.extend(_dates_touched(args, result))
                 fr_parts.append(types.Part.from_function_response(name=name, response=result))
             if fr_parts:
                 contents.append(types.Content(role="user", parts=fr_parts))
+                if hop_dates:
+                    note = _calendar_now_note(db, athlete_id, hop_dates)
+                    if note:
+                        contents.append(types.Content(role="user", parts=[types.Part.from_text(text=note)]))
                 reminder = _calendar_tool_result_reminder(planned_dates_from_tools, calendar)
                 if reminder:
                     contents.append(types.Content(role="user", parts=[types.Part.from_text(text=reminder)]))
@@ -1847,6 +2012,7 @@ def get_coach_response_agentic(
                         logger.warning("[coach] reply claimed a plan change without tool calls; nudging")
                         contents.append(cand.content)
                         contents.append(types.Content(role="user", parts=[types.Part.from_text(text=_UNSAVED_CLAIM_NOTE)]))
+                        force_tools_next = True
                         continue
                     logger.warning("[coach] reply still claims a plan change without tool calls")
                     final_text = f"{final_text}\n\n{_UNSAVED_CLAIM_DISCLAIMER}"
@@ -1865,6 +2031,14 @@ def get_coach_response_agentic(
         # are already in `contents`; ask once more with tools off so the athlete gets an
         # honest summary of what was done and what is left, not a generic failure.
         final = _wrap_up_after_tool_budget(contents, system_for_models, candidates)
+    if (
+        final
+        and tools_enabled
+        and not any(n in _PLAN_WRITE_TOOLS for n in mutations_run)
+        and _claims_plan_change(final)
+    ):
+        logger.warning("[coach] fallback reply claims a plan change without tool calls")
+        final = f"{final}\n\n{_UNSAVED_CLAIM_DISCLAIMER}"
     final = _correct_relative_date_language(final, planned_dates_from_tools, calendar)
     grounding = _extract_grounding_sources(last_response) if last_response else []
     if not final and last_response is not None:
