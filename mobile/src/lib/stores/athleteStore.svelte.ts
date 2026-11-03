@@ -372,6 +372,16 @@ export class AthleteState {
     if (data?.status === 'success') {
       const fresh = await api.getAthleteProfile();
       if (fresh) this.profile = fresh;
+      if (payload && payload.weight_kg != null) {
+        // The backend records a typed-in weight as today's reading; reload the series so
+        // every screen that shows "latest weight" picks it up.
+        try {
+          const bio = await api.getBiometricsPage({ limit: 60 });
+          if (bio) this.biometrics = bio;
+        } catch {
+          // keep the old series; the profile copy is still current
+        }
+      }
       const athleteId = authStore.user?.id ?? null;
       if (athleteId) this.persistCurrent(athleteId);
       return true;

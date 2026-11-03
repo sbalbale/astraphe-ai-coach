@@ -706,3 +706,70 @@ def test_delete_athlete_account_success_swallows_auth_delete_failure(capsys):
     assert res.status_code == 200
     assert res.json()["status"] == "success"
     assert "Failed to delete auth user" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# Manual weight entries become today's biometrics reading
+# ---------------------------------------------------------------------------
+
+
+class _WeightQuery:
+    def __init__(self, db, table):
+        self.db, self.table, self.filters = db, table, {}
+
+    def select(self, *_a, **_k):
+        return self
+
+    def eq(self, col, val):
+        self.filters[col] = val
+        return self
+
+    def __getattr__(self, name):
+        if name in ("not_", "is_", "order", "limit", "maybe_single"):
+            return lambda *a, **k: self
+        raise AttributeError(name)
+
+    @property
+    def not_(self):
+        return self
+
+    def upsert(self, payload, on_conflict=None):
+        self.db.upserts.append((self.table, payload, on_conflict))
+        return self
+
+    def execute(self):
+        if self.table == "athletes":
+            return SimpleNamespace(data={"timezone_offset_min": 0})
+        if "date" in self.filters:
+            return SimpleNamespace(data=self.db.today_rows)
+        return SimpleNamespace(data=[{"weight_kg": self.db.latest}] if self.db.latest is not None else [])
+
+
+class _WeightDb:
+    def __init__(self, latest=None, today_rows=None):
+        self.latest, self.today_rows, self.upserts = latest, today_rows or [], []
+
+    def table(self, name):
+        return _WeightQuery(self, name)
+
+
+def test_manual_weight_recorded_when_it_differs_from_latest_reading():
+    db = _WeightDb(latest=85.05, today_rows=[{"metric_sources": {"hrv_rmssd": "whoop", "weight_kg": "whoop"}}])
+    assert athlete_router._record_manual_weight_sync(db, "athlete-1", 83.914) is True
+    [(table, payload, conflict)] = db.upserts
+    assert table == "biometrics" and conflict == "athlete_id,date"
+    assert payload["weight_kg"] == 83.91
+    assert payload["metric_sources"] == {"hrv_rmssd": "whoop", "weight_kg": "manual"}
+    assert len(payload["date"]) == 10
+
+
+def test_manual_weight_recorded_when_there_are_no_readings():
+    db = _WeightDb(latest=None)
+    assert athlete_router._record_manual_weight_sync(db, "athlete-1", 70.0) is True
+    assert db.upserts[0][1]["metric_sources"] == {"weight_kg": "manual"}
+
+
+def test_manual_weight_skipped_when_it_matches_latest_reading():
+    db = _WeightDb(latest=83.91)
+    assert athlete_router._record_manual_weight_sync(db, "athlete-1", 83.93) is False
+    assert db.upserts == []

@@ -408,3 +408,23 @@ describe('refreshProfile', () => {
     expect((athleteStore.profile as any).ftp_watts).toBe(280);
   });
 });
+
+describe('updateProfile weight', () => {
+  it('reloads biometrics after saving a weight', async () => {
+    apiMock.patchAthleteProfile.mockResolvedValue({ ok: true, data: { status: 'success' } });
+    apiMock.getAthleteProfile.mockResolvedValue({ id: 'ath-1', weight_kg: 83.91 });
+    apiMock.getBiometricsPage.mockResolvedValue({ series: [{ date: '2026-11-02', weight_kg: 83.91 }] });
+    apiMock.getBiometricsPage.mockClear();
+    await expect(athleteStore.updateProfile({ weight_kg: 83.91 })).resolves.toBe(true);
+    expect(apiMock.getBiometricsPage).toHaveBeenCalledTimes(1);
+    expect(athleteStore.biometrics.series[0].weight_kg).toBe(83.91);
+  });
+
+  it('does not reload biometrics for other fields', async () => {
+    apiMock.patchAthleteProfile.mockResolvedValue({ ok: true, data: { status: 'success' } });
+    apiMock.getAthleteProfile.mockResolvedValue({ id: 'ath-1' });
+    apiMock.getBiometricsPage.mockClear();
+    await athleteStore.updateProfile({ display_name: 'Sean' });
+    expect(apiMock.getBiometricsPage).not.toHaveBeenCalled();
+  });
+});

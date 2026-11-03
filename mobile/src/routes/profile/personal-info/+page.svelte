@@ -5,6 +5,7 @@
   import { authStore } from '$lib/stores/authStore.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { normalizeUnits, kgToLbRoundedHalf, lbToKg, cmToFtIn, ftInToCm, type Units } from '$lib/utils/units';
+  import { latestWeightKg } from '$lib/utils/biometrics';
   import { onMount } from 'svelte';
 
   let units = $derived<Units>(normalizeUnits((athleteStore.profile as any)?.measurement_units));
@@ -14,14 +15,24 @@
   let dob = $state('1990-05-15');
   let gender = $state<'male' | 'female'>('male');
 
-  // canonical fields (what the backend expects)
-  let weightKg = $state(75);
-  let heightCm = $state(180);
+  // canonical fields (what the backend expects); NaN = unknown, shown as an empty field
+  let weightKg = $state(NaN);
+  let heightCm = $state(NaN);
 
   // imperial display fields (only used when units === 'imperial')
-  let weightLb = $state(165);
-  let heightFt = $state(5);
-  let heightIn = $state(11);
+  let weightLb = $state(NaN);
+  let heightFt = $state(NaN);
+  let heightIn = $state(NaN);
+
+  // The same weight the Me page shows: newest reading, else the profile value.
+  const currentWeightKg = $derived(
+    latestWeightKg(
+      athleteStore.biometrics?.series,
+      athleteStore.profile?.weight_kg,
+      (athleteStore.profile as { latest_weight_kg?: unknown } | null)?.latest_weight_kg
+    )
+  );
+  const currentHeightCm = $derived(Number(athleteStore.profile?.height_cm) > 0 ? Number(athleteStore.profile?.height_cm) : NaN);
 
   let dirty = $state(false);
   let lastSyncedSig = $state('');
@@ -37,10 +48,15 @@
 
   function syncDisplayFromCanonical() {
     if (units === 'imperial') {
-      weightLb = kgToLbRoundedHalf(weightKg);
-      const { ft, inch } = cmToFtIn(heightCm);
-      heightFt = ft;
-      heightIn = inch;
+      weightLb = Number.isFinite(weightKg) ? kgToLbRoundedHalf(weightKg) : NaN;
+      if (Number.isFinite(heightCm)) {
+        const { ft, inch } = cmToFtIn(heightCm);
+        heightFt = ft;
+        heightIn = inch;
+      } else {
+        heightFt = NaN;
+        heightIn = NaN;
+      }
       return;
     }
 
@@ -63,20 +79,20 @@
     dob = athleteStore.profile?.date_of_birth || '1990-05-15';
     gender = (athleteStore.profile?.gender || 'male') === 'female' ? 'female' : 'male';
 
-    weightKg = athleteStore.profile?.weight_kg ?? 75;
-    heightCm = athleteStore.profile?.height_cm ?? 180;
+    weightKg = currentWeightKg ?? NaN;
+    heightCm = currentHeightCm;
     syncDisplayFromCanonical();
 
-    lastSyncedSig = `${units}-${athleteStore.profile?.weight_kg ?? ''}-${athleteStore.profile?.height_cm ?? ''}`;
+    lastSyncedSig = `${units}-${currentWeightKg ?? ''}-${currentHeightCm}`;
     initialized = true;
   });
 
   $effect(() => {
-    const sig = `${units}-${athleteStore.profile?.weight_kg ?? ''}-${athleteStore.profile?.height_cm ?? ''}`;
+    const sig = `${units}-${currentWeightKg ?? ''}-${currentHeightCm}`;
     if (dirty || sig === lastSyncedSig) return;
 
-    weightKg = athleteStore.profile?.weight_kg ?? 75;
-    heightCm = athleteStore.profile?.height_cm ?? 180;
+    weightKg = currentWeightKg ?? NaN;
+    heightCm = currentHeightCm;
     syncDisplayFromCanonical();
     lastSyncedSig = sig;
   });
@@ -90,13 +106,11 @@
 
     const nextWeightKg = units === 'imperial' ? lbToKg(weightLb) : Number(weightKg);
     const nextHeightCm = units === 'imperial' ? ftInToCm(heightFt, heightIn) : Number(heightCm);
-    const success = await athleteStore.updateProfile({
-      display_name: name,
-      date_of_birth: dob,
-      gender,
-      weight_kg: nextWeightKg,
-      height_cm: nextHeightCm
-    });
+    const payload: Record<string, unknown> = { display_name: name, date_of_birth: dob, gender };
+    // Empty fields are left alone rather than saved as a made-up value.
+    if (Number.isFinite(nextWeightKg) && nextWeightKg > 0) payload.weight_kg = nextWeightKg;
+    if (Number.isFinite(nextHeightCm) && nextHeightCm > 0) payload.height_cm = nextHeightCm;
+    const success = await athleteStore.updateProfile(payload);
     saving = false;
     if (success) {
       dirty = false;
