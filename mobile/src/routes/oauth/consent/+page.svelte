@@ -1,6 +1,7 @@
 <script lang="ts">
   import { page } from '$app/stores';
   import { authStore } from '$lib/stores/authStore.svelte';
+  import { ensureAuthSession } from '$lib/apiAuth';
 
   // GoTrue's OAuth Server redirects here (site_url + authorization_url_path from
   // supabase/config.toml's [auth.oauth_server]) with only an opaque authorization_id —
@@ -18,7 +19,28 @@
     scope: string;
   };
 
-  let authorizationId = $derived($page.url.searchParams.get('authorization_id'));
+  // Opaque id from GoTrue. Validated before it goes into a request path: a crafted
+  // value like "../../x" would otherwise send this user's token to another endpoint.
+  const AUTHORIZATION_ID_RE = /^[A-Za-z0-9_-]{8,128}$/;
+  let authorizationId = $derived.by(() => {
+    const raw = $page.url.searchParams.get('authorization_id');
+    return raw && AUTHORIZATION_ID_RE.test(raw) ? raw : null;
+  });
+
+  /** Where the authorization code will be sent: shown so the user can see who is asking. */
+  function hostOf(url: string | undefined): string {
+    try {
+      return url ? new URL(url).host : '';
+    } catch {
+      return '';
+    }
+  }
+
+  /** A fresh, valid access token (the stored one can be expired on this page). */
+  async function accessToken(): Promise<string | null> {
+    const session = await ensureAuthSession();
+    return session?.access_token ?? null;
+  }
 
   let status = $state<'loading' | 'ready' | 'submitting' | 'error' | 'missing_id'>('loading');
   let errorMsg = $state('');
@@ -43,11 +65,12 @@
       status = 'missing_id';
       return;
     }
-    const token = authStore.session?.access_token;
-    if (!token) return; // handled by the {#if} below — waiting on sign-in
+    if (!authStore.session?.access_token) return; // handled by the {#if} below — waiting on sign-in
+    const token = await accessToken();
+    if (!token) return;
 
     try {
-      const res = await fetch(`${SUPABASE_URL}/auth/v1/oauth/authorizations/${authorizationId}`, {
+      const res = await fetch(`${SUPABASE_URL}/auth/v1/oauth/authorizations/${encodeURIComponent(authorizationId)}`, {
         headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${token}` },
       });
       if (!res.ok) {
@@ -64,13 +87,13 @@
 
   async function respond(action: 'approve' | 'deny') {
     if (!authorizationId) return;
-    const token = authStore.session?.access_token;
+    const token = await accessToken();
     if (!token) return;
 
     status = 'submitting';
     try {
       const res = await fetch(
-        `${SUPABASE_URL}/auth/v1/oauth/authorizations/${authorizationId}/consent`,
+        `${SUPABASE_URL}/auth/v1/oauth/authorizations/${encodeURIComponent(authorizationId)}/consent`,
         {
           method: 'POST',
           headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -81,7 +104,13 @@
       if (!res.ok || !body.redirect_url) {
         throw new Error(body.msg || `Request failed (${res.status})`);
       }
-      window.location.href = body.redirect_url;
+      // Only follow a redirect to the destination this request declared.
+      const expected = details?.redirect_uri ? new URL(details.redirect_uri).origin : null;
+      const target = new URL(String(body.redirect_url));
+      if (!expected || target.origin !== expected) {
+        throw new Error('Unexpected redirect; the connection was not completed.');
+      }
+      window.location.href = target.toString();
     } catch (e) {
       errorMsg = e instanceof Error ? e.message : 'Failed to submit your decision.';
       status = 'error';
@@ -145,8 +174,12 @@
           <span class="text-text2">({details.user.email})</span>.
         </p>
         <p class="text-text2 text-xs mt-3 leading-relaxed">
-          Astraphe's MCP tools are read-only in this release — this connection can read your
-          training data but cannot change it.
+          Access will be sent to <span class="font-mono text-text0">{hostOf(details.redirect_uri) || 'an unknown address'}</span>.
+          The app name is chosen by whoever registered it and isn't verified by Astraphe; only
+          allow this if you started the connection yourself.
+        </p>
+        <p class="text-text2 text-xs mt-2 leading-relaxed">
+          This connection is read-only: it can read your training data but can't change it.
         </p>
       </div>
 
