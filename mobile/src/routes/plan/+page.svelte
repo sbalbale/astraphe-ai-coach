@@ -4,6 +4,7 @@
   import { confirm } from '$lib/confirm';
   import { authStore } from '$lib/stores/authStore.svelte';
   import { trainingStore } from '$lib/stores/trainingStore.svelte';
+  import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { pageHeader, resetPageHeader } from '$lib/stores/pageHeader.svelte';
   import MonthNavigator from '$lib/components/MonthNavigator.svelte';
   import {
@@ -40,6 +41,8 @@
 
   type PlannedWorkout = RawPlanItem & {
     id: string;
+    /** Raw training_plans.structure intervals (numeric targets) for the session sheet. */
+    intervals?: Workout['structure'];
     isoDate: string; // yyyy-MM-dd (local)
     date: Date;
   };
@@ -95,6 +98,7 @@
         duration: w.duration_minutes != null ? `${w.duration_minutes} min` : undefined,
         tss: w.projected_tss,
         context: w.description,
+        intervals: w.structure ?? [],
         structure: (w.structure ?? []).map((i) => ({
           title: i.name,
           duration: i.duration_minutes != null ? `${i.duration_minutes} min` : undefined,
@@ -441,6 +445,95 @@
     pageHeader.onSegment = (v) => (planView = v as 'week' | 'month');
     return resetPageHeader;
   });
+
+  // --- Session sheet: interactive profile + per-step detail ---
+  let stepIdx = $state(0);
+  $effect(() => {
+    void selectedWorkout?.id;
+    stepIdx = 0;
+  });
+  const planFtp = $derived(Number(athleteStore.profile?.ftp_watts) || 0);
+  const ZONE_NAMES: Record<number, string> = { 1: 'Recovery', 2: 'Endurance', 3: 'Tempo', 4: 'Threshold', 5: 'VO2max' };
+  const RPE: Record<number, string> = { 1: '1–2 / 10', 2: '3–4 / 10', 3: '5–6 / 10', 4: '7–8 / 10', 5: '9–10 / 10' };
+  const PROFILE_H = 96;
+  const PROFILE_TOP = 14; // the dashed 100% FTP line
+
+  function hrRange(zone: number): string | undefined {
+    const z = (athleteStore.profile?.hr_zones?.zones ?? []).find((x: { zone: number }) => x.zone === zone);
+    if (!z) return undefined;
+    if (z.max >= 500) return `≥ ${z.min} bpm`;
+    if (z.min <= 0) return `< ${z.max + 1} bpm`;
+    return `${z.min}–${z.max} bpm`;
+  }
+  const mmss = (mins: number) => `${String(Math.floor(mins)).padStart(2, '0')}:00`;
+
+  type SessionStep = {
+    title: string;
+    note?: string;
+    minutes: number;
+    zone: number;
+    color: string;
+    watts?: string;
+    pctLabel?: string;
+    target?: string;
+    hr?: string;
+    rpe?: string;
+    sub: string;
+    start: string;
+    window: string;
+    barHeight: number;
+    isRest: boolean;
+    restHr?: string;
+  };
+
+  function sessionSteps(w: PlannedWorkout): SessionStep[] {
+    const raw = (w.intervals ?? []).filter(Boolean);
+    let t = 0;
+    const base = raw.map((i) => {
+      const minutes = Math.max(0, Number(i.duration_minutes) || 0);
+      const pct = typeof i.target_power_percent_ftp === 'number' ? i.target_power_percent_ftp : null;
+      const hrZone = typeof i.target_hr_zone === 'number' ? i.target_hr_zone : null;
+      const zone = pct != null ? targetZone(`${pct}% FTP`) : hrZone ?? 0;
+      const start = t;
+      t += minutes;
+      // Prescribed targets are a single % of FTP; show the usual ±2.5% working band.
+      const watts = pct != null && planFtp
+        ? `${Math.round((planFtp * (pct - 2.5)) / 100)}–${Math.round((planFtp * (pct + 2.5)) / 100)} W`
+        : undefined;
+      return {
+        title: i.name || 'Step',
+        note: i.description,
+        minutes,
+        zone,
+        color: zone > 0 ? `var(--zone-${zone})` : 'var(--text2)',
+        watts,
+        pctLabel: pct != null ? `${pct}% FTP` : undefined,
+        target: hrZone != null ? `Z${hrZone} HR` : undefined,
+        hr: zone > 0 ? hrRange(zone) : undefined,
+        rpe: zone > 0 ? RPE[zone] : undefined,
+        start: mmss(start),
+        window: `${mmss(start)}–${mmss(start + minutes)}`,
+        barHeight: pct != null
+          ? Math.max(8, Math.round((Math.min(pct, 130) / 100) * (PROFILE_H - PROFILE_TOP)))
+          : zone > 0 ? 14 + zone * 12 : 20,
+        sub: '',
+        isRest: false
+      } as SessionStep;
+    });
+    return base.map((s, i) => {
+      const between = s.zone === 1 && (base[i - 1]?.zone ?? 0) >= 3 && (base[i + 1]?.zone ?? 0) >= 3;
+      const sub = between
+        ? `Easy spin${s.hr ? ` · HR ${s.hr}` : ''}`
+        : [s.zone > 0 ? `Z${s.zone}` : null, s.pctLabel ?? s.target ?? null].filter(Boolean).join(' · ') || (s.note ?? '');
+      return { ...s, sub, isRest: between, restHr: between ? hrRange(1) : undefined };
+    });
+  }
+
+  function profileTicks(total: number): number[] {
+    if (total <= 0) return [0];
+    const step = total / 4;
+    return [0, 1, 2, 3].map((i) => Math.round((i * step) / 5) * 5).concat(total);
+  }
 </script>
 
 <div class="flex flex-col gap-4">
@@ -581,16 +674,19 @@
 
 {#if selectedWorkout}
   {@const sw = selectedWorkout}
-  {@const steps = structuredSteps(sw)}
-  {@const mins = durationMinutes(sw)}
+  {@const steps = sessionSteps(sw)}
+  {@const mins = durationMinutes(sw) || steps.reduce((a, s) => a + s.minutes, 0)}
   {@const ifValue = mins > 0 && Number(sw.tss) > 0 ? Math.sqrt(Number(sw.tss) / ((mins / 60) * 100)) : null}
+  {@const atTarget = steps.filter((s) => s.zone >= 3).reduce((a, s) => a + s.minutes, 0)}
+  {@const cur = steps[Math.min(stepIdx, Math.max(steps.length - 1, 0))]}
   <div class="fixed inset-0 z-50 flex flex-col justify-end" role="dialog" aria-modal="true" aria-labelledby="sess-title">
     <button type="button" class="absolute inset-0 bg-black/60" aria-label="Close" onclick={closeWorkout}></button>
-    <div class="relative max-h-[88dvh] overflow-y-auto bg-bg1 border-t border-border rounded-t-[28px] px-5 pt-2.5 pb-7 flex flex-col gap-[18px]" style="padding-bottom: max(28px, env(safe-area-inset-bottom, 0px));">
+    <div class="relative max-h-[92dvh] overflow-y-auto bg-bg1 border-t border-border rounded-t-[28px] px-5 pt-2.5 flex flex-col gap-4" style="padding-bottom: max(28px, env(safe-area-inset-bottom, 0px));">
       <span aria-hidden="true" class="self-center w-10 h-1 rounded-sm bg-bg3"></span>
+
       <div class="flex justify-between items-start gap-3">
         <div class="flex flex-col gap-1.5 min-w-0">
-          <span class="font-mono text-[11px] tracking-[0.14em] text-blue uppercase">{format(sw.date, 'EEE d MMM')} · {sessionLabel(sw)}</span>
+          <span class="font-mono text-[11px] tracking-[0.14em] text-blue uppercase">{format(sw.date, 'EEE d MMM')} · {sessionLabel(sw)}{sw.type ? ` · ${sw.type}` : ''}</span>
           <h1 id="sess-title" class="m-0 font-display font-normal text-[32px] leading-[1.05]">{sw.title ?? sw.type ?? 'Session'}</h1>
         </div>
         <button type="button" aria-label="Close" class="shrink-0 w-11 h-11 rounded-full bg-bg3 border-0 text-text1 flex items-center justify-center cursor-pointer" onclick={closeWorkout}>
@@ -598,30 +694,103 @@
         </button>
       </div>
 
-      <section aria-label="Prescription" class="grid grid-cols-3 gap-2">
-        <div class="bg-bg3 rounded-2xl p-3 flex flex-col gap-0.5"><span class="text-lg font-medium">{mins > 0 ? `${mins}′` : '—'}</span><span class="text-[11px] text-text2">Duration</span></div>
-        <div class="bg-bg3 rounded-2xl p-3 flex flex-col gap-0.5"><span class="text-lg font-medium">{Number.isFinite(Number(sw.tss)) ? sw.tss : '—'}</span><span class="text-[11px] text-text2">TSS</span></div>
-        <div class="bg-bg3 rounded-2xl p-3 flex flex-col gap-0.5"><span class="text-lg font-medium">{ifValue ? ifValue.toFixed(2) : '—'}</span><span class="text-[11px] text-text2">IF</span></div>
+      <section aria-label="Prescription" class="grid grid-cols-4 gap-1.5">
+        {#each [
+          { k: 'Duration', v: mins > 0 ? `${mins}′` : '—' },
+          { k: 'TSS', v: Number.isFinite(Number(sw.tss)) ? String(sw.tss) : '—' },
+          { k: 'IF', v: ifValue ? ifValue.toFixed(2) : '—' },
+          { k: 'At target', v: steps.length ? `${atTarget}′` : '—' }
+        ] as t (t.k)}
+          <div class="bg-bg3 rounded-[14px] p-2.5 flex flex-col gap-0.5"><span class="text-[17px] font-medium">{t.v}</span><span class="text-[10px] text-text2">{t.k}</span></div>
+        {/each}
       </section>
 
-      {#if steps.length > 0}
-        <section aria-label="Technical blocks" class="flex flex-col gap-2.5">
-          <span class="font-mono text-[11px] tracking-[0.14em] text-text2">BLOCKS</span>
-          <div role="img" aria-label="Session profile" class="flex items-end gap-0.5 h-14">
-            {#each steps as s, i (i)}
-              <span class="block rounded-[3px]" style="flex: {Math.max(s.minutes, 1)} 1 0; height: {s.hard ? 48 : 18}px; background: {s.hard ? 'var(--blue)' : 'var(--bg3)'}"></span>
-            {/each}
+      {#if steps.length > 0 && cur}
+        <!-- Interactive profile -->
+        <section aria-label="Workout profile" class="flex flex-col gap-2">
+          <div class="flex justify-between items-baseline">
+            <span class="font-mono text-[11px] tracking-[0.14em] text-text2">PROFILE · TAP A BLOCK</span>
+            {#if planFtp}<span class="font-mono text-[10px] text-text2">FTP {planFtp} W</span>{/if}
           </div>
-          <ol class="list-none m-0 p-0 flex flex-col">
-            {#each steps as s, i (i)}
-              <li class="grid grid-cols-[1fr_auto_52px] gap-2.5 py-2.5 border-t border-border text-sm {i === steps.length - 1 ? 'border-b' : ''}">
-                <span class="min-w-0">{s.title}{#if s.note}<span class="block text-xs text-text2">{s.note}</span>{/if}</span>
-                <span class="font-mono text-xs {s.hard ? 'text-blue' : 'text-text1'}">{s.target ?? ''}</span>
-                <span class="text-right font-mono text-xs text-text2">{s.duration ?? ''}</span>
-              </li>
-            {/each}
-          </ol>
+          <div class="relative h-24">
+            <span aria-hidden="true" class="absolute left-0 right-0 top-3.5 border-t border-dashed border-text2/40"></span>
+            <span aria-hidden="true" class="absolute right-0 top-0 font-mono text-[9px] text-text2/70">100%</span>
+            <div role="group" aria-label="Workout steps" class="absolute inset-0 flex items-end gap-0.5">
+              {#each steps as s, i (i)}
+                <button
+                  type="button"
+                  aria-label="Step {i + 1}, {s.title}: {s.minutes} minutes{s.watts ? ' at ' + s.watts : ''}"
+                  aria-pressed={i === stepIdx}
+                  class="h-24 p-0 border-0 bg-transparent cursor-pointer flex items-end {i === stepIdx ? 'outline outline-2 outline-offset-1 outline-text0 rounded-[5px]' : ''}"
+                  style="flex: {Math.max(s.minutes, 1)} 1 0"
+                  onclick={() => (stepIdx = i)}
+                >
+                  <span aria-hidden="true" class="block w-full rounded" style="height: {s.barHeight}px; background: {s.color}; opacity: {i === stepIdx ? 1 : 0.55}"></span>
+                </button>
+              {/each}
+            </div>
+          </div>
+          <div aria-hidden="true" class="flex justify-between font-mono text-[10px] text-text2">
+            {#each profileTicks(mins) as t (t)}<span>{t}′</span>{/each}
+          </div>
         </section>
+
+        <!-- Selected step -->
+        <section aria-live="polite" aria-label="Selected step" class="flex flex-col gap-3 p-4 rounded-[20px] bg-bg3/60 border {cur.zone >= 3 ? 'border-text2/40' : 'border-border'}">
+          <div class="flex justify-between items-start gap-2.5">
+            <div class="flex flex-col gap-1 min-w-0">
+              <span class="font-mono text-[10px] tracking-[0.12em] text-text2">STEP {stepIdx + 1} OF {steps.length} · {cur.window}</span>
+              <h2 class="m-0 font-display font-normal text-[26px] leading-[1.05]">{cur.title}</h2>
+            </div>
+            {#if cur.zone > 0}
+              <span class="shrink-0 px-2.5 py-1 rounded-lg font-mono text-[11px] font-medium text-bg0" style="background: {cur.color}">Z{cur.zone}</span>
+            {/if}
+          </div>
+          <div class="flex items-baseline gap-2">
+            <span class="text-[30px] font-medium tracking-[-0.02em]">{cur.watts ?? cur.target ?? '—'}</span>
+            {#if cur.pctLabel}<span class="text-[13px] text-text2">{cur.pctLabel}</span>{/if}
+            <span class="ml-auto font-mono text-sm">{cur.minutes} min</span>
+          </div>
+          <dl class="m-0 grid grid-cols-3 gap-2 pt-2.5 border-t border-border">
+            <div><dt class="text-[10px] text-text2">Zone</dt><dd class="m-0 text-[13px] font-medium">{cur.zone > 0 ? `Z${cur.zone} · ${ZONE_NAMES[cur.zone]}` : '—'}</dd></div>
+            <div><dt class="text-[10px] text-text2">Heart rate</dt><dd class="m-0 text-[13px] font-medium">{cur.hr ?? '—'}</dd></div>
+            <div><dt class="text-[10px] text-text2">Effort (RPE)</dt><dd class="m-0 text-[13px] font-medium">{cur.rpe ?? '—'}</dd></div>
+          </dl>
+          {#if cur.note}<p class="m-0 text-sm leading-[1.5] text-text1">{cur.note}</p>{/if}
+          {#if cur.isRest}
+            <div class="flex gap-2.5 items-start px-3 py-2.5 rounded-xl bg-bg1 border border-dashed border-border">
+              <span class="font-mono text-[10px] tracking-[0.1em] text-green pt-0.5">READY?</span>
+              <span class="text-xs leading-[1.45] text-text1">Start the next block when your heart rate is back in {cur.restHr ?? 'Zone 1'} and breathing is conversational.</span>
+            </div>
+          {/if}
+          <div class="flex gap-2">
+            <button type="button" aria-label="Previous step" disabled={stepIdx === 0} class="flex-1 h-10 rounded-xl border border-border bg-transparent text-[13px] font-medium {stepIdx === 0 ? 'text-text2/40 cursor-default' : 'text-text0 cursor-pointer'}" onclick={() => (stepIdx = Math.max(0, stepIdx - 1))}>‹ Prev</button>
+            <button type="button" aria-label="Next step" disabled={stepIdx >= steps.length - 1} class="flex-1 h-10 rounded-xl border border-border bg-transparent text-[13px] font-medium {stepIdx >= steps.length - 1 ? 'text-text2/40 cursor-default' : 'text-text0 cursor-pointer'}" onclick={() => (stepIdx = Math.min(steps.length - 1, stepIdx + 1))}>Next ›</button>
+          </div>
+        </section>
+
+        <!-- Full step list -->
+        <ol aria-label="All steps" class="list-none m-0 p-0 flex flex-col">
+          {#each steps as s, i (i)}
+            <li>
+              <button
+                type="button"
+                aria-pressed={i === stepIdx}
+                class="w-full min-h-[52px] flex items-center gap-2.5 px-2 py-1.5 border-0 border-t border-border text-text0 text-left cursor-pointer {i === stepIdx ? 'bg-bg3' : 'bg-transparent'}"
+                onclick={() => (stepIdx = i)}
+              >
+                <span aria-hidden="true" class="shrink-0 w-1 h-[30px] rounded-sm" style="background: {s.color}"></span>
+                <span class="w-10 font-mono text-[11px] text-text2">{s.start}</span>
+                <span class="flex-1 min-w-0 flex flex-col gap-px">
+                  <span class="text-sm font-medium truncate">{s.title}</span>
+                  <span class="text-[11px] text-text2 truncate">{s.sub}</span>
+                </span>
+                {#if s.watts}<span class="font-mono text-xs text-text1">{s.watts}</span>{/if}
+                <span class="w-[34px] text-right font-mono text-xs text-text2">{s.minutes}′</span>
+              </button>
+            </li>
+          {/each}
+        </ol>
       {/if}
 
       {#if sessionDetailContext.hasPrescriptionTable}
