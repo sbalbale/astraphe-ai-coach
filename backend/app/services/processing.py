@@ -255,16 +255,26 @@ def _choose_biometric_metric(
 
 def _periods_from_best_source(periods: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """
-    Keep only the sleep periods (main sleep and naps) of the highest-priority source
-    that has any for this night, per _BIOMETRIC_FIELD_SOURCES["sleep_duration_min"].
+    One source per kind of sleep, so two wearables aren't added together: the
+    highest-priority source (per _BIOMETRIC_FIELD_SOURCES["sleep_duration_min"]) that
+    has a *main* sleep for the night, plus the highest-priority source that has naps.
+    Choosing across both kinds at once let a source holding only a 30-minute nap
+    (e.g. a Garmin not worn overnight) win and drop another source's full night.
     """
-    by_source: dict[str, list[dict[str, Any]]] = {}
-    for p in periods or []:
-        by_source.setdefault(str(p.get("source") or "manual"), []).append(p)
-    if len(by_source) <= 1:
-        return list(periods or [])
-    best = min(by_source, key=lambda src: _biometric_source_quality_rank("sleep_duration_min", src))
-    return by_source[best]
+
+    def _best(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        by_source: dict[str, list[dict[str, Any]]] = {}
+        for p in rows:
+            by_source.setdefault(str(p.get("source") or "manual"), []).append(p)
+        if len(by_source) <= 1:
+            return rows
+        best = min(by_source, key=lambda src: _biometric_source_quality_rank("sleep_duration_min", src))
+        return by_source[best]
+
+    rows = list(periods or [])
+    mains = [p for p in rows if not p.get("is_nap")]
+    naps = [p for p in rows if p.get("is_nap")]
+    return _best(mains) + _best(naps)
 
 
 def _set_metric_source(metric_sources: dict[str, Any], field: str, source: str | None, value: Any) -> None:
@@ -679,11 +689,26 @@ def _find_or_create_canonical_workout_sync(
             .lte("started_at", datetime.fromtimestamp(started_at.timestamp() + CROSS_SPORT_WINDOW_SECONDS, tz=timezone.utc).isoformat())
             .execute()
         )
+        # Closest candidate wins (start and duration both count), not whichever row
+        # the database returned first, so a misfire is reproducible and the better
+        # of two near-simultaneous rows is chosen.
+        best_score: float | None = None
         for row in (near.data if near else None) or []:
             existing_duration = row.get("duration_seconds") or 0
-            if existing_duration > 0 and abs(existing_duration - dur_i) / max(existing_duration, dur_i) <= CROSS_SPORT_TOLERANCE:
-                matched = row
-                break
+            if existing_duration <= 0:
+                continue
+            dur_ratio = abs(existing_duration - dur_i) / max(existing_duration, dur_i)
+            if dur_ratio > CROSS_SPORT_TOLERANCE:
+                continue
+            row_start = _parse_workout_dt(row.get("started_at"))
+            if row_start is None:
+                continue
+            if row_start.tzinfo is None:
+                row_start = row_start.replace(tzinfo=timezone.utc)
+            start_gap = abs((row_start - started_at).total_seconds())
+            score = start_gap / CROSS_SPORT_WINDOW_SECONDS + dur_ratio / CROSS_SPORT_TOLERANCE
+            if best_score is None or score < best_score:
+                best_score, matched = score, row
 
     if matched:
         workout_id = matched["id"]
@@ -1115,7 +1140,15 @@ def process_and_save_biometrics(
             "source": payload.source,
             "external_id": getattr(payload, "external_id", None) or f"{payload.source}_{payload.sleep_bedtime.timestamp() if payload.sleep_bedtime else payload.date.isoformat()}"
         }
-        db.table("sleep_periods").upsert(session_data, on_conflict="athlete_id,source,external_id").execute()
+        try:
+            db.table("sleep_periods").upsert(session_data, on_conflict="athlete_id,source,external_id").execute()
+        except Exception as e:  # noqa: BLE001
+            # Don't let one sleep-period write sink the whole day (HRV, RHR, recovery).
+            # The night still counts below via the payload's own totals.
+            print(
+                f"[biometrics] sleep_periods upsert failed athlete_id={athlete_id} "
+                f"date={payload.date} external_id={session_data.get('external_id')}: {e!r}"
+            )
 
     # 2. Fetch All Sleep Periods for the biological day to aggregate
     all_periods_res = db.table("sleep_periods").select("*").eq("athlete_id", athlete_id).eq("date", payload.date.isoformat()).execute()
