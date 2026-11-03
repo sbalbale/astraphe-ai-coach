@@ -10,6 +10,7 @@
   import { isStandaloneDisplayMode } from '$lib/utils/pwa';
   import { normalizeLeadingTimeOfDayGreeting } from '$lib/utils/greeting';
   import { pageHeader, resetPageHeader } from '$lib/stores/pageHeader.svelte';
+  import { buildCoachSteps, coachStatusText, type CoachStep } from '$lib/coachProgress';
 
   type Conversation = { id: string; title?: string | null; created_at?: string; updated_at?: string };
   type Message = {
@@ -20,6 +21,8 @@
     created_at?: string;
     streaming?: boolean;
     statusText?: string;
+    /** What the coach checked while writing this reply (live, not persisted). */
+    steps?: CoachStep[];
   };
 
   let greetingMessage = $state<string>('');
@@ -128,34 +131,43 @@
    */
   function pollForCoachReply(cid: string, aiMsgId: string, knownMessageCount: number) {
     const token = ++activePollToken;
-    const POLL_INTERVAL_MS = 2500;
-    const MAX_ATTEMPTS = 72; // ~3 minutes
+    const POLL_INTERVAL_MS = 1200;
+    const MAX_ATTEMPTS = 150; // ~3 minutes
     let attempt = 0;
 
     const tickPoll = async () => {
       if (token !== activePollToken) return; // superseded by a newer poll/navigation
       attempt += 1;
       try {
-        const res = await api.getCoachMessages(cid);
+        const [res, events] = await Promise.all([api.getCoachMessages(cid), api.getCoachProgress(cid)]);
         const rows = res?.messages || [];
         if (rows.length > knownMessageCount) {
           const last = rows[rows.length - 1];
           if (token === activePollToken && conversationId === cid) {
             const msgIndex = messages.findIndex((m) => m.id === aiMsgId);
             if (msgIndex !== -1) {
+              const finalSteps = events.length ? buildCoachSteps(events, false) : messages[msgIndex].steps;
               messages[msgIndex] = {
                 id: String(last.id),
                 role: 'ai',
                 text: String(last.content ?? ''),
                 image_urls: Array.isArray(last.image_urls) ? last.image_urls : [],
                 created_at: last.created_at,
-                streaming: false
+                streaming: false,
+                steps: finalSteps?.length ? finalSteps.map((st) => ({ ...st, done: true })) : undefined
               };
             }
             loading = false;
             scrollToBottom();
           }
           return; // done
+        }
+        if (token === activePollToken && conversationId === cid && events.length) {
+          const msgIndex = messages.findIndex((m) => m.id === aiMsgId);
+          if (msgIndex !== -1) {
+            messages[msgIndex].steps = buildCoachSteps(events, true);
+            messages[msgIndex].statusText = coachStatusText(events);
+          }
         }
       } catch (e) {
         console.warn('[Chat] Poll for coach reply failed:', e);
@@ -527,6 +539,20 @@
   <div class="flex-1 overflow-y-auto flex flex-col gap-3.5 px-5 pt-2 pb-4 min-h-0" bind:this={chatContainer}>
     {#each messages as msg (msg.id)}
       {#if msg.role === 'ai'}
+        {#if msg.steps && msg.steps.length > 0}
+          <ol aria-label="What the coach checked" class="list-none m-0 p-0 flex flex-col gap-1.5">
+            {#each msg.steps as step (step.key)}
+              <li class="flex items-center gap-2 font-mono text-[11px] text-text2">
+                {#if step.done}
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 5 5L19 7"></path></svg>
+                {:else}
+                  <span aria-hidden="true" class="w-3 h-3 flex items-center justify-center"><span class="w-1.5 h-1.5 rounded-full bg-blue animate-pulse"></span></span>
+                {/if}
+                <span class:text-text1={!step.done}>{step.label}{step.count > 1 ? ` ×${step.count}` : ''}</span>
+              </li>
+            {/each}
+          </ol>
+        {/if}
         <div class="flex flex-col gap-2.5 p-4 rounded-[20px] bg-bg2 border border-border text-sm leading-[1.55] text-text1 break-words min-w-0">
           {#if msg.image_urls && msg.image_urls.length > 0}
             <div class="flex gap-2 flex-wrap">
