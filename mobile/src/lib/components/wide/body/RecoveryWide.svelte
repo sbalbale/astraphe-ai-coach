@@ -107,10 +107,22 @@
         spark: sparkline(seriesWindow(series, day, field))
       });
     }
+    const spo2 = pos(row?.spo2_pct);
+    if (spo2 !== null) {
+      const base = baselineBefore(series, day, 'spo2_pct');
+      // Low when under 95% or 2+ points below your usual night.
+      const low = spo2 < 95 || (base !== null && base - spo2 >= 2);
+      out.push({
+        name: 'SpO2',
+        value: `${Math.round(spo2)}%`,
+        delta: low ? 'low' : 'normal',
+        tone: low ? 'bad' : 'neutral',
+        accent: false,
+        spark: sparkline(seriesWindow(series, day, 'spo2_pct'))
+      });
+    }
     return out;
   });
-
-  const spo2 = $derived(pos(row?.spo2_pct));
 
   const sel = $derived(days[selected]);
   const readout = $derived(
@@ -144,11 +156,6 @@
         <span class="text-right text-[13px] {toneClass[dr.tone]}">{dr.delta}</span>
       </div>
     {/each}
-    {#if spo2 !== null}
-      <div class="mt-auto pt-3 flex gap-[18px] text-[13px] text-text1">
-        <span>SpO2 <strong class="text-text0 font-medium">{Math.round(spo2)}%</strong></span>
-      </div>
-    {/if}
   </section>
 
   <section aria-label="Recovery, last 7 days" class="bg-bg2 border border-border rounded-[24px] px-[22px] py-5 flex flex-col gap-3.5">
