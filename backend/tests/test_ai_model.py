@@ -17,10 +17,10 @@ def test_resolve_default_gemini_model_strips_whitespace(monkeypatch):
 def test_resolve_default_gemini_model_falls_back_when_unset(monkeypatch):
     monkeypatch.setattr(settings, "GEMINI_MODEL", "")
 
-    assert resolve_default_gemini_model() == "gemma-4-31b-it"
+    assert resolve_default_gemini_model() == "gemini-3.5-flash-lite"
 
 
 def test_resolve_default_gemini_model_falls_back_when_only_whitespace(monkeypatch):
     monkeypatch.setattr(settings, "GEMINI_MODEL", "   ")
 
-    assert resolve_default_gemini_model() == "gemma-4-31b-it"
+    assert resolve_default_gemini_model() == "gemini-3.5-flash-lite"

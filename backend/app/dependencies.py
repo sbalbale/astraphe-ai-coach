@@ -333,8 +333,8 @@ async def get_user_config(
     themselves via the Supabase client SDK.
     """
     token = credentials.credentials
-    fallback_model = (settings.GEMINI_MODEL or "").strip() or "gemma-4-31b-it"
-    fallback_analysis = (settings.GEMINI_ANALYSIS_MODEL or "").strip() or "gemini-flash-lite-latest"
+    fallback_model = (settings.GEMINI_MODEL or "").strip() or "gemini-3.5-flash-lite"
+    fallback_analysis = (settings.GEMINI_ANALYSIS_MODEL or "").strip() or "gemini-3.1-flash-lite"
 
     try:
         user_res = await _auth_get_user(db, token)

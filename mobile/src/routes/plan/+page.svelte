@@ -4,6 +4,7 @@
   import { api } from '$lib/api';
   import { confirm } from '$lib/confirm';
   import { authStore } from '$lib/stores/authStore.svelte';
+  import { hasPremiumAccess } from '$lib/utils/tier';
   import { trainingStore } from '$lib/stores/trainingStore.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import DatePicker from '$lib/components/DatePicker.svelte';
@@ -190,7 +191,7 @@
   }));
 
   $effect(() => {
-    if (authStore.tier !== 'premium') return;
+    if (!hasPremiumAccess(authStore.tier)) return;
     trainingStore.fetchWorkouts(viewMonthRange.startIso, viewMonthRange.endIso);
   });
 
@@ -452,7 +453,7 @@
   /** Anything planned from today over the next 8 weeks (null until checked). */
   let hasUpcoming = $state<boolean | null>(null);
   $effect(() => {
-    if (authStore.tier !== 'premium') return;
+    if (!hasPremiumAccess(authStore.tier)) return;
     void trainingStore.workouts; // re-check after the store reloads (e.g. a plan was just built)
     let cancelled = false;
     const to = format(addDays(new Date(), 56), 'yyyy-MM-dd');
@@ -472,6 +473,9 @@
   const noPlanYet = $derived(
     !trainingStore.isLoading && plannedWorkouts.length === 0 && hasUpcoming === false
   );
+  /** Nothing loaded yet and the upcoming check hasn't answered: hold a skeleton, so an athlete
+   * with no plan doesn't see the empty week flash before the "No plan yet" screen. */
+  const planCheckPending = $derived(plannedWorkouts.length === 0 && hasUpcoming === null);
 
   const PLAN_GOALS = [
     { title: 'Raise my FTP', sub: '8–12 week build', prompt: 'Build me an 8–12 week plan to raise my FTP.' },
@@ -484,7 +488,7 @@
   }
 
   $effect(() => {
-    if (noPlanYet) {
+    if (noPlanYet || planCheckPending) {
       resetPageHeader();
       return resetPageHeader;
     }
@@ -658,8 +662,13 @@
 </script>
 
 <div class="flex flex-col gap-4">
-  {#if authStore.tier !== 'premium'}
+  {#if !hasPremiumAccess(authStore.tier)}
     <EmptyStateCard icon="calendar-plus" tone="blue" eyebrow="Premium" title="Training plans are a premium feature" message="Your coach builds and adjusts a week-by-week plan around your goal and recovery. Upgrade to premium to use it." />
+  {:else if planCheckPending}
+    <div aria-busy="true" aria-label="Loading plan" class="flex flex-col gap-4">
+      <div class="h-[72px] rounded-[14px] bg-bg2 animate-pulse"></div>
+      <div class="h-[220px] rounded-[24px] bg-bg2 animate-pulse"></div>
+    </div>
   {:else if noPlanYet}
     <EmptyStateCard
       icon="calendar-plus"

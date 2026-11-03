@@ -24,6 +24,7 @@ import re
 import time
 from typing import Any, Callable
 
+import httpx
 import numpy as np
 from supabase import Client
 from datetime import date, timedelta
@@ -46,6 +47,12 @@ def _should_fallback_chat_model(err_str: str) -> bool:
             "overloaded",
             "resource exhausted",
             "quota exceeded",
+            # A hung request (httpx "The read operation timed out", Google's 504) is the
+            # primary model being slow, so the fallback model is worth a try.
+            "timed out",
+            "timeout",
+            "504",
+            "deadline_exceeded",
         )
     )
 
@@ -1461,8 +1468,10 @@ def get_coach_response_agentic(
                             # or a slow tool-heavy hop skipped straight to the single-attempt
                             # failure path below instead of getting a backoff-and-retry.
                             "429", "RESOURCE_EXHAUSTED", "DEADLINE_EXCEEDED", "timeout", "Timeout",
+                            # httpx.ReadTimeout's message is "The read operation timed out".
+                            "timed out", "504",
                         )
-                    )
+                    ) or isinstance(e, (httpx.TimeoutException, TimeoutError))
                     _transient = is_transient
                     if _attempt < max_attempts - 1 and is_transient:
                         wait = 1.5 * (_attempt + 1)

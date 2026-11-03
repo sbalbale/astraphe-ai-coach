@@ -13,6 +13,7 @@
   import { pageHeader, resetPageHeader } from '$lib/stores/pageHeader.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { authStore } from '$lib/stores/authStore.svelte';
+  import { hasPremiumAccess } from '$lib/utils/tier';
   import { api } from '$lib/api';
   import { goto } from '$app/navigation';
   import { resolve } from '$app/paths';
@@ -454,7 +455,7 @@
   }
 
   async function loadWorkoutAnalysis(workoutId: string) {
-    if (authStore.tier !== 'premium') return;
+    if (!hasPremiumAccess(authStore.tier)) return;
 
     if (workoutAnalysisMemo.has(workoutId)) {
       workoutAnalysisText = workoutAnalysisMemo.get(workoutId) ?? null;
@@ -711,7 +712,7 @@
       tone="blue"
       eyebrow="Not set up"
       title="Connect a training app"
-      message="Rides and runs from Garmin and Strava land here automatically. You can also log a session by hand."
+      message="Rides and runs from Garmin land here automatically. You can also log a session by hand."
       actionLabel="Connect an app"
       onAction={() => goto('/profile/connections')}
       secondaryLabel="Log an activity"
@@ -820,7 +821,7 @@
             </div>
 
             {#if detailTab === 'overview'}
-              {#if authStore.tier === 'premium'}
+              {#if hasPremiumAccess(authStore.tier)}
                 <section aria-label="Coach analysis" class="flex flex-col gap-2 p-4 rounded-[20px] bg-bg1 border border-dashed border-border">
                   <span class="font-mono text-[10px] tracking-[0.12em] text-blue">COACH ANALYSIS</span>
                   {#if workoutAnalysisLoading && !workoutAnalysisMemo.has(selectedWorkout.id)}
@@ -989,7 +990,7 @@
               eyebrow="Nothing yet"
               title={isCurrentWeek ? 'No workouts yet this week' : 'No workouts this week'}
               message={isCurrentWeek
-                ? 'Rides and runs from Garmin and Strava land here automatically, usually within a few minutes of finishing.'
+                ? 'Rides and runs from Garmin land here automatically, usually within a few minutes of finishing.'
                 : 'Nothing was recorded or logged in this week.'}
               actionLabel={isCurrentWeek ? "See today's session" : 'Log an activity'}
               onAction={() => (isCurrentWeek ? goto('/dashboard') : (addActivityOpen = true))}

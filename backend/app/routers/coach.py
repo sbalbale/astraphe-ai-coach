@@ -206,10 +206,12 @@ def _insert_message(db, athlete_id: str, conversation_id: str, role: str, conten
         _maybe_set_conversation_title(db, athlete_id, conversation_id, _generate_conversation_title(content, image_urls=image_urls))
     _touch_conversation(db, athlete_id, conversation_id)
 
+from app.services.tiers import has_premium_access
+
 router = APIRouter(prefix="/v1/coach", tags=["AI Coach"])
 
 def _require_premium(config: UserConfig):
-    if config.tier != "premium":
+    if not has_premium_access(config.tier):
         raise HTTPException(status_code=403, detail="Premium membership required for AI Coach.")
 
 
