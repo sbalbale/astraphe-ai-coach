@@ -1,6 +1,6 @@
 <script lang="ts">
-  import Card from '$lib/components/Card.svelte';
-  import { goto } from '$app/navigation';
+  import SubpageHeader from '$lib/components/SubpageHeader.svelte';
+  import ToggleSwitch from '$lib/components/ToggleSwitch.svelte';
   import { onMount } from 'svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { requestPushPermission, initPushNotifications } from '$lib/services/pushNotifications';
@@ -37,9 +37,6 @@
     }
   });
 
-  function goBack() {
-    goto('/profile');
-  }
 
   async function toggleSetting(key: keyof typeof settings) {
     const turningOn = !settings[key];
@@ -71,68 +68,41 @@
   }
 </script>
 
-<div class="flex flex-col gap-3">
-  <div class="flex items-center gap-3">
-    <button onclick={goBack} class="w-8 h-8 flex items-center justify-center bg-glass border border-border rounded-lg text-text2 hover:text-text0 transition-colors cursor-pointer">
-      ←
-    </button>
-    <div>
-      <p class="text-xs text-text2 font-mono uppercase tracking-[0.1em]">Account</p>
-      <h1 class="text-[22px] font-bold tracking-[-0.02em]">Notifications</h1>
-    </div>
-  </div>
+<div class="flex flex-col gap-4 pb-6">
+  <SubpageHeader title="Notifications" />
 
   {#if permissionGranted === false}
-    <div class="bg-amber/10 border border-amber/30 rounded-xl p-4 flex flex-col gap-2">
-      <p class="text-[13px] font-semibold text-amber">Notifications are blocked</p>
-      <p class="text-[11px] text-text2">Enable notifications in your device or browser settings, then tap below to activate.</p>
-      <button onclick={enableNotifications} class="mt-1 self-start px-3 py-1.5 bg-amber/20 border border-amber/40 rounded-lg text-[12px] font-medium text-amber hover:bg-amber/30 transition-colors cursor-pointer">
-        Enable Notifications
-      </button>
+    <div class="flex flex-col gap-2 px-4 py-3.5 rounded-[18px] bg-amber-dim border border-amber/30">
+      <p class="m-0 text-sm font-medium text-amber">Notifications are blocked</p>
+      <p class="m-0 text-xs text-text1">Allow notifications in your device or browser settings, then tap below.</p>
+      <button type="button" class="self-start h-10 px-3.5 rounded-xl border border-amber/40 bg-transparent text-[13px] font-medium text-amber cursor-pointer" onclick={enableNotifications}>Enable notifications</button>
+    </div>
+  {:else if permissionGranted === true}
+    <div class="flex items-center gap-3 px-4 py-3.5 rounded-[18px] bg-blue-dim border border-blue/25">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="shrink-0 text-blue"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"></path><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"></path></svg>
+      <span class="text-sm text-text0">Push notifications are on for this device.</span>
     </div>
   {/if}
 
-  <div class="flex flex-col gap-3 mt-2">
-    <Card>
-      <p class="text-[13px] font-semibold mb-3">Push Notifications</p>
-      <div class="flex flex-col gap-0">
-        <label class="flex justify-between items-center py-3 border-b border-border cursor-pointer group">
-          <div>
-            <p class="text-[13px] font-medium text-text0 group-hover:text-blue transition-colors">Daily Readiness</p>
-            <p class="text-[10px] text-text2 mt-0.5">Morning alerts when your recovery score is ready.</p>
-          </div>
-          <input type="checkbox" checked={settings.readiness} onchange={() => toggleSetting('readiness')} disabled={saving} class="w-4 h-4 accent-blue" />
-        </label>
-        <label class="flex justify-between items-center py-3 border-b border-border cursor-pointer group">
-          <div>
-            <p class="text-[13px] font-medium text-text0 group-hover:text-teal transition-colors">Coach Messages</p>
-            <p class="text-[10px] text-text2 mt-0.5">Real-time alerts when ASTRAPHE updates your plan.</p>
-          </div>
-          <input type="checkbox" checked={settings.coach} onchange={() => toggleSetting('coach')} disabled={saving} class="w-4 h-4 accent-teal" />
-        </label>
-        <label class="flex justify-between items-center py-3 border-b border-border cursor-pointer group">
-          <div>
-            <p class="text-[13px] font-medium text-text0 group-hover:text-amber transition-colors">Workout Reminders</p>
-            <p class="text-[10px] text-text2 mt-0.5">1 hour before scheduled sessions.</p>
-          </div>
-          <input type="checkbox" checked={settings.workouts} onchange={() => toggleSetting('workouts')} disabled={saving} class="w-4 h-4 accent-amber" />
-        </label>
-        <label class="flex justify-between items-center py-3 cursor-pointer group">
-          <div>
-            <p class="text-[13px] font-medium text-text0 group-hover:text-blue transition-colors">Weekly Insights</p>
-            <p class="text-[10px] text-text2 mt-0.5">Summary of your load, form, and sleep trends.</p>
-          </div>
-          <input type="checkbox" checked={settings.insights} onchange={() => toggleSetting('insights')} disabled={saving} class="w-4 h-4 accent-blue" />
-        </label>
+  <section aria-label="Push notifications" class="bg-bg2 border border-border rounded-[24px] px-[18px] py-1 flex flex-col">
+    {#each [
+      { key: 'readiness', title: 'Daily readiness', desc: 'Morning alert when your recovery score is ready.' },
+      { key: 'workouts', title: 'Workout reminders', desc: '1 hour before scheduled sessions.' },
+      { key: 'coach', title: 'Coach messages', desc: 'When your coach adjusts the plan or replies.' },
+      { key: 'insights', title: 'Weekly insights', desc: 'Sunday summary of load, form and sleep trends.' }
+    ] as row, i (row.key)}
+      <div class="flex items-center gap-4 py-3.5 {i ? 'border-t border-border' : ''}">
+        <div class="flex-1 min-w-0 flex flex-col gap-0.5">
+          <span class="text-base font-medium">{row.title}</span>
+          <span class="text-[13px] leading-[1.4] text-text2">{row.desc}</span>
+        </div>
+        <ToggleSwitch
+          label={row.title}
+          checked={settings[row.key as keyof typeof settings]}
+          disabled={saving}
+          onchange={() => toggleSetting(row.key as keyof typeof settings)}
+        />
       </div>
-    </Card>
-
-    <p class="text-center text-xs text-text2 p-4">
-      {#if permissionGranted === true}
-        Push notifications are active on this device.
-      {:else}
-        Ensure push notifications are allowed in your device settings.
-      {/if}
-    </p>
-  </div>
+    {/each}
+  </section>
 </div>

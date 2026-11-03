@@ -1,5 +1,6 @@
 <script lang="ts">
-  import Card from '$lib/components/Card.svelte';
+  import SubpageHeader from '$lib/components/SubpageHeader.svelte';
+  import ToggleSwitch from '$lib/components/ToggleSwitch.svelte';
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
   import { confirm } from '$lib/confirm';
@@ -30,9 +31,6 @@
     initialized = true;
   });
 
-  function goBack() {
-    goto('/profile');
-  }
 
   async function toggleSetting(key: keyof typeof settings) {
     settings[key] = !settings[key];
@@ -72,46 +70,37 @@
   }
 </script>
 
-<div class="flex flex-col gap-3">
-  <div class="flex items-center gap-3">
-    <button onclick={goBack} class="w-8 h-8 flex items-center justify-center bg-glass border border-border rounded-lg text-text2 hover:text-text0 transition-colors cursor-pointer">
-      ←
-    </button>
-    <div>
-      <p class="text-xs text-text2 font-mono uppercase tracking-[0.1em]">Account</p>
-      <h1 class="text-[22px] font-bold tracking-[-0.02em]">Privacy</h1>
-    </div>
+<div class="flex flex-col gap-4 pb-6">
+  <SubpageHeader title="Privacy" />
+
+  <div class="flex flex-col gap-2">
+    <span class="font-mono text-[11px] tracking-[0.14em] text-text2">DATA SHARING</span>
+    <section aria-label="Data sharing" class="bg-bg2 border border-border rounded-[24px] px-[18px] py-1 flex flex-col">
+      {#each [
+        { key: 'share_data', title: 'Anonymous AI training', desc: 'Let Astraphe use anonymized performance data to improve coaching models.' },
+        { key: 'marketing', title: 'Product updates', desc: 'Occasional emails about new features.' }
+      ] as row, i (row.key)}
+        <div class="flex items-center gap-4 py-3.5 {i ? 'border-t border-border' : ''}">
+          <div class="flex-1 min-w-0 flex flex-col gap-0.5">
+            <span class="text-base font-medium">{row.title}</span>
+            <span class="text-[13px] leading-[1.4] text-text2">{row.desc}</span>
+          </div>
+          <ToggleSwitch
+            label={row.title}
+            checked={settings[row.key as keyof typeof settings]}
+            disabled={saving}
+            onchange={() => toggleSetting(row.key as keyof typeof settings)}
+          />
+        </div>
+      {/each}
+    </section>
   </div>
 
-  <div class="flex flex-col gap-3 mt-2">
-    <Card>
-      <p class="text-[13px] font-semibold mb-3">Data Sharing</p>
-      <div class="flex flex-col gap-0">
-        <label class="flex justify-between items-center py-3 border-b border-border cursor-pointer group">
-          <div class="pr-4">
-            <p class="text-[13px] font-medium text-text0 transition-colors">Anonymous AI Training</p>
-            <p class="text-[10px] text-text2 mt-1 leading-relaxed">Allow ASTRAPHE to use your anonymized performance data to improve our global coaching models.</p>
-          </div>
-          <input type="checkbox" checked={settings.share_data} onchange={() => toggleSetting('share_data')} disabled={saving} class="w-4 h-4 accent-teal shrink-0" />
-        </label>
-        <label class="flex justify-between items-center py-3 cursor-pointer group">
-          <div class="pr-4">
-            <p class="text-[13px] font-medium text-text0 transition-colors">Product Updates</p>
-            <p class="text-[10px] text-text2 mt-1 leading-relaxed">Receive occasional emails about new features and platform updates.</p>
-          </div>
-          <input type="checkbox" checked={settings.marketing} onchange={() => toggleSetting('marketing')} disabled={saving} class="w-4 h-4 accent-teal shrink-0" />
-        </label>
-      </div>
-    </Card>
-
-    <Card class="border-red/30 !bg-red/5">
-      <p class="text-[13px] font-semibold text-red mb-2">Danger Zone</p>
-      <p class="text-[11px] text-text1 leading-relaxed mb-4">
-        Permanently delete your account and wipe all personal data from our servers. This action is irreversible and you will lose all your coaching history, connected integrations, and AI models.
-      </p>
-      <button onclick={handleDeleteAccount} class="w-full py-2.5 bg-red-dim border border-red text-red text-xs font-semibold rounded-lg hover:bg-red hover:text-text0 transition-colors cursor-pointer">
-        Delete Account
-      </button>
-    </Card>
+  <div class="flex flex-col gap-2">
+    <span class="font-mono text-[11px] tracking-[0.14em] text-red">DANGER ZONE</span>
+    <section aria-label="Delete account" class="flex flex-col gap-3 p-[18px] rounded-[24px] bg-red-dim border border-red/30">
+      <p class="m-0 text-sm leading-[1.45] text-text0">Deleting your account removes your workouts, biometrics and coach history. This can't be undone.</p>
+      <button type="button" class="h-12 rounded-[14px] border border-red/70 bg-transparent text-red text-sm font-semibold cursor-pointer" onclick={handleDeleteAccount}>Delete account</button>
+    </section>
   </div>
 </div>
