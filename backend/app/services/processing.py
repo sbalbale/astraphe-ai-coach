@@ -809,7 +809,7 @@ async def find_or_create_canonical_workout(
 def _fetch_athlete_for_workout_sync(db: Any, athlete_id: str) -> dict[str, Any]:
     athlete_res = (
         db.table("athletes")
-        .select("max_hr,resting_hr,threshold_hr,threshold_hr_source,threshold_pace,gender,hr_zone_method")
+        .select("max_hr,resting_hr,threshold_hr,threshold_hr_source,threshold_pace,gender,hr_zone_method,ftp_watts,measurement_units")
         .eq("id", athlete_id)
         .single()
         .execute()
@@ -823,43 +823,55 @@ def _workouts_update_by_id_sync(db: Any, workout_id: str, update_data: dict[str,
         db.table("workouts").update(payload).eq("id", workout_id).execute()
 
 
-def _parse_pace_to_sec_per_km(pace: object) -> float:
+MILE_KM = 1.609344
+
+
+def _parse_pace_to_sec_per_km(pace: object, units: str | None = None) -> float:
     """
-    Accepts pace like '5:00', '05:00', '5:00/km', returns seconds per km.
+    Threshold pace ('5:00', '05:00', '5:00/km', '8:00/mi', or seconds) in seconds per km.
+
+    The app stores threshold_pace in the athlete's own units (the profile field reads /mi for
+    imperial athletes), so a bare value is per mile when ``units`` is 'imperial'. An explicit
+    /km or /mi suffix wins. (It used to always be read as per km: an imperial 8:00/mi became
+    8:00/km, and every pace-scored run's TSS came out ~2.6x too high.)
     Returns 0.0 for invalid inputs.
     """
     if pace is None:
         return 0.0
+    per_mile = (units or "").strip().lower() == "imperial"
     if isinstance(pace, (int, float)):
-        return float(pace) if float(pace) > 0 else 0.0
+        v = float(pace)
+        return (v / MILE_KM if per_mile else v) if v > 0 else 0.0
 
     s = str(pace).strip().lower()
     if not s:
         return 0.0
-
-    # remove common suffixes
-    for suffix in ("/km", "per km", "km", "min/km"):
+    if any(x in s for x in ("/mi", "per mi", "min/mi", "mile")):
+        per_mile = True
+    elif "km" in s:
+        per_mile = False
+    for suffix in ("min/km", "per km", "/km", "km", "min/mi", "per mile", "per mi", "/mile", "/mi", "mile", "mi"):
         s = s.replace(suffix, "")
     s = s.strip()
 
-    # Support "m:ss" or "mm:ss"
+    total = 0.0
     if ":" in s:
-        parts = [p for p in s.split(":") if p != ""]
+        parts = s.split(":")
         if len(parts) == 2:
             try:
-                mins = int(parts[0])
-                secs = int(parts[1])
-                total = mins * 60 + secs
-                return float(total) if total > 0 else 0.0
+                total = float(int(parts[0]) * 60 + int(parts[1]))
             except Exception:
                 return 0.0
-
-    # Fallback: treat as numeric seconds
-    try:
-        v = float(s)
-        return v if v > 0 else 0.0
-    except Exception:
+        else:
+            return 0.0
+    else:
+        try:
+            total = float(s)
+        except Exception:
+            return 0.0
+    if total <= 0:
         return 0.0
+    return total / MILE_KM if per_mile else total
 
 def recalculate_tss_history(athlete_id: str, db):
     """
@@ -937,6 +949,18 @@ def recalculate_tss_history(athlete_id: str, db):
         db.table("tss_history").delete().eq("athlete_id", athlete_id).lt("date", start_date.isoformat()).execute()
         db.table("tss_history").upsert(records, on_conflict="athlete_id,date").execute()
 
+def workout_ftp(given: Any, profile: Any) -> int | None:
+    """FTP to score a workout's power with: the one given with it, else the profile's, else None."""
+    for v in (given, profile):
+        try:
+            n = int(v)
+        except (TypeError, ValueError):
+            continue
+        if n > 0:
+            return n
+    return None
+
+
 async def process_and_save_workout(
     payload: WorkoutPayload,
     athlete_id: str,
@@ -999,12 +1023,13 @@ async def process_and_save_workout(
     anchor_threshold_hr = athlete.get("threshold_hr")
     anchor_threshold_hr_source = athlete.get("threshold_hr_source")
     anchor_gender = athlete.get("gender") or "male"
-    threshold_pace_sec_km = _parse_pace_to_sec_per_km(athlete.get("threshold_pace"))
+    threshold_pace_sec_km = _parse_pace_to_sec_per_km(athlete.get("threshold_pace"), athlete.get("measurement_units"))
+    # Power TSS uses the FTP given with the workout, else the athlete's profile FTP. With neither,
+    # power isn't scored and the heart-rate / pace / provider TSS below applies instead.
+    ftp = workout_ftp(payload.ftp_at_time, athlete.get("ftp_watts"))
 
-    if canonical == "bike" and payload.normalized_power:
-        tss = compute_tss_power(
-            payload.duration_seconds, payload.normalized_power, payload.ftp_at_time
-        )
+    if canonical == "bike" and payload.normalized_power and ftp:
+        tss = compute_tss_power(payload.duration_seconds, payload.normalized_power, ftp)
     elif (
         mapped_sport == "run"
         and payload.duration_seconds
@@ -1035,9 +1060,9 @@ async def process_and_save_workout(
             threshold_hr_source=anchor_threshold_hr_source,
             hr_zone_method=athlete.get("hr_zone_method"),
         )
-    elif canonical == "row" and payload.average_power and payload.duration_seconds:
+    elif canonical == "row" and payload.average_power and payload.duration_seconds and ftp:
         norm_watts = normalize_rowing_watts(payload.average_power)
-        tss = compute_tss_power(payload.duration_seconds, int(norm_watts), payload.ftp_at_time)
+        tss = compute_tss_power(payload.duration_seconds, int(norm_watts), ftp)
     elif getattr(payload, "tss", None):
         tss = getattr(payload, "tss")
 
