@@ -60,6 +60,18 @@ def test_list_conversations_returns_rows(coach_client, fake_db, test_athlete_id)
     assert res.json()["conversations"][0]["id"] == "c1"
 
 
+def test_list_conversations_leaves_out_empty_chats(coach_client, fake_db, test_athlete_id):
+    fake_db._table_seeds["coach_conversations"] = [
+        {"id": "c1", "title": "Ramp rate", "created_at": "t", "updated_at": "t", "coach_messages": [{"count": 2}]},
+        {"id": "c2", "title": None, "created_at": "t", "updated_at": "t", "coach_messages": [{"count": 0}]},
+        {"id": "c3", "title": "Your week", "created_at": "t", "updated_at": "t", "coach_messages": [{"count": 1}]},
+    ]
+    res = coach_client.get("/v1/coach/conversations")
+    rows = res.json()["conversations"]
+    assert [r["id"] for r in rows] == ["c1", "c3"]
+    assert all("coach_messages" not in r for r in rows)
+
+
 def test_create_conversation_returns_new_id(coach_client, fake_db, test_athlete_id):
     res = coach_client.post("/v1/coach/conversations", json={"title": "New chat"})
     assert res.status_code == 200
