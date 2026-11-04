@@ -48,6 +48,7 @@
   } from '$lib/coachMarkdown';
   import type { Workout } from '$lib/types/training';
   import { modalDialog } from '$lib/actions/modalDialog';
+  import PlanSessionEditor from '$lib/components/plan/PlanSessionEditor.svelte';
   import { sessionNotesSummary } from '$lib/utils/sessionNotes';
 
   type AgendaView = 'day' | 'week';
@@ -251,6 +252,24 @@
   function closeWorkout() {
     selectedWorkout = null;
     removingPlanWorkout = false;
+  }
+
+  // --- Manual edit (phone sheet and wide inspector share one editor) ---
+  let editingWorkout = $state<Workout | null>(null);
+  function editSelected() {
+    const id = backendTrainingPlanId(selectedWorkout);
+    editingWorkout = (id && trainingStore.workouts.find((x) => x.id === id)) || null;
+  }
+  async function saveEdit(w: Workout): Promise<boolean> {
+    const ok = await trainingStore.updateWorkout(w, viewMonthRange.startIso, viewMonthRange.endIso);
+    if (!ok) return false;
+    // The sheet holds a snapshot: show the saved session (or close if it left this month).
+    if (selectedWorkout && backendTrainingPlanId(selectedWorkout) === w.id) {
+      selectedWorkout = plannedWorkouts.find((p) => backendTrainingPlanId(p) === w.id) ?? null;
+    }
+    // Wide: follow a session moved to another day.
+    if (viewport.wide && wideSelId === w.id) selectDate(new Date(w.date + 'T12:00:00'));
+    return true;
   }
 
   /** Whether a phone-view row's plan session is marked done (from the store's `completed`). */
@@ -933,6 +952,7 @@
         askCoach(`Swap my ${wideSelected.title} on ${format(selectedDate, 'EEEE d MMMM')} for a different session: `)}
       onadd={() => askCoach(`Add a session to my plan on ${format(selectedDate, 'EEEE d MMMM')}: `)}
       onremove={wideRemove}
+      onedit={() => (editingWorkout = (wideSelected && trainingStore.workouts.find((x) => x.id === wideSelected?.id)) || null)}
       ontoggledone={wideToggleDone}
       onopen={wideOpenFull}
       onundo={wideUndo}
@@ -1302,6 +1322,9 @@
         <div class="{backendTrainingPlanId(sw) ? '' : 'mt-auto'} shrink-0 flex gap-2">
           <button type="button" class="flex-1 h-12 rounded-[14px] border border-border bg-transparent text-text0 text-sm font-medium cursor-pointer {sheetMode === 'move' ? 'bg-bg3' : ''}" onclick={() => { moveDate = sw.isoDate; sheetMode = sheetMode === 'move' ? 'none' : 'move'; }}>Move</button>
           <button type="button" class="flex-1 h-12 rounded-[14px] border border-border bg-transparent text-text0 text-sm font-medium cursor-pointer {sheetMode === 'swap' ? 'bg-bg3' : ''}" onclick={() => (sheetMode = sheetMode === 'swap' ? 'none' : 'swap')}>Swap</button>
+          {#if backendTrainingPlanId(sw)}
+            <button type="button" class="flex-1 h-12 rounded-[14px] border border-border bg-transparent text-text0 text-sm font-medium cursor-pointer" onclick={editSelected}>Edit</button>
+          {/if}
           <button
             type="button"
             aria-label="Remove from plan"
@@ -1316,3 +1339,5 @@
     </div>
   </div>
 {/if}
+
+<PlanSessionEditor workout={editingWorkout} onSave={saveEdit} onClose={() => (editingWorkout = null)} />

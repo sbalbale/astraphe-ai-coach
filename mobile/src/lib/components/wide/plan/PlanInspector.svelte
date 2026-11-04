@@ -24,6 +24,7 @@
     onswap,
     onadd,
     onremove,
+    onedit,
     ontoggledone,
     onopen,
     onundo,
@@ -44,6 +45,8 @@
     onswap: () => void;
     onadd: () => void;
     onremove: () => void;
+    /** Opens the manual editor for the selected session. */
+    onedit: () => void;
     /** Marks the selected session done / not done. */
     ontoggledone: () => void;
     onopen: () => void;
@@ -216,6 +219,12 @@
             class="flex-1 h-[42px] rounded-xl border border-popover-border bg-transparent text-text0 text-[13px] font-medium cursor-pointer hover:border-text3"
             onclick={onswap}
           >Swap</button>
+          <button
+            type="button"
+            disabled={saving}
+            class="flex-1 h-[42px] rounded-xl border border-popover-border bg-transparent text-text0 text-[13px] font-medium cursor-pointer hover:border-text3 disabled:opacity-50"
+            onclick={onedit}
+          >Edit</button>
           <button
             type="button"
             aria-label="Remove from plan"
