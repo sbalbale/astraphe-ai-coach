@@ -300,6 +300,8 @@
     const first = (workoutsByIso[iso] ?? [])[0];
     return dayMark(first ? linkStateOf(first) : null);
   }
+  /** Spoken after a day's label on the calendar (the mark itself is visual). */
+  const MARK_SUFFIX: Record<string, string> = { linked: ', completed', mark: ', done', missed: ', missed' };
   const STATE_LABEL: Record<SessionLinkState, string> = { linked: 'Linked', mark: 'Done', missed: 'Missed', today: '', future: '' };
   async function setPlanDone(planId: string, done: boolean): Promise<boolean> {
     return trainingStore.setCompleted(planId, done, viewMonthRange.startIso, viewMonthRange.endIso);
@@ -586,13 +588,22 @@
     planActionError = null;
   });
 
-  // Deep link from Today: /plan?session=<id> selects that day and opens the session.
+  // Deep link from Today / a workout: /plan?session=<id>[&date=yyyy-MM-dd] selects that day and
+  // opens the session. With a date in another month, that month is loaded first.
   let openedFromLink: string | null = null;
+  let jumpedForLink: string | null = null;
   $effect(() => {
     const wanted = $page.url.searchParams.get('session');
     if (!wanted || wanted === openedFromLink) return;
     const match = plannedWorkouts.find((w) => backendTrainingPlanId(w) === wanted);
-    if (!match) return;
+    if (!match) {
+      const day = $page.url.searchParams.get('date');
+      if (day && /^\d{4}-\d{2}-\d{2}$/.test(day) && jumpedForLink !== wanted) {
+        jumpedForLink = wanted;
+        selectDate(new Date(day + 'T12:00:00'));
+      }
+      return;
+    }
     openedFromLink = wanted;
     selectDate(match.date);
     openWorkout(match);
@@ -1096,7 +1107,7 @@
           {@const mark = dayMarkFor(iso)}
           <button
             type="button"
-            aria-label="{format(d, 'EEEE d MMMM')}{first ? ': ' + (first.title ?? 'Session') : ''}"
+            aria-label="{format(d, 'EEEE d MMMM')}{first ? ': ' + (first.title ?? 'Session') : ''}{mark ? MARK_SUFFIX[mark] : ''}"
             class="h-[50px] rounded-[10px] flex flex-col items-center justify-center gap-1.5 p-0 cursor-pointer border {isSel ? 'bg-bg3 border-blue' : 'bg-transparent border-transparent'}"
             onclick={() => selectDate(d)}
           >
@@ -1325,13 +1336,15 @@
         {/if}
         {@const plan = rawPlan(sw)}
         {#if plan}
-          <PlanLinkPanel
-            {plan}
-            {todayIso}
-            {wide}
-            onsetdone={(done) => setPlanDone(plan.id, done)}
-            onchanged={reloadPlan}
-          />
+          {#key plan.id}
+            <PlanLinkPanel
+              {plan}
+              {todayIso}
+              {wide}
+              onsetdone={(done) => setPlanDone(plan.id, done)}
+              onchanged={reloadPlan}
+            />
+          {/key}
         {/if}
         <div class="{plan ? '' : 'mt-auto'} shrink-0 flex gap-2">
           <button type="button" class="flex-1 h-12 rounded-[14px] border border-border bg-transparent text-text0 text-sm font-medium cursor-pointer {sheetMode === 'move' ? 'bg-bg3' : ''}" onclick={() => { moveDate = sw.isoDate; sheetMode = sheetMode === 'move' ? 'none' : 'move'; }}>Move</button>

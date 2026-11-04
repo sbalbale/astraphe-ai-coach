@@ -179,7 +179,10 @@
   {/if}
 
   {#if s && plan}
-    <PlanLinkPanel {plan} {todayIso} wide onsetdone={onsetdone} onchanged={onlinkchanged} />
+    <!-- Keyed: a new session gets a fresh panel (its toast / Undo belong to the old one). -->
+    {#key plan.id}
+      <PlanLinkPanel {plan} {todayIso} wide onsetdone={onsetdone} onchanged={onlinkchanged} />
+    {/key}
   {/if}
 
   {#if canAct || (!s && !past)}

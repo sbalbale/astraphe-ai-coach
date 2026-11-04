@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 from datetime import date
+from uuid import UUID
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -307,13 +308,14 @@ def delete_training_plans(
 
 
 class LinkPayload(BaseModel):
-    workout_id: str
+    # UUID: a malformed id is a 422, not a Postgres error (500).
+    workout_id: UUID
     # Move the link when this workout already completes another session.
     move: bool = False
 
 
 class DismissPayload(BaseModel):
-    workout_id: str
+    workout_id: UUID
 
 
 def _link_error(e: Exception):
@@ -330,27 +332,27 @@ def _link_error(e: Exception):
 
 @router.get("/{training_plan_id}/candidates")
 def link_candidates(
-    training_plan_id: str,
+    training_plan_id: UUID,
     athlete_id: str = Depends(get_current_athlete),
     db=Depends(get_user_db),
 ):
     """Recorded workouts within two days of the session, best fit first, plus the one-tap suggestion."""
     try:
-        return plan_matching.candidates_for_plan(db, athlete_id, training_plan_id)
+        return plan_matching.candidates_for_plan(db, athlete_id, str(training_plan_id))
     except Exception as e:
         _link_error(e)
 
 
 @router.post("/{training_plan_id}/link")
 def link_workout(
-    training_plan_id: str,
+    training_plan_id: UUID,
     payload: LinkPayload,
     athlete_id: str = Depends(get_current_athlete),
     db=Depends(get_user_db),
 ):
     """Link a recorded workout by hand (marks the session done). 409 if it completes another session."""
     try:
-        row = plan_matching.link(db, athlete_id, training_plan_id, payload.workout_id, source="manual", move=payload.move)
+        row = plan_matching.link(db, athlete_id, str(training_plan_id), str(payload.workout_id), source="manual", move=payload.move)
         return _with_linked_workouts(db, athlete_id, [row])[0]
     except Exception as e:
         _link_error(e)
@@ -358,13 +360,17 @@ def link_workout(
 
 @router.delete("/{training_plan_id}/link")
 def unlink_workout(
-    training_plan_id: str,
+    training_plan_id: UUID,
+    dismiss: bool = True,
+    done: bool = False,
     athlete_id: str = Depends(get_current_athlete),
     db=Depends(get_user_db),
 ):
-    """Unlink: the session goes back to not done and auto-match won't relink that workout."""
+    """Unlink: the session goes back to not done and auto-match won't relink that workout.
+    Undo of a link passes `dismiss=false` (keep the workout suggestible) and `done=true` when
+    the session was done by hand before."""
     try:
-        row = plan_matching.unlink(db, athlete_id, training_plan_id)
+        row = plan_matching.unlink(db, athlete_id, str(training_plan_id), dismiss=dismiss, done=done)
         return _to_workout_row(row)
     except Exception as e:
         _link_error(e)
@@ -372,14 +378,14 @@ def unlink_workout(
 
 @router.post("/{training_plan_id}/dismiss")
 def dismiss_suggestion(
-    training_plan_id: str,
+    training_plan_id: UUID,
     payload: DismissPayload,
     athlete_id: str = Depends(get_current_athlete),
     db=Depends(get_user_db),
 ):
     """"Not this one": stop suggesting (and auto-matching) this workout for the session."""
     try:
-        row = plan_matching.dismiss(db, athlete_id, training_plan_id, payload.workout_id)
+        row = plan_matching.dismiss(db, athlete_id, str(training_plan_id), str(payload.workout_id))
         return _to_workout_row(row)
     except Exception as e:
         _link_error(e)

@@ -5,6 +5,7 @@
    * search and sport chips. Moving a link from another session or linking a different sport
    * asks for confirmation first. Bottom sheet on phones, centred dialog on wide screens.
    */
+  import { modalDialog } from '$lib/actions/modalDialog';
   import { tick } from 'svelte';
   import type { WorkoutCandidate } from '$lib/types/linking';
   import {
@@ -70,19 +71,17 @@
     return c.fit.auto_ok ? 'text-green' : 'text-text1';
   }
 
-  function onKey(e: KeyboardEvent) {
-    if (e.key === 'Escape') {
-      e.stopPropagation();
-      if (pending) pending = null;
-      else onclose();
-    }
+  function escape() {
+    if (pending) pending = null;
+    else onclose();
   }
 </script>
 
-<div class="fixed inset-0 z-[70] flex {wide ? 'items-center justify-center p-8' : 'flex-col justify-end'}" role="presentation" onkeydown={onKey}>
+<div class="fixed inset-0 z-[70] flex {wide ? 'items-center justify-center p-8' : 'flex-col justify-end'}" role="presentation">
   <button type="button" aria-label="Close" class="absolute inset-0 border-0 bg-black/55 cursor-default" onclick={onclose}></button>
   <div
     role="dialog"
+    use:modalDialog={{ onEscape: escape }}
     aria-modal="true"
     aria-labelledby="link-picker-title"
     class="relative flex flex-col gap-3 bg-popover border-popover-border text-text0 {wide ? 'w-full max-w-[520px] max-h-[80dvh] rounded-[24px] border p-5' : 'h-[min(640px,88dvh)] rounded-t-[28px] border-t px-4 pt-2.5'}"

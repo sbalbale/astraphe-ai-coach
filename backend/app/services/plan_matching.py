@@ -315,37 +315,77 @@ def link(db: Any, athlete_id: str, plan_id: str, workout_id: str, *, source: str
         raise LookupError("plan not found")
     if not _workout(db, athlete_id, workout_id):
         raise LookupError("workout not found")
+    if source == "auto" and plan.get("completed_workout_id"):
+        raise LinkConflict(plan_summary(plan))  # already completed by another recording
     other = _linked_plan_for_workout(db, athlete_id, workout_id)
+    moved_from: Optional[dict] = None
     if other and other["id"] != plan_id:
         if not move:
             raise LinkConflict(plan_summary(other))
         _clear_link(db, athlete_id, other["id"])
+        moved_from = other
     dismissed = [d for d in (plan.get("dismissed_workout_ids") or []) if d != workout_id]
-    res = (
+    q = (
         db.table("training_plans")
         .update({"status": "done", "completed_workout_id": workout_id, "link_source": source, "dismissed_workout_ids": dismissed})
         .eq("id", plan_id)
         .eq("athlete_id", athlete_id)
-        .execute()
     )
-    return (res.data or [{}])[0]
+    if source == "auto":
+        # Two replicas matching at once: only the first fills an empty session.
+        q = q.is_("completed_workout_id", "null")
+    try:
+        res = q.execute()
+    except Exception as e:
+        if moved_from:  # put the link we just cleared back
+            _restore_link(db, athlete_id, moved_from)
+        if _is_unique_violation(e):  # another request linked this workout in between
+            current = _linked_plan_for_workout(db, athlete_id, workout_id)
+            raise LinkConflict(plan_summary(current) if current else {}) from e
+        raise
+    if not res.data:
+        if source == "auto":
+            raise LinkConflict(plan_summary(plan))
+        raise LookupError("plan not found")
+    return res.data[0]
 
 
-def _clear_link(db: Any, athlete_id: str, plan_id: str, dismiss: Optional[str] = None, prior: Optional[list] = None) -> dict:
-    update: dict[str, Any] = {"status": "planned", "completed_workout_id": None, "link_source": None}
+def _is_unique_violation(e: Exception) -> bool:
+    text = f"{getattr(e, 'code', '')} {e}"
+    return "23505" in text or "duplicate key" in text
+
+
+def _restore_link(db: Any, athlete_id: str, prior: dict) -> None:
+    """Best effort: relink a session whose link was cleared for a move that then failed."""
+    try:
+        db.table("training_plans").update({
+            "status": prior.get("status") or "done",
+            "completed_workout_id": prior.get("completed_workout_id"),
+            "link_source": prior.get("link_source"),
+        }).eq("id", prior["id"]).eq("athlete_id", athlete_id).execute()
+    except Exception as e:
+        logger.warning("[plan_matching] could not restore link plan=%s: %r", prior.get("id"), e)
+
+
+def _clear_link(
+    db: Any, athlete_id: str, plan_id: str, dismiss: Optional[str] = None, prior: Optional[list] = None, done: bool = False
+) -> dict:
+    update: dict[str, Any] = {"status": "done" if done else "planned", "completed_workout_id": None, "link_source": None}
     if dismiss:
         update["dismissed_workout_ids"] = list(dict.fromkeys([*(prior or []), dismiss]))
     res = db.table("training_plans").update(update).eq("id", plan_id).eq("athlete_id", athlete_id).execute()
     return (res.data or [{}])[0]
 
 
-def unlink(db: Any, athlete_id: str, plan_id: str) -> dict:
-    """Back to not done. The workout is remembered as dismissed so auto-match won't relink it."""
+def unlink(db: Any, athlete_id: str, plan_id: str, *, dismiss: bool = True, done: bool = False) -> dict:
+    """Back to not done. By default the workout is remembered as dismissed so auto-match won't
+    relink it. Undo of a link passes `dismiss=False` (keep it suggestible) and `done=True` when
+    the session was done by hand before the link."""
     plan = _plan(db, athlete_id, plan_id)
     if not plan:
         raise LookupError("plan not found")
-    wid = plan.get("completed_workout_id")
-    return _clear_link(db, athlete_id, plan_id, dismiss=wid, prior=plan.get("dismissed_workout_ids"))
+    wid = plan.get("completed_workout_id") if dismiss else None
+    return _clear_link(db, athlete_id, plan_id, dismiss=wid, prior=plan.get("dismissed_workout_ids"), done=done)
 
 
 def dismiss(db: Any, athlete_id: str, plan_id: str, workout_id: str) -> dict:

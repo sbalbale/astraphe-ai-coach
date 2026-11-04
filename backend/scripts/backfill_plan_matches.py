@@ -37,8 +37,19 @@ def main() -> int:
     db = get_admin_db()
     since = date.today() - timedelta(days=args.days)
     if args.all:
-        rows = db.table("training_plans").select("athlete_id").gte("planned_date", since.isoformat()).execute().data or []
-        athletes = sorted({r["athlete_id"] for r in rows})
+        # Paged: PostgREST returns at most 1000 rows per request.
+        found: set[str] = set()
+        start, page = 0, 1000
+        while True:
+            rows = (
+                db.table("training_plans").select("athlete_id").gte("planned_date", since.isoformat())
+                .order("id").range(start, start + page - 1).execute().data or []
+            )
+            found.update(r["athlete_id"] for r in rows)
+            if len(rows) < page:
+                break
+            start += page
+        athletes = sorted(found)
     else:
         athletes = [args.athlete_id]
 

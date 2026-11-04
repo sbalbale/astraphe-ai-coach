@@ -1,5 +1,6 @@
 <script lang="ts">
   /** "Unlink <workout>?" confirmation (design: Plan · link a workout, unlink sheet). */
+  import { modalDialog } from '$lib/actions/modalDialog';
   import type { LinkSource } from '$lib/types/linking';
   import { unlinkText } from '$lib/utils/linking';
 
@@ -23,16 +24,11 @@
 <div
   class="fixed inset-0 z-[70] flex {wide ? 'items-center justify-center p-8' : 'flex-col justify-end'}"
   role="presentation"
-  onkeydown={(e) => {
-    if (e.key === 'Escape') {
-      e.stopPropagation();
-      oncancel();
-    }
-  }}
 >
   <button type="button" aria-label="Cancel" class="absolute inset-0 border-0 bg-black/55 cursor-default" onclick={oncancel}></button>
   <div
     role="alertdialog"
+    use:modalDialog={{ onEscape: oncancel }}
     aria-modal="true"
     aria-labelledby="unlink-title"
     class="relative flex flex-col gap-3.5 bg-popover border-popover-border text-text0 {wide ? 'w-full max-w-[440px] rounded-[24px] border p-6' : 'rounded-t-[28px] border-t px-5 pt-2.5'}"

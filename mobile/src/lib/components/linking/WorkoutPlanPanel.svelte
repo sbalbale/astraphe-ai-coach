@@ -6,6 +6,11 @@
    * workout, so a remount shows the last data at once and only refetches after 30 s. */
   const cache = new Map<string, { at: number; data: Link | null; structure: Step[] }>();
   const FRESH_MS = 30_000;
+
+  /** Drop cached links (call after linking / unlinking elsewhere, e.g. on the Plan page). */
+  export function invalidateWorkoutPlanLinks(): void {
+    cache.clear();
+  }
 </script>
 
 <script lang="ts">
@@ -113,7 +118,7 @@
     }
   }
 
-  async function linkTo(planId: string, title: string, previous: PlanSummary | null) {
+  async function linkTo(planId: string, title: string, previous: PlanSummary | null, wasDone = false) {
     await run(async () => {
       // Changing session: this workout already completes another one, so move the link.
       const res = await api.linkWorkoutToPlan(planId, workoutId, Boolean(previous));
@@ -124,7 +129,8 @@
       picking = false;
       flash(`Linked to ${title}.`, async () => {
         if (previous) await api.linkWorkoutToPlan(previous.id, workoutId, true);
-        else await api.unlinkPlanWorkout(planId);
+        // Undo: keep the workout suggestible, and a session done by hand stays done.
+        else await api.unlinkPlanWorkout(planId, { dismiss: false, done: wasDone });
         await load(workoutId, true);
         onchange?.();
       });
@@ -133,7 +139,7 @@
   }
 
   function pick(c: PlanCandidate) {
-    void linkTo(c.id, c.title, data?.linked ?? null);
+    void linkTo(c.id, c.title, data?.linked ?? null, !c.has_other_workout && c.completed);
   }
 
   async function dismiss(c: PlanCandidate) {
@@ -228,7 +234,7 @@
             : 'bg-accent-surface text-blue'}">{p.link_source === 'auto' ? 'AUTO-MATCHED' : 'LINKED BY YOU'}</span
         >
       </div>
-      <a href="/plan?session={encodeURIComponent(p.id)}" class="flex items-center gap-3 p-3 rounded-2xl bg-bg1 border border-rail-border no-underline text-text0">
+      <a href="/plan?session={encodeURIComponent(p.id)}&date={encodeURIComponent(p.date)}" class="flex items-center gap-3 p-3 rounded-2xl bg-bg1 border border-rail-border no-underline text-text0">
         <span aria-hidden="true" class="shrink-0 w-1 h-9 rounded-sm bg-blue"></span>
         <span class="flex-1 min-w-0 flex flex-col gap-0.5">
           <span class="text-[15px] font-medium truncate">{p.title}</span>
@@ -306,7 +312,7 @@
           <span class="font-mono text-[10px] tracking-[0.14em] text-blue">LOOKS LIKE A MATCH</span>
           <span class="text-[15px] leading-snug"><strong class="font-semibold">{sug.title}</strong> · {sessionMeta(sug)} ({sug.fit.reason}) — link it?</span>
           <div class="grid grid-cols-2 gap-2">
-            <button type="button" disabled={busy} class="h-11 rounded-xl border-0 bg-blue text-on-accent text-[14px] font-semibold cursor-pointer disabled:opacity-50" onclick={() => linkTo(sug.id, sug.title, null)}>Link it</button>
+            <button type="button" disabled={busy} class="h-11 rounded-xl border-0 bg-blue text-on-accent text-[14px] font-semibold cursor-pointer disabled:opacity-50" onclick={() => linkTo(sug.id, sug.title, null, sug.completed)}>Link it</button>
             <button type="button" disabled={busy} class="h-11 rounded-xl border border-accent-surface-border bg-transparent text-text0 text-[14px] font-medium cursor-pointer disabled:opacity-50" onclick={() => dismiss(sug)}>Not this one</button>
           </div>
         </div>

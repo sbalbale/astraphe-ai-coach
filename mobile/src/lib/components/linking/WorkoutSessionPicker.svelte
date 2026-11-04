@@ -4,6 +4,7 @@
    * planned sessions within two days, best fit first, with a confirm step before replacing
    * another recording's link or linking across sports. Bottom sheet on phone, dialog on wide.
    */
+  import { modalDialog } from '$lib/actions/modalDialog';
   import { viewport } from '$lib/stores/viewport.svelte';
   import type { PlanCandidate } from '$lib/types/linking';
   import { filterSessions, pendingFor, pickerTag, sessionMeta, type Pending } from '$lib/utils/workoutLinking';
@@ -41,17 +42,12 @@
   function chip(c: PlanCandidate): string {
     return c.fit.sport_ok ? 'var(--blue)' : 'var(--text3)';
   }
-
-  function onKey(e: KeyboardEvent) {
-    if (e.key === 'Escape') onclose();
-  }
 </script>
-
-<svelte:window onkeydown={onKey} />
 
 <div class="fixed inset-0 z-[70] bg-black/55" aria-hidden="true" onclick={onclose}></div>
 <div
   role="dialog"
+  use:modalDialog={{ onEscape: onclose }}
   aria-modal="true"
   aria-labelledby="wsp-title"
   class="fixed z-[71] box-border flex flex-col gap-3 bg-popover border-popover-border text-text0 {wide

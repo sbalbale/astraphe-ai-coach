@@ -11,6 +11,7 @@ from app.services.processing import (
 from app.dependencies import get_current_athlete, get_user_db
 from app.services.coach_workout_data import WORKOUT_LIST_COLUMNS
 from datetime import datetime, timezone, timedelta
+from uuid import UUID
 
 router = APIRouter(prefix="/v1/workouts", tags=["Workouts"])
 
@@ -297,7 +298,7 @@ async def process_workout(
 
 @router.get("/{workout_id}/plan-link")
 def workout_plan_link(
-    workout_id: str,
+    workout_id: UUID,
     athlete_id: str = Depends(get_current_athlete),
     db=Depends(get_user_db),
 ):
@@ -305,6 +306,6 @@ def workout_plan_link(
     from app.services import plan_matching
 
     try:
-        return plan_matching.candidates_for_workout(db, athlete_id, workout_id)
+        return plan_matching.candidates_for_workout(db, athlete_id, str(workout_id))
     except LookupError as e:
         raise HTTPException(status_code=404, detail=str(e))

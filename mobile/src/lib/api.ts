@@ -486,11 +486,19 @@ export const api = {
     }
   },
 
-  /** Unlink: the session goes back to not done; auto-match won't relink that workout. */
-  async unlinkPlanWorkout(planId: string): Promise<Workout | null> {
+  /**
+   * Unlink: the session goes back to not done; auto-match won't relink that workout.
+   * Undo of a link passes `{ dismiss: false }` (keep the workout suggestible) and
+   * `{ done: true }` when the session was done by hand before the link.
+   */
+  async unlinkPlanWorkout(planId: string, opts: { dismiss?: boolean; done?: boolean } = {}): Promise<Workout | null> {
     try {
       const headers = await getAuthHeaders();
-      const res = await fetch(`${API_URL}/v1/training-plans/${encodeURIComponent(planId)}/link`, { method: 'DELETE', headers });
+      const q = new URLSearchParams();
+      if (opts.dismiss === false) q.set('dismiss', 'false');
+      if (opts.done) q.set('done', 'true');
+      const qs = q.toString() ? `?${q}` : '';
+      const res = await fetch(`${API_URL}/v1/training-plans/${encodeURIComponent(planId)}/link${qs}`, { method: 'DELETE', headers });
       if (res.ok) return await res.json();
     } catch (e) {
       console.warn('Failed to unlink workout.', e);

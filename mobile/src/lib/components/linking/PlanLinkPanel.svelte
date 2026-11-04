@@ -27,6 +27,7 @@
     workoutMeta
   } from '$lib/utils/linking';
   import WorkoutPicker from './WorkoutPicker.svelte';
+  import { invalidateWorkoutPlanLinks } from './WorkoutPlanPanel.svelte';
   import PlanUnlinkConfirm from './PlanUnlinkConfirm.svelte';
 
   let {
@@ -61,7 +62,9 @@
   let toastTimer: ReturnType<typeof setTimeout> | null = null;
 
   async function loadCandidates() {
-    const res = await api.getPlanLinkCandidates(plan.id);
+    const id = plan.id;
+    const res = await api.getPlanLinkCandidates(id);
+    if (id !== plan.id) return; // another session was selected meanwhile
     candidates = res?.candidates ?? [];
     suggestion = res?.suggestion ?? null;
   }
@@ -95,6 +98,7 @@
         error = "Couldn't update the session. Try again.";
         return false;
       }
+      invalidateWorkoutPlanLinks();
       await onchanged();
       return true;
     } finally {
@@ -104,16 +108,19 @@
 
   /** Put the link back the way it was before a change (for Undo). */
   function restoreTo(prev: { workoutId: string | null; completed: boolean }): () => Promise<void> {
+    const planId = plan.id;
+    const setDone = onsetdone;
     return async () => {
       await run(async () => {
         if (prev.workoutId) {
-          const r = await api.linkWorkoutToPlan(plan.id, prev.workoutId, true);
+          const r = await api.linkWorkoutToPlan(planId, prev.workoutId, true);
           return r.ok;
         }
-        if (plan.completed_workout_id) {
-          if (!(await api.unlinkPlanWorkout(plan.id))) return false;
+        // Undo of a link: back to how it was (done by hand or not), without dismissing the workout.
+        if (plan.id === planId && plan.completed_workout_id) {
+          return !!(await api.unlinkPlanWorkout(planId, { dismiss: false, done: prev.completed }));
         }
-        return onsetdone(prev.completed);
+        return setDone(prev.completed);
       });
       toast = null;
     };
@@ -134,6 +141,7 @@
         return;
       }
       sheet = 'none';
+      invalidateWorkoutPlanLinks();
       await onchanged();
       showToast(`Linked ${c.title}.`, restoreTo(prev));
     } finally {
@@ -213,7 +221,14 @@
       <button type="button" class={btn} disabled={busy} onclick={openPicker}>Change workout</button>
       <button type="button" class="{btn} !border-red/40 !text-red" disabled={busy} onclick={() => (sheet = 'unlink')}>Unlink</button>
     </div>
-  {:else if linkState === 'mark' || (linkState === 'linked' && !w)}
+  {:else if linkState === 'linked' && !w}
+    <span class="font-mono text-[11px] tracking-[0.14em] text-green">✓ COMPLETED</span>
+    <span class="text-[13px] leading-normal text-text1">Linked to a recorded workout, but its details couldn't be loaded right now.</span>
+    <div class="grid grid-cols-2 gap-2">
+      <button type="button" class={btn} disabled={busy} onclick={openPicker}>Change workout</button>
+      <button type="button" class="{btn} !border-red/40 !text-red" disabled={busy} onclick={unlink}>Unlink</button>
+    </div>
+  {:else if linkState === 'mark'}
     <span class="font-mono text-[11px] tracking-[0.14em] text-green">✓ DONE · NO WORKOUT</span>
     <span class="text-[13px] leading-normal text-text1">
       You marked this done by hand. It counts as planned TSS{plannedTss ? ` (${plannedTss})` : ''} until you link a recording.

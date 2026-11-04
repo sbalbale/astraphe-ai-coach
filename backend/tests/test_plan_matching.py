@@ -63,3 +63,59 @@ def test_suggestion_skips_dismissed_linked_elsewhere_and_other_sports():
     ]
     assert pm._suggestion(_plan(), rows)["id"] == "d"
     assert pm._suggestion(_plan(status="done"), rows) is None
+
+
+# --- review fixes: races, undo, ids -------------------------------------------------------
+
+def test_unlink_for_undo_does_not_dismiss():
+    from unittest.mock import patch as _patch
+
+    from app.services import plan_matching as pm
+
+    updates = []
+    plan = {"id": "p1", "completed_workout_id": "w1", "dismissed_workout_ids": []}
+    with _patch.object(pm, "_plan", return_value=plan), _patch.object(
+        pm, "_clear_link", side_effect=lambda db, a, pid, dismiss=None, prior=None, done=False: updates.append((dismiss, done)) or {"id": pid}
+    ):
+        pm.unlink(None, "a", "p1", dismiss=False, done=True)
+        pm.unlink(None, "a", "p1")
+    assert updates == [(None, True), ("w1", False)]
+
+
+def test_auto_link_never_overwrites_a_completed_session():
+    from unittest.mock import patch as _patch
+
+    import pytest as _pytest
+
+    from app.services import plan_matching as pm
+
+    plan = {"id": "p1", "completed_workout_id": "w-other", "date": "2026-11-02", "title": "Ride"}
+    with _patch.object(pm, "_plan", return_value=plan), _patch.object(pm, "_workout", return_value={"id": "w1"}):
+        with _pytest.raises(pm.LinkConflict):
+            pm.link(None, "a", "p1", "w1", source="auto")
+
+
+def test_a_unique_violation_becomes_a_conflict_and_restores_a_moved_link():
+    from unittest.mock import MagicMock, patch as _patch
+
+    import pytest as _pytest
+
+    from app.services import plan_matching as pm
+
+    db = MagicMock()
+    db.table.return_value.update.return_value.eq.return_value.eq.return_value.execute.side_effect = Exception(
+        "duplicate key value violates unique constraint (23505)"
+    )
+    other = {"id": "p-other", "completed_workout_id": "w1", "status": "done", "link_source": "manual"}
+    restored = []
+    with _patch.object(pm, "_plan", return_value={"id": "p1", "dismissed_workout_ids": []}), _patch.object(
+        pm, "_workout", return_value={"id": "w1"}
+    ), _patch.object(pm, "_linked_plan_for_workout", side_effect=[other, other]), _patch.object(
+        pm, "_clear_link", return_value={}
+    ), _patch.object(pm, "_restore_link", side_effect=lambda db, a, prior: restored.append(prior["id"])), _patch.object(
+        pm, "plan_summary", side_effect=lambda p: {"id": p["id"]}
+    ):
+        with _pytest.raises(pm.LinkConflict) as exc:
+            pm.link(db, "a", "p1", "w1", move=True)
+    assert restored == ["p-other"]
+    assert exc.value.other == {"id": "p-other"}
