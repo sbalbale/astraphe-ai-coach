@@ -3,7 +3,7 @@ from app.config import settings
 from app.services import coach_tools
 from app.services import gemini_quota
 from app.services import plan_import
-from app.services.coach_workout_data import recent_workouts_teaser
+from app.services.coach_workout_data import pace_with_unit, recent_workouts_teaser
 from app.services.algorithms import compute_z_score
 from app.services.llm_provider import chat_uses_openai, client_for_chat_model, get_llm_client, is_chat_openai_model
 from app.services.memory import (
@@ -213,7 +213,7 @@ def _summarize_athlete_profile(db: Client, athlete_id: str) -> dict:
             "hrv_baseline": _safe_float(row.get("hrv_baseline")),
             "max_hr": _safe_int(row.get("max_hr")),
             "threshold_hr": _safe_int(row.get("threshold_hr")),
-            "threshold_pace": row.get("threshold_pace"),
+            "threshold_pace": pace_with_unit(row.get("threshold_pace"), row.get("measurement_units")),
             "ftp_watts": _safe_int(row.get("ftp_watts")),
             "weight_kg": _safe_float(row.get("weight_kg")),
         },

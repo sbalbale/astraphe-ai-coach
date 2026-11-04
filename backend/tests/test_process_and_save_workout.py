@@ -292,3 +292,30 @@ def test_workout_ftp_ignores_missing_and_zero_values():
     assert processing.workout_ftp(255, 280) == 255
     assert processing.workout_ftp(0, None) is None
     assert processing.workout_ftp(None, "290") == 290
+
+
+# --- Threshold pace is stored in the athlete's units ----------------------------------------------
+
+
+def test_threshold_pace_is_read_in_the_athletes_units():
+    p = processing._parse_pace_to_sec_per_km
+    assert p("8:00", "imperial") == pytest.approx(480 / 1.609344)
+    assert p("8:00", "metric") == 480
+    assert p("8:00", None) == 480
+    assert p("5:00/km", "imperial") == 300  # an explicit unit wins
+    assert p("8:00/mi", "metric") == pytest.approx(480 / 1.609344)
+    assert p("bad", "imperial") == 0.0
+    assert p(None, "imperial") == 0.0
+
+
+def test_imperial_run_is_scored_against_the_per_mile_threshold():
+    """Production: threshold '8:00' (per mile, imperial athlete) was read as 8:00/km, so an
+    82-min run at 7:48/mi was stored at TSS 344.5 instead of ~132."""
+    payload = _base_payload(source="garmin", sport="run", duration_seconds=82 * 60, avg_pace_sec_km=303)
+    athlete = {"threshold_pace": "8:00", "measurement_units": "imperial"}
+    p1, p2, p3 = _patch_common(athlete=athlete, created=True)
+    with p1, p2, p3 as mock_update:
+        _run_async(processing.process_and_save_workout(payload, "a", MagicMock(), skip_tss_recalc=True, skip_daily_strain_refresh=True))
+    tss = mock_update.call_args[0][2]["tss"]
+    assert tss == pytest.approx(82 / 60 * (480 / 1.609344 / 303) ** 2 * 100, rel=1e-3)
+    assert 125 < tss < 140

@@ -386,7 +386,20 @@ def slice_stream_window(
     return result
 
 
-def fetch_athlete_ftp(db: Client, athlete_id: str) -> int:
+def pace_with_unit(pace: Any, units: Any) -> str | None:
+    """Threshold pace as stored, with its unit spelled out for the coach ('8:00 /mi'). The app
+    stores it in the athlete's units, so a bare value is per mile for imperial athletes."""
+    if pace in (None, ""):
+        return None
+    s = str(pace).strip()
+    if any(u in s.lower() for u in ("/mi", "/km", "mile", "km")):
+        return s
+    return f"{s} /mi" if str(units or "").lower() == "imperial" else f"{s} /km"
+
+
+def fetch_athlete_ftp(db: Client, athlete_id: str) -> int | None:
+    """The athlete's profile FTP, or None (no made-up 250: a workout without a known FTP isn't
+    power-scored, the same as a synced one)."""
     try:
         res = (
             db.table("athletes")
@@ -395,12 +408,10 @@ def fetch_athlete_ftp(db: Client, athlete_id: str) -> int:
             .maybe_single()
             .execute()
         )
-        row = res.data or {}
-        ftp = row.get("ftp_watts")
-        return int(ftp) if ftp else 250
+        ftp = (res.data or {}).get("ftp_watts") if res else None
+        return int(ftp) if ftp else None
     except Exception:
-        return 250
-
+        return None
 
 def build_log_workout_payload(
     db: Client,
@@ -676,7 +687,7 @@ def get_athlete_zones_payload(db: Client, athlete_id: str) -> dict[str, Any]:
         res = (
             db.table("athletes")
             .select(
-                "lthr, threshold_hr, max_hr, resting_hr, hr_zone_method, ftp_watts, threshold_pace"
+                "lthr, threshold_hr, max_hr, resting_hr, hr_zone_method, ftp_watts, threshold_pace, measurement_units"
             )
             .eq("id", athlete_id)
             .maybe_single()
@@ -689,7 +700,7 @@ def get_athlete_zones_payload(db: Client, athlete_id: str) -> dict[str, Any]:
     zones = get_athlete_zones(athlete)
     return {
         "ftp_watts": athlete.get("ftp_watts"),
-        "threshold_pace": athlete.get("threshold_pace"),
+        "threshold_pace": pace_with_unit(athlete.get("threshold_pace"), athlete.get("measurement_units")),
         "anchors": {
             "lthr": athlete.get("lthr") or athlete.get("threshold_hr"),
             "max_hr": athlete.get("max_hr"),

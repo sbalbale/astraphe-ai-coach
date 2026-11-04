@@ -275,9 +275,9 @@ def test_slice_stream_window_unavailable_when_metric_series_empty():
 # ---------------------------------------------------------------------------
 
 
-def test_fetch_athlete_ftp_default_when_missing():
+def test_fetch_athlete_ftp_none_when_missing():
     db = _Db({"athletes": SimpleNamespace(data={})})
-    assert cwd.fetch_athlete_ftp(db, "athlete-1") == 250
+    assert cwd.fetch_athlete_ftp(db, "athlete-1") is None  # no made-up 250 W
 
 
 def test_fetch_athlete_ftp_returns_stored_value():
@@ -285,12 +285,12 @@ def test_fetch_athlete_ftp_returns_stored_value():
     assert cwd.fetch_athlete_ftp(db, "athlete-1") == 280
 
 
-def test_fetch_athlete_ftp_default_on_exception():
+def test_fetch_athlete_ftp_none_on_exception():
     db = MagicMock()
     db.table.return_value.select.return_value.eq.return_value.maybe_single.return_value.execute.side_effect = (
         RuntimeError("down")
     )
-    assert cwd.fetch_athlete_ftp(db, "athlete-1") == 250
+    assert cwd.fetch_athlete_ftp(db, "athlete-1") is None
 
 
 # ---------------------------------------------------------------------------

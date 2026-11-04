@@ -291,6 +291,8 @@ async def process_workout(
         if not payload.normalized_power:
             raise HTTPException(status_code=400, detail="Normalized power is required for cycling TSS.")
         ftp = payload.ftp_at_time or fetch_athlete_ftp(db, athlete_id)
+        if not ftp:
+            raise HTTPException(status_code=400, detail="Set your FTP to calculate cycling TSS.")
         tss = compute_tss_power(payload.duration_seconds, payload.normalized_power, ftp)
         return {"status": "success", "message": "Workout processed", "data": {"calculated_tss": tss}}
     raise HTTPException(status_code=400, detail="Not implemented.")
