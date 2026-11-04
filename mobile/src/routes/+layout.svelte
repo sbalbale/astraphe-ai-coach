@@ -177,11 +177,15 @@
     }
 
     const complete = profileComplete;
+    // Only a profile that loaded can say the account isn't set up. When the profile request
+    // failed (prod: a sign-in whose first requests went out without a token got 401s), the
+    // profile is empty, and that used to send set-up accounts to onboarding.
+    const needsOnboarding = athleteStore.profile != null && !complete;
 
     // Signed in but on an auth route: onboarding until profile is complete, then home.
     // Exempt callback/reset-password so email deep-link flows can complete.
     if (isAuthRoute && !isAuthFlowRoute) {
-      goto(complete ? '/dashboard' : '/onboarding', { replaceState: true });
+      goto(needsOnboarding ? '/onboarding' : '/dashboard', { replaceState: true });
       return;
     }
 

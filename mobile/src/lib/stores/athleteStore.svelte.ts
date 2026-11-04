@@ -189,6 +189,20 @@ export class AthleteState {
     });
   }
 
+  /** The profile request failed: try again shortly (twice), so the app doesn't treat the
+   * account as not set up because of one failed request. */
+  private retryProfile(gen: number, attempt = 1): void {
+    if (attempt > 2) return;
+    setTimeout(async () => {
+      if (!this.current(gen) || this.profile) return;
+      const profileWritesAtStart = this._profileWrites;
+      const p = await api.getAthleteProfile().catch(() => null);
+      if (!this.current(gen)) return;
+      if (p && profileWritesAtStart === this._profileWrites) this.profile = p;
+      else if (!p) this.retryProfile(gen, attempt + 1);
+    }, attempt === 1 ? 1500 : 5000);
+  }
+
   async fetchAll(force = false) {
     if (this.loading) {
       // Don't drop a forced refresh (new workout/sleep) just because a load is running.
@@ -239,6 +253,7 @@ export class AthleteState {
       }
       if (profileData && profileWritesAtStart === this._profileWrites) this.profile = profileData;
       if (syncData) this.syncStatus = syncData;
+      if (!profileData) this.retryProfile(gen);
 
       this.initialLoadDone = true;
       this.loading = false;

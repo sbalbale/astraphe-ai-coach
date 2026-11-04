@@ -70,6 +70,10 @@ describe('minutes:seconds fields', () => {
   it('reads what athletes type', () => {
     expect(parseMinSec('1:30')).toBe(1.5);
     expect(parseMinSec('90')).toBe(90);
+    expect(parseMinSec('90:00')).toBe(90);
+    expect(parseMinSec('1:30:00')).toBe(90);
+    expect(parseMinSec('0:01:30')).toBe(1.5);
+    expect(parseMinSec('1:75:00')).toBeNull();
     expect(parseMinSec('1.5')).toBe(1.5);
     expect(parseMinSec('')).toBe(0);
     expect(parseMinSec('1:75')).toBeNull();
@@ -79,6 +83,10 @@ describe('minutes:seconds fields', () => {
     expect(formatMinSec(1.5)).toBe('1:30');
     expect(formatMinSec(90)).toBe('90:00');
     expect(formatMinSec(0)).toBe('0:00');
+    expect(formatMinSec(119.5)).toBe('119:30');
+    expect(formatMinSec(120)).toBe('2:00:00');
+    expect(formatMinSec(135.5)).toBe('2:15:30');
+    expect(parseMinSec(formatMinSec(135.5))).toBe(135.5);
   });
 });
 
