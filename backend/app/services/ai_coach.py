@@ -193,7 +193,7 @@ def _summarize_athlete_profile(db: Client, athlete_id: str) -> dict:
     try:
         res = (
             db.table("athletes")
-            .select("display_name,gender,timezone_offset_min,resting_hr,hrv_baseline,rhr_baseline,max_hr,threshold_hr,threshold_pace,measurement_units")
+            .select("display_name,gender,timezone_offset_min,resting_hr,hrv_baseline,rhr_baseline,max_hr,threshold_hr,threshold_pace,ftp_watts,weight_kg,measurement_units")
             .eq("id", athlete_id)
             .maybe_single()
             .execute()
@@ -214,7 +214,14 @@ def _summarize_athlete_profile(db: Client, athlete_id: str) -> dict:
             "max_hr": _safe_int(row.get("max_hr")),
             "threshold_hr": _safe_int(row.get("threshold_hr")),
             "threshold_pace": row.get("threshold_pace"),
+            "ftp_watts": _safe_int(row.get("ftp_watts")),
+            "weight_kg": _safe_float(row.get("weight_kg")),
         },
+        "anchors_rule": (
+            "anchors are the athlete's current profile settings. Use them for every watt, pace and HR "
+            "target. They override any FTP, threshold or weight number in memories or earlier messages. "
+            "If an anchor is null, ask the athlete or call get_athlete_zones; never guess a number."
+        ),
     }
 
 def _load_conversation_history(db: Client, athlete_id: str, conversation_id: str, limit: int = 24) -> list[dict]:

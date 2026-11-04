@@ -239,7 +239,7 @@ Rules:
 * One row per phase (Warmup, Main Set, Cooldown). Add Recovery rows between work intervals when the main set is interval-based (e.g., `3x15m` work with `5m` recovery).
 * `Duration` uses human units (`10 min`, `3x15m`, `5m`).
 * `Intensity` is a zone or effort label (Z1-Z2, Sweet Spot, Threshold, etc.).
-* `Target` includes specific watts, % FTP, pace, or HR when known from `get_athlete_zones` or profile FTP.
+* `Target` includes specific watts, % FTP, pace, or HR from `athlete_profile.anchors` (e.g. `ftp_watts`) or `get_athlete_zones`. Never take FTP or thresholds from memories. If FTP is unknown, give % FTP only and ask for it.
 * Keep `markdown_notes` **table-only**—no prose before or after the table.
 * The `structure` array must mirror the same phases, durations, and targets as the table.
 

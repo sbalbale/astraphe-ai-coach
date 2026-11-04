@@ -461,3 +461,22 @@ def test_retrieve_relevant_memories_attaches_event_dates():
     with patch.object(memory, "_extract_embedding", return_value=[0.1]):
         rows = memory.retrieve_relevant_memories("athlete-1", "52k", db)
     assert rows == [{"id": "m1", "content": "52k row", "event_date": "2026-10-24"}]
+
+
+def test_profile_setting_memories_are_left_out_of_context():
+    from app.services.memory import memories_for_context, restates_profile_setting
+
+    assert restates_profile_setting("Athlete FTP is 275W.")
+    assert restates_profile_setting("Threshold heart rate is 185 bpm")
+    assert restates_profile_setting("Threshold pace is 6:25/mi")
+    assert not restates_profile_setting("FTP test on 2026-11-10 after the recovery week")
+    assert not restates_profile_setting("Race goal: hold 225 W, about 77% of FTP")
+    assert not restates_profile_setting("Competing in the bike leg of a 70.3 on 2026-07-26")
+    out = memories_for_context(
+        [
+            {"content": "Athlete FTP is 275W.", "created_at": "2026-06-30T16:08:00+00:00"},
+            {"content": "Prefers long rides on Saturdays", "created_at": "2026-06-30T16:08:00+00:00"},
+        ],
+        "2026-11-04",
+    )
+    assert [m["content"] for m in out] == ["Prefers long rides on Saturdays"]
