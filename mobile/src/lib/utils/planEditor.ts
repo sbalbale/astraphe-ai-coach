@@ -67,22 +67,51 @@ export function newBlock(name: string, minutes: number, zone: number, ftp: numbe
   return { key: nextKey(), name, duration: Math.round(Math.max(0, minutes) * 60) / 60, zone, ftp, rest: {} };
 }
 
-/** "1:30" → 1.5, "90" → 90, "1.5" → 1.5, "" → 0; null when it can't be read. */
-export function parseMinSec(text: string): number | null {
-  const t = String(text ?? '').trim();
-  if (!t) return 0;
-  const m = /^(\d{1,3}):(\d{1,2})$/.exec(t);
-  if (m) {
-    const sec = Number(m[2]);
-    return sec < 60 ? Number(m[1]) + sec / 60 : null;
-  }
-  return /^\d{1,3}(\.\d+)?$/.test(t) ? Number(t) : null;
+/**
+ * Time fields are typed as digits that fill in from the right, like a timer (the iPhone
+ * number pad has no colon): "30" = 0:30, "130" = 1:30, "13000" = 1:30:00. The last two
+ * digits are seconds, the two before are minutes, the rest are hours.
+ */
+const MAX_TIME_DIGITS = 6;
+
+/** The digits of what was typed or pasted (colons and the rest dropped), leading zeros trimmed. */
+export function timeDigits(text: string): string {
+  return String(text ?? '').replace(/\D/g, '').replace(/^0+/, '').slice(0, MAX_TIME_DIGITS);
 }
 
-/** 1.5 → "1:30", 90 → "90:00", 0 → "0:00". */
+/** Typed digits shown with colons as they're typed: "" → "0:00", "3" → "0:03", "130" → "1:30", "13000" → "1:30:00". */
+export function formatTimeDigits(digits: string): string {
+  const d = timeDigits(digits);
+  const ss = d.slice(-2).padStart(2, '0');
+  const rest = d.slice(0, -2);
+  if (rest.length <= 2) return `${Number(rest) || 0}:${ss}`;
+  return `${Number(rest.slice(0, -2))}:${rest.slice(-2)}:${ss}`;
+}
+
+/** Typed digits as minutes: "130" → 1.5, "13000" → 90, "90" → 1.5 (90 s), "9000" → 90. */
+export function timeDigitsToMinutes(digits: string): number {
+  const d = timeDigits(digits).padStart(MAX_TIME_DIGITS, '0');
+  return Number(d.slice(0, 2)) * 60 + Number(d.slice(2, 4)) + Number(d.slice(4)) / 60;
+}
+
+/** Minutes as the digits a field starts from (formatMinSec without colons): 1.5 → "130", 90 → "9000". */
+export function minutesToTimeDigits(minutes: number): string {
+  return timeDigits(formatMinSec(minutes));
+}
+
+/**
+ * Under 2 hours as m:ss (1.5 → "1:30", 90 → "90:00", 0 → "0:00"); 2 hours or more as
+ * h:mm:ss (120 → "2:00:00", 135.5 → "2:15:30").
+ */
 export function formatMinSec(minutes: number): string {
   const total = Math.round(Math.max(0, Number(minutes) || 0) * 60);
-  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+  const ss = String(total % 60).padStart(2, '0');
+  if (total >= 120 * 60) {
+    const h = Math.floor(total / 3600);
+    const mm = String(Math.floor((total % 3600) / 60)).padStart(2, '0');
+    return `${h}:${mm}:${ss}`;
+  }
+  return `${Math.floor(total / 60)}:${ss}`;
 }
 
 /** A blank session to plan by hand on `date`. */

@@ -29,6 +29,20 @@ function isSessionFromExpectedSupabase(session: Session): boolean {
   }
 }
 
+/** Supabase rejected the refresh token itself (expired, revoked, already used), not a
+ * network problem: the session is over. */
+function isDeadRefreshToken(error: { status?: number; message?: string; code?: string } | null): boolean {
+  if (!error) return false;
+  const text = `${error.code ?? ''} ${error.message ?? ''}`.toLowerCase();
+  return (
+    error.status === 400 ||
+    error.status === 401 ||
+    text.includes('refresh_token_not_found') ||
+    text.includes('invalid refresh token') ||
+    text.includes('refresh token not found')
+  );
+}
+
 // One refresh at a time: N parallel requests with an expired token each called
 // refreshSession(), rotating the refresh token N times (later ones then fail).
 let _refreshInFlight: ReturnType<typeof supabase.auth.refreshSession> | null = null;
@@ -56,6 +70,18 @@ export async function ensureAuthSession() {
   }
   if (!session?.access_token || isAccessTokenExpired(session.access_token)) {
     const { data, error } = await refreshSessionOnce();
+    if (error && isDeadRefreshToken(error)) {
+      // The stored session can't be renewed: sign out (the layout shows sign-in) instead of
+      // staying "signed in" and sending every request without a token (401s, empty profile).
+      try {
+        await supabase.auth.signOut({ scope: 'local' });
+      } catch {
+        // local sign-out only; nothing to do if it fails
+      }
+      authStore.session = null;
+      authStore.user = null;
+      return null;
+    }
     if (!error && data.session) {
       if (!isSessionFromExpectedSupabase(data.session)) {
         await supabase.auth.signOut();

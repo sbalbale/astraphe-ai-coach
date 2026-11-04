@@ -152,7 +152,8 @@ def test_schedule_workout_vo2max_inserts_training_plan():
     assert out.get("training_plan_id") == "mock-plan-id"
     assert db.inserts and db.inserts[0][0] == "training_plans"
     row = db.inserts[0][1]
-    assert row["duration_min"] == 45
+    # A session is as long as its blocks (the generated 45' VO2 set adds up to 39').
+    assert row["duration_min"] == round(sum(b["duration_minutes"] for b in row["structure"]))
     assert row["status"] == "planned"
     assert row["primary_zone"] == "VO2Max"
     assert isinstance(row.get("structure"), list)
@@ -168,8 +169,8 @@ def test_schedule_workout_vo2max_inserts_training_plan():
     assert any(b["name"].lower().startswith("recovery") for b in struct)
     assert all(b["sub_intervals"] == [] for b in struct)
     assert out["garmin_push"]["status"] == "stubbed"
-    # 45 min * 1.1^2 * (45/60) * 100 ≈ 90.75 TSS
-    assert 85 <= float(out["target_tss_estimate"]) <= 95
+    # TSS for the saved length: hours * 1.1^2 * 100
+    assert float(out["target_tss_estimate"]) == pytest.approx(row["duration_min"] / 60 * 1.21 * 100, abs=0.1)
     strict = out.get("workout_strict") or {}
     assert strict.get("id") == "mock-plan-id"
     assert strict.get("date") == planned
@@ -384,3 +385,19 @@ def test_simulate_training_impact_starts_from_stored_ctl(monkeypatch):
     )
     assert out["projected_ctl"] == pytest.approx(80.0 * math.exp(-1 / 42), abs=0.01)
     assert out["projected_atl"] == pytest.approx(90.0 * math.exp(-1 / 7), abs=0.01)
+
+
+def test_schedule_workout_length_is_the_blocks_total():
+    """Prod: 'Cat 1 = 90 min' saved with one 60' block showed 90'. The blocks decide."""
+    db = MockCoachDB()
+    planned = (date.today() + timedelta(days=5)).isoformat()
+    out = coach_tools.handle_schedule_workout(
+        {"duration_minutes": 90, "focus_zone": "Endurance", "date": planned, "sport": "bike",
+         "structure": [{"name": "Steady", "duration_minutes": 60, "target_hr_zone": 2}]},
+        athlete_id="ath-1",
+        db=db,  # type: ignore[arg-type]
+    )
+    assert "error" not in out
+    row = db.inserts[0][1]
+    assert row["duration_min"] == 60
+    assert row["target_tss"] == 49  # 1 h at Endurance

@@ -163,3 +163,28 @@ describe('getAuthHeaders', () => {
     expect(headers['Authorization']).toBeUndefined();
   });
 });
+
+describe('ensureAuthSession: a session that cannot be renewed', () => {
+  const EXPECTED = 'https://myproj.supabase.co';
+
+  it('a rejected refresh token signs out instead of sending requests without a token', async () => {
+    const { ensureAuthSession } = await loadApiAuth(EXPECTED);
+    authStoreMock.session = { access_token: makeJwt({ exp: Math.floor(Date.now() / 1000) - 10, iss: EXPECTED }) };
+    authStoreMock.user = { id: 'u1' };
+    refreshSessionMock.mockResolvedValue({ data: { session: null }, error: { status: 400, message: 'Invalid Refresh Token: Refresh Token Not Found' } });
+    signOutMock.mockResolvedValue({});
+    expect(await ensureAuthSession()).toBeNull();
+    expect(signOutMock).toHaveBeenCalledWith({ scope: 'local' });
+    expect(authStoreMock.user).toBeNull();
+  });
+
+  it('a network failure keeps the user signed in', async () => {
+    const { ensureAuthSession } = await loadApiAuth(EXPECTED);
+    authStoreMock.session = { access_token: makeJwt({ exp: Math.floor(Date.now() / 1000) - 10, iss: EXPECTED }) };
+    authStoreMock.user = { id: 'u1' };
+    refreshSessionMock.mockResolvedValue({ data: { session: null }, error: { message: 'Failed to fetch' } });
+    expect(await ensureAuthSession()).toBeNull();
+    expect(signOutMock).not.toHaveBeenCalled();
+    expect(authStoreMock.user).toEqual({ id: 'u1' });
+  });
+});
