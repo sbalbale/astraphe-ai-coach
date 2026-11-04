@@ -56,18 +56,27 @@ export function safeNotificationPath(url: unknown): string {
 }
 
 /**
+ * How web push setup ended, so the settings button can say why it didn't turn on:
+ * 'ok' (subscribed and saved), 'skipped' (a browser tab without permission yet, or iOS
+ * outside the Home Screen app), 'unsupported', 'not-configured' (no VAPID key in this
+ * build), 'no-service-worker' (it never became ready), 'failed' (subscribe or save threw).
+ */
+export type PushSetupResult = 'ok' | 'skipped' | 'unsupported' | 'not-configured' | 'no-service-worker' | 'failed';
+
+/**
  * Full push setup: request permission, register token, attach listeners.
  * Safe to call multiple times — Capacitor deduplicates listeners.
  */
-export async function initPushNotifications(): Promise<void> {
+export async function initPushNotifications(): Promise<PushSetupResult> {
   try {
     if (Capacitor.isNativePlatform()) {
       await _initNativePush();
-    } else {
-      await _initWebPush();
+      return 'ok';
     }
+    return await _initWebPush();
   } catch (e) {
     console.warn('[Push] Init failed:', e);
+    return 'failed';
   }
 }
 
@@ -127,31 +136,34 @@ export async function hasWebPushSubscription(): Promise<boolean> {
   }
 }
 
-async function _initWebPush(): Promise<void> {
+async function _initWebPush(): Promise<PushSetupResult> {
   // iPhone/iPad: web push only exists in the Home Screen app. Elsewhere (desktop, Android)
   // a normal browser tab can subscribe.
   const standalone = isStandaloneDisplayMode();
-  if (!standalone && isIosUserAgent(navigator.userAgent, navigator.maxTouchPoints ?? 0)) return;
-  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+  if (!standalone && isIosUserAgent(navigator.userAgent, navigator.maxTouchPoints ?? 0)) return 'skipped';
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return 'unsupported';
 
-  const vapidPublicKey = (import.meta.env.VITE_VAPID_PUBLIC_KEY as string | undefined) ?? '';
-  if (!vapidPublicKey) return;
+  const vapidPublicKey = String(import.meta.env.VITE_VAPID_PUBLIC_KEY ?? '').trim();
+  if (!vapidPublicKey) {
+    console.warn('[Push] VITE_VAPID_PUBLIC_KEY is not set; web push is off in this build.');
+    return 'not-configured';
+  }
 
   const reg = await Promise.race([
     navigator.serviceWorker.ready,
     new Promise<null>((resolve) => setTimeout(() => resolve(null), 8000)),
   ]);
-  if (!reg?.pushManager) return;
+  if (!reg?.pushManager) return 'no-service-worker';
 
   let sub = await reg.pushManager.getSubscription();
   if (!sub) {
-    if (Notification.permission === 'denied') return;
+    if (Notification.permission === 'denied') return 'skipped';
     if (Notification.permission !== 'granted') {
       // In a browser tab, ask only from the settings screen's button (it requests
       // permission first); this also runs on every sign-in, without a user gesture.
-      if (!standalone) return;
+      if (!standalone) return 'skipped';
       const result = await Notification.requestPermission();
-      if (result !== 'granted') return;
+      if (result !== 'granted') return 'skipped';
     }
     sub = await reg.pushManager.subscribe({
       userVisibleOnly: true,
@@ -161,6 +173,7 @@ async function _initWebPush(): Promise<void> {
 
   _registered = { token: JSON.stringify(sub.toJSON()), platform: 'web' };
   await api.post('/v1/notifications/token', _registered);
+  return 'ok';
 }
 
 function _urlBase64ToUint8Array(base64: string): Uint8Array<ArrayBuffer> {

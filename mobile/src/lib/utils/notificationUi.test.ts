@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { NOTIFICATION_DEFAULTS } from '$lib/notificationSettings';
 import {
   deviceLabel,
+  enablePushMessage,
+  permissionNotGrantedMessage,
   devicesLine,
   groupedTypes,
   isIosUserAgent,
@@ -85,5 +87,20 @@ describe('copy', () => {
     expect(testResultMessage('sent', 'this iPhone')!.ok).toBe(true);
     expect(testResultMessage('rate_limited', 'this iPhone')!.text).toMatch(/just sent/);
     expect(testResultMessage(null, 'x')).toBeNull();
+  });
+});
+
+describe('turn on notifications feedback', () => {
+  it('explains a prompt that never appeared, but not a blocked one (it has its own card)', () => {
+    expect(permissionNotGrantedMessage('default')).toMatch(/address bar/);
+    expect(permissionNotGrantedMessage('denied')).toBeNull();
+    expect(permissionNotGrantedMessage(null)).toBeNull();
+  });
+  it('says why push setup stopped', () => {
+    expect(enablePushMessage('ok')).toBeNull();
+    expect(enablePushMessage('skipped')).toBeNull();
+    expect(enablePushMessage('not-configured')).toMatch(/isn't set up/);
+    expect(enablePushMessage('no-service-worker')).toMatch(/Reload/);
+    expect(enablePushMessage('failed')).toMatch(/try again/);
   });
 });

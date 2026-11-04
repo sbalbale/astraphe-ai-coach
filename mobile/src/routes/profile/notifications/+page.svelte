@@ -25,8 +25,10 @@
   } from '$lib/notificationSettings';
   import {
     deviceLabel,
+    enablePushMessage,
     groupedTypes,
     isIosUserAgent,
+    permissionNotGrantedMessage,
     permissionState,
     quietNote,
     testResultMessage,
@@ -46,6 +48,8 @@
   let device = $state('this browser');
   let devicesCount = $state<number | null>(null);
   let enabling = $state(false);
+  /** Why "Turn on notifications" didn't turn push on (null when it worked or wasn't tried). */
+  let pushError = $state<string | null>(null);
 
   let testing = $state(false);
   let testStatus = $state<'sent' | 'no_devices' | 'rate_limited' | 'error' | null>(null);
@@ -126,9 +130,11 @@
 
   async function enablePush() {
     enabling = true;
+    pushError = null;
     try {
       const granted = await requestPushPermission();
-      if (granted) await initPushNotifications();
+      const webPermission = 'Notification' in window ? Notification.permission : null;
+      pushError = granted ? enablePushMessage(await initPushNotifications()) : permissionNotGrantedMessage(webPermission);
     } finally {
       enabling = false;
       await detectPermission();
@@ -161,6 +167,9 @@
   <div class={wide ? 'grid grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)] gap-5 items-start' : 'flex flex-col gap-2.5'}>
     <div class="flex flex-col gap-2.5 min-w-0">
       <PermissionCard status={perm} {device} {ios} {devicesCount} busy={enabling} onenable={enablePush} onrecheck={detectPermission} />
+      {#if pushError && perm !== 'granted'}
+        <p role="alert" class="m-0 px-4 py-3 rounded-[14px] bg-red-dim border border-red/30 text-[13px] text-red">{pushError}</p>
+      {/if}
 
       {#each groups as g (g.name)}
         {@render sectionLabel(g.name)}

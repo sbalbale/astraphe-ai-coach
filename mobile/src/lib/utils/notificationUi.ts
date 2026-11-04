@@ -7,6 +7,7 @@ import {
   type NotificationPrefs,
   type NotificationTypeId
 } from '$lib/notificationSettings';
+import type { PushSetupResult } from '$lib/services/pushNotifications';
 
 export type PermissionState = 'install' | 'default' | 'denied' | 'granted' | 'unsupported';
 
@@ -44,6 +45,35 @@ export function permissionState(env: PermissionEnv): PermissionState {
   if (env.webPermission === 'denied') return 'denied';
   if (env.webPermission === 'granted' && env.subscribed) return 'granted';
   return 'default';
+}
+
+/**
+ * After "Turn on notifications" when the permission wasn't granted. A blocked permission
+ * gets its own card ('denied'), so no message; still 'default' means the prompt was
+ * dismissed or the browser silently held it back (Chrome's quiet prompt).
+ */
+export function permissionNotGrantedMessage(webPermission: NotificationPermission | null): string | null {
+  if (webPermission === 'default') {
+    return "Your browser didn't turn notifications on. If no prompt appeared, click the icon at the left of the address bar, set Notifications to Allow, then try again.";
+  }
+  return null;
+}
+
+/** After permission was granted: why push still isn't on, or null when it worked. */
+export function enablePushMessage(result: PushSetupResult): string | null {
+  switch (result) {
+    case 'ok':
+    case 'skipped':
+      return null;
+    case 'not-configured':
+      return "Push isn't set up for this version of Astraphe yet.";
+    case 'no-service-worker':
+      return "Astraphe's background worker didn't start, so push can't be set up. Reload the page and try again.";
+    case 'unsupported':
+      return "This browser can't receive push notifications.";
+    default:
+      return "Couldn't turn on push. Check your connection and try again.";
+  }
 }
 
 export function isIosUserAgent(ua: string, maxTouchPoints = 0): boolean {
