@@ -966,7 +966,7 @@ async def process_and_save_workout(
     strava_int = int(payload.strava_activity_id) if payload.strava_activity_id is not None else None
     garmin_int = int(payload.garmin_activity_id) if payload.garmin_activity_id is not None else None
 
-    row, _ = await find_or_create_canonical_workout(
+    row, created = await find_or_create_canonical_workout(
         db,
         athlete_id,
         source,
@@ -1059,6 +1059,21 @@ async def process_and_save_workout(
             k: (v / 100.0) * (duration_seconds / 60.0) for k, v in safe_hr_zones.items()
         }
         strain_score = compute_strain_score(zone_minutes)
+    elif not created:
+        # A re-sync without zones (Garmin's activity summary has none; they come from the FIT
+        # stream, which the poll doesn't download again) must not reset the strain the stream
+        # gave this workout to 0. Recompute it from the zones already stored, else keep it.
+        stored = {i: row.get(f"hr_zone_{i}_pct") for i in range(1, 6)}
+        if any(v is not None for v in stored.values()) and duration_seconds:
+            zone_minutes = {i: (float(v or 0) / 100.0) * (duration_seconds / 60.0) for i, v in stored.items()}
+            strain_score = compute_strain_score(zone_minutes, sport=mapped_sport)
+        else:
+            strain_score = None
+
+    # Likewise a TSS this payload can't derive (0.0) never replaces one already stored, e.g. the
+    # heart-rate TSS the FIT stream gave an indoor row or a strength session.
+    if not created and not tss and row.get("tss"):
+        tss = None
 
     # Strip Nones only (_strip_none_update_values); keep tss/strain_score when they are 0.
     update_data: dict[str, Any] = {
