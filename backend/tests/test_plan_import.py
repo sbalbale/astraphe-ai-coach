@@ -211,8 +211,33 @@ def test_a_busy_model_gets_one_retry_and_strong_models_think_low():
     client = MagicMock()
     client.models.generate_content.side_effect = gen
     with patch.object(pi, "_import_client", return_value=client), patch.object(pi.gemini_quota, "wait_for_slot"), \
-            patch.object(pi, "_BUSY_RETRY_SEC", 0), patch.object(pi.settings, "GEMINI_IMPORT_MODELS", "gemini-3.8-flash"):
+            patch.object(pi, "_BUSY_RETRY_SEC", (0, 0)), patch.object(pi.settings, "GEMINI_IMPORT_MODELS", "gemini-3.8-flash"):
         _, model, _ = pi.call_import_model(["x"])
     assert model == "gemini-3.8-flash"
     assert [c[0] for c in calls] == ["gemini-3.8-flash", "gemini-3.8-flash"]
     assert str(calls[0][1]).endswith("LOW")
+
+
+def test_the_chat_model_is_not_a_fallback_by_default():
+    with patch.object(pi.settings, "GEMINI_IMPORT_MODELS", "gemini-3.8-flash,gemini-3.6-flash"), \
+            patch.object(pi.settings, "GEMINI_MODEL", "gemini-3.5-flash-lite"):
+        assert pi.import_models() == ["gemini-3.8-flash", "gemini-3.6-flash"]
+        with patch.object(pi.settings, "PLAN_IMPORT_CHAT_FALLBACK", True):
+            assert pi.import_models()[-1] == "gemini-3.5-flash-lite"
+
+
+def test_busy_models_get_three_tries_then_nothing_changes():
+    client = MagicMock()
+    client.models.generate_content.side_effect = RuntimeError("503 UNAVAILABLE high demand")
+    with patch.object(pi, "_import_client", return_value=client), patch.object(pi.gemini_quota, "wait_for_slot"), \
+            patch.object(pi, "_BUSY_RETRY_SEC", (0, 0)), patch.object(pi.settings, "GEMINI_IMPORT_MODELS", "a,b"), \
+            patch.object(pi.settings, "PLAN_IMPORT_CHAT_FALLBACK", False):
+        parsed, model, errors = pi.call_import_model(["x"])
+    assert parsed is None and model is None
+    assert client.models.generate_content.call_count == 6
+
+
+def test_merged_am_pm_sessions_are_flagged():
+    parsed = {"sessions": [_session("2026-11-02", "Monday", "AM - Cat 1 cross-train PM - Team ST - 4:20 Ferris", "bike", 90)]}
+    res, _, _ = _run(parsed)
+    assert res["unclear"][0].startswith("1 sessions still combine an AM and a PM")
