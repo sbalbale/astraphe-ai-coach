@@ -1,5 +1,5 @@
 <script lang="ts">
-  /** A length typed as m:ss ("1:30"), or plain minutes ("90"). Tidied to m:ss on blur. */
+  /** A length typed as m:ss ("1:30", "90:00"), h:mm:ss ("1:30:00") or plain minutes ("90"). Tidied to m:ss on blur. */
   import { formatMinSec, parseMinSec } from '$lib/utils/planEditor';
 
   let {

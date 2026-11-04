@@ -70,6 +70,10 @@ describe('minutes:seconds fields', () => {
   it('reads what athletes type', () => {
     expect(parseMinSec('1:30')).toBe(1.5);
     expect(parseMinSec('90')).toBe(90);
+    expect(parseMinSec('90:00')).toBe(90);
+    expect(parseMinSec('1:30:00')).toBe(90);
+    expect(parseMinSec('0:01:30')).toBe(1.5);
+    expect(parseMinSec('1:75:00')).toBeNull();
     expect(parseMinSec('1.5')).toBe(1.5);
     expect(parseMinSec('')).toBe(0);
     expect(parseMinSec('1:75')).toBeNull();

@@ -67,10 +67,19 @@ export function newBlock(name: string, minutes: number, zone: number, ftp: numbe
   return { key: nextKey(), name, duration: Math.round(Math.max(0, minutes) * 60) / 60, zone, ftp, rest: {} };
 }
 
-/** "1:30" → 1.5, "90" → 90, "1.5" → 1.5, "" → 0; null when it can't be read. */
+/**
+ * "1:30" → 1.5, "90:00" → 90, "1:30:00" → 90 (h:mm:ss), "90" → 90, "1.5" → 1.5, "" → 0;
+ * null when it can't be read.
+ */
 export function parseMinSec(text: string): number | null {
   const t = String(text ?? '').trim();
   if (!t) return 0;
+  const hms = /^(\d{1,2}):(\d{1,2}):(\d{1,2})$/.exec(t);
+  if (hms) {
+    const min = Number(hms[2]);
+    const sec = Number(hms[3]);
+    return min < 60 && sec < 60 ? Number(hms[1]) * 60 + min + sec / 60 : null;
+  }
   const m = /^(\d{1,3}):(\d{1,2})$/.exec(t);
   if (m) {
     const sec = Number(m[2]);
