@@ -174,12 +174,18 @@ def test_summarize_athlete_profile_with_data():
             "max_hr": 190,
             "threshold_hr": 165,
             "threshold_pace": "4:30",
+            "ftp_watts": 280,
+            "weight_kg": 83.9,
             "measurement_units": "imperial",
         }
     )
     result = ai_coach._summarize_athlete_profile(db, "ath-1")
     assert result["display_name"] == "Sean"
     assert result["anchors"]["max_hr"] == 190
+    # The coach quoted a stale 275 W memory because the profile FTP wasn't in its context.
+    assert result["anchors"]["ftp_watts"] == 280
+    assert result["anchors"]["weight_kg"] == 83.9
+    assert "override" in result["anchors_rule"]
     assert result["measurement_units"] == "imperial"
 
 

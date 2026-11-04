@@ -32,6 +32,9 @@ Today is {today} ({weekday}) in the athlete's timezone.
 Include ONLY: race goals with target dates/times, injuries or physical limitations, \
 equipment specifics, dietary restrictions, schedule constraints, or significant performance milestones.
 Do NOT include: generic advice, temporary states, or info derivable from biometrics.
+Do NOT include profile settings (FTP, threshold heart rate or pace, max or resting heart rate, weight):
+they live in the athlete's profile, and a copy in memory goes stale.
+Only record numbers the athlete stated themselves, never numbers the coach suggested.
 
 Rules:
 - Never use relative dates ("Saturday", "this weekend", "next month", "in two weeks"). Resolve every
@@ -399,8 +402,23 @@ MEMORY_CONTEXT_RULE = (
     "dated events, event_date and event_status. Relative words inside a memory ('Saturday', 'next week') "
     "are relative to noted_on, not today. An event whose event_status is 'past', or whose relative date "
     "has already gone by, has happened: never present it as upcoming. Prefer the most recent memory "
-    "when two conflict."
+    "when two conflict. Profile numbers (FTP, thresholds, weight) come from athlete_profile, never from "
+    "memories."
 )
+
+# Notes that restate a profile setting ("Athlete FTP is 275W."). The profile is the source of truth,
+# and older notes like this went stale and overrode it.
+_PROFILE_SETTING_RE = re.compile(
+    r"\b(ftp|threshold power)\b[^.]{0,30}?\b\d{2,3}\s*(w|watts)\b"
+    r"|\b(threshold (heart rate|hr)|lthr|max(imum)? (heart rate|hr)|resting (heart rate|hr))\b[^.]{0,30}?\b\d{2,3}\s*bpm\b"
+    r"|\bthreshold pace\b[^.]{0,30}?\b\d{1,2}:\d{2}\b",
+    re.IGNORECASE,
+)
+
+
+def restates_profile_setting(content: str) -> bool:
+    """True for a memory that is just a copy of a profile number (FTP, thresholds)."""
+    return bool(_PROFILE_SETTING_RE.search(content or ""))
 
 
 def memories_for_context(memories: list[dict], today_iso: str) -> list[dict[str, Any]]:
@@ -415,7 +433,7 @@ def memories_for_context(memories: list[dict], today_iso: str) -> list[dict[str,
     out: list[dict[str, Any]] = []
     for m in memories:
         content = m.get("content")
-        if not content:
+        if not content or restates_profile_setting(content):
             continue
         entry: dict[str, Any] = {"content": content}
         noted = _parse_iso_date(str(m.get("created_at") or ""))

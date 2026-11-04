@@ -13,13 +13,21 @@
   import { rangeStart, sportsLabel } from '$lib/components/wide/trends/trendsWide';
 
   let planned = $state<Workout[]>([]);
+  /** 12 weeks of daily load rows; null until loaded (falls back to the store's shorter window). */
+  let loadRows = $state<LoadRow[] | null>(null);
   const weeksStart = () => startOfWeek(subDays(new Date(), 11 * 7), { weekStartsOn: WEEK_STARTS_ON });
 
   onMount(async () => {
     athleteStore.fetchAll();
     const start = format(weeksStart(), 'yyyy-MM-dd');
     const end = format(addDays(startOfWeek(new Date(), { weekStartsOn: WEEK_STARTS_ON }), 6), 'yyyy-MM-dd');
-    planned = await api.getWorkouts(start, end);
+    // The store's metrics only cover the last 42 days; these charts span 12 weeks.
+    const [metrics, plan] = await Promise.all([
+      api.get<{ trainingLoadData?: LoadRow[] }>(`/v1/athlete/metrics?start_date=${start}&end_date=${format(new Date(), 'yyyy-MM-dd')}`),
+      api.getWorkouts(start, end)
+    ]);
+    if (metrics?.trainingLoadData) loadRows = metrics.trainingLoadData;
+    planned = plan ?? [];
   });
 
   /** Wide layout: weeks shown (header range tabs). */
@@ -46,7 +54,7 @@
   type LoadRow = { date: string; day: string; ctl: number; atl: number; tsb?: number; daily_tss?: number };
 
   const rows = $derived.by<LoadRow[]>(() =>
-    [...(athleteStore.metrics?.trainingLoadData ?? [])]
+    [...(loadRows ?? athleteStore.metrics?.trainingLoadData ?? [])]
       .filter((r: any) => r?.date)
       .sort((a: any, b: any) => String(a.date).localeCompare(String(b.date)))
   );
