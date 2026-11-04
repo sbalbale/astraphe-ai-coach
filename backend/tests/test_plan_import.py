@@ -241,3 +241,10 @@ def test_merged_am_pm_sessions_are_flagged():
     parsed = {"sessions": [_session("2026-11-02", "Monday", "AM - Cat 1 cross-train PM - Team ST - 4:20 Ferris", "bike", 90)]}
     res, _, _ = _run(parsed)
     assert res["unclear"][0].startswith("1 sessions still combine an AM and a PM")
+
+
+def test_a_session_with_blocks_is_as_long_as_its_blocks():
+    s = _session("2026-11-04", "Wednesday", "Cat 1 cross-train", "bike", 90, "Endurance",
+                 [{"name": "Steady", "minutes": 60, "zone": 2, "repeat": 1}])
+    ok, _, _ = pi.check_sessions([s], NOV1, NOV30)
+    assert ok[0]["duration_minutes"] == 60
