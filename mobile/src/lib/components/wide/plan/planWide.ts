@@ -20,6 +20,8 @@ export type WideSession = {
   /** 1–5 from primary_zone, 0 for strength / mobility (no zone chip colour). */
   zone: number;
   completed: boolean;
+  /** Recorded workout that completed it (null when done by hand or not done). */
+  completedWorkoutId: string | null;
   context: string;
   steps: WideStep[];
   bars: WideBar[];
@@ -100,6 +102,7 @@ export function toWideSession(w: Workout, ftp = 0): WideSession {
     tss: Number(w.projected_tss) > 0 ? Number(w.projected_tss) : null,
     zone: isStrength ? 0 : (PRIMARY_ZONE[w.primary_zone] ?? 0),
     completed: Boolean(w.completed),
+    completedWorkoutId: w.completed_workout_id ?? null,
     context: w.description ?? '',
     steps,
     bars

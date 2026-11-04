@@ -50,6 +50,7 @@
   import GpsTrace from '$lib/components/workout/GpsTrace.svelte';
   import LapStrip from '$lib/components/workout/LapStrip.svelte';
   import DataSources from '$lib/components/workout/DataSources.svelte';
+  import WorkoutPlanPanel from '$lib/components/linking/WorkoutPlanPanel.svelte';
   import AddActivityModal from '$lib/components/AddActivityModal.svelte';
   import WideTrainingList from '$lib/components/wide/training/WideTrainingList.svelte';
   import WideWorkoutDetail from '$lib/components/wide/training/WideWorkoutDetail.svelte';
@@ -859,6 +860,9 @@
             </div>
 
             {#if detailTab === 'overview'}
+              {#if selectedWorkout?.id}
+                <WorkoutPlanPanel workoutId={String(selectedWorkout.id)} streams={detailStreams} />
+              {/if}
               {#if hasPremiumAccess(authStore.tier)}
                 <section aria-label="Coach analysis" class="flex flex-col gap-2 p-4 rounded-[20px] bg-bg1 border border-dashed border-border">
                   <span class="font-mono text-[10px] tracking-[0.12em] text-blue">COACH ANALYSIS</span>

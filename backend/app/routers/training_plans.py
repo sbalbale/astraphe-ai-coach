@@ -3,12 +3,14 @@ from __future__ import annotations
 import json
 
 from datetime import date
+from uuid import UUID
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
 from app.dependencies import get_current_athlete, get_user_db
+from app.services import plan_matching
 
 
 router = APIRouter(prefix="/v1/training-plans", tags=["Training Plans"])
@@ -105,7 +107,26 @@ def _to_workout_row(row: dict[str, Any]) -> dict[str, Any]:
         "description": _plain_description(row.get("description")),
         "structure": row.get("structure") or [],
         "completed": completed,
+        # Link to the recorded workout that completed it (null when done by hand or not done).
+        "completed_workout_id": row.get("completed_workout_id"),
+        "link_source": row.get("link_source"),
+        "linked_workout": None,
     }
+
+
+def _with_linked_workouts(db, athlete_id: str, rows: list[dict]) -> list[dict]:
+    """Attach a short summary of each linked workout (one query for the whole list)."""
+    out = [_to_workout_row(r) for r in rows]
+    ids = [o["completed_workout_id"] for o in out if o.get("completed_workout_id")]
+    if ids:
+        try:
+            by_id = plan_matching.linked_workouts_by_id(db, athlete_id, ids)
+        except Exception as e:  # never fail the plan list over the summaries
+            print(f"[training_plans] linked workout lookup failed: {e!r}")
+            by_id = {}
+        for o in out:
+            o["linked_workout"] = by_id.get(o.get("completed_workout_id") or "")
+    return out
 
 
 @router.get("")
@@ -128,7 +149,7 @@ def get_training_plans(
     try:
         res = q.execute()
         rows = res.data or []
-        return [_to_workout_row(r) for r in rows]
+        return _with_linked_workouts(db, athlete_id, rows)
     except Exception as e:
         print(f"[training_plans] Failed to fetch training plans: {e!r}")
         raise HTTPException(status_code=500, detail="Failed to fetch training plans")
@@ -178,24 +199,38 @@ def update_training_plan(
     db=Depends(get_user_db),
 ):
     """
-    Update a planned workout (training_plans row).
+    Update a planned workout (training_plans row). Marking it not done also unlinks the
+    recorded workout (and keeps auto-match from relinking that one).
     """
     try:
+        update: dict[str, Any] = {
+            "planned_date": payload.date,
+            "sport": payload.sport,
+            "title": payload.title,
+            "description": payload.description,
+            "duration_min": payload.duration_minutes,
+            "target_tss": payload.projected_tss,
+            "primary_zone": payload.primary_zone,
+            "structure": [i.model_dump() for i in payload.structure],
+            "status": "done" if payload.completed else "modified",
+        }
+        if not payload.completed:
+            cur = (
+                db.table("training_plans")
+                .select("completed_workout_id,dismissed_workout_ids")
+                .eq("id", training_plan_id)
+                .eq("athlete_id", athlete_id)
+                .limit(1)
+                .execute()
+            ).data or []
+            wid = cur[0].get("completed_workout_id") if cur else None
+            if wid:
+                update["completed_workout_id"] = None
+                update["link_source"] = None
+                update["dismissed_workout_ids"] = list(dict.fromkeys([*(cur[0].get("dismissed_workout_ids") or []), wid]))
         upd = (
             db.table("training_plans")
-            .update(
-                {
-                    "planned_date": payload.date,
-                    "sport": payload.sport,
-                    "title": payload.title,
-                    "description": payload.description,
-                    "duration_min": payload.duration_minutes,
-                    "target_tss": payload.projected_tss,
-                    "primary_zone": payload.primary_zone,
-                    "structure": [i.model_dump() for i in payload.structure],
-                    "status": "done" if payload.completed else "modified",
-                }
-            )
+            .update(update)
             .eq("id", training_plan_id)
             .eq("athlete_id", athlete_id)
             .execute()
@@ -203,7 +238,7 @@ def update_training_plan(
         row = (upd.data or [{}])[0]
         if not row.get("id"):
             raise HTTPException(status_code=404, detail="Training plan not found")
-        return _to_workout_row(row)
+        return _with_linked_workouts(db, athlete_id, [row])[0]
     except HTTPException:
         raise
     except Exception as e:
@@ -267,3 +302,90 @@ def delete_training_plans(
         print(f"[training_plans] Failed to delete training plans: {e!r}")
         raise HTTPException(status_code=500, detail="Failed to delete training plans")
 
+
+
+# --- Linking recorded workouts ----------------------------------------------------------
+
+
+class LinkPayload(BaseModel):
+    # UUID: a malformed id is a 422, not a Postgres error (500).
+    workout_id: UUID
+    # Move the link when this workout already completes another session.
+    move: bool = False
+
+
+class DismissPayload(BaseModel):
+    workout_id: UUID
+
+
+def _link_error(e: Exception):
+    if isinstance(e, plan_matching.LinkConflict):
+        raise HTTPException(
+            status_code=409,
+            detail={"message": "This workout already completes another session.", "linked_to": e.other},
+        )
+    if isinstance(e, LookupError):
+        raise HTTPException(status_code=404, detail=str(e))
+    print(f"[training_plans] link failed: {e!r}")
+    raise HTTPException(status_code=500, detail="Failed to update the link")
+
+
+@router.get("/{training_plan_id}/candidates")
+def link_candidates(
+    training_plan_id: UUID,
+    athlete_id: str = Depends(get_current_athlete),
+    db=Depends(get_user_db),
+):
+    """Recorded workouts within two days of the session, best fit first, plus the one-tap suggestion."""
+    try:
+        return plan_matching.candidates_for_plan(db, athlete_id, str(training_plan_id))
+    except Exception as e:
+        _link_error(e)
+
+
+@router.post("/{training_plan_id}/link")
+def link_workout(
+    training_plan_id: UUID,
+    payload: LinkPayload,
+    athlete_id: str = Depends(get_current_athlete),
+    db=Depends(get_user_db),
+):
+    """Link a recorded workout by hand (marks the session done). 409 if it completes another session."""
+    try:
+        row = plan_matching.link(db, athlete_id, str(training_plan_id), str(payload.workout_id), source="manual", move=payload.move)
+        return _with_linked_workouts(db, athlete_id, [row])[0]
+    except Exception as e:
+        _link_error(e)
+
+
+@router.delete("/{training_plan_id}/link")
+def unlink_workout(
+    training_plan_id: UUID,
+    dismiss: bool = True,
+    done: bool = False,
+    athlete_id: str = Depends(get_current_athlete),
+    db=Depends(get_user_db),
+):
+    """Unlink: the session goes back to not done and auto-match won't relink that workout.
+    Undo of a link passes `dismiss=false` (keep the workout suggestible) and `done=true` when
+    the session was done by hand before."""
+    try:
+        row = plan_matching.unlink(db, athlete_id, str(training_plan_id), dismiss=dismiss, done=done)
+        return _to_workout_row(row)
+    except Exception as e:
+        _link_error(e)
+
+
+@router.post("/{training_plan_id}/dismiss")
+def dismiss_suggestion(
+    training_plan_id: UUID,
+    payload: DismissPayload,
+    athlete_id: str = Depends(get_current_athlete),
+    db=Depends(get_user_db),
+):
+    """"Not this one": stop suggesting (and auto-matching) this workout for the session."""
+    try:
+        row = plan_matching.dismiss(db, athlete_id, str(training_plan_id), str(payload.workout_id))
+        return _to_workout_row(row)
+    except Exception as e:
+        _link_error(e)

@@ -1,6 +1,7 @@
 import { getAuthHeaders } from './apiAuth';
 import { supabase } from '$lib/supabase';
 import type { Workout } from './types/training';
+import type { LinkResult, PlanCandidates, PlanSummary, WorkoutPlanLink } from './types/linking';
 import { getTimeOfDayPeriod, type TimeOfDayPeriod } from './utils/greeting';
 
 const VITE_API_URL = import.meta.env.VITE_API_URL;
@@ -445,6 +446,90 @@ export const api = {
       if (res.ok) return await res.json();
     } catch (e) {
       console.warn(`Failed to POST ${path} to backend.`, e);
+    }
+    return null;
+  },
+
+  // --- Planned session ↔ recorded workout ------------------------------------------------
+
+  /** Recorded workouts within two days of a planned session, plus the one-tap suggestion. */
+  async getPlanLinkCandidates(planId: string): Promise<PlanCandidates | null> {
+    try {
+      const headers = await getAuthHeaders();
+      const res = await fetch(`${API_URL}/v1/training-plans/${encodeURIComponent(planId)}/candidates`, { headers });
+      if (res.ok) return await res.json();
+    } catch (e) {
+      console.warn('Failed to fetch link candidates.', e);
+    }
+    return null;
+  },
+
+  /**
+   * Link a recorded workout to a planned session (marks it done). When the workout already
+   * completes another session the result is `{ ok: false, conflict }`; call again with
+   * `move: true` to move the link.
+   */
+  async linkWorkoutToPlan(planId: string, workoutId: string, move = false): Promise<LinkResult> {
+    try {
+      const headers = await getAuthHeaders({ 'Content-Type': 'application/json' });
+      const res = await fetch(`${API_URL}/v1/training-plans/${encodeURIComponent(planId)}/link`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ workout_id: workoutId, move })
+      });
+      if (res.ok) return { ok: true, plan: (await res.json()) as Workout };
+      const body = await res.json().catch(() => ({}));
+      if (res.status === 409 && body?.detail?.linked_to) return { ok: false, conflict: body.detail.linked_to as PlanSummary };
+      return { ok: false, error: typeof body?.detail === 'string' ? body.detail : `HTTP ${res.status}` };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : 'Network error' };
+    }
+  },
+
+  /**
+   * Unlink: the session goes back to not done; auto-match won't relink that workout.
+   * Undo of a link passes `{ dismiss: false }` (keep the workout suggestible) and
+   * `{ done: true }` when the session was done by hand before the link.
+   */
+  async unlinkPlanWorkout(planId: string, opts: { dismiss?: boolean; done?: boolean } = {}): Promise<Workout | null> {
+    try {
+      const headers = await getAuthHeaders();
+      const q = new URLSearchParams();
+      if (opts.dismiss === false) q.set('dismiss', 'false');
+      if (opts.done) q.set('done', 'true');
+      const qs = q.toString() ? `?${q}` : '';
+      const res = await fetch(`${API_URL}/v1/training-plans/${encodeURIComponent(planId)}/link${qs}`, { method: 'DELETE', headers });
+      if (res.ok) return await res.json();
+    } catch (e) {
+      console.warn('Failed to unlink workout.', e);
+    }
+    return null;
+  },
+
+  /** "Not this one": stop suggesting this workout for the session. */
+  async dismissPlanSuggestion(planId: string, workoutId: string): Promise<Workout | null> {
+    try {
+      const headers = await getAuthHeaders({ 'Content-Type': 'application/json' });
+      const res = await fetch(`${API_URL}/v1/training-plans/${encodeURIComponent(planId)}/dismiss`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ workout_id: workoutId })
+      });
+      if (res.ok) return await res.json();
+    } catch (e) {
+      console.warn('Failed to dismiss suggestion.', e);
+    }
+    return null;
+  },
+
+  /** The planned session a recorded workout completes, sessions within two days, a suggestion. */
+  async getWorkoutPlanLink(workoutId: string): Promise<WorkoutPlanLink | null> {
+    try {
+      const headers = await getAuthHeaders();
+      const res = await fetch(`${API_URL}/v1/workouts/${encodeURIComponent(workoutId)}/plan-link`, { headers });
+      if (res.ok) return await res.json();
+    } catch (e) {
+      console.warn('Failed to fetch plan link.', e);
     }
     return null;
   },

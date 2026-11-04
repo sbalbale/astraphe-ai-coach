@@ -49,6 +49,12 @@ class _PlanQuery:
     def lte(self, *_a, **_k):
         return self
 
+    def limit(self, *_a, **_k):
+        return self
+
+    def limit(self, *_a, **_k):
+        return self
+
     def order(self, *_a, **_k):
         return self
 
