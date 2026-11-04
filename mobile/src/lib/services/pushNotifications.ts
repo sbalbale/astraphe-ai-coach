@@ -136,6 +136,27 @@ export async function hasWebPushSubscription(): Promise<boolean> {
   }
 }
 
+/**
+ * The push service worker (src/service-worker.ts, which caches nothing), registered here
+ * because nothing else registers it. Dev serves it as an ES module. Resolves once active,
+ * or null after 10 s.
+ */
+async function pushServiceWorker(): Promise<ServiceWorkerRegistration | null> {
+  try {
+    await navigator.serviceWorker.register('/service-worker.js', {
+      scope: '/',
+      type: import.meta.env.DEV ? 'module' : 'classic',
+    });
+  } catch (e) {
+    console.warn('[Push] Service worker registration failed:', e);
+    return null;
+  }
+  return Promise.race([
+    navigator.serviceWorker.ready,
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), 10_000)),
+  ]);
+}
+
 async function _initWebPush(): Promise<PushSetupResult> {
   // iPhone/iPad: web push only exists in the Home Screen app. Elsewhere (desktop, Android)
   // a normal browser tab can subscribe.
@@ -149,22 +170,21 @@ async function _initWebPush(): Promise<PushSetupResult> {
     return 'not-configured';
   }
 
-  const reg = await Promise.race([
-    navigator.serviceWorker.ready,
-    new Promise<null>((resolve) => setTimeout(() => resolve(null), 8000)),
-  ]);
+  // No permission, no push: don't register the worker for nothing. In a browser tab, ask
+  // only from the settings screen's button (it requests permission first); this also runs
+  // on every sign-in, without a user gesture.
+  if (Notification.permission === 'denied') return 'skipped';
+  if (Notification.permission !== 'granted') {
+    if (!standalone) return 'skipped';
+    const result = await Notification.requestPermission();
+    if (result !== 'granted') return 'skipped';
+  }
+
+  const reg = await pushServiceWorker();
   if (!reg?.pushManager) return 'no-service-worker';
 
   let sub = await reg.pushManager.getSubscription();
   if (!sub) {
-    if (Notification.permission === 'denied') return 'skipped';
-    if (Notification.permission !== 'granted') {
-      // In a browser tab, ask only from the settings screen's button (it requests
-      // permission first); this also runs on every sign-in, without a user gesture.
-      if (!standalone) return 'skipped';
-      const result = await Notification.requestPermission();
-      if (result !== 'granted') return 'skipped';
-    }
     sub = await reg.pushManager.subscribe({
       userVisibleOnly: true,
       applicationServerKey: _urlBase64ToUint8Array(vapidPublicKey),

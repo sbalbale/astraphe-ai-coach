@@ -173,7 +173,7 @@ describe('initPushNotifications (native)', () => {
 
   it('swallows a thrown error from checkPermissions', async () => {
     checkPermissionsMock.mockRejectedValue(new Error('native failure'));
-    await expect(initPushNotifications()).resolves.toBeUndefined();
+    await expect(initPushNotifications()).resolves.toBe('failed');
   });
 });
 
@@ -197,6 +197,7 @@ describe('initPushNotifications (web)', () => {
     const KEY = 'BEl62iUYgUivxIkv69yViEuiBIa-Ib9-SkvMeAtA3LFgDzkrxZJjSgSnfckjBJuBkr3qBUYIHBQFLXYp5Nksh8U';
     let subscribe: ReturnType<typeof vi.fn>;
     let getSubscription: ReturnType<typeof vi.fn>;
+    let register: ReturnType<typeof vi.fn>;
 
     beforeEach(() => {
       isStandaloneMock.mockReturnValue(false);
@@ -205,8 +206,9 @@ describe('initPushNotifications (web)', () => {
       subscribe = vi.fn().mockResolvedValue({ toJSON: () => ({ endpoint: 'https://push.example/1' }) });
       getSubscription = vi.fn().mockResolvedValue(null);
       const reg = { pushManager: { subscribe, getSubscription } };
+      register = vi.fn().mockResolvedValue(reg);
       Object.defineProperty(navigator, 'serviceWorker', {
-        value: { ready: Promise.resolve(reg), getRegistration: () => Promise.resolve(reg) },
+        value: { ready: Promise.resolve(reg), getRegistration: () => Promise.resolve(reg), register },
         configurable: true
       });
     });
@@ -219,7 +221,9 @@ describe('initPushNotifications (web)', () => {
 
     it('subscribes and registers the token once permission is granted', async () => {
       vi.stubGlobal('Notification', { permission: 'granted', requestPermission: vi.fn() });
-      await initPushNotifications();
+      await expect(initPushNotifications()).resolves.toBe('ok');
+      // Nothing else registers the push worker, so setup does.
+      expect(register).toHaveBeenCalledWith('/service-worker.js', expect.objectContaining({ scope: '/' }));
       expect(subscribe).toHaveBeenCalled();
       expect(apiPostMock).toHaveBeenCalledWith('/v1/notifications/token', {
         token: JSON.stringify({ endpoint: 'https://push.example/1' }),
@@ -230,9 +234,23 @@ describe('initPushNotifications (web)', () => {
     it('never prompts on its own (only the settings button asks)', async () => {
       const requestPermission = vi.fn();
       vi.stubGlobal('Notification', { permission: 'default', requestPermission });
-      await initPushNotifications();
+      await expect(initPushNotifications()).resolves.toBe('skipped');
       expect(requestPermission).not.toHaveBeenCalled();
+      expect(register).not.toHaveBeenCalled();
       expect(subscribe).not.toHaveBeenCalled();
+    });
+
+    it('says when the worker never becomes usable', async () => {
+      vi.stubGlobal('Notification', { permission: 'granted', requestPermission: vi.fn() });
+      register.mockRejectedValue(new Error('SecurityError'));
+      await expect(initPushNotifications()).resolves.toBe('no-service-worker');
+      expect(subscribe).not.toHaveBeenCalled();
+    });
+
+    it('says when this build has no push key', async () => {
+      vi.stubEnv('VITE_VAPID_PUBLIC_KEY', '');
+      vi.stubGlobal('Notification', { permission: 'granted', requestPermission: vi.fn() });
+      await expect(initPushNotifications()).resolves.toBe('not-configured');
     });
 
     it('reports whether a subscription exists', async () => {

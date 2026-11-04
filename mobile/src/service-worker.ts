@@ -1,13 +1,12 @@
 /// <reference lib="webworker" />
 /// <reference types="vite-plugin-pwa/client" />
 
-import { clientsClaim } from 'workbox-core';
-import {
-	cleanupOutdatedCaches,
-	createHandlerBoundToURL,
-	precacheAndRoute,
-} from 'workbox-precaching';
-import { NavigationRoute, registerRoute } from 'workbox-routing';
+/**
+ * Push-only service worker: shows push notifications and handles clicks on them.
+ * It caches nothing. Offline precaching is what made Safari serve a stale app, which is
+ * why registration was dropped (0697e23), and that also turned off web push.
+ * The app registers this worker only to receive push (lib/services/pushNotifications).
+ */
 import {
 	OPEN_CHAT_ACTION,
 	coachThreadUrl,
@@ -19,22 +18,24 @@ import {
 
 declare let self: ServiceWorkerGlobalScope;
 
-self.skipWaiting();
-clientsClaim();
+// The PWA build (injectManifest) requires this injection point; the list isn't used.
+void self.__WB_MANIFEST;
 
-precacheAndRoute(self.__WB_MANIFEST);
-cleanupOutdatedCaches();
+self.addEventListener('install', () => {
+	self.skipWaiting();
+});
 
-try {
-	const navigationHandler = createHandlerBoundToURL('/');
-	registerRoute(
-		new NavigationRoute(navigationHandler, {
-			denylist: [/^\/_/, /\/[^/?]+\.[^/]+$/],
-		})
+self.addEventListener('activate', (event) => {
+	// Take over pages right away, and delete the precache an older (caching) worker left
+	// behind, so nobody keeps being served a stale copy of the app.
+	event.waitUntil(
+		(async () => {
+			const keys = await caches.keys();
+			await Promise.all(keys.map((k) => caches.delete(k)));
+			await self.clients.claim();
+		})()
 	);
-} catch (error) {
-	console.warn('[service-worker] Offline navigation fallback unavailable:', error);
-}
+});
 
 function resolveNotificationUrl(raw: string | undefined): string {
 	const fallback = '/dashboard';
