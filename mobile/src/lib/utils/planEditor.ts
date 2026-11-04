@@ -68,11 +68,11 @@ export function newBlock(name: string, minutes: number, zone: number, ftp: numbe
 }
 
 /**
- * "1:30" → 1.5, "90:00" → 90, "1:30:00" → 90 (h:mm:ss), "90" → 90, "1.5" → 1.5, "" → 0;
- * null when it can't be read.
+ * "1:30" → 1.5, "90:00" → 90, "1:30:00" → 90 (h:mm:ss), "90" → 90, "" → 0; null when it
+ * can't be read. "." and "," work as ":" ("1.30" = 1:30): the iPhone number pad has no colon.
  */
 export function parseMinSec(text: string): number | null {
-  const t = String(text ?? '').trim();
+  const t = String(text ?? '').trim().replace(/[.,]/g, ':');
   if (!t) return 0;
   const hms = /^(\d{1,2}):(\d{1,2}):(\d{1,2})$/.exec(t);
   if (hms) {
@@ -85,7 +85,7 @@ export function parseMinSec(text: string): number | null {
     const sec = Number(m[2]);
     return sec < 60 ? Number(m[1]) + sec / 60 : null;
   }
-  return /^\d{1,3}(\.\d+)?$/.test(t) ? Number(t) : null;
+  return /^\d{1,3}$/.test(t) ? Number(t) : null;
 }
 
 /**

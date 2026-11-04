@@ -1,5 +1,5 @@
 <script lang="ts">
-  /** A length typed as m:ss ("1:30", "90:00"), h:mm:ss ("1:30:00") or plain minutes ("90"). Tidied on blur: m:ss under 2 hours, h:mm:ss from 2 hours. */
+  /** A length typed as m:ss ("1:30", "90:00"), h:mm:ss ("1:30:00") or plain minutes ("90"). The iPhone number pad has no colon, so "." works as one ("1.30"). Tidied on blur: m:ss under 2 hours, h:mm:ss from 2 hours. */
   import { formatMinSec, parseMinSec } from '$lib/utils/planEditor';
 
   let {

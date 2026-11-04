@@ -11,7 +11,7 @@
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { normalizeUnits, type Units } from '$lib/utils/units';
   import { currentRecoveryState, firstPositiveFiniteNumber } from '$lib/utils/biometrics';
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { pageHeader, resetPageHeader } from '$lib/stores/pageHeader.svelte';
   import { bodyDate, rememberBodyDate } from '$lib/stores/bodyDate.svelte';
   import { addDays, format, subDays } from 'date-fns';
@@ -101,16 +101,19 @@
   const windowStart = $derived(subDays(clampedEndDay, 6));
   const windowEnd = $derived(clampedEndDay);
   const canGoForward = $derived(format(windowEnd, 'yyyy-MM-dd') !== todayStr);
+  /** The day picked in the 7-day strip; the header shows it. */
+  const selectedDayStr = $derived(format(addDays(windowStart, dayIndex), 'yyyy-MM-dd'));
 
   $effect(() => {
-    pageHeader.prev = () => { endPickerValue = format(subDays(windowEnd, 1), 'yyyy-MM-dd'); dayIndex = 6; };
-    pageHeader.next = () => { if (canGoForward) { endPickerValue = format(addDays(windowEnd, 1), 'yyyy-MM-dd'); dayIndex = 6; } };
-    pageHeader.canNext = canGoForward;
+    // Prev / next step the picked day; past either end of the 7-day strip, the strip moves.
+    pageHeader.prev = () => { if (dayIndex > 0) dayIndex -= 1; else { endPickerValue = format(subDays(windowStart, 1), 'yyyy-MM-dd'); dayIndex = 6; } };
+    pageHeader.next = () => { if (dayIndex < 6) dayIndex += 1; else if (canGoForward) { endPickerValue = format(addDays(windowEnd, 1), 'yyyy-MM-dd'); dayIndex = 6; } };
+    pageHeader.canNext = selectedDayStr !== todayStr;
     pageHeader.today = () => { endPickerValue = todayStr; dayIndex = 6; };
     pageHeader.dateMax = todayStr;
-    pageHeader.dateLabel = canGoForward ? format(clampedEndDay, 'EEE d MMM') : 'Today';
+    pageHeader.dateLabel = selectedDayStr === todayStr ? 'Today' : format(addDays(windowStart, dayIndex), 'EEE d MMM');
     pageHeader.dateMarks = (athleteStore.biometrics?.series ?? []).filter((r: any) => r?.date && Number(r?.recovery_score) > 0).map((r: any) => r.date);
-    pageHeader.dateValue = format(clampedEndDay, "yyyy-MM-dd");
+    pageHeader.dateValue = selectedDayStr;
     // Wide layouts show Recovery, Sleep and Strain as one "Body" screen.
     pageHeader.wideTitle = 'Body';
     pageHeader.wideEyebrow = bodyEyebrow(days[dayIndex]?.date ?? todayStr, days[dayIndex]?.data ?? (current.row as any));
@@ -124,8 +127,9 @@
 
   // The header calendar writes pageHeader.dateValue; follow it.
   $effect(() => {
+    // Runs only when the calendar writes (not when a day in the strip is picked).
     const picked = pageHeader.dateValue;
-    if (picked && picked !== endPickerValue && picked <= todayStr) { endPickerValue = picked; dayIndex = 6; }
+    if (picked && picked !== untrack(() => selectedDayStr) && picked <= todayStr) { endPickerValue = picked; dayIndex = 6; }
   });
 
   const days = $derived.by(() => {
