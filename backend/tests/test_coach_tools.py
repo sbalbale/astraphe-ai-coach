@@ -1,7 +1,6 @@
 """Unit tests for agentic coach tools and anomaly detection."""
 from __future__ import annotations
 
-import json
 from datetime import date, timedelta
 from typing import Any
 
