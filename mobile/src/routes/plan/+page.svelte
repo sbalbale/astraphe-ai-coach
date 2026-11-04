@@ -48,6 +48,8 @@
   } from '$lib/coachMarkdown';
   import type { Workout } from '$lib/types/training';
   import { modalDialog } from '$lib/actions/modalDialog';
+  import PlanSessionEditor from '$lib/components/plan/PlanSessionEditor.svelte';
+  import { blankWorkout } from '$lib/utils/planEditor';
   import { sessionNotesSummary } from '$lib/utils/sessionNotes';
 
   type AgendaView = 'day' | 'week';
@@ -251,6 +253,33 @@
   function closeWorkout() {
     selectedWorkout = null;
     removingPlanWorkout = false;
+  }
+
+  // --- Manual edit (phone sheet and wide inspector share one editor) ---
+  let editingWorkout = $state<Workout | null>(null);
+  function editSelected() {
+    const id = backendTrainingPlanId(selectedWorkout);
+    editingWorkout = (id && trainingStore.workouts.find((x) => x.id === id)) || null;
+  }
+  /** Plan a new session by hand on `iso`. */
+  function planNew(iso: string) {
+    editingWorkout = blankWorkout(iso);
+  }
+  async function saveEdit(w: Workout): Promise<boolean> {
+    const ok = await trainingStore.updateWorkout(w, viewMonthRange.startIso, viewMonthRange.endIso);
+    if (!ok) return false;
+    if (!w.id) {
+      // New session: show its day.
+      selectDate(new Date(w.date + 'T12:00:00'));
+      return true;
+    }
+    // The sheet holds a snapshot: show the saved session (or close if it left this month).
+    if (selectedWorkout && backendTrainingPlanId(selectedWorkout) === w.id) {
+      selectedWorkout = plannedWorkouts.find((p) => backendTrainingPlanId(p) === w.id) ?? null;
+    }
+    // Wide: follow a session moved to another day.
+    if (viewport.wide && wideSelId === w.id) selectDate(new Date(w.date + 'T12:00:00'));
+    return true;
   }
 
   /** Whether a phone-view row's plan session is marked done (from the store's `completed`). */
@@ -931,8 +960,10 @@
       onswap={() =>
         wideSelected &&
         askCoach(`Swap my ${wideSelected.title} on ${format(selectedDate, 'EEEE d MMMM')} for a different session: `)}
-      onadd={() => askCoach(`Add a session to my plan on ${format(selectedDate, 'EEEE d MMMM')}: `)}
+      onadd={() => planNew(format(selectedDate, 'yyyy-MM-dd'))}
+      onask={() => askCoach(`Add a session to my plan on ${format(selectedDate, 'EEEE d MMMM')}: `)}
       onremove={wideRemove}
+      onedit={() => (editingWorkout = (wideSelected && trainingStore.workouts.find((x) => x.id === wideSelected?.id)) || null)}
       ontoggledone={wideToggleDone}
       onopen={wideOpenFull}
       onundo={wideUndo}
@@ -1000,7 +1031,7 @@
       <section class="bg-bg2 border border-border rounded-[24px] p-5 flex flex-col gap-1.5">
         <span class="font-mono text-[11px] tracking-[0.14em] text-text2 uppercase">{format(selectedDate, 'EEE')} · Rest</span>
         <h2 class="m-0 font-display font-normal text-[32px] leading-[1.05]">Nothing planned</h2>
-        <p class="m-0 text-sm leading-[1.45] text-text1">No sessions on this day. Ask your coach if you want to add one.</p>
+        <p class="m-0 text-sm leading-[1.45] text-text1">No sessions on this day. Plan one yourself or ask your coach.</p>
       </section>
     {:else}
       {#each dayItems as w (w.id)}
@@ -1047,6 +1078,7 @@
         {/each}
       </section>
     {/if}
+    {@render planSessionButton()}
   {:else}
     <!-- Month -->
     <section aria-label={format(viewMonth, 'MMMM yyyy')} class="bg-bg2 border border-border rounded-[24px] px-3 pt-3 pb-3.5 flex flex-col gap-2">
@@ -1097,6 +1129,7 @@
         </button>
       {/each}
     {/if}
+    {@render planSessionButton()}
 
     <div class="flex flex-wrap gap-x-3.5 gap-y-1.5 text-[11px] text-text2">
       {#each SESSION_LEGEND as l (l.label)}
@@ -1302,6 +1335,9 @@
         <div class="{backendTrainingPlanId(sw) ? '' : 'mt-auto'} shrink-0 flex gap-2">
           <button type="button" class="flex-1 h-12 rounded-[14px] border border-border bg-transparent text-text0 text-sm font-medium cursor-pointer {sheetMode === 'move' ? 'bg-bg3' : ''}" onclick={() => { moveDate = sw.isoDate; sheetMode = sheetMode === 'move' ? 'none' : 'move'; }}>Move</button>
           <button type="button" class="flex-1 h-12 rounded-[14px] border border-border bg-transparent text-text0 text-sm font-medium cursor-pointer {sheetMode === 'swap' ? 'bg-bg3' : ''}" onclick={() => (sheetMode = sheetMode === 'swap' ? 'none' : 'swap')}>Swap</button>
+          {#if backendTrainingPlanId(sw)}
+            <button type="button" class="flex-1 h-12 rounded-[14px] border border-border bg-transparent text-text0 text-sm font-medium cursor-pointer" onclick={editSelected}>Edit</button>
+          {/if}
           <button
             type="button"
             aria-label="Remove from plan"
@@ -1316,3 +1352,16 @@
     </div>
   </div>
 {/if}
+
+<PlanSessionEditor workout={editingWorkout} onSave={saveEdit} onClose={() => (editingWorkout = null)} />
+
+{#snippet planSessionButton()}
+  <button
+    type="button"
+    class="h-12 rounded-[16px] border border-dashed border-border bg-transparent text-text1 text-sm font-medium cursor-pointer flex items-center justify-center gap-2 hover:text-text0 hover:border-text3"
+    onclick={() => planNew(selectedIso)}
+  >
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+    Plan a session on {format(selectedDate, 'EEE d MMM')}
+  </button>
+{/snippet}

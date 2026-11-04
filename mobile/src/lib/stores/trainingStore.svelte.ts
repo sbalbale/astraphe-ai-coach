@@ -143,6 +143,16 @@ export class TrainingState {
     return !!saved;
   }
 
+  /** Saves a manually edited planned session; refreshes the given date range view. */
+  async updateWorkout(workout: Workout, rangeStartIso: string, rangeEndIso: string): Promise<boolean> {
+    const before = this.workouts;
+    this.workouts = this.workouts.map((w) => (w.id === workout.id ? workout : w));
+    const saved = await api.saveWorkout(workout);
+    if (!saved) this.workouts = before;
+    await this.fetchWorkouts(rangeStartIso, rangeEndIso);
+    return !!saved;
+  }
+
   /** Removes a planned session from `training_plans`; refreshes the given date range view. */
   async deleteTrainingPlan(planId: string, rangeStartIso: string, rangeEndIso: string): Promise<boolean> {
     const ok = await api.deleteTrainingPlan(planId);
