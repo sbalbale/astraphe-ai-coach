@@ -82,6 +82,18 @@ def release(log_id: str) -> None:
         traceback.print_exc()
 
 
+def release_for_retry(athlete_id: str, kind: str, key: str, log_id: str, max_attempts: int = 2) -> bool:
+    """Composing the note failed. Release the claim so a later tick tries again, unless this
+    notification already used max_attempts; then the claim is kept (nothing is sent), so an
+    LLM outage can't turn into a model call every tick. Each failure leaves a
+    '<kind>_failed' marker row. Returns True when released for another try."""
+    for n in range(1, max_attempts):
+        if claim(athlete_id, f"{kind}_failed", f"{key}#{n}"):
+            release(log_id)
+            return True
+    return False
+
+
 def mark_log(log_id: str, **fields: Any) -> None:
     try:
         admin_db().table("notification_log").update(fields).eq("id", log_id).execute()

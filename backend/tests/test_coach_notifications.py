@@ -40,6 +40,27 @@ def test_legacy_type_names_still_gate_pushes():
     assert np.legacy_type_enabled({"coach": False}, "coach") is False
     assert np.legacy_type_enabled({}, "coach") is True
     assert np.legacy_type_enabled({"types": {"ready": {"on": False}}}, "ready") is False
+    # Saved v2 settings (no flat keys): old names map onto the v2 types.
+    v2_off = {"v": 2, "types": {"debrief": {"on": False}, "plan": {"push": False}}}
+    assert np.legacy_type_enabled(v2_off, "coach") is False
+    assert np.legacy_type_enabled({"v": 2, "types": {"plan": {"on": False}}}, "coach") is True
+    assert np.legacy_type_enabled({"v": 2, "types": {"ready": {"on": False}}}, "readiness") is False
+    assert np.legacy_type_enabled({"v": 2, "types": {"weekly": {"push": False}}}, "insights") is False
+
+
+def test_compose_failure_releases_once_then_keeps_the_claim():
+    taken = set()
+
+    def claim(aid, kind, key):
+        if (kind, key) in taken:
+            return None
+        taken.add((kind, key))
+        return "m"
+
+    with patch.object(cn, "claim", side_effect=claim), patch.object(cn, "release") as release:
+        assert cn.release_for_retry("a", "weekly", "2026-W45", "log-1") is True
+        assert cn.release_for_retry("a", "weekly", "2026-W45", "log-2") is False
+    release.assert_called_once_with("log-1")
 
 
 # --- debrief -----------------------------------------------------------------------------

@@ -23,9 +23,27 @@ logger = logging.getLogger(__name__)
 
 TICK_SECONDS = 300
 WINDOW_MIN = 60
+# Missed-session and weekly notes are claimed only outside quiet hours, so their window is
+# wider: quiet hours ending a little after 07:00 (or a 20:00/18:00 send with quiet hours
+# starting soon after) still leave non-quiet ticks to send in.
+LATE_WINDOW_MIN = 180
+# Debriefs held for the 19:00 digest: everything since the previous day's window (a 20:30
+# workout misses today's 19:00 window and goes out tomorrow).
+HELD_LOOKBACK_HOURS = 36
 KEY_ZONES = {"Threshold", "VO2Max", "Anaerobic", "SweetSpot"}
 KEY_MIN_TSS = 80
 STALE_HOURS = 48
+# A workout this long on the day counts as the session when its sport is unknown
+# ('other'): rowing and some gym sessions sync as 'other'.
+UNKNOWN_SPORT_MIN_SECONDS = 30 * 60
+# Sync-problem alerts for one outage (since the last data arrived): at most this many,
+# 3 days apart, then 6 days.
+SYNC_MAX_ALERTS = 3
+SYNC_FIRST_GAP_DAYS = 3
+# Composing a missed/weekly note with the LLM: at most this many tries per notification.
+COMPOSE_MAX_ATTEMPTS = 2
+PAGE_SIZE = 1000
+ID_CHUNK = 200
 
 
 # --- timing helpers (pure) ---------------------------------------------------------------
@@ -45,15 +63,16 @@ def in_window(local_now: datetime, at: str, window_min: int = WINDOW_MIN) -> boo
 def weekly_due(prefs: dict, local_now: datetime) -> bool:
     day = np.option(prefs, "weekly")
     if day == "Mon":
-        return local_now.weekday() == 0 and in_window(local_now, "07:00")
-    return local_now.weekday() == 6 and in_window(local_now, "18:00")
+        return local_now.weekday() == 0 and in_window(local_now, "07:00", LATE_WINDOW_MIN)
+    return local_now.weekday() == 6 and in_window(local_now, "18:00", LATE_WINDOW_MIN)
 
 
 def missed_check_day(prefs: dict, local_now: datetime) -> Optional[date]:
-    """Which day's sessions to check now: yesterday at 07:00 ('morning'), today at 20:00 ('evening')."""
-    if np.option(prefs, "missed") == "evening":
-        return local_now.date() if in_window(local_now, "20:00") else None
-    return local_now.date() - timedelta(days=1) if in_window(local_now, "07:00") else None
+    """Which day's sessions to check now. Always a day that is already over: yesterday, at
+    07:00 ('morning') or at 20:00 ('evening'). Checking today's session at 20:00 would call
+    an evening session missed before the athlete had a chance to do it (or sync it)."""
+    at = "20:00" if np.option(prefs, "missed") == "evening" else "07:00"
+    return local_now.date() - timedelta(days=1) if in_window(local_now, at, LATE_WINDOW_MIN) else None
 
 
 def is_key_session(plan: dict) -> bool:
@@ -83,20 +102,34 @@ async def notification_loop() -> None:
         await asyncio.sleep(TICK_SECONDS)
 
 
+def push_athlete_ids(db: Any) -> list[str]:
+    """Every athlete with a push token (PostgREST caps a response at 1000 rows, so page)."""
+    ids: set[str] = set()
+    start = 0
+    while True:
+        page = (
+            db.table("push_tokens").select("athlete_id").order("athlete_id")
+            .range(start, start + PAGE_SIZE - 1).execute().data
+        ) or []
+        ids.update(t["athlete_id"] for t in page)
+        if len(page) < PAGE_SIZE:
+            return sorted(ids)
+        start += PAGE_SIZE
+
+
 def run_tick(now_utc: Optional[datetime] = None) -> None:
     """One pass over athletes that can receive push."""
     db = cn.admin_db()
     now_utc = now_utc or datetime.now(timezone.utc)
-    tokens = db.table("push_tokens").select("athlete_id").execute().data or []
-    athlete_ids = sorted({t["athlete_id"] for t in tokens})
-    if not athlete_ids:
-        return
-    rows = db.table("athletes").select("id,timezone_offset_min,notification_settings").in_("id", athlete_ids).execute().data or []
-    for a in rows:
-        try:
-            tick_athlete(db, a, now_utc)
-        except Exception:
-            logger.warning("[notify] tick failed for %s", a.get("id"), exc_info=True)
+    athlete_ids = push_athlete_ids(db)
+    for i in range(0, len(athlete_ids), ID_CHUNK):
+        chunk = athlete_ids[i : i + ID_CHUNK]
+        rows = db.table("athletes").select("id,timezone_offset_min,notification_settings").in_("id", chunk).execute().data or []
+        for a in rows:
+            try:
+                tick_athlete(db, a, now_utc)
+            except Exception:
+                logger.warning("[notify] tick failed for %s", a.get("id"), exc_info=True)
 
 
 def tick_athlete(db: Any, athlete: dict, now_utc: datetime) -> None:
@@ -106,32 +139,36 @@ def tick_athlete(db: Any, athlete: dict, now_utc: datetime) -> None:
     local_now = local_datetime_from_timezone_offset(offset, now_utc)
     quiet = np.in_quiet_hours(prefs, local_now)
 
-    if not quiet:
-        send_held_debriefs(db, aid, prefs, local_now)
+    # Everything is gated on quiet hours before it is claimed: a claim is final, so a send
+    # attempted in quiet hours would be lost instead of going out at a later tick.
+    if quiet:
+        return
+    send_held_debriefs(db, aid, prefs, local_now, now_utc)
     ready_at = np.option(prefs, "ready") or "07:00"
-    if np.push_enabled(prefs, "ready") and in_window(local_now, ready_at) and not quiet:
+    if np.push_enabled(prefs, "ready") and in_window(local_now, ready_at):
         send_readiness(db, aid, local_now, ready_at)
     if np.push_enabled(prefs, "missed"):
         day = missed_check_day(prefs, local_now)
         if day:
-            send_missed(db, aid, prefs, day, local_now)
+            send_missed(db, aid, prefs, day, local_now, offset)
     if np.push_enabled(prefs, "weekly") and weekly_due(prefs, local_now):
         send_weekly(db, aid, prefs, local_now)
-    if np.push_enabled(prefs, "sync") and in_window(local_now, "09:00") and not quiet:
+    if np.push_enabled(prefs, "sync") and in_window(local_now, "09:00"):
         send_sync_problem(db, aid, local_now, now_utc)
 
 
 # --- debriefs held back (evening digest / quiet hours) --------------------------------------
 
-def send_held_debriefs(db: Any, aid: str, prefs: dict, local_now: datetime) -> None:
+def send_held_debriefs(db: Any, aid: str, prefs: dict, local_now: datetime, now_utc: Optional[datetime] = None) -> None:
     """Debrief threads created without a push: pushed at 19:00 for the evening digest, or as
-    soon as quiet hours end for 'right away'."""
+    soon as quiet hours end for 'right away'. Looks back past the previous day's digest
+    window, so a debrief created after 20:00 goes out in the next day's digest."""
     if not np.push_enabled(prefs, "debrief"):
         return
     evening = np.option(prefs, "debrief") == "evening"
     if evening and not in_window(local_now, "19:00"):
         return
-    since = (datetime.now(timezone.utc) - timedelta(hours=18)).isoformat()
+    since = ((now_utc or datetime.now(timezone.utc)) - timedelta(hours=HELD_LOOKBACK_HOURS)).isoformat()
     held = (
         db.table("notification_log")
         .select("id,conversation_id,created_at")
@@ -235,7 +272,42 @@ async def _compose(aid: str, directive: str) -> Optional[str]:
     return reply.strip()
 
 
-def send_missed(db: Any, aid: str, prefs: dict, day: date, local_now: datetime) -> None:
+def _sport(raw: Any) -> str:
+    from app.services.processing import normalize_sport
+
+    return normalize_sport(str(raw or ""))
+
+
+def recorded_workouts(db: Any, aid: str, day: date, offset_min: int) -> list[dict]:
+    """Workouts that started on `day` or the next local day (athlete's time zone)."""
+    tz = timezone(timedelta(minutes=offset_min or 0))
+    start = datetime(day.year, day.month, day.day, tzinfo=tz).astimezone(timezone.utc)
+    end = start + timedelta(days=2)
+    return (
+        db.table("workouts")
+        .select("sport,duration_seconds,started_at")
+        .eq("athlete_id", aid)
+        .gte("started_at", start.isoformat())
+        .lt("started_at", end.isoformat())
+        .execute()
+    ).data or []
+
+
+def probably_done(plan: dict, workouts: list[dict]) -> bool:
+    """A recorded workout likely is this session, even though it isn't linked: same sport
+    (that day or the next), or a long one whose sport the app couldn't tell ('other'; rowing
+    often syncs that way) when the plan's or the workout's sport is unknown."""
+    sport = _sport(plan.get("sport"))
+    for w in workouts:
+        ws = _sport(w.get("sport"))
+        if ws == sport and sport != "other":
+            return True
+        if "other" in (ws, sport) and float(w.get("duration_seconds") or 0) >= UNKNOWN_SPORT_MIN_SECONDS:
+            return True
+    return False
+
+
+def send_missed(db: Any, aid: str, prefs: dict, day: date, local_now: datetime, offset_min: int = 0) -> None:
     plans = (
         db.table("training_plans")
         .select("id,title,planned_date,duration_min,target_tss,primary_zone,status,sport")
@@ -244,7 +316,13 @@ def send_missed(db: Any, aid: str, prefs: dict, day: date, local_now: datetime) 
         .in_("status", ["planned", "modified"])
         .execute()
     ).data or []
-    for p in [p for p in plans if is_key_session(p)]:
+    keys = [p for p in plans if is_key_session(p)]
+    if not keys:
+        return
+    workouts = recorded_workouts(db, aid, day, offset_min)
+    for p in keys:
+        if probably_done(p, workouts):
+            continue
         log_id = cn.claim(aid, "missed", p["id"])
         if not log_id:
             continue
@@ -269,7 +347,7 @@ def send_missed(db: Any, aid: str, prefs: dict, day: date, local_now: datetime) 
             )
         )
         if not reply:
-            cn.release(log_id)
+            cn.release_for_retry(aid, "missed", p["id"], log_id, COMPOSE_MAX_ATTEMPTS)
             continue
         context = {
             "kind": "plan",
@@ -316,7 +394,8 @@ def week_numbers(db: Any, aid: str, start: date, end: date) -> dict:
 def send_weekly(db: Any, aid: str, prefs: dict, local_now: datetime) -> None:
     end = last_completed_week_end(local_now.date())
     start = end - timedelta(days=6)
-    log_id = cn.claim(aid, "weekly", iso_week_key(end))
+    week_key = iso_week_key(end)
+    log_id = cn.claim(aid, "weekly", week_key)
     if not log_id:
         return
     nums = week_numbers(db, aid, start, end)
@@ -339,7 +418,7 @@ def send_weekly(db: Any, aid: str, prefs: dict, local_now: datetime) -> None:
         )
     )
     if not reply:
-        cn.release(log_id)
+        cn.release_for_retry(aid, "weekly", week_key, log_id, COMPOSE_MAX_ATTEMPTS)
         return
     meta = [f"{nums['tss']} TSS"]
     if nums["pct_of_plan"] is not None:
@@ -362,24 +441,61 @@ def send_weekly(db: Any, aid: str, prefs: dict, local_now: datetime) -> None:
 
 # --- sync problems -----------------------------------------------------------------------
 
-PROVIDER_NAMES = {"garmin": "Garmin", "whoop": "WHOOP", "strava": "Strava", "intervals_icu": "Intervals.icu"}
+# Strava is not listed: the integration is disabled ("coming soon"), so a stale Strava
+# token is not a problem the athlete can fix.
+PROVIDER_NAMES = {"garmin": "Garmin", "whoop": "WHOOP", "intervals_icu": "Intervals.icu"}
+
+
+def _parse_dt(v: Any) -> Optional[datetime]:
+    try:
+        dt = datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def last_data_at(db: Any, aid: str) -> Optional[datetime]:
+    """When the latest workout started, or the end of the latest day with daily data
+    (whichever is later)."""
+    w = db.table("workouts").select("started_at").eq("athlete_id", aid).order("started_at", desc=True).limit(1).execute().data or []
+    b = db.table("biometrics").select("date").eq("athlete_id", aid).order("date", desc=True).limit(1).execute().data or []
+    day = _parse_dt(str(b[0].get("date"))[:10]) if b else None
+    times = [t for t in (_parse_dt(w[0].get("started_at")) if w else None, day + timedelta(days=1) if day else None) if t]
+    return max(times) if times else None
+
+
+def sync_alert_due(previous: list[datetime], now_utc: datetime) -> bool:
+    """previous = alerts already sent for this outage. Up to SYNC_MAX_ALERTS, backing off:
+    3 days after the first, then 6 days after the second."""
+    if len(previous) >= SYNC_MAX_ALERTS:
+        return False
+    if not previous:
+        return True
+    gap = timedelta(days=SYNC_FIRST_GAP_DAYS * 2 ** (len(previous) - 1)) - timedelta(hours=2)
+    return now_utc - max(previous) >= gap
 
 
 def send_sync_problem(db: Any, aid: str, local_now: datetime, now_utc: datetime) -> None:
-    """A connected app but no workouts and no daily data for STALE_HOURS. At most every 3 days."""
+    """A connected app but no workouts and no daily data for STALE_HOURS. Up to three alerts
+    per outage (counted in notification_log since the last data arrived), then silence until
+    data arrives again."""
     from app.services.push import send_push_to_athlete
 
     providers = [r["provider"] for r in (db.table("oauth_tokens").select("provider").eq("athlete_id", aid).execute().data or [])]
     providers = [p for p in providers if p in PROVIDER_NAMES]
     if not providers:
         return
-    cutoff = now_utc - timedelta(hours=STALE_HOURS)
-    recent_w = db.table("workouts").select("id").eq("athlete_id", aid).gte("started_at", cutoff.isoformat()).limit(1).execute().data or []
-    recent_b = db.table("biometrics").select("id").eq("athlete_id", aid).gte("date", cutoff.date().isoformat()).limit(1).execute().data or []
-    if recent_w or recent_b:
+    last = last_data_at(db, aid)
+    if last and now_utc - last < timedelta(hours=STALE_HOURS):
         return
-    bucket = local_now.date().toordinal() // 3
-    if not cn.claim(aid, "sync", str(bucket)):
+    since = last or datetime(2000, 1, 1, tzinfo=timezone.utc)
+    sent = (
+        db.table("notification_log").select("created_at").eq("athlete_id", aid).eq("kind", "sync")
+        .gte("created_at", since.isoformat()).execute().data
+    ) or []
+    if not sync_alert_due([t for t in (_parse_dt(r.get("created_at")) for r in sent) if t], now_utc):
+        return
+    if not cn.claim(aid, "sync", local_now.date().isoformat()):
         return
     names = " and ".join(PROVIDER_NAMES[p] for p in providers)
     send_push_to_athlete(

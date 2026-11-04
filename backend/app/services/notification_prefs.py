@@ -113,9 +113,15 @@ def in_quiet_hours(prefs: dict, local_now: datetime) -> bool:
 
 
 def legacy_type_enabled(raw: Any, notification_type: str) -> bool:
-    """For pushes still sent with the old type names ('coach' = a chat reply finished, etc.)."""
+    """For pushes still sent with the old type names ('coach' = a chat reply finished, etc.).
+    Old names map onto the v2 types they stood for (saved settings only keep the v2 shape):
+    on while any of those types still has push on, so 'coach' goes quiet once both coach
+    types (debrief and plan changes) are off."""
+    prefs = effective(raw)
     if notification_type in TYPE_IDS:
-        return push_enabled(effective(raw), notification_type)
+        return push_enabled(prefs, notification_type)
+    if notification_type in _LEGACY:
+        return any(push_enabled(prefs, t) for t in _LEGACY[notification_type])
     saved = raw if isinstance(raw, dict) else {}
     v = saved.get(notification_type)
     return v if isinstance(v, bool) else True
