@@ -12,7 +12,6 @@
   import QuietHoursCard from '$lib/components/notifications/QuietHoursCard.svelte';
   import TextsCard from '$lib/components/notifications/TextsCard.svelte';
   import TestNotificationCard from '$lib/components/notifications/TestNotificationCard.svelte';
-  import SettingsTabs from '$lib/components/notifications/SettingsTabs.svelte';
   import { api } from '$lib/api';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { viewport } from '$lib/stores/viewport.svelte';
@@ -153,15 +152,7 @@
 {/snippet}
 
 <div class="flex flex-col gap-4 pb-6">
-  {#if wide}
-    <header class="flex flex-col gap-1.5 pt-1">
-      <span class="font-mono text-[12px] tracking-[0.14em] text-text2">ME · SETTINGS</span>
-      <h1 class="m-0 font-display font-normal text-[44px] leading-none">Notifications</h1>
-    </header>
-    <SettingsTabs current="/profile/notifications" />
-  {:else}
-    <SubpageHeader title="Notifications" />
-  {/if}
+  <SubpageHeader title="Notifications" />
 
   {#if saveError}
     <p role="alert" class="m-0 px-4 py-3 rounded-[14px] bg-red-dim border border-red/30 text-[13px] text-red">{saveError}</p>
