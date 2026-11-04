@@ -481,3 +481,86 @@ def test_agentic_keeps_scratchpad_on_gemma():
     names = {d.name for t in seen["config"].tools for d in (getattr(t, "function_declarations", None) or [])}
     assert "internal_scratchpad" in names
     assert ai_coach.SCRATCHPAD_UNAVAILABLE_NOTE not in seen["config"].system_instruction
+
+
+# --- CHAT_LLM_PROVIDER=openai: chat on a self-hosted model, Gemini fallback -----------------------
+
+
+def _strata_settings():
+    from contextlib import ExitStack
+
+    stack = ExitStack()
+    for name, value in {
+        "CHAT_LLM_PROVIDER": "openai",
+        "CHAT_MODEL": "strata-model",
+        "OPENAI_API_BASE_URL": "https://llm.example/v1",
+        "GEMINI_FALLBACK_MODEL": "gemini-3.1-flash-lite",
+    }.items():
+        stack.enter_context(patch.object(ai_coach.settings, name, value))
+    return stack
+
+
+def test_chat_runs_on_the_self_hosted_model_and_gemini_stays_unused():
+    db = MagicMock()
+    strata = MagicMock()
+    strata.models.generate_content.return_value = _response([_text_part("<response>from strata</response>")])
+    with _strata_settings(), _db_patches(), patch(
+        "app.services.llm_provider.get_chat_openai_client", return_value=strata
+    ), patch.object(ai_coach._client.models, "generate_content") as gemini:
+        # The athlete's configured Gemini model is ignored for the chat.
+        text, _ = ai_coach.get_coach_response_agentic("ath-1", "hi", db=db, model_name="gemini-3.5-flash-lite")
+    assert text == "from strata"
+    assert strata.models.generate_content.call_args.kwargs["model"] == "strata-model"
+    gemini.assert_not_called()
+
+
+def test_any_self_hosted_failure_falls_back_to_gemini():
+    """Not just transient errors: e.g. a 400 the local server returns for a request it can't take."""
+    db = MagicMock()
+    strata = MagicMock()
+    strata.models.generate_content.side_effect = RuntimeError("Error code: 400 - bad request")
+    with _strata_settings(), _db_patches(), patch(
+        "app.services.llm_provider.get_chat_openai_client", return_value=strata
+    ), patch.object(
+        ai_coach._client.models, "generate_content", return_value=_response([_text_part("<response>from gemini</response>")])
+    ) as gemini:
+        text, _ = ai_coach.get_coach_response_agentic("ath-1", "hi", db=db)
+    assert text == "from gemini"
+    assert strata.models.generate_content.call_count == 1  # tried once, not retried
+    assert gemini.call_args.kwargs["model"] == "gemini-3.1-flash-lite"
+
+
+def test_self_hosted_chat_model_counts_as_native_thinking_and_skips_quota():
+    from app.services import coach_tools, gemini_quota
+
+    with _strata_settings():
+        assert coach_tools.has_native_thinking("strata-model")
+        assert coach_tools.scratchpad_dropped(["strata-model", "gemini-3.1-flash-lite"])
+        with patch.object(gemini_quota, "_rpm_limit") as rpm:
+            gemini_quota.wait_for_slot("strata-model")
+        rpm.assert_not_called()
+    assert not coach_tools.has_native_thinking("strata-model")  # off again without the setting
+
+
+def test_after_a_self_hosted_failure_the_rest_of_the_turn_stays_on_gemini():
+    """Each tool hop would otherwise wait on the failing self-hosted model again."""
+    db = MagicMock()
+    strata = MagicMock()
+    strata.models.generate_content.side_effect = TimeoutError("timed out")
+    gemini_calls: list[str] = []
+
+    def _gemini(*, model, contents, config):
+        gemini_calls.append(model)
+        if len(gemini_calls) == 1:  # first hop: a tool call, so there is a second hop
+            return _response([_fc_part("get_recent_workouts", {"limit": 5})])
+        return _response([_text_part("<response>done</response>")])
+
+    with _strata_settings(), _db_patches(), patch(
+        "app.services.llm_provider.get_chat_openai_client", return_value=strata
+    ), patch.object(ai_coach._client.models, "generate_content", side_effect=_gemini), patch.dict(
+        coach_tools.TOOL_HANDLERS, {"get_recent_workouts": lambda args, athlete_id, db: {"workouts": []}}
+    ):
+        text, _ = ai_coach.get_coach_response_agentic("ath-1", "how many rides this week", db=db)
+    assert text == "done"
+    assert strata.models.generate_content.call_count == 1  # not asked again on hop 2
+    assert gemini_calls == ["gemini-3.1-flash-lite", "gemini-3.1-flash-lite"]
