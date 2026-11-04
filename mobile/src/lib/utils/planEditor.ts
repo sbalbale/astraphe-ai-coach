@@ -33,8 +33,8 @@ export type DraftBlock = {
   /** Stable key for the list (not saved). */
   key: string;
   name: string;
-  minutes: number;
-  seconds: number;
+  /** Length in minutes (decimals for seconds: 1:30 = 1.5). */
+  duration: number;
   zone: number;
   /** Optional %FTP target; '' when none. */
   ftp: number | '';
@@ -59,13 +59,46 @@ const nextKey = () => `b${++keySeq}`;
 
 export const hasBlocks = (sport: Sport) => sport !== 'strength' && sport !== 'mobility';
 
-export function blockMinutes(b: Pick<DraftBlock, 'minutes' | 'seconds'>): number {
-  return Math.max(0, Number(b.minutes) || 0) + Math.max(0, Number(b.seconds) || 0) / 60;
+export function blockMinutes(b: Pick<DraftBlock, 'duration'>): number {
+  return Math.max(0, Number(b.duration) || 0);
 }
 
 export function newBlock(name: string, minutes: number, zone: number, ftp: number | '' = ''): DraftBlock {
-  const whole = Math.floor(minutes);
-  return { key: nextKey(), name, minutes: whole, seconds: Math.round((minutes - whole) * 60), zone, ftp, rest: {} };
+  return { key: nextKey(), name, duration: Math.round(Math.max(0, minutes) * 60) / 60, zone, ftp, rest: {} };
+}
+
+/** "1:30" → 1.5, "90" → 90, "1.5" → 1.5, "" → 0; null when it can't be read. */
+export function parseMinSec(text: string): number | null {
+  const t = String(text ?? '').trim();
+  if (!t) return 0;
+  const m = /^(\d{1,3}):(\d{1,2})$/.exec(t);
+  if (m) {
+    const sec = Number(m[2]);
+    return sec < 60 ? Number(m[1]) + sec / 60 : null;
+  }
+  return /^\d{1,3}(\.\d+)?$/.test(t) ? Number(t) : null;
+}
+
+/** 1.5 → "1:30", 90 → "90:00", 0 → "0:00". */
+export function formatMinSec(minutes: number): string {
+  const total = Math.round(Math.max(0, Number(minutes) || 0) * 60);
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+}
+
+/** A blank session to plan by hand on `date`. */
+export function blankWorkout(date: string): Workout {
+  return {
+    id: '',
+    date,
+    title: '',
+    sport: 'bike',
+    primary_zone: 'Endurance',
+    duration_minutes: 60,
+    projected_tss: 0,
+    description: '',
+    structure: [],
+    completed: false
+  };
 }
 
 export function toDraft(w: Workout): Draft {
@@ -140,7 +173,6 @@ export function draftErrors(d: Draft): string[] {
   if (hasBlocks(d.sport)) {
     d.blocks.forEach((b, i) => {
       if (blockMinutes(b) <= 0) out.push(`Block ${i + 1} needs a length.`);
-      if (Number(b.seconds) >= 60) out.push(`Block ${i + 1}: seconds must be under 60.`);
       if (b.ftp !== '' && (Number(b.ftp) <= 0 || Number(b.ftp) > 300)) out.push(`Block ${i + 1}: %FTP must be between 1 and 300.`);
     });
   }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Workout } from '$lib/types/training';
-import { draftErrors, draftMinutes, estimateTss, fromDraft, intervalSet, moveBlock, newBlock, toDraft } from './planEditor';
+import { blankWorkout, draftErrors, draftMinutes, estimateTss, formatMinSec, fromDraft, intervalSet, moveBlock, newBlock, parseMinSec, toDraft } from './planEditor';
 
 const speed: Workout = {
   id: '11111111-1111-1111-1111-111111111111',
@@ -22,7 +22,7 @@ const speed: Workout = {
 describe('planEditor', () => {
   it('round-trips a session: 1:30 blocks stay 1.5 min, unknown fields are kept', () => {
     const d = toDraft(speed);
-    expect(d.blocks[1]).toMatchObject({ name: 'Work 1/8', minutes: 1, seconds: 30, zone: 5 });
+    expect(d.blocks[1]).toMatchObject({ name: 'Work 1/8', duration: 1.5, zone: 5 });
     const saved = fromDraft(d, speed);
     expect(saved.structure[1]).toEqual({ name: 'Work 1/8', duration_minutes: 1.5, target_hr_zone: 5, description: 'r32-34' });
     expect(saved.id).toBe(speed.id);
@@ -32,8 +32,8 @@ describe('planEditor', () => {
   it('an interval set expands into Work / Recovery blocks', () => {
     const blocks = intervalSet(8, 1.5, 5, 1);
     expect(blocks).toHaveLength(15);
-    expect(blocks[0]).toMatchObject({ name: 'Work 1/8', minutes: 1, seconds: 30, zone: 5 });
-    expect(blocks[1]).toMatchObject({ name: 'Recovery 1/7', minutes: 1, seconds: 0, zone: 1 });
+    expect(blocks[0]).toMatchObject({ name: 'Work 1/8', duration: 1.5, zone: 5 });
+    expect(blocks[1]).toMatchObject({ name: 'Recovery 1/7', duration: 1, zone: 1 });
     expect(blocks.at(-1)?.name).toBe('Work 8/8');
   });
 
@@ -60,9 +60,34 @@ describe('planEditor', () => {
     expect(moveBlock(d.blocks, 0, 2).map((b) => b.name)).toEqual(['Work 1/8', 'Cooldown', 'Warmup']);
     expect(draftErrors(d)).toEqual([]);
     d.title = ' ';
-    d.blocks[0].minutes = 0;
-    d.blocks[0].seconds = 0;
+    d.blocks[0].duration = 0;
     d.blocks[1].ftp = 400;
     expect(draftErrors(d)).toEqual(['Give the session a name.', 'Block 1 needs a length.', 'Block 2: %FTP must be between 1 and 300.']);
+  });
+});
+
+describe('minutes:seconds fields', () => {
+  it('reads what athletes type', () => {
+    expect(parseMinSec('1:30')).toBe(1.5);
+    expect(parseMinSec('90')).toBe(90);
+    expect(parseMinSec('1.5')).toBe(1.5);
+    expect(parseMinSec('')).toBe(0);
+    expect(parseMinSec('1:75')).toBeNull();
+    expect(parseMinSec('abc')).toBeNull();
+  });
+  it('shows m:ss', () => {
+    expect(formatMinSec(1.5)).toBe('1:30');
+    expect(formatMinSec(90)).toBe('90:00');
+    expect(formatMinSec(0)).toBe('0:00');
+  });
+});
+
+describe('planning a new session', () => {
+  it('starts blank and needs a name', () => {
+    const d = toDraft(blankWorkout('2026-11-10'));
+    expect(draftErrors(d)).toEqual(['Give the session a name.']);
+    d.title = 'Easy spin';
+    const w = fromDraft(d, blankWorkout('2026-11-10'));
+    expect(w).toMatchObject({ id: '', date: '2026-11-10', title: 'Easy spin', duration_minutes: 60, projected_tss: 49 });
   });
 });

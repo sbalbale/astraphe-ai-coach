@@ -25,6 +25,7 @@
     onadd,
     onremove,
     onedit,
+    onask,
     ontoggledone,
     onopen,
     onundo,
@@ -47,6 +48,8 @@
     onremove: () => void;
     /** Opens the manual editor for the selected session. */
     onedit: () => void;
+    /** Asks the coach to add a session on this day. */
+    onask: () => void;
     /** Marks the selected session done / not done. */
     ontoggledone: () => void;
     onopen: () => void;
@@ -239,12 +242,38 @@
             type="button"
             class="flex-1 h-[42px] rounded-xl border border-popover-border bg-transparent text-text0 text-[13px] font-medium cursor-pointer hover:border-text3"
             onclick={onadd}
-          >Add a session</button>
+          >Plan a session</button>
+          <button
+            type="button"
+            class="flex-1 h-[42px] rounded-xl border border-popover-border bg-transparent text-text0 text-[13px] font-medium cursor-pointer hover:border-text3"
+            onclick={onask}
+          >Ask coach</button>
         {/if}
       </div>
+      {#if s}
+        <!-- Always available: a day can hold several sessions. -->
+        <button
+          type="button"
+          class="h-[42px] rounded-xl border border-dashed border-popover-border bg-transparent text-text1 text-[13px] font-medium cursor-pointer hover:text-text0 hover:border-text3 flex items-center justify-center gap-2"
+          onclick={onadd}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+          Plan a session
+        </button>
+      {/if}
       {#if s}
         <span class="text-center text-[11px] text-text3">Tip: drag a session onto another day to move it</span>
       {/if}
     </div>
+  {:else if s && !past}
+    <!-- The selected session is done: you can still plan another one this day. -->
+    <button
+      type="button"
+      class="h-[42px] rounded-xl border border-dashed border-popover-border bg-transparent text-text1 text-[13px] font-medium cursor-pointer hover:text-text0 hover:border-text3 flex items-center justify-center gap-2"
+      onclick={onadd}
+    >
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+      Plan a session
+    </button>
   {/if}
 </aside>

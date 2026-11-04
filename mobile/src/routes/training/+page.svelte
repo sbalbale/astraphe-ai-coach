@@ -787,10 +787,13 @@
         {@const selLatlng = detailStreams?.time_series?.latlng}
         {@const selLthr = Number((athleteStore.profile as any)?.lthr ?? (athleteStore.profile as any)?.threshold_hr) || 0}
         {@const selElev = Number(sel?.elevation_gain_m) || 0}
+        <!-- Map only with a GPS trace (indoor sessions have none); hold its space only while loading. Same as wide. -->
+        {@const selHasGps = (selLatlng?.length ?? 0) > 1}
+        {@const selHero = selHasGps || (!detailStreams && (detailLoading || detailHydrating))}
         <div class="-mx-4 flex flex-col">
           <!-- Map hero -->
-          <div class="relative">
-            {#if selLatlng && selLatlng.length > 1}
+          <div class="relative {selHero ? '' : 'h-[76px]'}">
+            {#if selHasGps && selLatlng}
               <GpsTrace
                 hero
                 latlng={selLatlng}
@@ -798,8 +801,8 @@
                 time={detailStreams?.time_series?.time}
                 zones={mergedHrZoneDefs}
               />
-            {:else}
-              <div class="h-[150px] bg-bg1 {detailLoading || detailHydrating ? 'animate-pulse' : ''}"></div>
+            {:else if selHero}
+              <div class="h-[150px] bg-bg1 animate-pulse"></div>
             {/if}
             <div class="absolute left-4 right-4 top-4 z-10 flex justify-between pointer-events-none">
               <button type="button" aria-label="Back to training" class="pointer-events-auto w-11 h-11 rounded-full bg-bg0/85 border border-border text-text0 flex items-center justify-center cursor-pointer" onclick={closeWorkout}>
@@ -817,7 +820,7 @@
           </div>
 
           <!-- Sheet -->
-          <div class="relative -mt-6 px-5 pt-5 pb-10 rounded-t-[28px] bg-bg0 border-t border-border flex flex-col gap-3.5">
+          <div class="relative px-5 pb-10 bg-bg0 flex flex-col gap-3.5 {selHero ? '-mt-6 pt-5 rounded-t-[28px] border-t border-border' : 'pt-1'}">
             <header class="flex justify-between items-start gap-3">
               <div class="flex flex-col gap-1.5 min-w-0">
                 <span class="font-mono text-[11px] tracking-[0.14em] text-blue uppercase">{getWorkoutLabel(sel.sport)} · {format(new Date(sel.started_at), (athleteStore.profile as any)?.time_format === '24h' ? 'EEE d MMM · HH:mm' : 'EEE d MMM · h:mm a')}</span>
