@@ -8,6 +8,13 @@ import {
 	precacheAndRoute,
 } from 'workbox-precaching';
 import { NavigationRoute, registerRoute } from 'workbox-routing';
+import {
+	OPEN_CHAT_ACTION,
+	coachThreadUrl,
+	parseQuickReplies,
+	replyActionId,
+	replyIndexFromAction,
+} from './lib/utils/coachThreads';
 
 declare let self: ServiceWorkerGlobalScope;
 
@@ -54,8 +61,16 @@ async function focusOrOpenClient(targetUrl: string): Promise<void> {
 	await self.clients.openWindow(targetUrl);
 }
 
+type PushData = {
+	url?: string;
+	type?: string;
+	conversation_id?: string;
+	/** JSON string (FCM data values are strings) or array of up to two quick replies. */
+	quick_replies?: unknown;
+};
+
 self.addEventListener('push', (event) => {
-	let payload: { title?: string; body?: string; data?: { url?: string } } = {
+	let payload: { title?: string; body?: string; data?: PushData } = {
 		title: 'ASTRAPHE',
 		body: '',
 		data: {},
@@ -65,21 +80,44 @@ self.addEventListener('push', (event) => {
 	} catch {
 		/* ignore malformed payload */
 	}
+	const data: PushData = payload.data ?? {};
+	const replies = data.conversation_id ? parseQuickReplies(data.quick_replies, 2) : [];
+	// Coach threads: one notification per thread (a newer one replaces it), and quick-reply
+	// buttons where the platform supports actions (Chrome/Edge/Android; iOS ignores them).
+	// With two replies both become buttons; with one, the other button opens the chat.
+	const actions = replies.length >= 2
+		? replies.map((r, i) => ({ action: replyActionId(i), title: r }))
+		: replies.length === 1
+			? [{ action: replyActionId(0), title: replies[0] }, { action: OPEN_CHAT_ACTION, title: 'Open chat' }]
+			: [];
+	const options: NotificationOptions & { actions?: { action: string; title: string }[]; renotify?: boolean } = {
+		body: payload.body ?? '',
+		icon: '/astraphe-logo.png',
+		badge: '/android-chrome-192x192.png',
+		data: { ...data, quick_replies: replies },
+	};
+	if (data.conversation_id) {
+		options.tag = `coach-${data.conversation_id}`;
+		options.renotify = true;
+	}
+	if (actions.length) options.actions = actions;
 
-	event.waitUntil(
-		self.registration.showNotification(payload.title ?? 'ASTRAPHE', {
-			body: payload.body ?? '',
-			icon: '/astraphe-logo.png',
-			badge: '/android-chrome-192x192.png',
-			data: payload.data ?? {},
-		})
-	);
+	event.waitUntil(self.registration.showNotification(payload.title ?? 'ASTRAPHE', options));
 });
 
 self.addEventListener('notificationclick', (event) => {
 	event.notification.close();
-	const targetUrl = resolveNotificationUrl(
-		(event.notification.data as { url?: string } | undefined)?.url
-	);
-	event.waitUntil(focusOrOpenClient(targetUrl));
+	const data = (event.notification.data ?? {}) as PushData & { quick_replies?: string[] };
+	// A quick-reply button opens the thread and sends that reply (the chat page reads ?reply=).
+	const idx = replyIndexFromAction(event.action);
+	const replies = Array.isArray(data.quick_replies) ? data.quick_replies : [];
+	let target: string;
+	if (data.conversation_id && idx !== null && replies[idx]) {
+		target = coachThreadUrl(data.conversation_id, replies[idx]);
+	} else if (data.conversation_id && event.action === OPEN_CHAT_ACTION) {
+		target = coachThreadUrl(data.conversation_id);
+	} else {
+		target = data.url ?? (data.conversation_id ? coachThreadUrl(data.conversation_id) : undefined) ?? '';
+	}
+	event.waitUntil(focusOrOpenClient(resolveNotificationUrl(target)));
 });
