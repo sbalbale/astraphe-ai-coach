@@ -1,5 +1,5 @@
 """Timed notifications: morning readiness, evening debrief digest (and debriefs held back by
-quiet hours), missed key session, weekly summary, sync problems.
+quiet hours), weekly summary, sync problems.
 
 `notification_loop` ticks every few minutes in every API replica. Each send is claimed in
 notification_log first (athlete, kind, key), so replicas and restarts never double-send.
@@ -23,24 +23,19 @@ logger = logging.getLogger(__name__)
 
 TICK_SECONDS = 300
 WINDOW_MIN = 60
-# Missed-session and weekly notes are claimed only outside quiet hours, so their window is
-# wider: quiet hours ending a little after 07:00 (or a 20:00/18:00 send with quiet hours
-# starting soon after) still leave non-quiet ticks to send in.
+# Weekly notes are claimed only outside quiet hours, so their window is wider: quiet hours
+# ending a little after 07:00 (or an 18:00 send with quiet hours starting soon after)
+# still leave non-quiet ticks to send in.
 LATE_WINDOW_MIN = 180
 # Debriefs held for the 19:00 digest: everything since the previous day's window (a 20:30
 # workout misses today's 19:00 window and goes out tomorrow).
 HELD_LOOKBACK_HOURS = 36
-KEY_ZONES = {"Threshold", "VO2Max", "Anaerobic", "SweetSpot"}
-KEY_MIN_TSS = 80
 STALE_HOURS = 48
-# A workout this long on the day counts as the session when its sport is unknown
-# ('other'): rowing and some gym sessions sync as 'other'.
-UNKNOWN_SPORT_MIN_SECONDS = 30 * 60
 # Sync-problem alerts for one outage (since the last data arrived): at most this many,
 # 3 days apart, then 6 days.
 SYNC_MAX_ALERTS = 3
 SYNC_FIRST_GAP_DAYS = 3
-# Composing a missed/weekly note with the LLM: at most this many tries per notification.
+# Composing a weekly note with the LLM: at most this many tries per notification.
 COMPOSE_MAX_ATTEMPTS = 2
 PAGE_SIZE = 1000
 ID_CHUNK = 200
@@ -65,18 +60,6 @@ def weekly_due(prefs: dict, local_now: datetime) -> bool:
     if day == "Mon":
         return local_now.weekday() == 0 and in_window(local_now, "07:00", LATE_WINDOW_MIN)
     return local_now.weekday() == 6 and in_window(local_now, "18:00", LATE_WINDOW_MIN)
-
-
-def missed_check_day(prefs: dict, local_now: datetime) -> Optional[date]:
-    """Which day's sessions to check now. Always a day that is already over: yesterday, at
-    07:00 ('morning') or at 20:00 ('evening'). Checking today's session at 20:00 would call
-    an evening session missed before the athlete had a chance to do it (or sync it)."""
-    at = "20:00" if np.option(prefs, "missed") == "evening" else "07:00"
-    return local_now.date() - timedelta(days=1) if in_window(local_now, at, LATE_WINDOW_MIN) else None
-
-
-def is_key_session(plan: dict) -> bool:
-    return plan.get("primary_zone") in KEY_ZONES or int(plan.get("target_tss") or 0) >= KEY_MIN_TSS
 
 
 def last_completed_week_end(today: date) -> date:
@@ -147,10 +130,6 @@ def tick_athlete(db: Any, athlete: dict, now_utc: datetime) -> None:
     ready_at = np.option(prefs, "ready") or "07:00"
     if np.push_enabled(prefs, "ready") and in_window(local_now, ready_at):
         send_readiness(db, aid, local_now, ready_at)
-    if np.push_enabled(prefs, "missed"):
-        day = missed_check_day(prefs, local_now)
-        if day:
-            send_missed(db, aid, prefs, day, local_now, offset)
     if np.push_enabled(prefs, "weekly") and weekly_due(prefs, local_now):
         send_weekly(db, aid, prefs, local_now)
     if np.push_enabled(prefs, "sync") and in_window(local_now, "09:00"):
@@ -247,7 +226,7 @@ def send_readiness(db: Any, aid: str, local_now: datetime, at: str) -> None:
     send_push_to_athlete(athlete_id=aid, title=title, body=body, db=db, data={"url": "/readiness", "type": "ready"})
 
 
-# --- missed key session -------------------------------------------------------------------
+# --- composing coach notes ----------------------------------------------------------------
 
 async def _compose(aid: str, directive: str) -> Optional[str]:
     from app.services.ai_coach import COACH_FAILURE_REPLIES, get_coach_response
@@ -270,101 +249,6 @@ async def _compose(aid: str, directive: str) -> Optional[str]:
     if not (reply or "").strip() or reply.strip() in COACH_FAILURE_REPLIES:
         return None
     return reply.strip()
-
-
-def _sport(raw: Any) -> str:
-    from app.services.processing import normalize_sport
-
-    return normalize_sport(str(raw or ""))
-
-
-def recorded_workouts(db: Any, aid: str, day: date, offset_min: int) -> list[dict]:
-    """Workouts that started on `day` or the next local day (athlete's time zone)."""
-    tz = timezone(timedelta(minutes=offset_min or 0))
-    start = datetime(day.year, day.month, day.day, tzinfo=tz).astimezone(timezone.utc)
-    end = start + timedelta(days=2)
-    return (
-        db.table("workouts")
-        .select("sport,duration_seconds,started_at")
-        .eq("athlete_id", aid)
-        .gte("started_at", start.isoformat())
-        .lt("started_at", end.isoformat())
-        .execute()
-    ).data or []
-
-
-def probably_done(plan: dict, workouts: list[dict]) -> bool:
-    """A recorded workout likely is this session, even though it isn't linked: same sport
-    (that day or the next), or a long one whose sport the app couldn't tell ('other'; rowing
-    often syncs that way) when the plan's or the workout's sport is unknown."""
-    sport = _sport(plan.get("sport"))
-    for w in workouts:
-        ws = _sport(w.get("sport"))
-        if ws == sport and sport != "other":
-            return True
-        if "other" in (ws, sport) and float(w.get("duration_seconds") or 0) >= UNKNOWN_SPORT_MIN_SECONDS:
-            return True
-    return False
-
-
-def send_missed(db: Any, aid: str, prefs: dict, day: date, local_now: datetime, offset_min: int = 0) -> None:
-    plans = (
-        db.table("training_plans")
-        .select("id,title,planned_date,duration_min,target_tss,primary_zone,status,sport")
-        .eq("athlete_id", aid)
-        .eq("planned_date", day.isoformat())
-        .in_("status", ["planned", "modified"])
-        .execute()
-    ).data or []
-    keys = [p for p in plans if is_key_session(p)]
-    if not keys:
-        return
-    workouts = recorded_workouts(db, aid, day, offset_min)
-    for p in keys:
-        if probably_done(p, workouts):
-            continue
-        log_id = cn.claim(aid, "missed", p["id"])
-        if not log_id:
-            continue
-        upcoming = (
-            db.table("training_plans")
-            .select("title,planned_date,target_tss")
-            .eq("athlete_id", aid)
-            .gt("planned_date", day.isoformat())
-            .lte("planned_date", (day + timedelta(days=7)).isoformat())
-            .order("planned_date")
-            .execute()
-        ).data or []
-        weekday = f"{datetime.fromisoformat(day.isoformat()):%A}"
-        reply = asyncio.run(
-            _compose(
-                aid,
-                f"[SYSTEM: The athlete missed a key session: {p['title']} ({p.get('sport')}, "
-                f"{p.get('duration_min')} min, {p.get('target_tss')} TSS) planned for {weekday} {day.isoformat()}. "
-                f"Their next 7 days: {json.dumps(upcoming)}. Write a short note: no guilt, whether it's worth "
-                "making up, and one concrete idea for where it could fit (or to let it go). End with one short "
-                "question. Reply with only your <response> block; no tools.]",
-            )
-        )
-        if not reply:
-            cn.release_for_retry(aid, "missed", p["id"], log_id, COMPOSE_MAX_ATTEMPTS)
-            continue
-        context = {
-            "kind": "plan",
-            "id": p["id"],
-            "title": p["title"],
-            "meta": f"{weekday[:3]} {day.day} {day:%b} · not recorded",
-            "href": f"/plan?session={p['id']}",
-        }
-        cid = cn.create_coach_thread(
-            aid, title=f"{weekday}'s {p['title']}", trigger="missed", context=context, message=reply,
-            quick_replies=["Add it later this week", "Skip it"],
-        )
-        pushed = cn.push_thread(
-            db, aid, type_id="missed", conversation_id=cid, title=f"Coach · Missed {p['title']}",
-            body=cn.first_sentence(reply), quick_replies=["Add it later this week", "Skip it"], prefs=prefs,
-        )
-        cn.mark_log(log_id, conversation_id=cid, pushed=pushed)
 
 
 # --- weekly summary ----------------------------------------------------------------------

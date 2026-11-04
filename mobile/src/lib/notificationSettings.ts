@@ -1,10 +1,10 @@
 /**
  * Notification settings (athletes.notification_settings). Mirrors the backend
- * (app/services/notification_prefs.py): six types with a timing option, push / email
- * per type, quiet hours, and coach texts (Photon, being replaced by push).
+ * (app/services/notification_prefs.py): five types with a timing option, push / email
+ * per type, quiet hours, and coach texts (Photon; not shown in the app).
  * Email is stored but not sent yet.
  */
-export type NotificationTypeId = 'debrief' | 'plan' | 'ready' | 'missed' | 'weekly' | 'sync';
+export type NotificationTypeId = 'debrief' | 'plan' | 'ready' | 'weekly' | 'sync';
 
 export type NotificationTypePrefs = { on: boolean; opt?: string; push: boolean; email?: boolean };
 
@@ -15,13 +15,12 @@ export type NotificationPrefs = {
   texts: 'active' | 'off';
 };
 
-export const NOTIFICATION_TYPE_IDS: NotificationTypeId[] = ['debrief', 'plan', 'ready', 'missed', 'weekly', 'sync'];
+export const NOTIFICATION_TYPE_IDS: NotificationTypeId[] = ['debrief', 'plan', 'ready', 'weekly', 'sync'];
 
 /** Allowed timing options per type (value, label), as on the settings screen. */
 export const NOTIFICATION_OPTIONS: Partial<Record<NotificationTypeId, { label: string; values: [string, string][] }>> = {
   debrief: { label: 'When', values: [['now', 'Right away'], ['evening', 'Evening digest · 19:00']] },
   ready: { label: 'At', values: [['06:30', '06:30'], ['07:00', '07:00'], ['07:30', '07:30'], ['08:00', '08:00']] },
-  missed: { label: 'When', values: [['morning', 'Next morning'], ['evening', 'Next evening · 20:00']] },
   weekly: { label: 'Day', values: [['Sun', 'Sunday 18:00'], ['Mon', 'Monday 07:00']] }
 };
 
@@ -34,7 +33,6 @@ export const NOTIFICATION_DEFAULTS: NotificationPrefs = {
     debrief: { on: true, opt: 'now', push: true },
     plan: { on: true, push: true, email: false },
     ready: { on: true, opt: '07:00', push: true },
-    missed: { on: true, opt: 'morning', push: true },
     weekly: { on: true, opt: 'Sun', push: true, email: false },
     sync: { on: true, push: true, email: false }
   },
@@ -45,7 +43,6 @@ export const NOTIFICATION_DEFAULTS: NotificationPrefs = {
 const LEGACY: Record<string, NotificationTypeId[]> = {
   readiness: ['ready'],
   coach: ['debrief', 'plan'],
-  workouts: ['missed'],
   insights: ['weekly']
 };
 

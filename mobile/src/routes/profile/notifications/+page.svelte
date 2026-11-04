@@ -1,7 +1,7 @@
 <script lang="ts">
   /**
    * Notification settings (design: NotifPrefs / PNotify / WNotify): push permission,
-   * six notification types with timing and channels, quiet hours, coach texts and a test.
+   * five notification types with timing and channels, quiet hours and a test.
    * Every change saves straight away and is undone on screen if the save fails.
    */
   import { onMount } from 'svelte';
@@ -10,7 +10,6 @@
   import PermissionCard from '$lib/components/notifications/PermissionCard.svelte';
   import NotificationTypeRow from '$lib/components/notifications/NotificationTypeRow.svelte';
   import QuietHoursCard from '$lib/components/notifications/QuietHoursCard.svelte';
-  import TextsCard from '$lib/components/notifications/TextsCard.svelte';
   import TestNotificationCard from '$lib/components/notifications/TestNotificationCard.svelte';
   import { api } from '$lib/api';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
@@ -201,9 +200,6 @@
         ontoggle={() => save({ ...prefs, quiet: { ...prefs.quiet, on: !prefs.quiet.on } })}
         onchange={(from, to) => save({ ...prefs, quiet: { ...prefs.quiet, from, to } })}
       />
-
-      {@render sectionLabel('TEXT MESSAGES')}
-      <TextsCard texts={prefs.texts} debriefOn={prefs.types.debrief.on} disabled={!loaded || saving} onchange={(t) => save({ ...prefs, texts: t })} />
 
       {@render sectionLabel('CHECK IT WORKS')}
       <TestNotificationCard enabled={perm === 'granted'} {device} sending={testing} result={testResult} onsend={sendTest} />

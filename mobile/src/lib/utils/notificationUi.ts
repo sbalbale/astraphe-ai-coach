@@ -103,7 +103,6 @@ export const TYPE_META: TypeMeta[] = [
   { id: 'debrief', group: 'COACH', name: 'Post-workout debrief', desc: 'A short note from your coach after each synced workout. Reply right in the chat.', opens: 'Coach chat for that workout' },
   { id: 'plan', group: 'COACH', name: 'Plan changed by your coach', desc: 'When a session is moved, swapped or shortened for you.', opens: 'The changed session' },
   { id: 'ready', group: 'DAILY', name: 'Morning readiness', desc: 'Your readiness score with today’s session.', opens: 'Readiness' },
-  { id: 'missed', group: 'DAILY', name: 'Missed key session', desc: 'Only for key sessions, with an idea for where to fit it.', opens: 'Plan, on that day' },
   { id: 'weekly', group: 'SUMMARIES', name: 'Weekly summary', desc: 'Load, form and sleep for the week, with what’s next.', opens: 'Trends' },
   { id: 'sync', group: 'ACCOUNT', name: 'Sync problems', desc: 'When Garmin or WHOOP disconnects or stops sending data.', opens: 'Connected apps' }
 ];

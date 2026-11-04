@@ -27,22 +27,6 @@ def test_weekly_on_the_chosen_day():
     assert ns.weekly_due(mon, at(2026, 11, 9, 7, 5))  # Monday 07:05
 
 
-def test_missed_only_checks_a_day_that_is_over():
-    morning = np.effective(None)
-    evening = np.effective({"types": {"missed": {"opt": "evening"}}})
-    assert ns.missed_check_day(morning, at(2026, 11, 4, 7, 10)) == date(2026, 11, 3)
-    assert ns.missed_check_day(morning, at(2026, 11, 4, 12)) is None
-    # Evening: yesterday's session, never today's (an evening session may still happen).
-    assert ns.missed_check_day(evening, at(2026, 11, 4, 20, 10)) == date(2026, 11, 3)
-    assert ns.missed_check_day(evening, at(2026, 11, 4, 7, 10)) is None
-
-
-def test_key_sessions():
-    assert ns.is_key_session({"primary_zone": "VO2Max", "target_tss": 60})
-    assert ns.is_key_session({"primary_zone": "Endurance", "target_tss": 120})
-    assert not ns.is_key_session({"primary_zone": "Endurance", "target_tss": 60})
-
-
 def test_readiness_waits_for_sleep_except_at_the_end_of_the_window():
     assert ns.readiness_should_wait(at(2026, 11, 3, 7, 5), "07:00", has_score=False)
     assert not ns.readiness_should_wait(at(2026, 11, 3, 7, 52), "07:00", has_score=False)
@@ -64,12 +48,12 @@ def test_tick_routes_by_local_time_and_respects_quiet_hours():
     calls = []
     with patch.object(ns, "send_held_debriefs", side_effect=lambda *a, **k: calls.append("held")), patch.object(
         ns, "send_readiness", side_effect=lambda *a, **k: calls.append("ready")
-    ), patch.object(ns, "send_missed", side_effect=lambda *a, **k: calls.append("missed")), patch.object(
+    ), patch.object(
         ns, "send_weekly", side_effect=lambda *a, **k: calls.append("weekly")
     ), patch.object(ns, "send_sync_problem", side_effect=lambda *a, **k: calls.append("sync")):
-        # 12:05 UTC = 07:05 in UTC-5 on Tuesday: readiness + missed (morning) are due.
+        # 12:05 UTC = 07:05 in UTC-5 on Tuesday: readiness is due.
         ns.tick_athlete(MagicMock(), athlete, datetime(2026, 11, 3, 12, 5, tzinfo=timezone.utc))
-        assert calls == ["held", "ready", "missed"]
+        assert calls == ["held", "ready"]
         calls.clear()
         # 04:00 UTC = 23:00 local: quiet hours, nothing due.
         ns.tick_athlete(MagicMock(), athlete, datetime(2026, 11, 4, 4, 0, tzinfo=timezone.utc))
@@ -195,48 +179,6 @@ def test_held_debriefs_look_back_36_hours_from_the_tick_time():
     assert since == "2026-11-02T12:05:00+00:00" and since < "2026-11-03T01:30:00+00:00"
 
 
-# --- missed key session ------------------------------------------------------------------
-
-_PLAN = {"id": "p1", "athlete_id": "a1", "title": "VO2 intervals", "planned_date": "2026-11-03", "target_tss": 90,
-         "primary_zone": "VO2Max", "status": "planned", "sport": "bike", "duration_min": 60}
-
-
-def _missed(workouts, plan=_PLAN):
-    """True when the session would be claimed as missed."""
-    db = _Db(training_plans=[plan], workouts=[{"athlete_id": "a1", **w} for w in workouts])
-    with patch.object(ns.cn, "claim", return_value=None) as claim:
-        ns.send_missed(db, "a1", np.effective(None), date(2026, 11, 3), at(2026, 11, 4, 7, 5), -300)
-    return claim.called
-
-
-def test_missed_skips_a_session_done_but_not_linked():
-    # 23:30 local on the day (04:30 UTC the next day) in UTC-5, same sport.
-    assert not _missed([{"sport": "bike", "duration_seconds": 1200, "started_at": "2026-11-04T04:30:00+00:00"}])
-    # The next local day counts too, with the sport normalized.
-    assert not _missed([{"sport": "cycling", "duration_seconds": 1200, "started_at": "2026-11-04T10:00:00+00:00"}])
-    # A long 'other' workout (rowing often syncs that way) counts; a short one doesn't.
-    assert not _missed([{"sport": "other", "duration_seconds": 1800, "started_at": "2026-11-03T15:00:00+00:00"}])
-    assert _missed([{"sport": "other", "duration_seconds": 900, "started_at": "2026-11-03T15:00:00+00:00"}])
-    # Unknown planned sport: any long workout counts.
-    assert not _missed([{"sport": "run", "duration_seconds": 2400, "started_at": "2026-11-03T15:00:00+00:00"}], {**_PLAN, "sport": None})
-    # Different sport, or outside the two local days: still missed.
-    assert _missed([{"sport": "run", "duration_seconds": 3600, "started_at": "2026-11-03T15:00:00+00:00"}])
-    assert _missed([{"sport": "bike", "duration_seconds": 3600, "started_at": "2026-11-03T04:00:00+00:00"}])  # 23:00 the day before
-    assert _missed([])
-
-
-def test_missed_compose_failure_retries_once_then_keeps_the_claim():
-    db = _Db(training_plans=[_PLAN], workouts=[])
-    claim, release = _claims()
-    with patch.object(ns.cn, "claim", side_effect=claim), patch.object(ns.cn, "release", side_effect=release), patch.object(
-        ns, "_compose", return_value=None
-    ) as compose, patch.object(ns.cn, "create_coach_thread") as mk:
-        for _ in range(5):
-            ns.send_missed(db, "a1", np.effective(None), date(2026, 11, 3), at(2026, 11, 4, 7, 5), -300)
-    assert compose.call_count == 2
-    mk.assert_not_called()
-
-
 def test_weekly_compose_failure_retries_once():
     claim, release = _claims()
     with patch.object(ns.cn, "claim", side_effect=claim), patch.object(ns.cn, "release", side_effect=release), patch.object(
@@ -249,19 +191,9 @@ def test_weekly_compose_failure_retries_once():
 
 # --- quiet hours: claimed only outside them, and the window still has a free tick -----------
 
-def test_missed_and_weekly_wait_for_quiet_hours_to_end():
-    late_quiet = {"quiet": {"on": True, "from": "22:00", "to": "07:30"}}
-    athlete = {"id": "a1", "timezone_offset_min": 0, "notification_settings": late_quiet}
+def test_weekly_waits_for_quiet_hours_to_end():
     calls = []
-    with patch.object(ns, "send_held_debriefs"), patch.object(ns, "send_readiness"), patch.object(
-        ns, "send_missed", side_effect=lambda *a, **k: calls.append("missed")
-    ), patch.object(ns, "send_sync_problem"):
-        ns.tick_athlete(MagicMock(), athlete, datetime(2026, 11, 4, 7, 5, tzinfo=timezone.utc))
-        assert calls == []  # quiet until 07:30: not claimed
-        ns.tick_athlete(MagicMock(), athlete, datetime(2026, 11, 4, 7, 35, tzinfo=timezone.utc))
-        assert calls == ["missed"]
     sunday = {"id": "a1", "timezone_offset_min": 0, "notification_settings": {"quiet": {"on": True, "from": "17:00", "to": "19:00"}}}
-    calls.clear()
     with patch.object(ns, "send_held_debriefs"), patch.object(ns, "send_weekly", side_effect=lambda *a, **k: calls.append("weekly")):
         ns.tick_athlete(MagicMock(), sunday, datetime(2026, 11, 8, 18, 5, tzinfo=timezone.utc))
         assert calls == []
@@ -271,11 +203,6 @@ def test_missed_and_weekly_wait_for_quiet_hours_to_end():
 
 def test_default_quiet_hours_leave_free_ticks_in_every_window():
     prefs = np.effective(None)
-    for opt in ("morning", "evening"):
-        p = np.effective({"types": {"missed": {"opt": opt}}})
-        start = 7 if opt == "morning" else 20
-        ticks = [at(2026, 11, 4, start, m) for m in range(0, 60, 5)]
-        assert any(ns.missed_check_day(p, t) and not np.in_quiet_hours(prefs, t) for t in ticks)
     for opt, d, h in (("Sun", 8, 18), ("Mon", 9, 7)):
         p = np.effective({"types": {"weekly": {"opt": opt}}})
         ticks = [at(2026, 11, d, h, m) for m in range(0, 60, 5)]

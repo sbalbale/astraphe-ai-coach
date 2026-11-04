@@ -3,8 +3,8 @@ import { effectiveNotificationPrefs, enabledNotificationCount } from './notifica
 
 describe('notification settings', () => {
   it('treats unsaved types as on, like the backend', () => {
-    expect(enabledNotificationCount(null)).toBe(6);
-    expect(enabledNotificationCount({})).toBe(6);
+    expect(enabledNotificationCount(null)).toBe(5);
+    expect(enabledNotificationCount({})).toBe(5);
   });
 
   it('reads the old flat flags as a fallback', () => {
@@ -12,7 +12,7 @@ describe('notification settings', () => {
     expect(p.types.debrief.on).toBe(false);
     expect(p.types.plan.on).toBe(false);
     expect(p.types.ready.on).toBe(false);
-    expect(enabledNotificationCount({ coach: false, readiness: false })).toBe(3);
+    expect(enabledNotificationCount({ coach: false, readiness: false })).toBe(2);
   });
 
   it('keeps valid saved values and ignores bad ones', () => {

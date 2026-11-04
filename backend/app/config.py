@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     # Background loops (WHOOP token refresh, Garmin poll, startup backfills). Tests turn
     # these off so importing the app never syncs against a real database.
     BACKGROUND_LOOPS_ENABLED: bool = True
-    # Timed notifications (readiness, digest, missed sessions, weekly summary, sync problems).
+    # Timed notifications (readiness, digest, weekly summary, sync problems).
     NOTIFICATION_SCHEDULER_ENABLED: bool = True
     PORT: int = 8000
     APP_BASE_URL: str = "http://localhost:8000"

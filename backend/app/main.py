@@ -75,7 +75,7 @@ async def start_garmin_poll_loop():
 
 @app.on_event("startup")
 async def start_notification_loop():
-    # Morning readiness, evening digest, missed key sessions, weekly summary, sync problems.
+    # Morning readiness, evening digest, weekly summary, sync problems.
     # Every send is claimed in notification_log, so running in each replica is safe.
     if not (settings.BACKGROUND_LOOPS_ENABLED and settings.NOTIFICATION_SCHEDULER_ENABLED):
         return
