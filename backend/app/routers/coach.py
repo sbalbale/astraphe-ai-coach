@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends, UploadFile, BackgroundTas
 from fastapi.responses import StreamingResponse
 from pathlib import Path
 from pydantic import BaseModel, field_validator
-from typing import Optional, List
+from typing import Any, Optional, List
 import asyncio
 import json
 import traceback
@@ -198,8 +198,11 @@ def _create_conversation(db, athlete_id: str, title: Optional[str]) -> str:
         raise RuntimeError("Failed to create conversation")
     return res.data[0]["id"]
 
-def _touch_conversation(db, athlete_id: str, conversation_id: str):
-    db.table("coach_conversations").update({"updated_at": _now_iso()}).eq("id", conversation_id).eq("athlete_id", athlete_id).execute()
+def _touch_conversation(db, athlete_id: str, conversation_id: str, read: bool = False):
+    update: dict[str, Any] = {"updated_at": _now_iso()}
+    if read:
+        update["unread"] = False  # the athlete replied, so they've seen it
+    db.table("coach_conversations").update(update).eq("id", conversation_id).eq("athlete_id", athlete_id).execute()
 
 def _maybe_set_conversation_title(db, athlete_id: str, conversation_id: str, title: str):
     try:
@@ -265,7 +268,7 @@ def _insert_message(
     if role == "user":
         title_seed = content if (content or "").strip() or not documents else documents[0]["name"]
         _maybe_set_conversation_title(db, athlete_id, conversation_id, _generate_conversation_title(title_seed, image_urls=image_urls))
-    _touch_conversation(db, athlete_id, conversation_id)
+    _touch_conversation(db, athlete_id, conversation_id, read=(role == "user"))
 
 from app.services.tiers import has_premium_access
 
@@ -285,13 +288,24 @@ def list_conversations(
     _require_premium(config)
     res = (
         db.table("coach_conversations")
-        .select("id,title,created_at,updated_at")
+        .select("id,title,created_at,updated_at,started_by,trigger,context,unread")
         .eq("athlete_id", athlete_id)
         .order("updated_at", desc=True)
         .limit(50)
         .execute()
     )
     return {"status": "success", "conversations": res.data or []}
+
+
+@router.post("/conversations/{conversation_id}/read")
+def mark_conversation_read(
+    conversation_id: str,
+    athlete_id: str = Depends(get_current_athlete),
+    db = Depends(get_user_db),
+):
+    """Clear the unread dot on a coach-started thread (the chat calls this when it opens one)."""
+    db.table("coach_conversations").update({"unread": False}).eq("id", conversation_id).eq("athlete_id", athlete_id).execute()
+    return {"status": "success"}
 
 
 @router.get("/memories")
@@ -387,7 +401,7 @@ def get_conversation_messages(
     )
     res = (
         db.table("coach_messages")
-        .select("id,role,content,image_urls,attachments,created_at")
+        .select("id,role,content,image_urls,attachments,quick_replies,created_at")
         .eq("athlete_id", athlete_id)
         .eq("conversation_id", conversation_id)
         .order("created_at")

@@ -55,7 +55,22 @@ class AthleteProfileUpdate(BaseModel):
             raise ValueError("sport names must be 30 characters or fewer")
         return v
 
-    @field_validator("notification_settings", "privacy_settings")
+    @field_validator("notification_settings")
+    @classmethod
+    def _notification_settings(cls, v: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
+        """The nested v2 shape (types / quiet / texts). Stored normalized: unknown keys and
+        bad values are dropped, so only what the app and the scheduler understand is kept."""
+        if v is None:
+            return v
+        import json
+
+        if len(json.dumps(v, default=str)) > 4000:
+            raise ValueError("notification settings are too large")
+        from app.services.notification_prefs import effective
+
+        return effective(v)
+
+    @field_validator("privacy_settings")
     @classmethod
     def _small_flat_settings(cls, v: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
         if v is None:

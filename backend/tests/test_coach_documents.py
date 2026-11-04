@@ -71,7 +71,7 @@ def test_insert_message_stores_attachments_and_titles_from_the_file(monkeypatch)
     db = MagicMock()
     titles = []
     monkeypatch.setattr(coach, "_maybe_set_conversation_title", lambda _db, _a, _c, title: titles.append(title))
-    monkeypatch.setattr(coach, "_touch_conversation", lambda *a: None)
+    monkeypatch.setattr(coach, "_touch_conversation", lambda *a, **k: None)
     docs = [{"name": "12 week plan.pdf", "kind": "pdf", "content": "..."}]
 
     coach._insert_message(db, "ath", "conv", "user", "", None, docs)

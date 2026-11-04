@@ -105,24 +105,30 @@ def test_unregister_token_deletes_row():
     assert db.recorder["deleted"] is True
 
 
-def test_send_test_notification_disabled_in_production(monkeypatch):
-    monkeypatch.setattr(settings, "APP_ENV", "production")
-    _production_encryption_key(monkeypatch)
+def test_send_test_notification_is_throttled(monkeypatch):
+    """Settings → "Check it works" runs in production too, at most once per 30 s."""
     _override(_TokenDb())
-    try:
-        with TestClient(app) as client:
-            res = client.post("/v1/notifications/test")
-    finally:
-        app.dependency_overrides = {}
+    with patch("app.services.coach_notifications.claim", return_value=None), patch(
+        "app.services.push.send_push_to_athlete"
+    ) as mock_send:
+        try:
+            with TestClient(app) as client:
+                res = client.post("/v1/notifications/test")
+        finally:
+            app.dependency_overrides = {}
 
-    assert res.status_code == 403
+    assert res.status_code == 429
+    mock_send.assert_not_called()
 
 
 def test_send_test_notification_calls_push_service(monkeypatch):
-    monkeypatch.setattr(settings, "APP_ENV", "development")
+    monkeypatch.setattr(settings, "APP_ENV", "production")
+    _production_encryption_key(monkeypatch)
     _override(_TokenDb())
 
-    with patch("app.services.push.send_push_to_athlete", return_value=2) as mock_send:
+    with patch("app.services.coach_notifications.claim", return_value="log-1"), patch(
+        "app.services.push.send_push_to_athlete", return_value=2
+    ) as mock_send:
         try:
             with TestClient(app) as client:
                 res = client.post("/v1/notifications/test")
@@ -134,7 +140,7 @@ def test_send_test_notification_calls_push_service(monkeypatch):
     mock_send.assert_called_once()
     _, kwargs = mock_send.call_args
     assert kwargs["athlete_id"] == "athlete-1"
-    assert kwargs["title"] == "ASTRAPHE"
+    assert kwargs["data"]["url"] == "/profile/notifications"
 
 
 def _production_encryption_key(monkeypatch):

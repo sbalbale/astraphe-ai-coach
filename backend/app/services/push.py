@@ -115,8 +115,10 @@ def send_push_to_athlete(
                 .maybe_single()
                 .execute()
             )
+            from app.services.notification_prefs import legacy_type_enabled
+
             ns = (profile_res.data or {}).get("notification_settings") or {}
-            if not ns.get(notification_type, True):
+            if not legacy_type_enabled(ns, notification_type):
                 return 0
 
         tokens_res = (

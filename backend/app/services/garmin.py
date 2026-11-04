@@ -793,13 +793,14 @@ async def _save_one_activity(
     if laps:
         await asyncio.to_thread(_persist_activity_laps, db, workout_id, athlete_id, laps)
 
-    # Post-workout Photon text. It fires here rather than inside process_and_save_workout
-    # (which Garmin calls with skip_tss_recalc=True, and before HR zones/TSS/laps exist)
-    # so the coach sees the fully enriched workout. maybe_text_workout checks recency and
-    # notified_at itself, so history backfills and re-syncs never text.
-    from app.services.messaging import maybe_text_workout
+    # Post-workout debrief (coach thread + push, and a text while texts are still on). It
+    # fires here rather than inside process_and_save_workout (which Garmin calls with
+    # skip_tss_recalc=True, before HR zones/TSS/laps exist) so the coach sees the fully
+    # enriched workout. It checks recency and claims each workout once, so history
+    # backfills and re-syncs never notify.
+    from app.services.coach_notifications import post_workout_debrief
 
-    spawn_background(maybe_text_workout(db, athlete_id, str(workout_id)))
+    spawn_background(post_workout_debrief(db, athlete_id, str(workout_id)))
 
     return True, streams_saved
 
