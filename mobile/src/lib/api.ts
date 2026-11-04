@@ -647,7 +647,10 @@ export const api = {
   async getCoachProgress(conversationId: string): Promise<{ status: string; tool?: string; hop?: number; at?: number }[]> {
     try {
       const headers = await getAuthHeaders();
-      const res = await fetch(`${API_URL}/v1/coach/conversations/${conversationId}/progress`, { headers });
+      // visible=1 tells the server this reply is being watched, so it skips the push to the
+      // athlete's other devices (a phone's service worker can't see a chat open on a laptop).
+      const visible = typeof document !== 'undefined' && document.visibilityState === 'visible' ? '?visible=1' : '';
+      const res = await fetch(`${API_URL}/v1/coach/conversations/${conversationId}/progress${visible}`, { headers });
       if (res.ok) {
         const body = await res.json();
         return Array.isArray(body?.events) ? body.events : [];
