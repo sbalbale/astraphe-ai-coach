@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Workout } from '$lib/types/training';
-import { blankWorkout, draftErrors, draftMinutes, estimateTss, formatMinSec, fromDraft, intervalSet, moveBlock, newBlock, parseMinSec, toDraft } from './planEditor';
+import { blankWorkout, draftErrors, draftMinutes, estimateTss, formatMinSec, fromDraft, intervalSet, minutesToTimeDigits, moveBlock, newBlock, timeDigits, timeDigitsToMinutes, formatTimeDigits, toDraft } from './planEditor';
 
 const speed: Workout = {
   id: '11111111-1111-1111-1111-111111111111',
@@ -67,19 +67,31 @@ describe('planEditor', () => {
 });
 
 describe('minutes:seconds fields', () => {
-  it('reads what athletes type', () => {
-    expect(parseMinSec('1:30')).toBe(1.5);
-    expect(parseMinSec('90')).toBe(90);
-    expect(parseMinSec('90:00')).toBe(90);
-    expect(parseMinSec('1:30:00')).toBe(90);
-    expect(parseMinSec('0:01:30')).toBe(1.5);
-    expect(parseMinSec('1:75:00')).toBeNull();
-    expect(parseMinSec('1.30')).toBe(1.5);
-    expect(parseMinSec('1,30')).toBe(1.5);
-    expect(parseMinSec('1.30.00')).toBe(90);
-    expect(parseMinSec('')).toBe(0);
-    expect(parseMinSec('1:75')).toBeNull();
-    expect(parseMinSec('abc')).toBeNull();
+  it('fills digits in from the right, like a timer', () => {
+    expect(timeDigitsToMinutes('30')).toBe(0.5);
+    expect(timeDigitsToMinutes('130')).toBe(1.5);
+    expect(timeDigitsToMinutes('13000')).toBe(90);
+    expect(timeDigitsToMinutes('9000')).toBe(90);
+    expect(timeDigitsToMinutes('90')).toBe(1.5);
+    expect(timeDigitsToMinutes('')).toBe(0);
+    expect(formatTimeDigits('')).toBe('0:00');
+    expect(formatTimeDigits('3')).toBe('0:03');
+    expect(formatTimeDigits('130')).toBe('1:30');
+    expect(formatTimeDigits('1300')).toBe('13:00');
+    expect(formatTimeDigits('13000')).toBe('1:30:00');
+  });
+  it('keeps only digits (typed or pasted with colons)', () => {
+    expect(timeDigits('0:01:30')).toBe('130');
+    expect(timeDigits('1:30:00')).toBe('13000');
+    expect(timeDigits('12345678')).toBe('123456');
+    // Backspace on "1:30" leaves "1:3" → 0:13.
+    expect(formatTimeDigits(timeDigits('1:3'))).toBe('0:13');
+  });
+  it('starts from the current length', () => {
+    expect(minutesToTimeDigits(1.5)).toBe('130');
+    expect(minutesToTimeDigits(90)).toBe('9000');
+    expect(minutesToTimeDigits(150)).toBe('23000');
+    expect(timeDigitsToMinutes(minutesToTimeDigits(135.5))).toBe(135.5);
   });
   it('shows m:ss', () => {
     expect(formatMinSec(1.5)).toBe('1:30');
@@ -88,7 +100,6 @@ describe('minutes:seconds fields', () => {
     expect(formatMinSec(119.5)).toBe('119:30');
     expect(formatMinSec(120)).toBe('2:00:00');
     expect(formatMinSec(135.5)).toBe('2:15:30');
-    expect(parseMinSec(formatMinSec(135.5))).toBe(135.5);
   });
 });
 
