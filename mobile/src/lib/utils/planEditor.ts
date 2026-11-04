@@ -68,24 +68,35 @@ export function newBlock(name: string, minutes: number, zone: number, ftp: numbe
 }
 
 /**
- * "1:30" → 1.5, "90:00" → 90, "1:30:00" → 90 (h:mm:ss), "90" → 90, "" → 0; null when it
- * can't be read. "." and "," work as ":" ("1.30" = 1:30): the iPhone number pad has no colon.
+ * Time fields are typed as digits that fill in from the right, like a timer (the iPhone
+ * number pad has no colon): "30" = 0:30, "130" = 1:30, "13000" = 1:30:00. The last two
+ * digits are seconds, the two before are minutes, the rest are hours.
  */
-export function parseMinSec(text: string): number | null {
-  const t = String(text ?? '').trim().replace(/[.,]/g, ':');
-  if (!t) return 0;
-  const hms = /^(\d{1,2}):(\d{1,2}):(\d{1,2})$/.exec(t);
-  if (hms) {
-    const min = Number(hms[2]);
-    const sec = Number(hms[3]);
-    return min < 60 && sec < 60 ? Number(hms[1]) * 60 + min + sec / 60 : null;
-  }
-  const m = /^(\d{1,3}):(\d{1,2})$/.exec(t);
-  if (m) {
-    const sec = Number(m[2]);
-    return sec < 60 ? Number(m[1]) + sec / 60 : null;
-  }
-  return /^\d{1,3}$/.test(t) ? Number(t) : null;
+const MAX_TIME_DIGITS = 6;
+
+/** The digits of what was typed or pasted (colons and the rest dropped), leading zeros trimmed. */
+export function timeDigits(text: string): string {
+  return String(text ?? '').replace(/\D/g, '').replace(/^0+/, '').slice(0, MAX_TIME_DIGITS);
+}
+
+/** Typed digits shown with colons as they're typed: "" → "0:00", "3" → "0:03", "130" → "1:30", "13000" → "1:30:00". */
+export function formatTimeDigits(digits: string): string {
+  const d = timeDigits(digits);
+  const ss = d.slice(-2).padStart(2, '0');
+  const rest = d.slice(0, -2);
+  if (rest.length <= 2) return `${Number(rest) || 0}:${ss}`;
+  return `${Number(rest.slice(0, -2))}:${rest.slice(-2)}:${ss}`;
+}
+
+/** Typed digits as minutes: "130" → 1.5, "13000" → 90, "90" → 1.5 (90 s), "9000" → 90. */
+export function timeDigitsToMinutes(digits: string): number {
+  const d = timeDigits(digits).padStart(MAX_TIME_DIGITS, '0');
+  return Number(d.slice(0, 2)) * 60 + Number(d.slice(2, 4)) + Number(d.slice(4)) / 60;
+}
+
+/** Minutes as the digits a field starts from (formatMinSec without colons): 1.5 → "130", 90 → "9000". */
+export function minutesToTimeDigits(minutes: number): string {
+  return timeDigits(formatMinSec(minutes));
 }
 
 /**
