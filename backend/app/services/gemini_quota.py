@@ -97,6 +97,11 @@ def wait_for_slot(model: str, max_wait_sec: float = 20.0) -> None:
     # such constraint, so don't throttle it against a Gemini-derived default.
     if (settings.LLM_PROVIDER or "gemini").strip().lower() != "gemini":
         return
+    # Nor the coach chat's self-hosted model (CHAT_LLM_PROVIDER=openai).
+    from app.services.llm_provider import is_chat_openai_model
+
+    if is_chat_openai_model(model):
+        return
     # Likewise, a paid/billed Gemini key has real quota — this guardrail is
     # a *guess* at limits that may not even apply. Reactive handling of an
     # actual 429/RESOURCE_EXHAUSTED (retry, fall back to

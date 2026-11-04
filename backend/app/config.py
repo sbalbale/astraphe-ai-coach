@@ -46,6 +46,16 @@ class Settings(BaseSettings):
     # Most local OpenAI-compatible servers don't check this at all; set it if
     # yours does (e.g. behind a reverse proxy requiring a bearer token).
     OPENAI_API_KEY: Optional[str] = None
+    # Serve only the coach chat from the OpenAI-compatible endpoint above (e.g. a self-hosted
+    # model), leaving analysis blurbs, memory extraction and titles on LLM_PROVIDER. Set
+    # CHAT_LLM_PROVIDER=openai and CHAT_MODEL to the endpoint's model id. GEMINI_FALLBACK_MODEL
+    # (on Gemini) still takes over when the chat model fails or times out.
+    CHAT_LLM_PROVIDER: Optional[str] = None
+    CHAT_MODEL: Optional[str] = None
+    # Per-request timeout for that chat model before the turn falls back to Gemini. Generous on
+    # purpose: a busy box can queue a request (its slowest benchmarked hop, long context p90,
+    # was ~32 s).
+    CHAT_REQUEST_TIMEOUT_SEC: int = 120
 
     # --- Gemini AI ---
     # Also used for LLM_PROVIDER=openai: these hold whatever model id

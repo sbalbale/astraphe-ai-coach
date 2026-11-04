@@ -251,18 +251,47 @@ _REQUEST_TIMEOUT_SEC = 120.0
 
 
 class _OpenAICompatClient:
-    def __init__(self, base_url: str, api_key: str | None):
+    def __init__(self, base_url: str, api_key: str | None, timeout_sec: float = _REQUEST_TIMEOUT_SEC):
         import openai  # local import: only needed when this provider is actually selected
 
         self._raw = openai.OpenAI(
             base_url=base_url,
             api_key=api_key or "not-needed",
-            timeout=_REQUEST_TIMEOUT_SEC,
+            timeout=timeout_sec,
             # ai_coach.py's own per-hop retry loop already retries on
             # failure — don't let the SDK silently retry underneath it too.
             max_retries=0,
         )
         self.models = _OpenAICompatModels(self._raw)
+
+
+def chat_uses_openai() -> bool:
+    """True when the coach chat runs on the OpenAI-compatible endpoint while everything else
+    stays on LLM_PROVIDER (CHAT_LLM_PROVIDER=openai + CHAT_MODEL + OPENAI_API_BASE_URL)."""
+    return (
+        (settings.CHAT_LLM_PROVIDER or "").strip().lower() == "openai"
+        and bool((settings.CHAT_MODEL or "").strip())
+        and bool(settings.OPENAI_API_BASE_URL)
+    )
+
+
+def is_chat_openai_model(model: str | None) -> bool:
+    """The configured chat model on the OpenAI-compatible endpoint (not a Gemini model id)."""
+    return chat_uses_openai() and (model or "").strip() == (settings.CHAT_MODEL or "").strip()
+
+
+@lru_cache(maxsize=1)
+def get_chat_openai_client() -> Any:
+    logger.info("[llm_provider] coach chat via OpenAI-compatible endpoint %s", settings.OPENAI_API_BASE_URL)
+    return _OpenAICompatClient(
+        settings.OPENAI_API_BASE_URL, settings.OPENAI_API_KEY, timeout_sec=float(settings.CHAT_REQUEST_TIMEOUT_SEC)
+    )
+
+
+def client_for_chat_model(model: str | None, default_client: Any) -> Any:
+    """The client that serves `model` in the coach chat: the OpenAI-compatible one for
+    CHAT_MODEL, else the default (Gemini) client, which also serves the fallback model."""
+    return get_chat_openai_client() if is_chat_openai_model(model) else default_client
 
 
 @lru_cache(maxsize=1)

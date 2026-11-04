@@ -5,7 +5,7 @@ from app.services import gemini_quota
 from app.services import plan_import
 from app.services.coach_workout_data import recent_workouts_teaser
 from app.services.algorithms import compute_z_score
-from app.services.llm_provider import get_llm_client
+from app.services.llm_provider import chat_uses_openai, client_for_chat_model, get_llm_client, is_chat_openai_model
 from app.services.memory import (
     MEMORY_CONTEXT_RULE,
     memories_for_context,
@@ -1440,7 +1440,7 @@ def _wrap_up_after_tool_budget(contents: list[types.Content], system_instruction
     for model in candidates:
         try:
             gemini_quota.wait_for_slot(model, max_wait_sec=20.0)
-            resp = _client.models.generate_content(model=model, contents=wrap, config=config)
+            resp = client_for_chat_model(model, _client).models.generate_content(model=model, contents=wrap, config=config)
         except Exception as e:
             logger.warning("[coach] wrap-up call failed model=%s: %r", model, e)
             continue
@@ -1778,7 +1778,9 @@ def get_coach_response_agentic(
     # the model saw it, so "don't remove anything from my plan next week" wiped it.
     # Clearing is now only ever the model's explicit, bounded clear_training_plans call.)
 
-    primary_model = model_name or settings.GEMINI_MODEL
+    # CHAT_LLM_PROVIDER=openai: the chat runs on the self-hosted CHAT_MODEL, and the Gemini
+    # fallback model below takes over if it fails.
+    primary_model = settings.CHAT_MODEL.strip() if chat_uses_openai() else (model_name or settings.GEMINI_MODEL)
     fallback_model = (getattr(settings, "GEMINI_FALLBACK_MODEL", "") or "").strip()
     candidates: list[str] = [primary_model]
     if fallback_model and fallback_model not in candidates:
@@ -1830,16 +1832,18 @@ def get_coach_response_agentic(
     pending_clears: list[tuple[str, str]] = []
     last_tool_names: list[str] = []
     max_hops = _agentic_max_tool_hops(message, has_images=history_has_images)
+    self_hosted_failed = False
     for _hop in range(max_hops):
         hop_t0 = time.perf_counter()
         _coach_progress(progress_callback, "thinking", hop=_hop)
         _hop_error: Exception | None = None
-        for _model_idx, effective_model in enumerate(candidates):
+        hop_candidates = [m for m in candidates if not (self_hosted_failed and is_chat_openai_model(m))]
+        for _model_idx, effective_model in enumerate(hop_candidates):
             _hop_error = None
             _transient = False
             # Only the last candidate is retried: a failing call can itself take 10+ s, so when
             # a fallback model exists it is tried after one failure instead of after 3 retries.
-            max_attempts = 3 if _model_idx == len(candidates) - 1 else 1
+            max_attempts = 3 if _model_idx == len(hop_candidates) - 1 else 1
             for _attempt in range(max_attempts):
                 try:
                     # Blocks (bounded) rather than firing and getting a 429 —
@@ -1851,7 +1855,7 @@ def get_coach_response_agentic(
                     # into the existing _should_fallback_chat_model() check
                     # below like any other overload signal.
                     gemini_quota.wait_for_slot(effective_model, max_wait_sec=20.0)
-                    last_response = _client.models.generate_content(
+                    last_response = client_for_chat_model(effective_model, _client).models.generate_content(
                         model=effective_model,
                         contents=contents,
                         config=forced_config if (force_tools_next and forced_config is not None) else config,
@@ -1891,8 +1895,19 @@ def get_coach_response_agentic(
 
             # If this model looks overloaded/unavailable (or hit any transient error), try the
             # next configured fallback model.
-            if _model_idx < len(candidates) - 1 and (_transient or _should_fallback_chat_model(str(_hop_error))):
-                print(f"[coach] Primary model unavailable; trying fallback model={candidates[_model_idx + 1]}")
+            # Any failure of the self-hosted chat model falls back (it has no "overloaded" codes).
+            if _model_idx < len(hop_candidates) - 1 and (
+                _transient
+                or _should_fallback_chat_model(str(_hop_error))
+                or is_chat_openai_model(effective_model)
+            ):
+                print(f"[coach] Primary model unavailable; trying fallback model={hop_candidates[_model_idx + 1]}")
+                if is_chat_openai_model(effective_model):
+                    # Stay on Gemini for the rest of this turn rather than waiting on the
+                    # self-hosted model again at every tool hop.
+                    logger.warning("[coach] self-hosted chat model failed, using %s for this turn: %r",
+                                   hop_candidates[_model_idx + 1], _hop_error)
+                    self_hosted_failed = True
                 continue
 
             # Otherwise don't keep iterating candidates.
@@ -2048,7 +2063,9 @@ def get_coach_response_agentic(
         # Ran out of tool rounds mid-task (e.g. importing a long plan). The tool results
         # are already in `contents`; ask once more with tools off so the athlete gets an
         # honest summary of what was done and what is left, not a generic failure.
-        final = _wrap_up_after_tool_budget(contents, system_for_models, candidates)
+        final = _wrap_up_after_tool_budget(
+            contents, system_for_models, [m for m in candidates if not (self_hosted_failed and is_chat_openai_model(m))]
+        )
     if (
         final
         and tools_enabled

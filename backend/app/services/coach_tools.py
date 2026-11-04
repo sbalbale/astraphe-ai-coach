@@ -1795,8 +1795,11 @@ def search_grounding_available(model: str | None) -> bool:
 
 def has_native_thinking(model: str | None) -> bool:
     """Gemini 3+ models reason natively, so the internal_scratchpad tool only adds a full
-    model round trip (~10-20s) per turn without improving the answer."""
-    return (model or "").strip().lower().startswith("gemini-3")
+    model round trip (~10-20s) per turn without improving the answer. The self-hosted chat
+    model (CHAT_MODEL) is a reasoning model too."""
+    from app.services.llm_provider import is_chat_openai_model
+
+    return (model or "").strip().lower().startswith("gemini-3") or is_chat_openai_model(model)
 
 
 def scratchpad_dropped(models: list[str]) -> bool:
