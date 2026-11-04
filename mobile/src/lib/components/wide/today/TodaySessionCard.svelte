@@ -100,7 +100,7 @@
     'h-[46px] px-[18px] rounded-[14px] border border-popover-border bg-transparent text-text0 text-[14px] font-medium cursor-pointer hover:border-text3 disabled:opacity-50 disabled:cursor-default';
 </script>
 
-<section aria-label="Session" class="relative z-[4] bg-bg2 border border-border rounded-[28px] p-[26px] flex flex-col gap-[18px]">
+<section aria-label="Session" class="relative {menu ? 'z-[6]' : 'z-[4]'} bg-bg2 border border-border rounded-[28px] p-[26px] flex flex-col gap-[18px]">
   <div class="flex justify-between items-center gap-4">
     <span class="font-mono text-[11px] tracking-[0.14em] text-blue uppercase">{kicker}{provisional && isToday && workout ? ' · PROVISIONAL' : ''}</span>
     {#if workout}

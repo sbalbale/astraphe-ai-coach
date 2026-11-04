@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from datetime import date
 from typing import Any, Optional
 
@@ -68,6 +70,18 @@ class WorkoutPayload(BaseModel):
         return _normalize_plan_sport(v)
 
 
+def _plain_description(raw: Any) -> str:
+    """The coach's notes; '' for the workout JSON older sessions stored here instead."""
+    text = str(raw or "")
+    if text.lstrip().startswith("{"):
+        try:
+            if isinstance(json.loads(text), dict):
+                return ""
+        except ValueError:
+            pass
+    return text
+
+
 def _to_workout_row(row: dict[str, Any]) -> dict[str, Any]:
     """
     Map `training_plans` DB rows to the strict mobile Workout shape.
@@ -88,7 +102,7 @@ def _to_workout_row(row: dict[str, Any]) -> dict[str, Any]:
         "primary_zone": row.get("primary_zone") or "Endurance",
         "duration_minutes": int(row.get("duration_min") or 0),
         "projected_tss": int(row.get("target_tss") or 0),
-        "description": row.get("description") or "",
+        "description": _plain_description(row.get("description")),
         "structure": row.get("structure") or [],
         "completed": completed,
     }

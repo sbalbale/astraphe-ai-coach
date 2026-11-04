@@ -625,8 +625,6 @@ def handle_schedule_workout(
             "note": "This session is already on the calendar that day; nothing was added.",
         }
 
-    # Keep legacy `description` as a compact JSON string for backwards compatibility.
-    description = json.dumps(workout_json, ensure_ascii=False)
     markdown_notes = normalize_markdown_notes(args.get("markdown_notes"))
 
     try:
@@ -638,7 +636,9 @@ def handle_schedule_workout(
                     "planned_date": planned_date.isoformat(),
                     "sport": sport,
                     "title": title,
-                    "description": markdown_notes if markdown_notes else description,
+                    # Notes only. (It used to fall back to the workout JSON, which the app then
+                    # showed as the coach's notes, e.g. on every imported strength session.)
+                    "description": markdown_notes,
                     "duration_min": duration_minutes,
                     "target_tss": int(round(est_tss)),
                     "primary_zone": focus_zone,

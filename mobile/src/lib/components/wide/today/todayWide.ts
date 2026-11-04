@@ -144,3 +144,10 @@ export function readinessStatus(score: number | null): { label: string; tone: 'g
   if (score >= 34) return { label: 'Train as planned', tone: 'amber' };
   return { label: 'Recovery day', tone: 'red' };
 }
+
+/** A day's sessions, hardest first (the first is the day's key session). */
+export function daySessions<T extends Pick<Workout, 'date' | 'projected_tss' | 'duration_minutes'>>(workouts: T[], iso: string): T[] {
+  return workouts
+    .filter((w) => w.date === iso)
+    .sort((a, b) => (Number(b.projected_tss) || 0) - (Number(a.projected_tss) || 0) || (b.duration_minutes || 0) - (a.duration_minutes || 0));
+}
