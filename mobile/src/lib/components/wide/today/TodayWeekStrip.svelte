@@ -1,9 +1,9 @@
 <script lang="ts">
-  /** Wide Today: Monday–Sunday strip of planned sessions; picking a day shows it in the session card. */
+  /** Wide Today: the week's planned sessions, every one listed per day; picking a day shows them in the session cards. */
   import { resolve } from '$app/paths';
   import { format } from 'date-fns';
   import type { Workout } from '$lib/types/training';
-  import { shortDuration, weekSummary, zoneNumber } from './todayWide';
+  import { daySessions, shortDuration, weekSummary, zoneNumber } from './todayWide';
 
   let {
     days,
@@ -41,7 +41,7 @@
   <div class="grid grid-cols-7 gap-2">
     {#each days as d (d.toISOString())}
       {@const iso = format(d, 'yyyy-MM-dd')}
-      {@const items = byIso[iso] ?? []}
+      {@const items = daySessions(byIso[iso] ?? [], iso)}
       {@const first = items[0]}
       {@const on = iso === selectedIso}
       {@const mins = items.reduce((a, w) => a + (w.duration_minutes || 0), 0)}
@@ -56,8 +56,15 @@
         onclick={() => onSelect(iso)}
       >
         <span class="font-mono text-[10px] tracking-[0.08em] uppercase {iso === todayIso ? 'text-blue' : 'text-text2'}">{format(d, 'EEE d')}</span>
-        <span aria-hidden="true" class="block w-full h-1 rounded-sm" style="background: {chipColor(first)}"></span>
-        <span class="text-[12px] font-medium leading-[1.3] line-clamp-2">{first ? first.title : 'Rest'}{items.length > 1 ? ` +${items.length - 1}` : ''}</span>
+        {#each items as w (w.id)}
+          <span class="w-full flex flex-col gap-1">
+            <span aria-hidden="true" class="block w-full h-1 rounded-sm" style="background: {chipColor(w)}"></span>
+            <span class="text-[12px] font-medium leading-[1.3] line-clamp-2">{w.title}</span>
+          </span>
+        {:else}
+          <span aria-hidden="true" class="block w-full h-1 rounded-sm"></span>
+          <span class="text-[12px] font-medium leading-[1.3]">Rest</span>
+        {/each}
         <span class="text-[11px] text-text2">{first ? `${shortDuration(mins)}${tss > 0 ? ` · ${Math.round(tss)}` : ''}` : '—'}</span>
       </button>
     {/each}

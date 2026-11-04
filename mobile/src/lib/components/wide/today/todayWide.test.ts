@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  daySessions,
   moveChanges,
   profileBars,
   readinessStatus,
@@ -88,5 +89,17 @@ describe('moveChanges', () => {
 
   it('is a no-op for the same day', () => {
     expect(moveChanges(week[0], '2026-11-02', week)).toEqual([]);
+  });
+});
+
+describe('daySessions', () => {
+  it("lists every session on the day, hardest first", () => {
+    const ws = [
+      { id: 'st', date: '2026-11-03', projected_tss: 30, duration_minutes: 60 },
+      { id: 'tank', date: '2026-11-03', projected_tss: 94, duration_minutes: 60 },
+      { id: 'other-day', date: '2026-11-04', projected_tss: 200, duration_minutes: 90 }
+    ];
+    expect(daySessions(ws, '2026-11-03').map((w) => w.id)).toEqual(['tank', 'st']);
+    expect(daySessions(ws, '2026-11-05')).toEqual([]);
   });
 });

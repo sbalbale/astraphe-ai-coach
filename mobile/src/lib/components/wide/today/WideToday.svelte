@@ -12,7 +12,7 @@
   import TodayWeekStrip from './TodayWeekStrip.svelte';
   import TodayReadinessCard from './TodayReadinessCard.svelte';
   import TodayCoachCard from './TodayCoachCard.svelte';
-  import { moveChanges } from './todayWide';
+  import { daySessions, moveChanges } from './todayWide';
 
   let {
     todayIso,
@@ -75,7 +75,10 @@
     // Back to today when the day rolls over.
     selectedIso = todayIso;
   });
-  const selected = $derived((byIso[selectedIso] ?? [])[0] ?? null);
+  /** Every session on the selected day, hardest first. */
+  const sessions = $derived(daySessions(week, selectedIso));
+  /** The session the last move / error / toast belongs to (shown on its card only). */
+  let activeId = $state<string | null>(null);
 
   let saving = $state(false);
   let error = $state<string | null>(null);
@@ -105,9 +108,8 @@
     }
   }
 
-  async function move(targetIso: string) {
-    const w = selected;
-    if (!w) return;
+  async function move(w: Workout, targetIso: string) {
+    activeId = w.id;
     const changes = moveChanges(w, targetIso, week);
     if (!changes.length) return;
     const other = changes[1] ? week.find((x) => x.id === changes[1].id) : null;
@@ -124,7 +126,7 @@
     const changes = undoChanges;
     if (!changes.length) return;
     if (await apply(changes)) {
-      const back = changes.find((c) => c.id === selected?.id)?.date ?? changes[0].date;
+      const back = changes.find((c) => c.id === activeId)?.date ?? changes[0].date;
       selectedIso = back;
       toast = null;
       undoChanges = [];
@@ -132,25 +134,36 @@
   }
 </script>
 
-{#snippet session()}
+{#snippet card(w: Workout | null)}
+  {@const mine = !!w && w.id === activeId}
   <TodaySessionCard
-    workout={selected}
+    workout={w}
     dayIso={selectedIso || todayIso}
     {todayIso}
     {days}
     {byIso}
     {ftp}
     {provisional}
-    {saving}
-    {error}
-    {toast}
-    onMove={move}
+    saving={mine && saving}
+    error={mine ? error : null}
+    toast={mine ? toast : null}
+    onMove={(iso) => w && move(w, iso)}
     onUndo={undo}
     onDismissToast={() => {
       toast = null;
       undoChanges = [];
     }}
   />
+{/snippet}
+
+{#snippet session()}
+  {#if sessions.length === 0}
+    {@render card(null)}
+  {:else}
+    {#each sessions as w (w.id)}
+      {@render card(w)}
+    {/each}
+  {/if}
 {/snippet}
 
 {#snippet weekStrip()}

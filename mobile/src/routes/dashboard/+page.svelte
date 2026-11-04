@@ -60,7 +60,8 @@
   import { pageHeader } from '$lib/stores/pageHeader.svelte';
   import { viewport } from '$lib/stores/viewport.svelte';
   import WideToday from '$lib/components/wide/today/WideToday.svelte';
-  import { profileBars as sessionProfileBars, workPctFtp, workWattRange } from '$lib/components/wide/today/todayWide';
+  import { daySessions } from '$lib/components/wide/today/todayWide';
+  import PhoneSessionCard from '$lib/components/dashboard/PhoneSessionCard.svelte';
   import { firstName, isProfileComplete } from '$lib/utils/profile';
   import { addDays } from 'date-fns';
   import CalibrationBadge from '$lib/components/CalibrationBadge.svelte';
@@ -76,7 +77,6 @@
   import { boundedScoreCssColor } from '$lib/colorSystem';
   import { CHART_ATL_STROKE, CHART_CTL_STROKE, formCssColor } from '$lib/scoreColors';
   import { getTimeOfDayGreeting } from '$lib/utils/greeting';
-  import { sessionNotesSummary } from '$lib/utils/sessionNotes';
   import { currentRecoveryState, firstPositiveFiniteNumber, readinessScoreFromRow } from '$lib/utils/biometrics';
 
   const CTL_IDENTITY_HEX = CHART_CTL_STROKE;
@@ -115,15 +115,7 @@
     athleteStore.days_on_platform > 0 &&
     athleteStore.days_on_platform < 42
   );
-  // --- Key session (today's planned workout) ---
-  const ZONE_LABEL: Record<string, string> = {
-    Recovery: 'Z1',
-    Endurance: 'Z2',
-    Tempo: 'Z3–Z4',
-    Threshold: 'Z4',
-    VO2Max: 'Z5',
-    Anaerobic: 'Z6'
-  };
+  // --- Today's planned sessions (hardest first: the first is the key session) ---
   let plannedWorkouts = $state<Workout[]>([]);
   const todayIso = $derived(format(greetingNow, 'yyyy-MM-dd'));
   /** Bumped when the wide layout moves a session, so today's plan reloads. */
@@ -144,22 +136,8 @@
     };
   });
 
-  const keySession = $derived(plannedWorkouts.find((w) => w.date === todayIso) ?? null);
+  const todaySessions = $derived(daySessions(plannedWorkouts, todayIso));
   const ftp = $derived(Number(athleteStore.profile?.ftp_watts) || 0);
-  const sessionRange = $derived.by(() => {
-    const w = keySession;
-    if (!w) return null;
-    // Same figures as the Plan session sheet: planned minutes, and the hardest step's
-    // %FTP ±2.5% in watts.
-    const duration = String(w.duration_minutes);
-    const watts = workWattRange(w, ftp);
-    if (watts) {
-      return { duration, valueLabel: watts, unit: 'W', caption: `Target · ${workPctFtp(w)}% FTP` };
-    }
-    return { duration, valueLabel: String(w.projected_tss), unit: 'TSS', caption: 'Projected load' };
-  });
-  /** Same blocks as the Plan session sheet: width by duration, height by %FTP, zone colour. */
-  const profileBars = $derived(keySession?.structure?.length ? sessionProfileBars(keySession) : []);
 
   const hasData = $derived(athleteStore.workouts?.length > 0 || athleteStore.readiness > 0);
   const isConnected = $derived(Object.values(athleteStore.syncStatus?.integrations || {}).some((i: any) => i.connected));
@@ -587,51 +565,11 @@
         onPlanChanged={() => planReload++}
       />
     {:else}
-    <!-- Key session -->
-    {#if keySession && sessionRange}
-      <a
-        href={resolve(`/plan?session=${encodeURIComponent(keySession.id)}`)}
-        aria-label="Open {keySession.title} in your plan"
-        class="bg-bg2 border border-border rounded-[24px] p-5 flex flex-col gap-3.5 text-text0"
-      >
-        <div class="flex justify-between items-center">
-          <span class="font-mono text-[11px] tracking-[0.14em] text-blue uppercase">Key session · {keySession.sport}{waitingForSleep ? ' · provisional' : ''}</span>
-          <span class="flex items-center gap-1 font-mono text-[11px] text-text2">
-            {ZONE_LABEL[keySession.primary_zone] ?? ''}
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m9 6 6 6-6 6"></path></svg>
-          </span>
-        </div>
-        <div class="flex flex-col gap-1">
-          <h2 class="m-0 font-display font-normal text-[34px] leading-[1.05]">{keySession.title}</h2>
-          {#if waitingForSleep}
-            <p class="m-0 text-sm leading-[1.45] text-text1">
-              Your coach will confirm or adjust this once recovery comes in. Training before then? Go by feel and ease off if it feels harder than it should.
-            </p>
-          {:else if sessionNotesSummary(keySession.description)}
-            <p class="m-0 text-sm leading-[1.45] text-text1">{sessionNotesSummary(keySession.description)}</p>
-          {/if}
-        </div>
-        <div class="grid grid-cols-2 gap-3 border-t border-border">
-          <div class="flex flex-col gap-0.5 pt-2.5">
-            <span class="text-[26px] font-medium tracking-[-0.02em]">{sessionRange.duration}<span class="text-[13px] text-text2 font-normal"> min</span></span>
-            <span class="text-xs text-text2">Duration</span>
-          </div>
-          <div class="flex flex-col gap-0.5 pt-2.5">
-            <span class="text-[26px] font-medium tracking-[-0.02em]">{sessionRange.valueLabel}<span class="text-[13px] text-text2 font-normal"> {sessionRange.unit}</span></span>
-            <span class="text-xs text-text2">{sessionRange.caption}</span>
-          </div>
-        </div>
-        {#if profileBars.length > 0}
-          <div role="img" aria-label="Workout profile" class="flex items-end gap-[3px] h-16">
-            {#each profileBars as b, idx (idx)}
-              <div
-                class="rounded-[3px]"
-                style="flex: {b.grow} 1 0; height: {b.pct}%; background: {b.zone > 0 ? `var(--zone-${b.zone})` : 'var(--text2)'}"
-              ></div>
-            {/each}
-          </div>
-        {/if}
-      </a>
+    <!-- Today's sessions: every one planned, the hardest first -->
+    {#if todaySessions.length > 0}
+      {#each todaySessions as w, i (w.id)}
+        <PhoneSessionCard workout={w} {ftp} label={i === 0 ? 'Key session' : 'Also today'} provisional={waitingForSleep} />
+      {/each}
     {:else}
       <section aria-label="Key session" class="bg-bg2 border border-border rounded-[24px] p-5 flex flex-col gap-3.5">
         <span class="font-mono text-[11px] tracking-[0.14em] text-text2">NO SESSION PLANNED</span>

@@ -1,7 +1,6 @@
 """Unit tests for agentic coach tools and anomaly detection."""
 from __future__ import annotations
 
-import json
 from datetime import date, timedelta
 from typing import Any
 
@@ -322,67 +321,21 @@ def test_schedule_workout_normalizes_escaped_newlines_in_markdown_notes():
     assert "\n| Warmup | 10 min | Z1-Z2 | Easy spin |" in row["description"]
 
 
-def test_schedule_workout_none_markdown_notes_falls_back_to_json_description():
+@pytest.mark.parametrize("notes", [None, {"phase": "warmup", "duration": "10 min"}, "   "])
+def test_schedule_workout_without_notes_saves_an_empty_description(notes):
+    """No notes means no description: it used to fall back to the workout JSON, which the
+    app showed as the coach's notes (prod: every imported strength session)."""
     db = MockCoachDB()
     planned = (date.today() + timedelta(days=6)).isoformat()
     out = coach_tools.handle_schedule_workout(
-        {
-            "duration_minutes": 45,
-            "focus_zone": "VO2Max",
-            "date": planned,
-            "sport": "Bike",
-            "markdown_notes": None,
-        },
+        {"duration_minutes": 45, "focus_zone": "VO2Max", "date": planned, "sport": "Bike", "markdown_notes": notes},
         athlete_id="ath-1",
         db=db,  # type: ignore[arg-type]
     )
     assert "error" not in out
     row = db.inserts[0][1]
-    assert row["description"] != "None"
-    parsed = json.loads(row["description"])
-    assert parsed["sport"] == "bike"
-
-
-def test_schedule_workout_non_string_markdown_notes_falls_back_to_json_description():
-    db = MockCoachDB()
-    planned = (date.today() + timedelta(days=6)).isoformat()
-    out = coach_tools.handle_schedule_workout(
-        {
-            "duration_minutes": 45,
-            "focus_zone": "VO2Max",
-            "date": planned,
-            "sport": "Bike",
-            "markdown_notes": {"phase": "warmup", "duration": "10 min"},
-        },
-        athlete_id="ath-1",
-        db=db,  # type: ignore[arg-type]
-    )
-    assert "error" not in out
-    row = db.inserts[0][1]
-    parsed = json.loads(row["description"])
-    assert parsed["sport"] == "bike"
-
-
-def test_schedule_workout_without_markdown_notes_keeps_json_description():
-    db = MockCoachDB()
-    planned = (date.today() + timedelta(days=6)).isoformat()
-    out = coach_tools.handle_schedule_workout(
-        {
-            "duration_minutes": 45,
-            "focus_zone": "VO2Max",
-            "date": planned,
-            "sport": "Bike",
-            "markdown_notes": "   ",
-        },
-        athlete_id="ath-1",
-        db=db,  # type: ignore[arg-type]
-    )
-    assert "error" not in out
-    row = db.inserts[0][1]
-    parsed = json.loads(row["description"])
-    assert parsed["sport"] == "bike"
-    assert parsed["focus_zone"] == "VO2Max"
-    assert isinstance(parsed["structure"], list)
+    assert row["description"] == ""
+    assert row["sport"] == "bike" and isinstance(row["structure"], list)
 
 
 def test_detect_anomalies_hrv_suppressed():
