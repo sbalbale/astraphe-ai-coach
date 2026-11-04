@@ -42,6 +42,8 @@ _SPORT_ALIASES = {
 # Zone used for a block the model left without one, from the session's focus.
 _FOCUS_TO_ZONE = {"Recovery": 1, "Endurance": 2, "Tempo": 3, "Threshold": 4, "VO2Max": 5, "Anaerobic": 5}
 _ZONE_TO_FOCUS = {1: "Recovery", 2: "Endurance", 3: "Tempo", 4: "Threshold", 5: "VO2Max"}
+# One entry holding two sessions: "AM - Cat 1 cross-train PM - Team ST".
+_MERGED_AM_PM = re.compile(r"(?-i:AM)\s*[-:\u2013\u2014].+(?-i:PM)\s*[-:\u2013\u2014]")
 # Titles that are gym sessions whatever sport the reader picked ("Team ST", "S&C", "Lift").
 _STRENGTH_TITLE = re.compile(r"\b(?:(?-i:ST)|S ?& ?C|strength|lift(?:ing)?|gym|weights)\b", re.IGNORECASE)
 
@@ -70,7 +72,7 @@ def _import_client() -> Any:
 def import_models() -> list[str]:
     models = [m.strip() for m in (settings.GEMINI_IMPORT_MODELS or "").split(",") if m.strip()]
     chat = (settings.GEMINI_MODEL or "").strip()
-    if chat and chat not in models:
+    if settings.PLAN_IMPORT_CHAT_FALLBACK and chat and chat not in models:
         models.append(chat)  # last resort: still one request, on the chat model's own quota
     return models
 
@@ -241,7 +243,8 @@ def _is_busy(err: str) -> bool:
     return "503" in err or "UNAVAILABLE" in err or "high demand" in err
 
 
-_BUSY_RETRY_SEC = 5.0
+# Waits before the 2nd and 3rd try of a model answering 503 "high demand".
+_BUSY_RETRY_SEC = (5.0, 15.0)
 
 
 def call_import_model(contents: list[Any], now: datetime | None = None) -> tuple[dict | None, str | None, list[str]]:
@@ -265,7 +268,7 @@ def call_import_model(contents: list[Any], now: datetime | None = None) -> tuple
             thinking_config=types.ThinkingConfig(thinking_level=level) if (level and model in strong) else None,
         )
         resp = None
-        for attempt in range(2):
+        for attempt in range(len(_BUSY_RETRY_SEC) + 1):
             try:
                 gemini_quota.wait_for_slot(model, max_wait_sec=30.0)
                 resp = _import_client().models.generate_content(model=model, contents=contents, config=config)
@@ -275,8 +278,8 @@ def call_import_model(contents: list[Any], now: datetime | None = None) -> tuple
                 if _is_daily_quota(msg):
                     _mark_exhausted(model, now)
                 logger.warning("[plan_import] %s failed (attempt %s): %s", model, attempt + 1, msg[:300])
-                if attempt == 0 and _is_busy(msg):
-                    time.sleep(_BUSY_RETRY_SEC)
+                if attempt < len(_BUSY_RETRY_SEC) and _is_busy(msg):
+                    time.sleep(_BUSY_RETRY_SEC[attempt])
                     continue
                 errors.append(f"{model}: {msg[:160]}")
                 break
@@ -509,13 +512,25 @@ def run_import(
     if parsed is None:
         return {
             "error": "plan_reader_unavailable",
-            "message": "The plan could not be read right now (model limits or errors). Nothing was changed. Ask the athlete to try again later.",
+            "message": (
+                "The plan reader is busy or at its limit right now, so nothing was changed. Tell the "
+                "athlete to send the same message again in a few minutes; this didn't use one of their imports."
+            ),
             "details": errors[:4],
         }
     _count_athlete_import(athlete_id, today)
 
     sessions, skipped, zones_filled = check_sessions(parsed.get("sessions") or [], start, end)
     unclear = [str(u)[:200] for u in (parsed.get("unclear") or []) if str(u).strip()][:10]
+    merged = [s for s in sessions if _MERGED_AM_PM.search(s["title"])]
+    if merged:
+        unclear.insert(0, f"{len(merged)} sessions still combine an AM and a PM session in one entry (e.g. {merged[0]['date']}: {merged[0]['title']}).")
+    if skipped:
+        reasons: dict[str, int] = {}
+        for k in skipped:
+            r = k["reason"] if "is a " not in k["reason"] else "date/weekday mismatch"
+            reasons[r] = reasons.get(r, 0) + 1
+        logger.info("[plan_import] skipped by reason: %s; first: %s", reasons, skipped[:3])
     if not sessions:
         return {"error": "nothing_to_import", "message": "No sessions could be read for those dates. Nothing was changed.", "skipped": skipped[:10], "unclear": unclear}
 

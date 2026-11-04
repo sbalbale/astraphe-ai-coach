@@ -72,7 +72,10 @@ class Settings(BaseSettings):
     # Plan import (coach tool import_plan): one structured request reads the whole plan.
     # Tried in order; GEMINI_MODEL is the last resort. The free tier allows these ~5 RPM and
     # ~20 requests a day each, shared by all athletes, hence the per-athlete daily cap.
-    GEMINI_IMPORT_MODELS: str = "gemini-3.8-flash,gemini-3.6-flash"
+    GEMINI_IMPORT_MODELS: str = "gemini-3.8-flash,gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash"
+    # Let the chat model (flash-lite) import when every import model is busy. Off: in prod it
+    # merged AM/PM sessions into one; better to say "busy, try again" and change nothing.
+    PLAN_IMPORT_CHAT_FALLBACK: bool = False
     PLAN_IMPORT_TIMEOUT_SEC: int = 240
     PLAN_IMPORT_THINKING_LEVEL: str = "LOW"
     PLAN_IMPORTS_PER_DAY: int = 5
