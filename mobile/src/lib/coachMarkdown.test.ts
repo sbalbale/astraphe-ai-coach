@@ -3,7 +3,8 @@ import {
   extractFirstGfmPipeTable,
   normalizeMarkdownBlockStructure,
   normalizeMarkdownSource,
-  renderCoachMarkdownToSafeHtml
+  renderCoachMarkdownToSafeHtml,
+  htmlTagsToMarkdown
 } from './coachMarkdown';
 
 describe('extractFirstGfmPipeTable', () => {
@@ -157,5 +158,30 @@ describe('renderCoachMarkdownToSafeHtml security', () => {
     const html = renderCoachMarkdownToSafeHtml('[docs](https://example.com)');
     expect(html).toMatch(/href="https:\/\/example\.com"/);
     expect(html).toMatch(/rel="noopener noreferrer"/);
+  });
+});
+
+describe('replies written in HTML', () => {
+  const body = 'With your FTP set at **280W**, TSS scales as follows:\n* **175W**: **~39 TSS**\n* **180W**: **~41 TSS**';
+
+  it('still renders markdown when the reply starts with <p>', () => {
+    // A leading <p> made marked treat the reply as raw HTML: literal ** and the list run together.
+    const html = renderCoachMarkdownToSafeHtml(`<p>${body}</p>`);
+    expect(html).toContain('<strong>280W</strong>');
+    expect(html).not.toContain('**');
+    expect(html.match(/<li>/g)?.length).toBe(2);
+  });
+
+  it('does not render an empty bubble after <br> or a <thought> block', () => {
+    expect(renderCoachMarkdownToSafeHtml(`<br>\n${body}`)).toContain('<strong>280W</strong>');
+    const html = renderCoachMarkdownToSafeHtml(`<thought>plan the answer</thought>\n${body}`);
+    expect(html).toContain('<strong>280W</strong>');
+    expect(html).not.toContain('plan the answer');
+  });
+
+  it('maps inline and list tags to markdown and leaves code fences alone', () => {
+    expect(htmlTagsToMarkdown('<ul><li><b>Z2</b></li><li><em>easy</em></li></ul>')).toBe('* **Z2**\n* *easy*');
+    expect(htmlTagsToMarkdown('```\n<p>keep</p>\n```')).toBe('```\n<p>keep</p>\n```');
+    expect(htmlTagsToMarkdown('Keep HR <150 and > 120')).toBe('Keep HR <150 and > 120');
   });
 });
