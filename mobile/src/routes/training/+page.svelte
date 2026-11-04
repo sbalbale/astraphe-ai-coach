@@ -861,7 +861,7 @@
 
             {#if detailTab === 'overview'}
               {#if selectedWorkout?.id}
-                <WorkoutPlanPanel workoutId={String(selectedWorkout.id)} streams={detailStreams} />
+                <WorkoutPlanPanel workoutId={String(selectedWorkout.id)} streams={detailStreams} zones={mergedHrZoneDefs} />
               {/if}
               {#if hasPremiumAccess(authStore.tier)}
                 <section aria-label="Coach analysis" class="flex flex-col gap-2 p-4 rounded-[20px] bg-bg1 border border-dashed border-border">

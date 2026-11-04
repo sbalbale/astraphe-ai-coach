@@ -17,8 +17,8 @@
   /**
    * Planned session for a recorded workout (design: PWorkoutLink).
    * Linked: the session it completes (auto-matched or linked by hand), planned vs actual
-   * (blocks overlaid on the power or heart-rate trace, and a small table), Change session /
-   * Unlink. Not linked: why, a one-tap "Looks like a match" suggestion, and a session picker.
+   * (PlanVsActual: target windows per block with the recorded trace, and a row per block),
+   * Change session / Unlink. Not linked: why, a one-tap "Looks like a match" suggestion, and a session picker.
    */
   import { untrack } from 'svelte';
   import { api } from '$lib/api';
@@ -27,26 +27,23 @@
   import type { ActivityStreams } from '$lib/services/activityService';
   import type { Interval } from '$lib/types/training';
   import type { PlanCandidate, PlanSummary, WorkoutPlanLink } from '$lib/types/linking';
-  import {
-    comparisonRows,
-    dayShort,
-    plannedBlocks,
-    sessionMeta,
-    traceLine,
-    unlinkConfirmText,
-    unlinkedText
-  } from '$lib/utils/workoutLinking';
+  import type { ZoneDefLike } from '$lib/utils/planVsActual';
+  import { dayShort, sessionMeta, unlinkConfirmText, unlinkedText } from '$lib/utils/workoutLinking';
+  import PlanVsActual from './PlanVsActual.svelte';
   import WorkoutSessionPicker from './WorkoutSessionPicker.svelte';
 
   let {
     workoutId,
     streams = null,
     ftp: ftpProp = 0,
+    zones = [],
     onchange
   }: {
     workoutId: string;
     streams?: ActivityStreams | null;
     ftp?: number;
+    /** The athlete's heart-rate zones (bpm), for heart-rate target windows. */
+    zones?: ZoneDefLike[];
     /** Called after a link change (e.g. to refresh the plan). */
     onchange?: () => void;
   } = $props();
@@ -62,7 +59,6 @@
   let picking = $state(false);
   let toast = $state<{ text: string; undo: (() => Promise<void>) | null } | null>(null);
   let toastTimer: ReturnType<typeof setTimeout> | null = null;
-  let mode = $state<'power' | 'hr'>('power');
 
   async function load(id: string, force = false) {
     const hit = cache.get(id);
@@ -176,45 +172,6 @@
     });
   }
 
-  // --- chart + table ---------------------------------------------------------------------
-  const W = 320;
-  const H = 120;
-  const ts = $derived(streams?.time_series ?? {});
-  const step = $derived(streams?.resolution_seconds || 1);
-  const hasPower = $derived((ts.watts?.length ?? 0) > 1 && ftp > 0);
-  const hasHr = $derived((ts.heartrate?.length ?? 0) > 1);
-  $effect(() => {
-    if (mode === 'power' && !hasPower && hasHr) mode = 'hr';
-  });
-  const modes = $derived.by(() => {
-    const out: ['power' | 'hr', string][] = [];
-    if (hasPower) out.push(['power', 'Power']);
-    if (hasHr) out.push(['hr', 'HR']);
-    return out;
-  });
-  const planMin = $derived(structure.reduce((s, i) => s + (i.duration_minutes || 0), 0) || data?.linked?.duration_minutes || 0);
-  const actualMin = $derived((data?.workout.duration_seconds ?? 0) / 60);
-  const spanMin = $derived(Math.max(planMin, actualMin, 1));
-  const blocks = $derived(structure.length ? plannedBlocks(structure, spanMin, W, H - 10) : []);
-  const line = $derived.by(() => {
-    if (mode === 'power' && hasPower) return traceLine(ts.watts, ts.time, step, spanMin, W, H - 10, ftp * 1.3);
-    if (hasHr) {
-      const max = Math.max(...(ts.heartrate ?? [0]).filter((v) => Number.isFinite(v)), 1);
-      return traceLine(ts.heartrate, ts.time, step, spanMin, W, H - 10, max * 1.05);
-    }
-    return '';
-  });
-  const showChart = $derived(blocks.length > 0 || line !== '');
-  const cmp = $derived(
-    data?.linked
-      ? comparisonRows(
-          { duration_minutes: data.linked.duration_minutes, projected_tss: data.linked.projected_tss, structure },
-          { duration_seconds: data.workout.duration_seconds, tss: data.workout.tss },
-          hasPower ? { watts: ts.watts, time: ts.time, step, ftp } : undefined
-        )
-      : []
-  );
-  const toneClass = { good: 'text-green', warn: 'text-amber', neutral: 'text-text0' } as const;
   const sug = $derived(data?.suggestion ?? null);
   const pickTitle = $derived(data?.linked ? 'Change session' : 'Link to a session');
   const dateLabel = $derived(data?.workout.started_at ? dayShort(data.workout.started_at) : '');
@@ -243,63 +200,16 @@
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true" class="text-text3"><path d="m9 6 6 6-6 6"></path></svg>
       </a>
 
-      {#if showChart || cmp.length}
-        <div class="flex justify-between items-center gap-2">
-          <span class="text-[13px] font-medium">Planned vs actual</span>
-          {#if modes.length > 1}
-            <div role="tablist" aria-label="Trace" class="flex gap-0.5 p-[3px] rounded-[10px] bg-bg1 border border-border">
-              {#each modes as [id, label] (id)}
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={mode === id}
-                  class="h-7 px-2.5 border-0 rounded-[7px] text-[12px] font-medium cursor-pointer {mode === id ? 'bg-border text-text0' : 'bg-transparent text-text2'}"
-                  onclick={() => (mode = id)}
-                >{label}</button>
-              {/each}
-            </div>
-          {/if}
-        </div>
-      {/if}
-      {#if showChart}
-        <svg width="100%" height={H} viewBox="0 0 {W} {H}" preserveAspectRatio="none" role="img" aria-label="Planned blocks with the recorded {mode === 'power' ? 'power' : 'heart rate'}" class="block">
-          <line x1="0" y1={H - 10} x2={W} y2={H - 10} stroke="var(--border)" vector-effect="non-scaling-stroke"></line>
-          {#each blocks as b, i (i)}
-            <rect x={b.x} y={b.y} width={b.w} height={b.h} rx="2" fill={b.color} fill-opacity="0.22" stroke={b.color} stroke-opacity="0.5" stroke-dasharray="3 2" vector-effect="non-scaling-stroke"></rect>
-          {/each}
-          {#if line}
-            <polyline points={line} fill="none" stroke={mode === 'power' ? 'var(--blue)' : 'var(--red)'} stroke-width="1.8" stroke-linejoin="round" vector-effect="non-scaling-stroke"></polyline>
-          {/if}
-        </svg>
-        <div class="flex gap-3.5 text-[11px] text-text2">
-          {#if blocks.length}
-            <span class="flex items-center gap-1.5"><span aria-hidden="true" class="w-3 h-2 rounded-sm border border-dashed border-text1 bg-text1/15"></span>Planned blocks</span>
-          {/if}
-          {#if line}
-            <span class="flex items-center gap-1.5"><span aria-hidden="true" class="w-3.5 h-0.5 {mode === 'power' ? 'bg-blue' : 'bg-red'}"></span>{mode === 'power' ? 'Actual power' : 'Actual heart rate'}</span>
-          {/if}
-        </div>
-      {/if}
-      {#if cmp.length}
-        <table class="w-full border-collapse text-[13px]">
-          <thead>
-            <tr class="font-mono text-[10px] tracking-[0.1em] text-text2 text-left">
-              <th class="py-1.5 font-medium"><span class="sr-only">Measure</span></th>
-              <th class="py-1.5 font-medium text-right">PLANNED</th>
-              <th class="py-1.5 font-medium text-right">ACTUAL</th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each cmp as c (c.k)}
-              <tr class="border-t border-border">
-                <td class="py-2.5 text-text1">{c.k}</td>
-                <td class="py-2.5 text-right font-mono">{c.p}</td>
-                <td class="py-2.5 text-right font-mono {toneClass[c.tone]}">{c.a}</td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-      {/if}
+      <PlanVsActual
+        {structure}
+        {streams}
+        {ftp}
+        {zones}
+        plannedMin={p.duration_minutes}
+        plannedTss={p.projected_tss}
+        actualSecs={data.workout.duration_seconds ?? 0}
+        actualTss={data.workout.tss ?? null}
+      />
       <div class="grid grid-cols-2 gap-2">
         <button type="button" disabled={busy} class="h-11 rounded-[13px] border border-popover-border bg-transparent text-text0 text-[14px] font-medium cursor-pointer disabled:opacity-50" onclick={() => (picking = true)}>Change session</button>
         <button type="button" disabled={busy} class="h-11 rounded-[13px] border border-red/40 bg-transparent text-red text-[14px] font-medium cursor-pointer disabled:opacity-50" onclick={unlink}>Unlink</button>
