@@ -345,6 +345,34 @@ function installPurifyHooks() {
 }
 
 /**
+ * Models sometimes answer in HTML (`<p>…</p>`, `<br>`, `<strong>`) or leave a `<thought>` block in.
+ * A line starting with a block tag makes marked treat the whole paragraph as raw HTML: the
+ * markdown inside is never parsed (literal `**`), DOMPurify drops the unknown tags, and the
+ * browser collapses the line breaks, so lists end up as one run-on paragraph (or, after
+ * `<br>` / `<thought>`, an empty bubble). Turn the common tags back into markdown first.
+ * Fenced code blocks are left alone.
+ */
+export function htmlTagsToMarkdown(text: string): string {
+  const parts = (text ?? '').split(/(```[\s\S]*?```)/);
+  for (let i = 0; i < parts.length; i += 2) {
+    parts[i] = parts[i]
+      .replace(/<(thought|think|thinking)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, '')
+      .replace(/<\/?(thought|think|thinking)\b[^>]*>/gi, '')
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/?(p|div)\b[^>]*>/gi, '\n\n')
+      .replace(/<\/?(ul|ol)\b[^>]*>/gi, '\n')
+      .replace(/<li\b[^>]*>/gi, '\n* ')
+      .replace(/<\/li\s*>/gi, '')
+      .replace(/<h[1-6]\b[^>]*>/gi, '\n\n**')
+      .replace(/<\/h[1-6]\s*>/gi, '**\n\n')
+      .replace(/<\/?(strong|b)\b[^>]*>/gi, '**')
+      .replace(/<\/?(em|i)\b[^>]*>/gi, '*')
+      .replace(/<\/?span\b[^>]*>/gi, '');
+  }
+  return parts.join('').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+/**
  * Coach reply markdown → sanitized HTML (GFM + line breaks + KaTeX + safe links).
  * Untrusted text (LLM output can echo workout titles, documents, search results)
  * is sanitised before it is ever parsed into a DOM, and again after the
@@ -352,7 +380,7 @@ function installPurifyHooks() {
  */
 export function renderCoachMarkdownToSafeHtml(text: string): string {
   installPurifyHooks();
-  const wrapped = normalizeTypographyForWrap(text ?? '');
+  const wrapped = normalizeTypographyForWrap(htmlTagsToMarkdown(text ?? ''));
   const structured = normalizeMarkdownBlockStructure(wrapped);
   const src = normalizeTightInlineDollarMath(structured);
   const html = coachMd.parse(src, { async: false }) as string;
