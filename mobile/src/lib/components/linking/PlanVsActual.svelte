@@ -11,6 +11,7 @@
     type Fit,
     type Metric,
     type ZoneDefLike,
+    hrOnPowerScale,
     inTargetPct,
     mins,
     pct,
@@ -82,11 +83,18 @@
       .filter((z) => z.hi > z.lo)
   );
   const trace = $derived(hasStream ? tracePoints(stream, blocks) : []);
+  // "Both": heart rate drawn in the power chart's zone bands (HR Z2 inside the Z2 band), so the
+  // two lines read against the same zones. Without HR zones it falls back to its own bpm scale.
+  const hrByZone = $derived(zones.length >= 5);
   const hrTrace = $derived.by(() => {
     if (view !== 'both' || !hasHr) return '';
     const [lo, hi] = yRange('hr', ftp, zones);
     return tracePoints({ values: ts.heartrate, time: ts.time, step }, [])
-      .map((p) => `${X(p.tMin).toFixed(1)},${(PLOT_H - ((Math.max(lo, Math.min(hi, p.v)) - lo) / (hi - lo)) * (PLOT_H - 5)).toFixed(1)}`)
+      .map((p) => {
+        const onPower = hrByZone ? hrOnPowerScale(p.v, ftp, zones) : null;
+        const y = onPower != null ? Y(onPower) : PLOT_H - ((Math.max(lo, Math.min(hi, p.v)) - lo) / (hi - lo)) * (PLOT_H - 5);
+        return `${X(p.tMin).toFixed(1)},${y.toFixed(1)}`;
+      })
       .join(' ');
   });
 
@@ -232,7 +240,9 @@
   </div>
   {#if hrTrace}
     <span class="flex items-center gap-1.5 text-[11px] text-text2">
-      <span aria-hidden="true" class="w-3.5 h-0 border-t-[1.5px] border-dashed border-red"></span>Heart rate (own scale) — how hard the power felt
+      <span aria-hidden="true" class="w-3.5 h-0 border-t-[1.5px] border-dashed border-red"></span>{hrByZone
+        ? 'Heart rate, drawn in its own zones — how hard the power felt'
+        : 'Heart rate (own scale) — how hard the power felt'}
     </span>
   {/if}
 

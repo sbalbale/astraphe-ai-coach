@@ -219,3 +219,26 @@ export function mins(m: number): string {
   const r = Math.round(m);
   return r >= 60 ? `${Math.floor(r / 60)}h${String(r % 60).padStart(2, '0')}` : `${r}′`;
 }
+
+/**
+ * A heart rate placed on the power chart by zone ("Both"): a value in HR zone z is drawn in
+ * power zone z's band, at the same relative position within the zone. So HR in Z2 sits in the
+ * Z2 band whatever the bpm numbers are. Null without HR zones.
+ */
+export function hrOnPowerScale(bpm: number, ftp: number, zones: ZoneDefLike[]): number | null {
+  const hr = zoneBands('hr', ftp, zones);
+  if (hr.length < 5 || !(ftp > 0) || !Number.isFinite(bpm)) return null;
+  const power = zoneBands('power', ftp, zones);
+  const [hrLo] = yRange('hr', ftp, zones);
+  const [pLo, pHi] = yRange('power', ftp, zones);
+  const i = hr.findIndex((z) => bpm < z.hi);
+  const z = hr[i === -1 ? hr.length - 1 : i];
+  const pz = power[z.zone - 1];
+  // Zone 1 starts at the chart floor; zone 5 ends at the chart top.
+  const lo = z.zone === 1 ? hrLo : z.lo;
+  const hi = z.zone === 5 ? Math.max(z.lo + 1, zones.find((d) => d.zone === 5)?.max_bpm ?? z.lo + 20) : z.hi;
+  const plo = z.zone === 1 ? pLo : pz.lo;
+  const phi = z.zone === 5 ? pHi : pz.hi;
+  const t = Math.max(0, Math.min(1, (bpm - lo) / Math.max(1, hi - lo)));
+  return plo + t * (phi - plo);
+}

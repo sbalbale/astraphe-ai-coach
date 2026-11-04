@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   blockStats,
+  hrOnPowerScale,
   inTargetPct,
   mins,
   pvaBlocks,
@@ -125,5 +126,28 @@ describe('chart helpers', () => {
   it('formats minutes like the design', () => {
     expect(mins(54.4)).toBe('54′');
     expect(mins(65)).toBe('1h05');
+  });
+});
+
+describe('hrOnPowerScale ("Both")', () => {
+  // ZONES: Z2 136–149 bpm; power Z2 at FTP 200 is 112–150 W.
+  it('draws a heart rate inside the matching power zone band', () => {
+    const mid = hrOnPowerScale(142.5, 200, ZONES)!;
+    expect(mid).toBeCloseTo(112 + 0.5 * (150 - 112), 5);
+    // Z4 HR lands in the Z4 power band, Z1 HR in Z1.
+    const z4 = hrOnPowerScale(166, 200, ZONES)!;
+    expect(z4).toBeGreaterThanOrEqual(182);
+    expect(z4).toBeLessThanOrEqual(210);
+    expect(hrOnPowerScale(120, 200, ZONES)!).toBeLessThan(112);
+  });
+
+  it('keeps a higher heart rate higher on the chart', () => {
+    const vals = [110, 130, 140, 150, 160, 180, 200].map((v) => hrOnPowerScale(v, 200, ZONES)!);
+    expect([...vals].sort((a, b) => a - b)).toEqual(vals);
+  });
+
+  it('needs HR zones and an FTP', () => {
+    expect(hrOnPowerScale(150, 200, [])).toBeNull();
+    expect(hrOnPowerScale(150, 0, ZONES)).toBeNull();
   });
 });
