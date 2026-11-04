@@ -19,9 +19,11 @@ def _run(coro):
 def _memory_backend():
     """Default every test to the in-process store (no Redis) with a clean slate."""
     coach_progress._memory.clear()
+    coach_progress._watching.clear()
     with patch.object(coach_progress, "get_redis", return_value=None):
         yield
     coach_progress._memory.clear()
+    coach_progress._watching.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -171,3 +173,48 @@ def test_progress_endpoint_empty_when_nothing_running(coach_client):
     res = coach_client.get("/v1/coach/conversations/conv-none/progress")
     assert res.status_code == 200
     assert res.json() == {"events": []}
+
+
+# ---------------------------------------------------------------------------
+# Watching (chat open on a visible screen)
+# ---------------------------------------------------------------------------
+
+
+def test_watching_is_per_conversation_and_expires():
+    assert not _run(coach_progress.is_watching("ath", "conv"))
+    _run(coach_progress.mark_watching("ath", "conv"))
+    assert _run(coach_progress.is_watching("ath", "conv"))
+    assert not _run(coach_progress.is_watching("ath", "other"))
+    assert not _run(coach_progress.is_watching("ath-b", "conv"))
+    assert not _run(coach_progress.is_watching("ath", None))
+    with patch.object(coach_progress.time, "monotonic", return_value=coach_progress.time.monotonic() + 60):
+        assert not _run(coach_progress.is_watching("ath", "conv"))
+
+
+def test_watching_uses_redis_with_ttl():
+    redis = MagicMock()
+    redis.set = AsyncMock()
+    redis.exists = AsyncMock(return_value=1)
+    with patch.object(coach_progress, "get_redis", return_value=redis):
+        _run(coach_progress.mark_watching("ath", "conv"))
+        assert _run(coach_progress.is_watching("ath", "conv"))
+    redis.set.assert_awaited_once_with("coach:watching:ath:conv", "1", ex=coach_progress.WATCH_TTL_SEC)
+
+
+def test_progress_endpoint_marks_watching_only_when_visible(coach_client):
+    coach_client.get("/v1/coach/conversations/conv-9/progress")
+    assert not _run(coach_progress.is_watching(MOCK_ATHLETE_ID, "conv-9"))
+    coach_client.get("/v1/coach/conversations/conv-9/progress?visible=1")
+    assert _run(coach_progress.is_watching(MOCK_ATHLETE_ID, "conv-9"))
+
+
+def test_no_reply_push_while_the_chat_is_being_watched():
+    """A chat open in a desktop browser used to still buzz the phone."""
+    db = MagicMock()
+    _run(coach_progress.mark_watching("ath-1", "conv-1"))
+    with patch.object(coach_router, "get_coach_response", return_value=("Great ride!", [])),          patch.object(coach_router, "_insert_message"),          patch.object(coach_router, "_load_conversation_history", return_value=[]),          patch.object(coach_router, "_run_memory_extraction", AsyncMock()),          patch.object(coach_router, "_run_conversation_title", AsyncMock()),          patch("app.services.push.send_push_to_athlete") as push:
+        _run(coach_router._run_coach_response_and_notify("ath-1", "hi", 0.0, db, "conv-1", "m", "m2", 0))
+        push.assert_not_called()
+        # Nobody watching another conversation: that reply still pushes.
+        _run(coach_router._run_coach_response_and_notify("ath-1", "hi", 0.0, db, "conv-2", "m", "m2", 0))
+        push.assert_called_once()

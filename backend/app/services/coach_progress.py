@@ -90,3 +90,49 @@ async def read(athlete_id: str, conversation_id: str) -> list[dict[str, Any]]:
     now = time.monotonic()
     _memory_prune(now)
     return list(_memory.get(key, (0.0, []))[1])
+
+
+# --- Who is watching a reply come in -----------------------------------------------------------
+# While the chat is open and visible, the app polls GET /conversations/{id}/progress about once a
+# second and says so (visible=1). A reply that lands while someone is watching it needs no push on
+# the athlete's other devices: the service worker can only tell whether *its own* device has the
+# chat open, so a chat open in a desktop browser still buzzed the phone.
+
+WATCH_TTL_SEC = 15
+
+# key -> expires_at_monotonic
+_watching: dict[str, float] = {}
+
+
+def _watch_key(athlete_id: str, conversation_id: str) -> str:
+    return f"coach:watching:{athlete_id}:{conversation_id}"
+
+
+async def mark_watching(athlete_id: str, conversation_id: str) -> None:
+    """Note that this conversation is open on a visible screen right now."""
+    key = _watch_key(athlete_id, conversation_id)
+    redis = get_redis()
+    if redis is not None:
+        try:
+            await redis.set(key, "1", ex=WATCH_TTL_SEC)
+            return
+        except Exception as exc:
+            logger.warning("coach_progress mark_watching via redis failed: %s", exc)
+    now = time.monotonic()
+    for k in [k for k, exp in _watching.items() if exp <= now]:
+        _watching.pop(k, None)
+    _watching[key] = now + WATCH_TTL_SEC
+
+
+async def is_watching(athlete_id: str, conversation_id: str | None) -> bool:
+    """True when the conversation was open on a visible screen in the last WATCH_TTL_SEC."""
+    if not conversation_id:
+        return False
+    key = _watch_key(athlete_id, conversation_id)
+    redis = get_redis()
+    if redis is not None:
+        try:
+            return bool(await redis.exists(key))
+        except Exception as exc:
+            logger.warning("coach_progress is_watching via redis failed: %s", exc)
+    return _watching.get(key, 0.0) > time.monotonic()
