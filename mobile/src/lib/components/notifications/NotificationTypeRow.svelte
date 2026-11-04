@@ -59,12 +59,9 @@
       <div class="flex items-center gap-2.5">
         <span class="w-[58px] shrink-0 text-[12px] text-text2">Send by</span>
         <div role="group" aria-label="{meta.name}: channels" class="flex-1 flex gap-1 flex-wrap">
-          <button type="button" aria-pressed={prefs.push} {disabled} class={chip(prefs.push)} onclick={() => onchannel('push')}>Push</button>
-          {#if canEmail}
-            <button type="button" aria-pressed={!!prefs.email} {disabled} class={chip(!!prefs.email)} title="Saved for later: Astraphe doesn't send email notifications yet." onclick={() => onchannel('email')}>Email</button>
-          {:else}
-            <button type="button" disabled class={chip(false, true)} aria-label="Email isn't available for this notification">Email · n/a</button>
-          {/if}
+          <!-- Push is the channel that delivers: turning it off turns this notification off. -->
+          <button type="button" aria-pressed={prefs.push} {disabled} class={chip(prefs.push)} title={prefs.push ? 'Turning push off turns this notification off' : undefined} onclick={() => onchannel('push')}>Push</button>
+          <span class="inline-flex items-center {chip(false, true)}">{canEmail ? 'Email · coming soon' : 'Email · n/a'}</span>
         </div>
       </div>
     </div>

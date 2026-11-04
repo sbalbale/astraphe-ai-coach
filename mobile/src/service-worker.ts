@@ -11,6 +11,7 @@ import { NavigationRoute, registerRoute } from 'workbox-routing';
 import {
 	OPEN_CHAT_ACTION,
 	coachThreadUrl,
+	focusOrOpenClient,
 	parseQuickReplies,
 	replyActionId,
 	replyIndexFromAction,
@@ -45,20 +46,6 @@ function resolveNotificationUrl(raw: string | undefined): string {
 	} catch {
 		return fallback;
 	}
-}
-
-async function focusOrOpenClient(targetUrl: string): Promise<void> {
-	const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-	for (const client of clients) {
-		if (client.url.startsWith(self.location.origin)) {
-			if ('navigate' in client && typeof client.navigate === 'function') {
-				await client.navigate(targetUrl);
-			}
-			await client.focus();
-			return;
-		}
-	}
-	await self.clients.openWindow(targetUrl);
 }
 
 type PushData = {
@@ -119,5 +106,5 @@ self.addEventListener('notificationclick', (event) => {
 	} else {
 		target = data.url ?? (data.conversation_id ? coachThreadUrl(data.conversation_id) : undefined) ?? '';
 	}
-	event.waitUntil(focusOrOpenClient(resolveNotificationUrl(target)));
+	event.waitUntil(focusOrOpenClient(self.clients, self.location.origin, resolveNotificationUrl(target)));
 });

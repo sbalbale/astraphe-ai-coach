@@ -108,6 +108,57 @@ export function replyIndexFromAction(action: string | null | undefined): number 
   return m ? Number(m[1]) : null;
 }
 
+/**
+ * What a chat send posts. A quick reply (non-null) is its own message: never the typed
+ * draft or the staged photos/documents, which stay in the composer. Null = nothing to send.
+ */
+export function outgoingMessage<D>(
+  quickReply: string | null,
+  composer: { input: string; images: string[]; docs: D[] }
+): { text: string; images: string[]; docs: D[]; fromComposer: boolean } | null {
+  if (quickReply !== null) {
+    const text = quickReply.trim();
+    return text ? { text, images: [], docs: [], fromComposer: false } : null;
+  }
+  const text = composer.input.trim();
+  if (!text && composer.images.length === 0 && composer.docs.length === 0) return null;
+  return { text, images: composer.images, docs: composer.docs, fromComposer: true };
+}
+
+type SwWindowClient ={ url: string; navigate?: (url: string) => Promise<unknown>; focus: () => Promise<unknown> };
+type SwClients = {
+  matchAll: (opts: { type: 'window'; includeUncontrolled: boolean }) => Promise<readonly SwWindowClient[]>;
+  openWindow: (url: string) => Promise<unknown>;
+};
+
+/**
+ * Notification click (service worker): reuse an open app window, else open one.
+ * `navigate()` rejects for windows this worker doesn't control (matchAll includes them),
+ * and resolves null when it can't navigate; then a new window is opened instead, so the
+ * click never does nothing.
+ */
+export async function focusOrOpenClient(clients: SwClients, origin: string, targetUrl: string): Promise<void> {
+  const list = await clients.matchAll({ type: 'window', includeUncontrolled: true });
+  const client = list.find((c) => c.url.startsWith(origin));
+  if (client && typeof client.navigate === 'function') {
+    let navigated: SwWindowClient | null = null;
+    try {
+      navigated = ((await client.navigate(targetUrl)) as SwWindowClient | null) ?? null;
+    } catch {
+      navigated = null; // uncontrolled client: open a new window below
+    }
+    if (navigated) {
+      try {
+        await (navigated.focus ? navigated.focus() : client.focus());
+      } catch {
+        // focus can be refused; the window already shows the page
+      }
+      return;
+    }
+  }
+  await clients.openWindow(targetUrl);
+}
+
 /** Last message from the coach that still offers quick replies (only when it is the latest message). */
 export function latestQuickReplies(messages: { role: string; quick_replies?: string[] | null; streaming?: boolean }[]): string[] {
   const last = messages[messages.length - 1];

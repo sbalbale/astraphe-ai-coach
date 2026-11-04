@@ -24,6 +24,7 @@
   import {
     isCoachThread,
     latestQuickReplies,
+    outgoingMessage,
     triggerLabel,
     unreadCount,
     unreadLabel,
@@ -320,10 +321,10 @@
   /** Quick replies under the coach's latest message; hidden while a reply is in flight. */
   const quickReplies = $derived(loading ? [] : latestQuickReplies(messages));
 
+  /** A quick reply goes as its own message; a typed draft and staged files stay put. */
   function sendQuickReply(text: string) {
     if (loading) return;
-    input = text;
-    void send();
+    void send(text);
   }
 
   async function deleteConversation(cid: string) {
@@ -508,11 +509,16 @@
     };
   });
 
-  async function send() {
-    const text = input.trim();
-    if (!text && pendingImageUrls.length === 0 && readyDocs.length === 0) return;
+  /**
+   * Send the composer (text + staged photos/documents), or, with `quickReply`, just that
+   * reply as its own message: the typed draft and staged attachments stay untouched.
+   */
+  async function send(quickReply: string | null = null) {
+    const out = outgoingMessage(quickReply, { input, images: pendingImageUrls, docs: readyDocs });
+    if (!out) return;
+    const { text, fromComposer } = out;
     // Wait for documents still being read rather than sending without them.
-    if (docsReading) return;
+    if (fromComposer && docsReading) return;
     // Serialize sends: a reply still in flight (loading stays true from the
     // moment it's submitted until pollForCoachReply resolves it — see that
     // function's docstring) must finish before the next one starts, or a
@@ -521,15 +527,22 @@
     // same flag; this guards direct calls to send() too (e.g. Enter key).
     if (loading) return;
 
-    input = '';
-    await tick();
-    resizeChatInput();
+    let image_urls: string[] = [];
+    let documents: { name: string; content: string }[] = [];
+    if (fromComposer) {
+      input = '';
+      await tick();
+      resizeChatInput();
+    }
     const cid = await ensureConversation();
-    const image_urls = pendingImageUrls;
-    pendingImageUrls = [];
-    const documents = readyDocs.map((d) => ({ name: d.name, content: d.content as string }));
-    pendingDocs = [];
-    attachError = null;
+    if (fromComposer) {
+      // Staged files as of now (the composer awaited above); a quick reply never takes them.
+      image_urls = pendingImageUrls;
+      pendingImageUrls = [];
+      documents = readyDocs.map((d) => ({ name: d.name, content: d.content as string }));
+      pendingDocs = [];
+      attachError = null;
+    }
 
     const userMsg: Message = {
       id: `local-user-${Date.now()}`,

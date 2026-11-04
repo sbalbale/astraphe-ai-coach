@@ -21,9 +21,16 @@ export type PermissionEnv = {
   ios: boolean;
   /** Opened as an installed PWA (display-mode standalone). */
   standalone: boolean;
+  /** The browser has `PushManager` (web push). Defaults to true. */
+  pushManager?: boolean;
+  /** This browser has a push subscription (`pushManager.getSubscription()`). */
+  subscribed?: boolean;
 };
 
-/** Which permission card to show. */
+/**
+ * Which permission card to show. On the web, "on" needs an actual push subscription:
+ * permission granted without one shows 'default', whose button subscribes again.
+ */
 export function permissionState(env: PermissionEnv): PermissionState {
   if (env.native) {
     if (env.nativeStatus === 'granted') return 'granted';
@@ -31,10 +38,11 @@ export function permissionState(env: PermissionEnv): PermissionState {
     return 'default';
   }
   // iOS Safari only exposes web push to Home Screen apps; in a tab the API is missing.
+  // Other browsers (desktop, Android) can subscribe from a normal tab.
   if (env.ios && !env.standalone) return 'install';
-  if (env.webPermission === null) return 'unsupported';
-  if (env.webPermission === 'granted') return 'granted';
+  if (env.webPermission === null || env.pushManager === false) return 'unsupported';
   if (env.webPermission === 'denied') return 'denied';
+  if (env.webPermission === 'granted' && env.subscribed) return 'granted';
   return 'default';
 }
 
@@ -85,15 +93,21 @@ export function emailCapable(id: NotificationTypeId): boolean {
 }
 
 /**
- * Prefs with one channel flipped, or null when the change isn't allowed (email on a type
- * that can't email, or turning off the last channel).
+ * Prefs after tapping a channel, or null when nothing changes. Push is the only channel
+ * that delivers (email isn't sent yet, so its chip is "coming soon" and does nothing).
+ * Turning push off therefore turns the type off rather than leaving it on with nothing
+ * delivered; a type saved with push off gets push back.
  */
 export function toggleChannel(prefs: NotificationPrefs, id: NotificationTypeId, channel: 'push' | 'email'): NotificationPrefs | null {
-  if (channel === 'email' && !emailCapable(id)) return null;
+  if (channel === 'email') return null;
   const cur = prefs.types[id];
-  const next = { ...cur, [channel]: !(cur[channel] ?? false) };
-  if (!next.push && !next.email) return null;
-  return { ...prefs, types: { ...prefs.types, [id]: next } };
+  return withType(prefs, id, cur.push ? { on: false, push: true } : { push: true });
+}
+
+/** Switch a type on or off. Turning it on also turns push on (the channel that delivers). */
+export function toggleType(prefs: NotificationPrefs, id: NotificationTypeId): NotificationPrefs {
+  const on = !prefs.types[id].on;
+  return withType(prefs, id, on ? { on, push: true } : { on });
 }
 
 export function withType(prefs: NotificationPrefs, id: NotificationTypeId, patch: Partial<NotificationPrefs['types'][NotificationTypeId]>): NotificationPrefs {

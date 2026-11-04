@@ -8,7 +8,8 @@ import {
   permissionState,
   quietNote,
   testResultMessage,
-  toggleChannel
+  toggleChannel,
+  toggleType
 } from './notificationUi';
 
 const IPHONE = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 Safari/604.1';
@@ -20,11 +21,16 @@ describe('permissionState', () => {
     expect(permissionState({ ...web, ios: true, webPermission: null })).toBe('install');
     expect(permissionState({ ...web, ios: true, standalone: true, webPermission: 'default' })).toBe('default');
   });
-  it('maps browser permission', () => {
-    expect(permissionState({ ...web, webPermission: 'granted' })).toBe('granted');
+  it('maps browser permission (desktop / Android tabs can subscribe without installing)', () => {
+    expect(permissionState({ ...web, webPermission: 'granted', subscribed: true })).toBe('granted');
     expect(permissionState({ ...web, webPermission: 'denied' })).toBe('denied');
     expect(permissionState({ ...web, webPermission: 'default' })).toBe('default');
     expect(permissionState({ ...web, webPermission: null })).toBe('unsupported');
+    expect(permissionState({ ...web, webPermission: 'default', pushManager: false })).toBe('unsupported');
+  });
+  it('is only "on" with an actual subscription; otherwise offers to turn it on again', () => {
+    expect(permissionState({ ...web, webPermission: 'granted', subscribed: false })).toBe('default');
+    expect(permissionState({ ...web, webPermission: 'granted' })).toBe('default');
   });
   it('maps native permission', () => {
     expect(permissionState({ ...web, native: true, nativeStatus: 'granted', webPermission: null })).toBe('granted');
@@ -50,13 +56,19 @@ describe('devices', () => {
 });
 
 describe('channels', () => {
-  it('keeps at least one channel on', () => {
-    expect(toggleChannel(NOTIFICATION_DEFAULTS, 'debrief', 'push')).toBeNull();
-    const withEmail = toggleChannel(NOTIFICATION_DEFAULTS, 'weekly', 'email')!;
-    expect(withEmail.types.weekly.email).toBe(true);
-    expect(toggleChannel(withEmail, 'weekly', 'push')!.types.weekly).toMatchObject({ push: false, email: true });
+  it('turning push off turns the type off (email is not sent yet)', () => {
+    const off = toggleChannel(NOTIFICATION_DEFAULTS, 'weekly', 'push')!;
+    expect(off.types.weekly).toMatchObject({ on: false, push: true });
+    // Turning the type back on delivers by push again.
+    expect(toggleType(off, 'weekly').types.weekly).toMatchObject({ on: true, push: true });
   });
-  it('refuses email on types that cannot email', () => {
+  it('restores push on a type saved with push off', () => {
+    const saved = { ...NOTIFICATION_DEFAULTS, types: { ...NOTIFICATION_DEFAULTS.types, sync: { on: true, push: false, email: true } } };
+    expect(toggleChannel(saved, 'sync', 'push')!.types.sync).toMatchObject({ on: true, push: true });
+    expect(toggleType(toggleType(saved, 'sync'), 'sync').types.sync).toMatchObject({ on: true, push: true });
+  });
+  it('email is coming soon: tapping it changes nothing', () => {
+    expect(toggleChannel(NOTIFICATION_DEFAULTS, 'weekly', 'email')).toBeNull();
     expect(toggleChannel(NOTIFICATION_DEFAULTS, 'ready', 'email')).toBeNull();
   });
 });

@@ -21,7 +21,7 @@ export const NOTIFICATION_TYPE_IDS: NotificationTypeId[] = ['debrief', 'plan', '
 export const NOTIFICATION_OPTIONS: Partial<Record<NotificationTypeId, { label: string; values: [string, string][] }>> = {
   debrief: { label: 'When', values: [['now', 'Right away'], ['evening', 'Evening digest · 19:00']] },
   ready: { label: 'At', values: [['06:30', '06:30'], ['07:00', '07:00'], ['07:30', '07:30'], ['08:00', '08:00']] },
-  missed: { label: 'When', values: [['morning', 'Next morning'], ['evening', 'That evening · 20:00']] },
+  missed: { label: 'When', values: [['morning', 'Next morning'], ['evening', 'Next evening · 20:00']] },
   weekly: { label: 'Day', values: [['Sun', 'Sunday 18:00'], ['Mon', 'Monday 07:00']] }
 };
 

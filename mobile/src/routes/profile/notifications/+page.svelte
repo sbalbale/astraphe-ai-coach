@@ -16,7 +16,7 @@
   import { api } from '$lib/api';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { viewport } from '$lib/stores/viewport.svelte';
-  import { requestPushPermission, initPushNotifications } from '$lib/services/pushNotifications';
+  import { requestPushPermission, initPushNotifications, hasWebPushSubscription } from '$lib/services/pushNotifications';
   import { isStandaloneDisplayMode } from '$lib/utils/pwa';
   import {
     NOTIFICATION_DEFAULTS,
@@ -32,6 +32,7 @@
     quietNote,
     testResultMessage,
     toggleChannel,
+    toggleType as toggleTypePrefs,
     withType,
     type PermissionState
   } from '$lib/utils/notificationUi';
@@ -68,12 +69,16 @@
         nativeStatus = null;
       }
     }
+    const webPermission = 'Notification' in window ? Notification.permission : null;
     perm = permissionState({
       native,
       nativeStatus,
-      webPermission: 'Notification' in window ? Notification.permission : null,
+      webPermission,
       ios,
-      standalone: isStandaloneDisplayMode()
+      standalone: isStandaloneDisplayMode(),
+      pushManager: 'PushManager' in window,
+      // "On" needs a real subscription, not just the permission.
+      subscribed: !native && webPermission === 'granted' ? await hasWebPushSubscription() : false
     });
     if (perm === 'granted') {
       const d = await api.getNotificationDevices();
@@ -107,7 +112,7 @@
   }
 
   function toggleType(id: NotificationTypeId) {
-    void save(withType(prefs, id, { on: !prefs.types[id].on }));
+    void save(toggleTypePrefs(prefs, id));
   }
 
   function setOption(id: NotificationTypeId, value: string) {
@@ -182,7 +187,7 @@
           {/each}
         </section>
       {/each}
-      <span class="px-1 text-[11px] leading-normal text-text3">Email is saved for later: Astraphe doesn't send notification emails yet, so these arrive as push only.</span>
+      <span class="px-1 text-[11px] leading-normal text-text3">Email is coming soon. For now every notification arrives as push, so turning push off turns that notification off.</span>
     </div>
 
     <div class="flex flex-col gap-2.5 min-w-0">
