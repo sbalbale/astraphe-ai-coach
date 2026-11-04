@@ -9,7 +9,6 @@
   import { localDay } from '$lib/utils/localDay';
   import Card from '$lib/components/Card.svelte';
   import RadialProgress from '$lib/components/RadialProgress.svelte';
-  import Tag from '$lib/components/Tag.svelte';
   import EmptyStateCard from '$lib/components/ui/EmptyStateCard.svelte';
   import DashedNote from '$lib/components/ui/DashedNote.svelte';
   import DatePicker from '$lib/components/DatePicker.svelte';
@@ -25,11 +24,11 @@
   import { addDays, format, subDays } from 'date-fns';
   import { boundedScoreCssColor } from '$lib/colorSystem';
   import { CHART_ATL_STROKE, CHART_CTL_STROKE, formCssColor } from '$lib/scoreColors';
-  import { canonicalHrZoneShortName, formatHrZoneTitle } from '$lib/hrZoneDisplay';
+  import { canonicalHrZoneShortName } from '$lib/hrZoneDisplay';
   import { normalizeUnits, workoutDistanceParts } from '$lib/utils/units';
   import { workoutDurationSecs } from '$lib/utils/workoutDuration';
   import { viewport } from '$lib/stores/viewport.svelte';
-  import { bodyEyebrow, dayStrain } from '$lib/utils/bodyWide';
+  import { bodyEyebrow, dayStrain, workoutStrainContribution } from '$lib/utils/bodyWide';
   import BodyScoreTabs from '$lib/components/wide/body/BodyScoreTabs.svelte';
   import StrainWide from '$lib/components/wide/body/StrainWide.svelte';
 
@@ -202,17 +201,6 @@
     return Math.round(vals.reduce((a, b) => a + b, 0) / vals.length);
   });
 
-  function getWorkoutIcon(type: string) {
-    const t = type?.toLowerCase();
-    if (t === 'run' || t === 'running') return '🏃';
-    if (t === 'bike' || t === 'cycling') return '🚴';
-    if (t === 'row' || t === 'rowing') return '🚣';
-    if (t === 'swim' || t === 'swimming') return '🏊';
-    if (t === 'strength' || t === 'strength_training' || t === 'gym') return '💪';
-    if (t === 'mobility') return '🧘';
-    return '⭐';
-  }
-
   function getWorkoutLabel(type: string) {
     const t = type?.toLowerCase();
     if (t === 'strength_training' || t === 'strength' || t === 'gym') return 'Strength';
@@ -229,16 +217,6 @@
     if (t === 'mobility') return '#a855f7'; // sport-type color, no design token
     if (t === 'other') return 'var(--amber)';
     return 'var(--text2)';
-  }
-
-  function getWorkoutBg(type: string) {
-    const t = type?.toLowerCase();
-    if (t === 'run' || t === 'running') return 'bg-blue-dim border-blue-glow';
-    if (t === 'bike' || t === 'cycling') return 'bg-teal-dim border-teal/30';
-    if (t === 'row' || t === 'rowing') return 'bg-amber-dim border-amber/30';
-    if (t === 'mobility') return 'bg-glass border-[rgba(168,85,247,0.35)]';
-    if (t === 'other') return 'bg-glass border-[rgba(234,179,8,0.35)]';
-    return 'bg-glass border-border';
   }
 
   function getDurationSecs(w: any): number {
@@ -416,13 +394,13 @@
       <section aria-label="Contributing activities" class="flex flex-col gap-2">
         <span class="font-mono text-[11px] tracking-[0.14em] text-text2">CONTRIBUTING</span>
         {#each d.workouts as w (w.id || w.started_at)}
-          {@const strainVal = Number.isFinite(Number(w?.strain_score)) ? Math.round(Number(w.strain_score)) : null}
+          {@const strainVal = Math.round(workoutStrainContribution(w))}
           {@const tssVal = Number.isFinite(Number(w?.tss)) ? Math.round(Number(w.tss)) : null}
           {@const zp = [1, 2, 3, 4, 5].map((z) => Number(w?.[`hr_zone_${z}_pct`]) || 0)}
           <button type="button" class="flex flex-col gap-2.5 px-4 py-3.5 rounded-[18px] bg-bg1 border border-border text-left w-full cursor-pointer" onclick={() => openWorkoutDetails(w)}>
             <span class="flex justify-between items-baseline">
               <span class="text-sm font-medium text-text0">{w.title || (getWorkoutLabel(w.sport) + ' Session')}</span>
-              <span class="font-mono text-xs text-blue">{strainVal === null ? '--' : `+${strainVal}`}</span>
+              <span class="font-mono text-xs text-blue">+{strainVal}</span>
             </span>
             {#if zp.some((p) => p > 0)}
               <span aria-hidden="true" class="flex gap-[3px] h-1.5">
@@ -449,141 +427,80 @@
 
 <Modal
   show={showWorkoutModal}
-  title={selectedWorkout?.title || (getWorkoutLabel(selectedWorkout?.sport) + ' Details')}
+  title={selectedWorkout ? `${getWorkoutLabel(selectedWorkout.sport)} · ${format(new Date(selectedWorkout.started_at), 'EEE d MMM')}` : 'Workout'}
   onClose={() => (showWorkoutModal = false)}
 >
   {#if selectedWorkout}
-    {@const selectedStrainVal = Number.isFinite(Number(selectedWorkout?.strain_score)) ? Math.round(Number(selectedWorkout.strain_score)) : null}
-    {@const selectedTssVal = Number.isFinite(Number(selectedWorkout?.tss)) ? Math.round(Number(selectedWorkout.tss)) : null}
-    <div class="flex flex-col gap-6">
-      <div class="flex items-center gap-4">
-        <div class="w-14 h-14 rounded-2xl flex items-center justify-center text-[28px] {getWorkoutBg(selectedWorkout.sport)}">
-          {getWorkoutIcon(selectedWorkout.sport)}
-        </div>
-        <div>
-          <h3 class="text-lg font-bold text-text0">{selectedWorkout.title || (getWorkoutLabel(selectedWorkout.sport) + ' Session')}</h3>
-          <p class="text-xs text-text2 font-mono uppercase">
-            {format(new Date(selectedWorkout.started_at), 'MMMM d, yyyy')} · {format(new Date(selectedWorkout.started_at), (athleteStore.profile as any)?.time_format === '24h' ? 'HH:mm' : 'h:mm a')}
-          </p>
-        </div>
+    {@const w = selectedWorkout}
+    {@const strainVal = Math.round(workoutStrainContribution(w))}
+    {@const tssVal = Number.isFinite(Number(w?.tss)) ? Math.round(Number(w.tss)) : null}
+    {@const secs = getDurationSecs(w)}
+    {@const zp = [1, 2, 3, 4, 5].map((z) => Number(w?.[`hr_zone_${z}_pct`]) || 0)}
+    {@const tiles = [
+      { k: 'Strain', v: `+${strainVal}`, c: 'text-blue' },
+      { k: 'Duration', v: secs >= 3600 ? `${Math.floor(secs / 3600)}h ${String(Math.round((secs % 3600) / 60)).padStart(2, '0')}m` : formatMinutes(secs), c: 'text-text0' },
+      tssVal !== null ? { k: 'TSS', v: String(tssVal), c: 'text-text0' } : null,
+      w.avg_hr ? { k: 'Avg HR', v: `${w.avg_hr} bpm`, c: 'text-text0' } : null,
+      selectedWorkoutDistance ? { k: 'Distance', v: `${selectedWorkoutDistance.value} ${selectedWorkoutDistance.unit.toLowerCase()}`, c: 'text-text0' } : null,
+      w.norm_power_w ? { k: 'Norm. power', v: `${w.norm_power_w} W`, c: 'text-text0' } : null
+    ].filter((t) => t !== null)}
+    <div class="flex flex-col gap-4">
+      <div class="flex flex-col gap-1">
+        <span class="font-mono text-[11px] tracking-[0.14em] text-blue uppercase">
+          {getWorkoutLabel(w.sport)} · {format(new Date(w.started_at), (athleteStore.profile as any)?.time_format === '24h' ? 'HH:mm' : 'h:mm a')}
+        </span>
+        <h3 class="m-0 font-display font-normal text-[32px] leading-[1.05] text-text0">{w.title || `${getWorkoutLabel(w.sport)} session`}</h3>
       </div>
 
-      <div class="grid grid-cols-2 gap-3">
-        <div class="p-4 rounded-2xl bg-glass border border-border/50">
-          <p class="text-[10px] text-text2 font-mono uppercase mb-1">Intensity</p>
-          <div class="flex items-baseline gap-1">
-            <span class="text-[20px] font-bold tabular-nums" style:color={boundedScoreCssColor(selectedStrainVal)}>
-              {selectedStrainVal === null ? '--' : selectedStrainVal}
-            </span>
-            <span class="text-[10px] text-text2 font-mono">STRAIN</span>
+      <div class="grid grid-cols-2 gap-2">
+        {#each tiles as t (t.k)}
+          <div class="px-3.5 py-3 rounded-2xl bg-bg2 border border-border flex flex-col gap-0.5">
+            <span class="text-[20px] font-medium tabular-nums {t.c}">{t.v}</span>
+            <span class="text-[12px] text-text2">{t.k}</span>
           </div>
-        </div>
-        <div class="p-4 rounded-2xl bg-glass border border-border/50">
-          <p class="text-[10px] text-text2 font-mono uppercase mb-1">Duration</p>
-          <div class="flex items-baseline gap-1">
-            <span class="text-[20px] font-bold text-text0">{Math.floor(getDurationSecs(selectedWorkout) / 60)}</span>
-            <span class="text-[10px] text-text2 font-mono">MIN</span>
-          </div>
-        </div>
-        {#if selectedWorkout.avg_hr}
-          <div class="p-4 rounded-2xl bg-glass border border-border/50">
-            <p class="text-[10px] text-text2 font-mono uppercase mb-1">Avg HR</p>
-            <div class="flex items-baseline gap-1">
-              <span class="text-[20px] font-bold text-text0">{selectedWorkout.avg_hr}</span>
-              <span class="text-[10px] text-text2 font-mono">BPM</span>
-            </div>
-          </div>
-        {/if}
-        <div class="p-4 rounded-2xl bg-glass border border-border/50">
-          <p class="text-[10px] text-text2 font-mono uppercase mb-1">Stress</p>
-          <div class="flex items-baseline gap-1">
-            <span
-              class="text-[20px] font-bold tabular-nums"
-              style:color={boundedScoreCssColor(selectedTssVal === null ? null : selectedStrainVal, true)}
-            >
-              {selectedTssVal === null ? '--' : selectedTssVal}
-            </span>
-            <span class="text-[10px] text-text2 font-mono">TSS</span>
-          </div>
-        </div>
-        {#if selectedWorkoutDistance}
-          <div class="p-4 rounded-2xl bg-glass border border-border/50">
-            <p class="text-[10px] text-text2 font-mono uppercase mb-1">Distance</p>
-            <div class="flex items-baseline gap-1">
-              <span class="text-[20px] font-bold text-text0">{selectedWorkoutDistance.value}</span>
-              <span class="text-[10px] text-text2 font-mono uppercase">{selectedWorkoutDistance.unit}</span>
-            </div>
-          </div>
-        {/if}
+        {/each}
       </div>
+
+      {#if zp.some((p) => p > 0)}
+        <section aria-label="Heart-rate zones" class="flex flex-col gap-2.5 p-4 rounded-[20px] bg-bg2 border border-border">
+          <span class="font-display text-[20px] leading-none">Heart-rate zones</span>
+          <span aria-hidden="true" class="flex gap-[3px] h-1.5">
+            {#each zp as p, i (i)}
+              {#if p > 0}<span class="rounded-[3px]" style="flex: {p} 1 0; background: var(--zone-{i + 1})"></span>{/if}
+            {/each}
+          </span>
+          {#each [5, 4, 3, 2, 1] as zone (zone)}
+            {@const p = zp[zone - 1]}
+            <div class="flex items-center gap-2.5 text-[13px] {p > 0 ? 'text-text0' : 'text-text3'}">
+              <span aria-hidden="true" class="w-2 h-2 rounded-sm shrink-0" style="background: var(--zone-{zone}); opacity: {p > 0 ? 1 : 0.4}"></span>
+              <span class="font-mono text-[12px] w-6">Z{zone}</span>
+              <span class="flex-1 truncate {p > 0 ? 'text-text1' : ''}">{canonicalHrZoneShortName(zone)}</span>
+              <span class="font-mono text-[12px] w-10 text-right">{p}%</span>
+              <span class="font-mono text-[12px] w-12 text-right text-text2">{formatMinutes((p / 100) * secs)}</span>
+            </div>
+          {/each}
+        </section>
+      {/if}
+
+      {#if hasPremiumAccess(authStore.tier)}
+        <section aria-label="Coach analysis" class="flex flex-col gap-2 p-4 rounded-[20px] bg-bg1 border border-dashed border-popover-border">
+          <span class="font-mono text-[10px] tracking-[0.12em] text-blue">COACH ANALYSIS</span>
+          {#if workoutAnalysisLoading && !workoutAnalysisMemo.has(w.id)}
+            <p class="m-0 text-sm text-text2 animate-pulse">Analyzing workout…</p>
+          {:else}
+            <p class="m-0 text-[14px] leading-[1.55] text-text1">{workoutAnalysisMemo.get(w.id) ?? 'Insight unavailable.'}</p>
+          {/if}
+        </section>
+      {/if}
 
       <button
         type="button"
-        class="w-full rounded-xl border border-blue/30 bg-blue/10 px-4 py-3 text-[13px] font-semibold text-blue transition-colors hover:bg-blue/15 disabled:cursor-not-allowed disabled:opacity-50"
-        disabled={!selectedWorkout.id}
+        class="w-full h-12 rounded-[14px] border-0 bg-blue text-on-accent text-[15px] font-semibold cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
+        disabled={!w.id}
         onclick={viewSelectedWorkout}
       >
-        View full workout
+        Open workout
       </button>
-
-      {#if hasPremiumAccess(authStore.tier)}
-        <div class="mt-4 pt-4 border-t border-border/40 rounded-xl p-3 bg-bg1">
-          <div class="flex items-center gap-1.5 mb-2">
-            <span class="text-[11px] font-mono uppercase tracking-[0.08em] text-blue">AI Insight</span>
-            <Tag color="var(--blue)">ASTRAPHE</Tag>
-          </div>
-          {#if workoutAnalysisLoading && !workoutAnalysisMemo.has(selectedWorkout.id)}
-            <p class="text-xs text-text2 animate-pulse">Analyzing workout...</p>
-          {:else}
-            <p class="text-xs text-text1 leading-relaxed">
-              {workoutAnalysisMemo.get(selectedWorkout.id) ?? 'Insight unavailable.'}
-            </p>
-          {/if}
-        </div>
-      {/if}
-
-      {#if selectedWorkout.hr_zone_1_pct !== undefined || selectedWorkout.hr_zone_2_pct !== undefined}
-        <div class="flex flex-col gap-4">
-          <p class="text-[13px] font-semibold">Heart Rate Zones</p>
-          <div class="flex flex-col gap-3">
-            {#each [5, 4, 3, 2, 1] as zone (zone)}
-              {@const pct = selectedWorkout[`hr_zone_${zone}_pct`] || 0}
-              {@const zTitle = formatHrZoneTitle(zone)}
-              <div class="flex items-center gap-3">
-                <div class="min-w-[5.25rem] max-w-[6rem] flex items-center gap-1.5 shrink-0">
-                  <div class="w-2 h-2 shrink-0 rounded-full" style="background: var(--zone-{zone})"></div>
-                  <div class="min-w-0 leading-tight" title={zTitle}>
-                    <span class="block text-[10px] font-mono text-text2">Z{zone}</span>
-                    <span class="block text-[9px] text-text2 truncate">{canonicalHrZoneShortName(zone)}</span>
-                  </div>
-                </div>
-                <div class="flex-1 h-1.5 bg-glass rounded-full overflow-hidden relative">
-                   <div 
-                    class="absolute inset-y-0 left-0 rounded-full transition-all duration-500" 
-                    style="width: {pct}%; background: var(--zone-{zone})"
-                  ></div>
-                </div>
-                <div class="w-8 text-right shrink-0">
-                  <span class="text-[11px] font-bold font-mono {pct > 0 ? 'text-text1' : 'text-text2'}">{pct}%</span>
-                </div>
-              </div>
-            {/each}
-          </div>
-        </div>
-      {/if}
-
-      <div class="p-4 rounded-xl bg-glass border border-border/50 flex flex-col gap-2">
-         <div class="flex justify-between items-center">
-            <span class="text-xs text-text2">Source</span>
-            <span class="text-xs font-mono font-medium text-text1 uppercase">{selectedWorkout.source || 'Manual'}</span>
-         </div>
-         {#if selectedWorkout.norm_power_w}
-          <div class="flex justify-between items-center">
-              <span class="text-xs text-text2">Normalized Power</span>
-              <span class="text-xs font-mono font-medium text-text1">{selectedWorkout.norm_power_w} W</span>
-          </div>
-         {/if}
-      </div>
     </div>
   {/if}
 </Modal>
