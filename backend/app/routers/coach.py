@@ -288,13 +288,33 @@ def list_conversations(
     _require_premium(config)
     res = (
         db.table("coach_conversations")
-        .select("id,title,created_at,updated_at,started_by,trigger,context,unread")
+        .select("id,title,created_at,updated_at,started_by,trigger,context,unread,coach_messages(count)")
         .eq("athlete_id", athlete_id)
         .order("updated_at", desc=True)
-        .limit(50)
+        .limit(_CONVERSATION_SCAN)
         .execute()
     )
-    return {"status": "success", "conversations": res.data or []}
+    return {"status": "success", "conversations": _with_messages(res.data or [])[:_CONVERSATION_LIST]}
+
+
+_CONVERSATION_LIST = 50
+# Read a few more than are listed: empty ones are dropped after the query.
+_CONVERSATION_SCAN = 80
+
+
+def _with_messages(rows: list[dict]) -> list[dict]:
+    """Conversations that have at least one message. A chat is created before its first
+    message is sent (to upload photos into it), so an abandoned attempt leaves an empty
+    "New chat" behind; those stay out of the history. The count comes from the embedded
+    `coach_messages(count)`; a row without it is kept."""
+    out = []
+    for r in rows:
+        r = dict(r)
+        embedded = r.pop("coach_messages", None)
+        count = embedded[0].get("count") if isinstance(embedded, list) and embedded and isinstance(embedded[0], dict) else None
+        if count is None or count > 0:
+            out.append(r)
+    return out
 
 
 @router.post("/conversations/{conversation_id}/read")

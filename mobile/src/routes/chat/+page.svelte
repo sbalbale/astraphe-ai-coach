@@ -276,17 +276,29 @@
     }
   }
 
-  async function ensureConversation() {
+  // One create at a time: several photos picked together each asked for a conversation and
+  // each got a new one, leaving empty "New chat"s in the history.
+  let creatingConversation: Promise<string | null> | null = null;
+
+  /** The open conversation, created on first need (a send, or a photo upload). It joins the
+   * history list once it has a message (the list refreshes after each send; the server
+   * leaves empty chats out). */
+  async function ensureConversation(): Promise<string | null> {
     if (conversationId) return conversationId;
-    const created = await api.createCoachConversation();
-    const cid = created?.conversation?.id;
-    if (cid) {
-      conversationId = cid;
-      conversations = [{ id: cid, title: created?.conversation?.title }, ...conversations];
-      return cid as string;
-    }
-    conversationId = null;
-    return null;
+    if (creatingConversation) return creatingConversation;
+    const token = activePollToken;
+    creatingConversation = (async () => {
+      try {
+        const created = await api.createCoachConversation();
+        const cid = (created?.conversation?.id as string | undefined) ?? null;
+        // Started a new chat (or opened another) meanwhile: don't point the screen at this one.
+        if (cid && token === activePollToken) conversationId = cid;
+        return cid;
+      } finally {
+        creatingConversation = null;
+      }
+    })();
+    return creatingConversation;
   }
 
   async function newChat() {
@@ -360,9 +372,9 @@
     }
   }
 
-  async function pickImage() {
-    const cid = await ensureConversation();
-    if (!cid) return;
+  function pickImage() {
+    // The conversation is created once photos are actually picked (onFilesSelected), so
+    // cancelling the picker leaves nothing behind.
     fileInput?.click();
   }
 
