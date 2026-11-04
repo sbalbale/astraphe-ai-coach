@@ -17,13 +17,13 @@ def test_defaults_and_legacy_flags():
     assert p["quiet"] == {"on": True, "from": "22:00", "to": "07:00"}
     # Old flat keys still switch the matching types off.
     p = np.effective({"readiness": False, "coach": False})
-    assert not p["types"]["ready"]["on"] and not p["types"]["debrief"]["on"] and not p["types"]["plan"]["on"]
+    assert not p["types"]["ready"]["on"] and not p["types"]["debrief"]["on"] and not p["types"]["reply"]["on"]
     assert p["types"]["weekly"]["on"]
 
 
 def test_bad_values_are_ignored():
-    p = np.effective({"types": {"ready": {"opt": "03:00", "on": "yes"}, "nope": {"on": False}}, "quiet": {"from": "25:99"}, "texts": "loud"})
-    assert p["types"]["ready"]["opt"] == "07:00" and p["types"]["ready"]["on"] is True
+    p = np.effective({"types": {"debrief": {"opt": "later", "on": "yes"}, "nope": {"on": False}}, "quiet": {"from": "25:99"}, "texts": "loud"})
+    assert p["types"]["debrief"]["opt"] == "now" and p["types"]["debrief"]["on"] is True
     assert "nope" not in p["types"]
     assert p["quiet"]["from"] == "22:00" and p["texts"] == "active"
 
@@ -41,9 +41,12 @@ def test_legacy_type_names_still_gate_pushes():
     assert np.legacy_type_enabled({}, "coach") is True
     assert np.legacy_type_enabled({"types": {"ready": {"on": False}}}, "ready") is False
     # Saved v2 settings (no flat keys): old names map onto the v2 types.
-    v2_off = {"v": 2, "types": {"debrief": {"on": False}, "plan": {"push": False}}}
+    v2_off = {"v": 2, "types": {"debrief": {"on": False}, "reply": {"push": False}}}
     assert np.legacy_type_enabled(v2_off, "coach") is False
-    assert np.legacy_type_enabled({"v": 2, "types": {"plan": {"on": False}}}, "coach") is True
+    assert np.legacy_type_enabled({"v": 2, "types": {"reply": {"on": False}}}, "coach") is True
+    # Chat-reply pushes have their own type now.
+    assert np.legacy_type_enabled({"v": 2, "types": {"reply": {"on": False}}}, "reply") is False
+    assert np.legacy_type_enabled({"v": 2, "types": {"debrief": {"on": False}}}, "reply") is True
     assert np.legacy_type_enabled({"v": 2, "types": {"ready": {"on": False}}}, "readiness") is False
     assert np.legacy_type_enabled({"v": 2, "types": {"weekly": {"push": False}}}, "insights") is False
 
@@ -154,10 +157,11 @@ def test_profile_accepts_and_normalizes_v2_notification_settings():
 
     from app.models.athlete import AthleteProfileUpdate
 
-    p = AthleteProfileUpdate(notification_settings={"v": 2, "types": {"ready": {"on": False, "opt": "06:30"}, "bogus": {}}, "quiet": {"on": True, "from": "23:00", "to": "06:00"}, "texts": "off", "junk": 1})
+    p = AthleteProfileUpdate(notification_settings={"v": 2, "types": {"ready": {"on": False, "opt": "06:30"}, "plan": {"on": False}, "bogus": {}}, "quiet": {"on": True, "from": "23:00", "to": "06:00"}, "texts": "off", "junk": 1})
     ns = p.notification_settings
-    assert ns["types"]["ready"] == {"on": False, "opt": "06:30", "push": True}
-    assert "bogus" not in ns["types"] and "junk" not in ns
+    # Readiness has no time option any more (it follows the sleep sync); removed types are dropped.
+    assert ns["types"]["ready"] == {"on": False, "push": True}
+    assert "bogus" not in ns["types"] and "plan" not in ns["types"] and "junk" not in ns
     assert ns["quiet"] == {"on": True, "from": "23:00", "to": "06:00"} and ns["texts"] == "off"
     with pytest.raises(ValidationError):
         AthleteProfileUpdate(notification_settings={"types": {"debrief": {"x": "y" * 5000}}})

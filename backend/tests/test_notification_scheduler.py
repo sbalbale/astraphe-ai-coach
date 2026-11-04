@@ -27,10 +27,19 @@ def test_weekly_on_the_chosen_day():
     assert ns.weekly_due(mon, at(2026, 11, 9, 7, 5))  # Monday 07:05
 
 
-def test_readiness_waits_for_sleep_except_at_the_end_of_the_window():
-    assert ns.readiness_should_wait(at(2026, 11, 3, 7, 5), "07:00", has_score=False)
-    assert not ns.readiness_should_wait(at(2026, 11, 3, 7, 52), "07:00", has_score=False)
-    assert not ns.readiness_should_wait(at(2026, 11, 3, 7, 5), "07:00", has_score=True)
+def test_readiness_needs_last_nights_sleep():
+    assert ns.readiness_ready({"sleep_duration_min": 420, "readiness_score": 71})
+    # A readiness score without sleep is form only: wait for the sleep.
+    assert not ns.readiness_ready({"sleep_duration_min": None, "readiness_score": 40})
+    assert not ns.readiness_ready({"sleep_duration_min": 420, "readiness_score": None})
+    assert not ns.readiness_ready(None)
+
+
+def test_readiness_only_in_the_morning():
+    assert ns.readiness_window(at(2026, 11, 3, 4, 0))
+    assert ns.readiness_window(at(2026, 11, 3, 11, 55))
+    assert not ns.readiness_window(at(2026, 11, 3, 12, 0))
+    assert not ns.readiness_window(at(2026, 11, 3, 3, 55))
 
 
 def test_weekly_covers_the_last_sunday_to_saturday_week():
@@ -177,6 +186,23 @@ def test_held_debriefs_look_back_36_hours_from_the_tick_time():
     since = q.gte.call_args.args[1]
     # Covers yesterday's 20:30 local workout (01:30 UTC on the 3rd), after yesterday's window.
     assert since == "2026-11-02T12:05:00+00:00" and since < "2026-11-03T01:30:00+00:00"
+
+
+def test_readiness_goes_out_once_the_sleep_is_recorded():
+    claim, release = _claims()
+    db = _Db(
+        biometrics=[{"athlete_id": "a1", "date": "2026-11-04", "sleep_duration_min": None, "readiness_score": 40}],
+        training_plans=[{"athlete_id": "a1", "planned_date": "2026-11-04", "title": "Easy spin", "duration_min": 45, "status": "planned"}],
+    )
+    with patch.object(ns.cn, "claim", side_effect=claim), patch("app.services.push.send_push_to_athlete") as push:
+        ns.send_readiness(db, "a1", at(2026, 11, 4, 6, 5))  # no sleep yet: nothing
+        push.assert_not_called()
+        db.rows["biometrics"][0].update(sleep_duration_min=450, readiness_score=74)
+        ns.send_readiness(db, "a1", at(2026, 11, 4, 6, 10))  # sleep synced: sent
+        ns.send_readiness(db, "a1", at(2026, 11, 4, 6, 15))  # once a day
+    assert push.call_count == 1
+    kw = push.call_args.kwargs
+    assert kw["title"] == "Readiness 74 · ready to train" and kw["body"] == "Today: Easy spin, 45 min."
 
 
 def test_weekly_compose_failure_retries_once():

@@ -653,7 +653,7 @@ async def _run_coach_response_and_notify(
                 body=preview,
                 db=db,
                 data={"url": "/chat", "conversation_id": conversation_id},
-                notification_type="coach",
+                notification_type="reply",
             )
         except Exception:
             pass
@@ -777,7 +777,7 @@ async def chat_with_coach(
                 body=preview,
                 db=db,
                 data={"url": "/chat"},
-                notification_type="coach",
+                notification_type="reply",
             )
         except Exception:
             pass

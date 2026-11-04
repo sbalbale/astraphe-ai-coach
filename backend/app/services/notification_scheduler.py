@@ -1,4 +1,4 @@
-"""Timed notifications: morning readiness, evening debrief digest (and debriefs held back by
+"""Timed notifications: morning readiness (once last night's sleep is recorded), evening debrief digest (and debriefs held back by
 quiet hours), weekly summary, sync problems.
 
 `notification_loop` ticks every few minutes in every API replica. Each send is claimed in
@@ -30,6 +30,11 @@ LATE_WINDOW_MIN = 180
 # Debriefs held for the 19:00 digest: everything since the previous day's window (a 20:30
 # workout misses today's 19:00 window and goes out tomorrow).
 HELD_LOOKBACK_HOURS = 36
+# Morning readiness goes out at the first tick that finds last night's sleep recorded (and
+# outside quiet hours), between these local times. Sleep that syncs in the afternoon gets no
+# push; a late nap or a hand-logged night in the evening never counts as the morning one.
+READY_FROM = "04:00"
+READY_UNTIL = "12:00"
 STALE_HOURS = 48
 # Sync-problem alerts for one outage (since the last data arrived): at most this many,
 # 3 days apart, then 6 days.
@@ -127,9 +132,8 @@ def tick_athlete(db: Any, athlete: dict, now_utc: datetime) -> None:
     if quiet:
         return
     send_held_debriefs(db, aid, prefs, local_now, now_utc)
-    ready_at = np.option(prefs, "ready") or "07:00"
-    if np.push_enabled(prefs, "ready") and in_window(local_now, ready_at):
-        send_readiness(db, aid, local_now, ready_at)
+    if np.push_enabled(prefs, "ready") and readiness_window(local_now):
+        send_readiness(db, aid, local_now)
     if np.push_enabled(prefs, "weekly") and weekly_due(prefs, local_now):
         send_weekly(db, aid, prefs, local_now)
     if np.push_enabled(prefs, "sync") and in_window(local_now, "09:00"):
@@ -195,34 +199,38 @@ def _readiness_label(score: float) -> str:
     return "take it easy"
 
 
-def readiness_should_wait(local_now: datetime, at: str, has_score: bool) -> bool:
-    """Without today's score yet, wait for the sleep sync, except in the window's last 10 minutes."""
-    if has_score:
-        return False
-    elapsed = local_now.hour * 60 + local_now.minute - _minutes(at)
-    return elapsed < WINDOW_MIN - 10
+def readiness_window(local_now: datetime) -> bool:
+    """Morning hours in which a newly recorded sleep sends the readiness push."""
+    now_m = local_now.hour * 60 + local_now.minute
+    return _minutes(READY_FROM) <= now_m < _minutes(READY_UNTIL)
 
 
-def send_readiness(db: Any, aid: str, local_now: datetime, at: str) -> None:
+def readiness_ready(row: Optional[dict]) -> bool:
+    """Today's biometrics have last night's sleep and the readiness computed from it.
+    (A readiness score alone isn't enough: it's computed from form even with no sleep.)"""
+    return bool(row) and float(row.get("sleep_duration_min") or 0) > 0 and row.get("readiness_score") is not None
+
+
+def send_readiness(db: Any, aid: str, local_now: datetime) -> None:
+    """Sent once a day, as soon as last night's sleep is recorded (checked every tick)."""
     from app.services.push import send_push_to_athlete
 
     today = local_now.date().isoformat()
-    bio = db.table("biometrics").select("readiness_score,recovery_score,hrv_rmssd,sleep_duration_min").eq("athlete_id", aid).eq("date", today).limit(1).execute().data or []
-    score = (bio[0].get("readiness_score") or bio[0].get("recovery_score")) if bio else None
-    if readiness_should_wait(local_now, at, score is not None):
+    bio = db.table("biometrics").select("readiness_score,sleep_duration_min").eq("athlete_id", aid).eq("date", today).limit(1).execute().data or []
+    row = bio[0] if bio else None
+    if not readiness_ready(row):
         return
+    score = row.get("readiness_score")
     if not cn.claim(aid, "ready", today):
         return
     plans = db.table("training_plans").select("title,duration_min,status").eq("athlete_id", aid).eq("planned_date", today).execute().data or []
     session = next((p for p in plans if p.get("status") != "done"), None)
-    title = f"Readiness {round(float(score))} · {_readiness_label(float(score))}" if score is not None else "Good morning"
+    title = f"Readiness {round(float(score))} · {_readiness_label(float(score))}"
     body = (
         f"Today: {session['title']}, {int(session.get('duration_min') or 0)} min."
         if session
         else "Nothing planned today. Rest well."
     )
-    if score is None:
-        body += " Your sleep hasn't synced yet."
     send_push_to_athlete(athlete_id=aid, title=title, body=body, db=db, data={"url": "/readiness", "type": "ready"})
 
 

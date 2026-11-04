@@ -101,8 +101,8 @@ export type TypeMeta = { id: NotificationTypeId; group: string; name: string; de
 /** Rows in screen order, grouped as in the design. */
 export const TYPE_META: TypeMeta[] = [
   { id: 'debrief', group: 'COACH', name: 'Post-workout debrief', desc: 'A short note from your coach after each synced workout. Reply right in the chat.', opens: 'Coach chat for that workout' },
-  { id: 'plan', group: 'COACH', name: 'Plan changed by your coach', desc: 'When a session is moved, swapped or shortened for you.', opens: 'The changed session' },
-  { id: 'ready', group: 'DAILY', name: 'Morning readiness', desc: 'Your readiness score with today’s session.', opens: 'Readiness' },
+  { id: 'reply', group: 'COACH', name: 'Coach replies', desc: 'When your coach finishes a reply after you’ve left the chat or the app.', opens: 'That chat' },
+  { id: 'ready', group: 'DAILY', name: 'Morning readiness', desc: 'Your readiness score with today’s session, as soon as last night’s sleep syncs.', opens: 'Readiness' },
   { id: 'weekly', group: 'SUMMARIES', name: 'Weekly summary', desc: 'Load, form and sleep for the week, with what’s next.', opens: 'Trends' },
   { id: 'sync', group: 'ACCOUNT', name: 'Sync problems', desc: 'When Garmin or WHOOP disconnects or stops sending data.', opens: 'Connected apps' }
 ];

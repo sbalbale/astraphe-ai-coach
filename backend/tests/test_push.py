@@ -152,18 +152,18 @@ def test_send_push_to_athlete_respects_disabled_notification_type():
     assert result == 0
 
 
-def test_chat_reply_push_follows_v2_coach_types_and_quiet_hours():
+def test_chat_reply_push_follows_its_setting_and_quiet_hours():
     tokens = [{"token": "t1", "platform": "ios"}]
-    both_off = {"v": 2, "types": {"debrief": {"on": False}, "plan": {"push": False}}, "quiet": {"on": False}}
+    both_off = {"v": 2, "types": {"reply": {"push": False}}, "quiet": {"on": False}}
     one_on = {"v": 2, "types": {"debrief": {"on": False}}, "quiet": {"on": False}}
     with patch.object(push_module, "_send_fcm", return_value=True):
-        # Saved v2 settings have no 'coach' key: the coach types decide.
-        assert push_module.send_push_to_athlete("a", "T", "B", _PushDb({"notification_settings": both_off}, tokens), notification_type="coach") == 0
-        assert push_module.send_push_to_athlete("a", "T", "B", _PushDb({"notification_settings": one_on}, tokens), notification_type="coach") == 1
+        # The coach-reply setting decides (debrief being off doesn't matter).
+        assert push_module.send_push_to_athlete("a", "T", "B", _PushDb({"notification_settings": both_off}, tokens), notification_type="reply") == 0
+        assert push_module.send_push_to_athlete("a", "T", "B", _PushDb({"notification_settings": one_on}, tokens), notification_type="reply") == 1
         quiet = {"v": 2, "quiet": {"on": True, "from": "22:00", "to": "07:00"}}
         with patch("app.services.notification_prefs.in_quiet_hours", return_value=True):
             db = _PushDb({"notification_settings": quiet, "timezone_offset_min": -300}, tokens)
-            assert push_module.send_push_to_athlete("a", "T", "B", db, notification_type="coach") == 0
+            assert push_module.send_push_to_athlete("a", "T", "B", db, notification_type="reply") == 0
             # Untyped pushes (e.g. the test button) aren't held.
             assert push_module.send_push_to_athlete("a", "T", "B", db) == 1
 

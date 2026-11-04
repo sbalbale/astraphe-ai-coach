@@ -5,8 +5,8 @@ Shape (v2, matches the Notification settings screen):
     "v": 2,
     "types": {
       "debrief": {"on": true, "opt": "now",     "push": true},          # now | evening
-      "plan":    {"on": true,                   "push": true, "email": false},
-      "ready":   {"on": true, "opt": "07:00",   "push": true},          # 06:30 | 07:00 | 07:30 | 08:00
+      "reply":   {"on": true,                   "push": true},          # a coach reply finished after you left the chat
+      "ready":   {"on": true,                   "push": true},          # once last night's sleep is recorded
       "weekly":  {"on": true, "opt": "Sun",     "push": true, "email": true},   # Sun | Mon
       "sync":    {"on": true,                   "push": true, "email": true}
     },
@@ -23,11 +23,10 @@ import copy
 from datetime import datetime, time
 from typing import Any
 
-TYPE_IDS = ("debrief", "plan", "ready", "weekly", "sync")
+TYPE_IDS = ("debrief", "reply", "ready", "weekly", "sync")
 
 OPTIONS: dict[str, tuple[str, ...]] = {
     "debrief": ("now", "evening"),
-    "ready": ("06:30", "07:00", "07:30", "08:00"),
     "weekly": ("Sun", "Mon"),
 }
 
@@ -35,8 +34,8 @@ DEFAULTS: dict[str, Any] = {
     "v": 2,
     "types": {
         "debrief": {"on": True, "opt": "now", "push": True},
-        "plan": {"on": True, "push": True, "email": False},
-        "ready": {"on": True, "opt": "07:00", "push": True},
+        "reply": {"on": True, "push": True},
+        "ready": {"on": True, "push": True},
         "weekly": {"on": True, "opt": "Sun", "push": True, "email": False},
         "sync": {"on": True, "push": True, "email": False},
     },
@@ -45,7 +44,7 @@ DEFAULTS: dict[str, Any] = {
 }
 
 # Old flat keys → the new types they stood for.
-_LEGACY = {"readiness": ("ready",), "coach": ("debrief", "plan"), "insights": ("weekly",)}
+_LEGACY = {"readiness": ("ready",), "coach": ("debrief", "reply"), "insights": ("weekly",)}
 
 
 def _hhmm(v: Any, default: str) -> str:
@@ -112,8 +111,7 @@ def in_quiet_hours(prefs: dict, local_now: datetime) -> bool:
 def legacy_type_enabled(raw: Any, notification_type: str) -> bool:
     """For pushes still sent with the old type names ('coach' = a chat reply finished, etc.).
     Old names map onto the v2 types they stood for (saved settings only keep the v2 shape):
-    on while any of those types still has push on, so 'coach' goes quiet once both coach
-    types (debrief and plan changes) are off."""
+    on while any of those types still has push on."""
     prefs = effective(raw)
     if notification_type in TYPE_IDS:
         return push_enabled(prefs, notification_type)
