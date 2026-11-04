@@ -1,15 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { PlanCandidate } from '$lib/types/linking';
 import {
-  comparisonRows,
   filterSessions,
   hm,
   pendingFor,
   pickerTag,
-  plannedBlocks,
-  secondsAtOrAbove,
   sessionMeta,
-  traceLine,
   unlinkConfirmText,
   unlinkedText
 } from './workoutLinking';
@@ -46,52 +42,6 @@ describe('labels', () => {
       'VO2 5×4 on Thu 5 Nov goes back to not done. It won’t be auto-matched again.'
     );
     expect(unlinkConfirmText({ title: 'VO2 5×4', date: '2026-11-05' }, 'manual')).not.toMatch(/auto-matched/);
-  });
-});
-
-describe('comparisonRows', () => {
-  it('compares duration and TSS, colouring by how close', () => {
-    const rows = comparisonRows({ duration_minutes: 90, projected_tss: 100 }, { duration_seconds: 88 * 60, tss: 130 });
-    expect(rows).toEqual([
-      { k: 'Duration', p: '1h 30', a: '1h 28', tone: 'good' },
-      { k: 'TSS', p: '100', a: '130 · 130%', tone: 'warn' }
-    ]);
-  });
-
-  it('adds time at threshold only with power targets, a power stream and FTP', () => {
-    const structure = [{ name: 'Block', duration_minutes: 2, target_power_percent_ftp: 95 }];
-    const watts = [300, 300, 300, 100];
-    const rows = comparisonRows({ duration_minutes: 2, projected_tss: 0, structure }, { duration_seconds: 120, tss: null }, { watts, step: 40, ftp: 300 });
-    expect(rows.at(-1)).toEqual({ k: 'Time at threshold', p: '2′', a: '2′', tone: 'good' });
-    expect(comparisonRows({ duration_minutes: 2, projected_tss: 0, structure }, { duration_seconds: 120, tss: null })).toHaveLength(1);
-  });
-
-  it('counts seconds above a threshold with real time gaps (capped)', () => {
-    expect(secondsAtOrAbove([5, 1, 5, 5], 4, [0, 10, 20, 100])).toBe(10 + 30 + 1);
-  });
-});
-
-describe('chart geometry', () => {
-  it('lays planned blocks along the span with zone colours', () => {
-    const b = plannedBlocks(
-      [
-        { name: 'Warm-up', duration_minutes: 15, target_power_percent_ftp: 60 },
-        { name: 'Block', duration_minutes: 15, target_power_percent_ftp: 95 }
-      ],
-      30,
-      300,
-      100
-    );
-    expect(b.map((x) => Math.round(x.x))).toEqual([0, 150]);
-    expect(b[0].color).toBe('var(--zone-2)');
-    expect(b[1].color).toBe('var(--zone-4)');
-    expect(b[1].h).toBeGreaterThan(b[0].h);
-  });
-
-  it('downsamples a stream into a polyline', () => {
-    const pts = traceLine([100, 200, 300, 400], undefined, 60, 4, 400, 100, 400, 2).split(' ');
-    expect(pts).toHaveLength(2);
-    expect(traceLine(undefined, undefined, 1, 10, 100, 100, 100)).toBe('');
   });
 });
 

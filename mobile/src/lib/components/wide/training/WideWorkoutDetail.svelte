@@ -195,7 +195,7 @@
       <div class={cols}>
         <div class="flex flex-col gap-2.5 min-w-0">
           {#if workout?.id}
-            <WorkoutPlanPanel workoutId={String(workout.id)} {streams} />
+            <WorkoutPlanPanel workoutId={String(workout.id)} {streams} zones={zoneDefs} />
           {/if}
           <section aria-label="Coach analysis" class="flex flex-col gap-2 p-4 rounded-[20px] bg-bg1 border border-dashed border-popover-border">
             <span class="font-mono text-[10px] tracking-[0.12em] text-blue">{analysis.premium ? 'COACH ANALYSIS' : 'ANALYSIS'}</span>
