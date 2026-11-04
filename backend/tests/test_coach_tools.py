@@ -384,3 +384,19 @@ def test_simulate_training_impact_starts_from_stored_ctl(monkeypatch):
     )
     assert out["projected_ctl"] == pytest.approx(80.0 * math.exp(-1 / 42), abs=0.01)
     assert out["projected_atl"] == pytest.approx(90.0 * math.exp(-1 / 7), abs=0.01)
+
+
+def test_schedule_workout_length_is_the_blocks_total():
+    """Prod: 'Cat 1 = 90 min' saved with one 60' block showed 90'. The blocks decide."""
+    db = MockCoachDB()
+    planned = (date.today() + timedelta(days=5)).isoformat()
+    out = coach_tools.handle_schedule_workout(
+        {"duration_minutes": 90, "focus_zone": "Endurance", "date": planned, "sport": "bike",
+         "structure": [{"name": "Steady", "duration_minutes": 60, "target_hr_zone": 2}]},
+        athlete_id="ath-1",
+        db=db,  # type: ignore[arg-type]
+    )
+    assert "error" not in out
+    row = db.inserts[0][1]
+    assert row["duration_min"] == 60
+    assert row["target_tss"] == 49  # 1 h at Endurance

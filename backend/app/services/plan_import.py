@@ -440,8 +440,8 @@ def check_sessions(raw: list[Any], start: date, end: date) -> tuple[list[dict], 
             structure, total, filled = build_structure(blocks, focus)
             zones_filled += filled
             if structure:
-                if duration <= 0:
-                    duration = total
+                # A session with blocks is as long as its blocks (one 60' block = 60').
+                duration = total
                 hardest = max(int(b["target_hr_zone"]) for b in structure)
                 if focus == "Endurance" and hardest >= 4:
                     focus = _ZONE_TO_FOCUS[hardest]

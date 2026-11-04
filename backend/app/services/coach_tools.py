@@ -398,6 +398,16 @@ def _workout_structure(
         }
     )
 
+    # The interval sets don't always fill their main block exactly (e.g. 4x3' + 3' rest in a
+    # 31' slot). The app shows the reps, not the slot, and a session is as long as its blocks,
+    # so the leftover minutes go into the cooldown.
+    shown = sum(
+        sum(int(i.get("duration_min") or 0) for i in b["intervals"]) if b.get("intervals") else int(b.get("duration_min") or 0)
+        for b in blocks
+    )
+    if shown < d:
+        blocks[-1]["duration_min"] = int(blocks[-1]["duration_min"]) + (d - shown)
+
     return {
         "sport": sport,
         "focus_zone": focus_zone,
@@ -480,6 +490,13 @@ def _sanitize_workout_structure(raw_structure: Any) -> list[dict[str, Any]]:
 
 
 _MAX_EXPANDED_BLOCKS = 120
+
+
+def blocks_total_minutes(structure: list[dict[str, Any]]) -> int:
+    """A session with blocks is as long as its blocks: one 60' block = 60', two 35' = 70'
+    (prod: a Cat 1 ride saved as 90' with one 60' block). Rounded to whole minutes; 0 = no blocks."""
+    total = sum(float(b.get("duration_minutes") or 0) for b in structure or [])
+    return int(round(total)) if total > 0 else 0
 
 
 def _minutes_value(v: Any) -> float | int:
@@ -601,6 +618,10 @@ def handle_schedule_workout(
         workout_json["structure"] = raw_ai_structure
 
     clean_structure = _sanitize_workout_structure(workout_json.get("structure") or [])
+    blocks_min = blocks_total_minutes(clean_structure)
+    if duration_minutes > 0 and blocks_min and blocks_min != duration_minutes:
+        duration_minutes = min(blocks_min, 600)
+        est_tss = round((duration_minutes / 60.0) * (ZONE_IF[focus_zone] ** 2) * 100.0, 1)
     workout_json["structure"] = clean_structure
 
     try:

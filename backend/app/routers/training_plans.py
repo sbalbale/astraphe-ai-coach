@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.dependencies import get_current_athlete, get_user_db
 from app.services import plan_matching
+from app.services.coach_tools import blocks_total_minutes
 
 
 router = APIRouter(prefix="/v1/training-plans", tags=["Training Plans"])
@@ -96,14 +97,24 @@ def _to_workout_row(row: dict[str, Any]) -> dict[str, Any]:
     # (PUT without completed=True), so it used to show moved future sessions as done.
     completed = status == "done"
 
+    # A session with blocks is as long as its blocks. Older rows could say 90' with one 60'
+    # block; show the blocks' total, with TSS scaled to it.
+    duration = int(row.get("duration_min") or 0)
+    tss = int(row.get("target_tss") or 0)
+    structure = row.get("structure") or []
+    blocks_min = blocks_total_minutes(structure) if isinstance(structure, list) else 0
+    if blocks_min and duration and blocks_min != duration:
+        tss = int(round(tss * blocks_min / duration))
+        duration = blocks_min
+
     return {
         "id": row.get("id"),
         "date": d,
         "title": row.get("title") or "",
         "sport": _normalize_plan_sport(row.get("sport")),
         "primary_zone": row.get("primary_zone") or "Endurance",
-        "duration_minutes": int(row.get("duration_min") or 0),
-        "projected_tss": int(row.get("target_tss") or 0),
+        "duration_minutes": duration,
+        "projected_tss": tss,
         "description": _plain_description(row.get("description")),
         "structure": row.get("structure") or [],
         "completed": completed,
