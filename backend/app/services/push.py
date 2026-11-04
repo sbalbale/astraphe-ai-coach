@@ -110,13 +110,22 @@ def send_push_to_athlete(
         if notification_type:
             profile_res = (
                 db.table("athletes")
-                .select("notification_settings")
+                .select("notification_settings,timezone_offset_min")
                 .eq("id", athlete_id)
                 .maybe_single()
                 .execute()
             )
-            ns = (profile_res.data or {}).get("notification_settings") or {}
-            if not ns.get(notification_type, True):
+            from app.services import notification_prefs
+            from app.services.time_utils import local_datetime_from_timezone_offset
+
+            profile = profile_res.data or {}
+            ns = profile.get("notification_settings") or {}
+            if not notification_prefs.legacy_type_enabled(ns, notification_type):
+                return 0
+            # Typed pushes (a chat reply finished, …) also wait out quiet hours: dropped,
+            # the reply is still in the chat.
+            local = local_datetime_from_timezone_offset(profile.get("timezone_offset_min"))
+            if notification_prefs.in_quiet_hours(notification_prefs.effective(ns), local):
                 return 0
 
         tokens_res = (

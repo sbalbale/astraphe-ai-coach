@@ -31,7 +31,7 @@ vi.mock('$lib/api', () => ({ api: { post: (...args: unknown[]) => apiPostMock(..
 const isStandaloneMock = vi.fn();
 vi.mock('$lib/utils/pwa', () => ({ isStandaloneDisplayMode: () => isStandaloneMock() }));
 
-import { initPushNotifications, requestPushPermission } from './pushNotifications';
+import { hasWebPushSubscription, initPushNotifications, requestPushPermission } from './pushNotifications';
 
 beforeEach(() => {
   isNativePlatformMock.mockReset();
@@ -173,17 +173,91 @@ describe('initPushNotifications (native)', () => {
 
   it('swallows a thrown error from checkPermissions', async () => {
     checkPermissionsMock.mockRejectedValue(new Error('native failure'));
-    await expect(initPushNotifications()).resolves.toBeUndefined();
+    await expect(initPushNotifications()).resolves.toBe('failed');
   });
 });
 
 describe('initPushNotifications (web)', () => {
   beforeEach(() => isNativePlatformMock.mockReturnValue(false));
 
-  it('does nothing when not in standalone display mode', async () => {
+  it('does nothing in an iPhone browser tab (web push needs the Home Screen app there)', async () => {
     isStandaloneMock.mockReturnValue(false);
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)');
+    const ready = vi.fn();
+    vi.stubGlobal('PushManager', function PushManager() {});
+    Object.defineProperty(navigator, 'serviceWorker', { get: ready, configurable: true });
     await initPushNotifications();
+    expect(ready).not.toHaveBeenCalled();
     expect(apiPostMock).not.toHaveBeenCalled();
+    // @ts-expect-error test cleanup
+    delete navigator.serviceWorker;
+  });
+
+  describe('in a desktop / Android browser tab', () => {
+    const KEY = 'BEl62iUYgUivxIkv69yViEuiBIa-Ib9-SkvMeAtA3LFgDzkrxZJjSgSnfckjBJuBkr3qBUYIHBQFLXYp5Nksh8U';
+    let subscribe: ReturnType<typeof vi.fn>;
+    let getSubscription: ReturnType<typeof vi.fn>;
+    let register: ReturnType<typeof vi.fn>;
+
+    beforeEach(() => {
+      isStandaloneMock.mockReturnValue(false);
+      vi.stubEnv('VITE_VAPID_PUBLIC_KEY', KEY);
+      vi.stubGlobal('PushManager', function PushManager() {});
+      subscribe = vi.fn().mockResolvedValue({ toJSON: () => ({ endpoint: 'https://push.example/1' }) });
+      getSubscription = vi.fn().mockResolvedValue(null);
+      const reg = { pushManager: { subscribe, getSubscription } };
+      register = vi.fn().mockResolvedValue(reg);
+      Object.defineProperty(navigator, 'serviceWorker', {
+        value: { ready: Promise.resolve(reg), getRegistration: () => Promise.resolve(reg), register },
+        configurable: true
+      });
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+      // @ts-expect-error test cleanup
+      delete navigator.serviceWorker;
+    });
+
+    it('subscribes and registers the token once permission is granted', async () => {
+      vi.stubGlobal('Notification', { permission: 'granted', requestPermission: vi.fn() });
+      await expect(initPushNotifications()).resolves.toBe('ok');
+      // Nothing else registers the push worker, so setup does.
+      expect(register).toHaveBeenCalledWith('/service-worker.js', expect.objectContaining({ scope: '/' }));
+      expect(subscribe).toHaveBeenCalled();
+      expect(apiPostMock).toHaveBeenCalledWith('/v1/notifications/token', {
+        token: JSON.stringify({ endpoint: 'https://push.example/1' }),
+        platform: 'web'
+      });
+    });
+
+    it('never prompts on its own (only the settings button asks)', async () => {
+      const requestPermission = vi.fn();
+      vi.stubGlobal('Notification', { permission: 'default', requestPermission });
+      await expect(initPushNotifications()).resolves.toBe('skipped');
+      expect(requestPermission).not.toHaveBeenCalled();
+      expect(register).not.toHaveBeenCalled();
+      expect(subscribe).not.toHaveBeenCalled();
+    });
+
+    it('says when the worker never becomes usable', async () => {
+      vi.stubGlobal('Notification', { permission: 'granted', requestPermission: vi.fn() });
+      register.mockRejectedValue(new Error('SecurityError'));
+      await expect(initPushNotifications()).resolves.toBe('no-service-worker');
+      expect(subscribe).not.toHaveBeenCalled();
+    });
+
+    it('says when this build has no push key', async () => {
+      vi.stubEnv('VITE_VAPID_PUBLIC_KEY', '');
+      vi.stubGlobal('Notification', { permission: 'granted', requestPermission: vi.fn() });
+      await expect(initPushNotifications()).resolves.toBe('not-configured');
+    });
+
+    it('reports whether a subscription exists', async () => {
+      expect(await hasWebPushSubscription()).toBe(false);
+      getSubscription.mockResolvedValue({ endpoint: 'x' });
+      expect(await hasWebPushSubscription()).toBe(true);
+    });
   });
 
   it('does nothing when serviceWorker/PushManager are unsupported', async () => {

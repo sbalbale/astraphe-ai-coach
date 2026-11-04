@@ -19,8 +19,19 @@
   import { buildCoachSteps, coachStatusText, type CoachStep } from '$lib/coachProgress';
   import { COACH_REPLY_WAIT_MS, remainingReplyWaitMs } from '$lib/utils/coachReply';
   import { CHAT_FILE_ACCEPT, documentBadge, documentProblem, fileExtension, isDocumentFile, isImageFile } from '$lib/utils/chatAttachments';
+  import CoachThreadHeader from '$lib/components/coach/CoachThreadHeader.svelte';
+  import QuickReplies from '$lib/components/coach/QuickReplies.svelte';
+  import {
+    isCoachThread,
+    latestQuickReplies,
+    outgoingMessage,
+    triggerLabel,
+    unreadCount,
+    unreadLabel,
+    type CoachConversation
+  } from '$lib/utils/coachThreads';
 
-  type Conversation = { id: string; title?: string | null; created_at?: string; updated_at?: string };
+  type Conversation = CoachConversation;
   type Message = {
     id: string;
     role: 'user' | 'ai';
@@ -33,6 +44,8 @@
     statusText?: string;
     /** What the coach checked while writing this reply (live, not persisted). */
     steps?: CoachStep[];
+    /** One-tap replies the coach offered with this message ("Felt good"). */
+    quick_replies?: string[];
   };
 
   let greetingMessage = $state<string>('');
@@ -111,6 +124,7 @@
         text: String(m.content ?? ''),
         image_urls: Array.isArray(m.image_urls) ? m.image_urls : [],
         attachments: Array.isArray(m.attachments) ? m.attachments : [],
+        quick_replies: Array.isArray(m.quick_replies) ? m.quick_replies : [],
         created_at: m.created_at
       }));
       // A conversation loaded (or reloaded, e.g. re-opening the app) whose
@@ -181,6 +195,7 @@
                 role: 'ai',
                 text: String(last.content ?? ''),
                 image_urls: Array.isArray(last.image_urls) ? last.image_urls : [],
+                quick_replies: Array.isArray(last.quick_replies) ? last.quick_replies : [],
                 created_at: last.created_at,
                 streaming: false,
                 steps: finalSteps?.length ? finalSteps.map((st) => ({ ...st, done: true })) : undefined
@@ -290,7 +305,26 @@
     loading = false; // that poll invalidation means nothing will clear it otherwise
     conversationId = cid;
     convoMenuOpen = false;
+    markRead(cid);
     await loadConversationMessages(cid);
+  }
+
+  /** Opening a coach-started thread clears its unread dot (locally right away, then on the server). */
+  function markRead(cid: string) {
+    if (!conversations.some((c) => c.id === cid && c.unread)) return;
+    conversations = conversations.map((c) => (c.id === cid ? { ...c, unread: false } : c));
+    void api.markCoachConversationRead(cid);
+  }
+
+  const currentConversation = $derived(conversations.find((c) => c.id === conversationId) ?? null);
+  const unreadN = $derived(unreadCount(conversations));
+  /** Quick replies under the coach's latest message; hidden while a reply is in flight. */
+  const quickReplies = $derived(loading ? [] : latestQuickReplies(messages));
+
+  /** A quick reply goes as its own message; a typed draft and staged files stay put. */
+  function sendQuickReply(text: string) {
+    if (loading) return;
+    void send(text);
   }
 
   async function deleteConversation(cid: string) {
@@ -475,11 +509,16 @@
     };
   });
 
-  async function send() {
-    const text = input.trim();
-    if (!text && pendingImageUrls.length === 0 && readyDocs.length === 0) return;
+  /**
+   * Send the composer (text + staged photos/documents), or, with `quickReply`, just that
+   * reply as its own message: the typed draft and staged attachments stay untouched.
+   */
+  async function send(quickReply: string | null = null) {
+    const out = outgoingMessage(quickReply, { input, images: pendingImageUrls, docs: readyDocs });
+    if (!out) return;
+    const { text, fromComposer } = out;
     // Wait for documents still being read rather than sending without them.
-    if (docsReading) return;
+    if (fromComposer && docsReading) return;
     // Serialize sends: a reply still in flight (loading stays true from the
     // moment it's submitted until pollForCoachReply resolves it — see that
     // function's docstring) must finish before the next one starts, or a
@@ -488,15 +527,22 @@
     // same flag; this guards direct calls to send() too (e.g. Enter key).
     if (loading) return;
 
-    input = '';
-    await tick();
-    resizeChatInput();
+    let image_urls: string[] = [];
+    let documents: { name: string; content: string }[] = [];
+    if (fromComposer) {
+      input = '';
+      await tick();
+      resizeChatInput();
+    }
     const cid = await ensureConversation();
-    const image_urls = pendingImageUrls;
-    pendingImageUrls = [];
-    const documents = readyDocs.map((d) => ({ name: d.name, content: d.content as string }));
-    pendingDocs = [];
-    attachError = null;
+    if (fromComposer) {
+      // Staged files as of now (the composer awaited above); a quick reply never takes them.
+      image_urls = pendingImageUrls;
+      pendingImageUrls = [];
+      documents = readyDocs.map((d) => ({ name: d.name, content: d.content as string }));
+      pendingDocs = [];
+      attachError = null;
+    }
 
     const userMsg: Message = {
       id: `local-user-${Date.now()}`,
@@ -600,6 +646,40 @@
     })();
   });
 
+  // /chat?conversation=<id>[&reply=<text>] (from a notification): open that thread and send
+  // the quick reply once, then drop the params so a reload doesn't repeat it.
+  let lastDeepLink = '';
+  let pendingReply = $state<string | null>(null);
+  $effect(() => {
+    const cid = $page.url.searchParams.get('conversation');
+    if (!cid || !historyLoaded || historyLoading) return;
+    const reply = $page.url.searchParams.get('reply');
+    const key = `${cid}|${reply ?? ''}`;
+    if (key === lastDeepLink) return;
+    lastDeepLink = key;
+    (async () => {
+      if (!conversations.some((c) => c.id === cid)) {
+        const res = await api.getCoachConversations();
+        conversations = res?.conversations || conversations;
+      }
+      if (conversations.some((c) => c.id === cid)) {
+        await selectConversation(cid);
+        if (reply && reply.trim()) pendingReply = reply.trim().slice(0, 500);
+      }
+      const url = new URL($page.url);
+      url.searchParams.delete('conversation');
+      url.searchParams.delete('reply');
+      replaceState(url, $page.state);
+    })();
+  });
+  // Send the notification's quick reply once the thread has loaded (and no reply is pending).
+  $effect(() => {
+    const text = pendingReply;
+    if (!text || loading || !conversationId) return;
+    pendingReply = null;
+    sendQuickReply(text);
+  });
+
   $effect(() => {
     pageHeader.eyebrow = 'Knows your training history';
     pageHeader.actions = [
@@ -635,7 +715,7 @@
     <!-- Past conversations -->
     <div bind:this={convoMenuEl} class="absolute left-4 right-4 top-1 z-30 rounded-[20px] border border-border bg-bg2 shadow-[0_16px_40px_rgba(0,0,0,0.5)] overflow-hidden">
       <div class="flex items-center justify-between px-4 pt-3 pb-2">
-        <span class="font-mono text-[10px] tracking-[0.12em] text-text2">PAST CONVERSATIONS</span>
+        <span class="font-mono text-[10px] tracking-[0.12em] {unreadN ? 'text-blue' : 'text-text2'}">CONVERSATIONS · {unreadLabel(unreadN)}</span>
         <button type="button" class="h-8 border-0 bg-transparent p-0 text-[13px] font-medium text-blue cursor-pointer" onclick={() => { convoMenuOpen = false; newChat(); }}>New chat</button>
       </div>
       <div class="max-h-[50dvh] overflow-y-auto">
@@ -644,9 +724,15 @@
         {/if}
         {#each conversations as c (c.id)}
           <div class="flex items-center gap-2 border-t border-border px-2 {c.id === conversationId ? 'bg-bg3' : ''}">
-            <button type="button" class="flex-1 min-w-0 flex flex-col gap-0.5 px-2 py-2.5 border-0 bg-transparent text-left cursor-pointer" onclick={() => { convoMenuOpen = false; selectConversation(c.id); }}>
-              <span class="text-sm text-text0 truncate">{c.title || 'New chat'}</span>
-              <span class="font-mono text-[10px] text-text2 truncate">{formatConvoDate(c.updated_at || c.created_at)}</span>
+            <button type="button" class="flex-1 min-w-0 flex items-center gap-2 px-2 py-2.5 border-0 bg-transparent text-left cursor-pointer" aria-label="{c.title || 'New chat'}{c.unread ? ', unread, from your coach' : ''}" onclick={() => { convoMenuOpen = false; selectConversation(c.id); }}>
+              <span class="flex-1 min-w-0 flex flex-col gap-0.5">
+                <span class="text-sm text-text0 truncate {c.unread ? 'font-semibold' : ''}">{c.title || 'New chat'}</span>
+                {#if isCoachThread(c)}
+                  <span class="font-mono text-[9px] tracking-[0.1em] truncate {c.unread ? 'text-blue' : 'text-text3'}">FROM YOUR COACH · {triggerLabel(c.trigger)}</span>
+                {/if}
+                <span class="font-mono text-[10px] text-text2 truncate">{formatConvoDate(c.updated_at || c.created_at)}</span>
+              </span>
+              {#if c.unread}<span aria-hidden="true" class="flex-none w-[9px] h-[9px] rounded-full bg-blue"></span>{/if}
             </button>
             <button
               type="button"
@@ -669,6 +755,13 @@
         <div class="w-14 h-14 rounded-2xl border border-blue/20 bg-blue-dim text-blue flex items-center justify-center mb-6">
           <UiIcon name="chat" size={24} />
         </div>
+        {#if !wide && unreadN > 0}
+          <button
+            type="button"
+            class="self-start -mt-2 mb-5 h-9 px-3 rounded-full border border-accent-surface-border bg-accent-surface text-blue font-mono text-[11px] tracking-[0.08em] cursor-pointer"
+            onclick={() => (convoMenuOpen = true)}
+          >{unreadN} FROM YOUR COACH · OPEN</button>
+        {/if}
         <h2 id="coach-intro-title" class="m-0 font-display font-normal text-[34px] leading-[1.1] text-text0">Ask me anything about your training.</h2>
         <p class="m-0 mt-3 text-[16px] leading-relaxed text-text1">
           I can see your workouts, plan, recovery and sleep, so you don't need to paste numbers in. I'll show you what I checked before I answer.
@@ -683,6 +776,9 @@
           {/each}
         </div>
       </section>
+    {/if}
+    {#if currentConversation && isCoachThread(currentConversation) && !isFreshChat}
+      <CoachThreadHeader conversation={currentConversation} {wide} />
     {/if}
     {#each visibleMessages as msg (msg.id)}
       {#if msg.role === 'ai'}
@@ -755,6 +851,9 @@
 
   <div class="shrink-0 {wide ? 'w-[calc(100%-96px)] max-w-[680px] self-center flex flex-col gap-2.5 mb-8' : 'px-4 pt-1'}" style={wide ? undefined : 'padding-bottom: 12px;'}>
     {#if wide}{@render suggestions()}{/if}
+    {#if quickReplies.length > 0}
+      <div class={wide ? '' : 'pb-2'}><QuickReplies replies={quickReplies} disabled={loading} onPick={sendQuickReply} /></div>
+    {/if}
     {#if pendingImageUrls.length > 0}
       <div class="flex gap-2 flex-wrap pb-2">
         {#each pendingImageUrls as u (u)}
@@ -840,7 +939,7 @@
 {/snippet}
 
 {#snippet suggestions()}
-  {#if !loading && !isFreshChat && promptSuggestions.length > 0}
+  {#if !loading && !isFreshChat && promptSuggestions.length > 0 && quickReplies.length === 0}
     <div aria-label="Suggested questions" class="flex flex-wrap gap-2">
       {#each promptSuggestions as s, i (s + String(i))}
         <button

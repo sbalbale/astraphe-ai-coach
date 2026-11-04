@@ -534,6 +534,43 @@ export const api = {
     return null;
   },
 
+  // --- Notifications ----------------------------------------------------------------------
+
+  /** Settings → "Check it works". `rate_limited` when one was sent in the last 30 s. */
+  async sendTestNotification(): Promise<{ status: 'sent' | 'no_devices' | 'rate_limited' | 'error'; delivered_to?: number }> {
+    try {
+      const headers = await getAuthHeaders();
+      const res = await fetch(`${API_URL}/v1/notifications/test`, { method: 'POST', headers });
+      if (res.status === 429) return { status: 'rate_limited' };
+      if (res.ok) return await res.json();
+    } catch (e) {
+      console.warn('Failed to send test notification.', e);
+    }
+    return { status: 'error' };
+  },
+
+  /** Devices that get push (count + platforms). */
+  async getNotificationDevices(): Promise<{ count: number; platforms: string[] } | null> {
+    try {
+      const headers = await getAuthHeaders();
+      const res = await fetch(`${API_URL}/v1/notifications/devices`, { headers });
+      if (res.ok) return await res.json();
+    } catch (e) {
+      console.warn('Failed to fetch notification devices.', e);
+    }
+    return null;
+  },
+
+  /** Clear the unread dot on a coach-started thread. */
+  async markCoachConversationRead(conversationId: string): Promise<void> {
+    try {
+      const headers = await getAuthHeaders();
+      await fetch(`${API_URL}/v1/coach/conversations/${encodeURIComponent(conversationId)}/read`, { method: 'POST', headers });
+    } catch (e) {
+      console.warn('Failed to mark conversation read.', e);
+    }
+  },
+
   async getCoachConversations() {
     try {
       const headers = await getAuthHeaders();

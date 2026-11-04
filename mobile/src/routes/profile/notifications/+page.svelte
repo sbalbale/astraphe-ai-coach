@@ -1,104 +1,210 @@
 <script lang="ts">
-  import SubpageHeader from '$lib/components/SubpageHeader.svelte';
-  import ToggleSwitch from '$lib/components/ToggleSwitch.svelte';
+  /**
+   * Notification settings (design: NotifPrefs / PNotify / WNotify): push permission,
+   * five notification types with timing and channels, quiet hours and a test.
+   * Every change saves straight away and is undone on screen if the save fails.
+   */
   import { onMount } from 'svelte';
+  import { Capacitor } from '@capacitor/core';
+  import SubpageHeader from '$lib/components/SubpageHeader.svelte';
+  import PermissionCard from '$lib/components/notifications/PermissionCard.svelte';
+  import NotificationTypeRow from '$lib/components/notifications/NotificationTypeRow.svelte';
+  import QuietHoursCard from '$lib/components/notifications/QuietHoursCard.svelte';
+  import TestNotificationCard from '$lib/components/notifications/TestNotificationCard.svelte';
+  import { api } from '$lib/api';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
-  import { requestPushPermission, initPushNotifications } from '$lib/services/pushNotifications';
-  import { NOTIFICATION_DEFAULTS, effectiveNotificationSettings } from '$lib/notificationSettings';
+  import { viewport } from '$lib/stores/viewport.svelte';
+  import { requestPushPermission, initPushNotifications, hasWebPushSubscription } from '$lib/services/pushNotifications';
+  import { isStandaloneDisplayMode } from '$lib/utils/pwa';
+  import {
+    NOTIFICATION_DEFAULTS,
+    effectiveNotificationPrefs,
+    type NotificationPrefs,
+    type NotificationTypeId
+  } from '$lib/notificationSettings';
+  import {
+    deviceLabel,
+    enablePushMessage,
+    groupedTypes,
+    isIosUserAgent,
+    permissionNotGrantedMessage,
+    permissionState,
+    quietNote,
+    testResultMessage,
+    toggleChannel,
+    toggleType as toggleTypePrefs,
+    withType,
+    type PermissionState
+  } from '$lib/utils/notificationUi';
 
-  let settings = $state({ ...NOTIFICATION_DEFAULTS } as Record<keyof typeof NOTIFICATION_DEFAULTS, boolean>);
-  let initialized = $state(false);
+  let prefs = $state<NotificationPrefs>(structuredClone(NOTIFICATION_DEFAULTS));
+  let loaded = $state(false);
   let saving = $state(false);
-  let permissionGranted = $state<boolean | null>(null);
+  let saveError = $state<string | null>(null);
+
+  let perm = $state<PermissionState>('default');
+  let ios = $state(false);
+  let device = $state('this browser');
+  let devicesCount = $state<number | null>(null);
+  let enabling = $state(false);
+  /** Why "Turn on notifications" didn't turn push on (null when it worked or wasn't tried). */
+  let pushError = $state<string | null>(null);
+
+  let testing = $state(false);
+  let testStatus = $state<'sent' | 'no_devices' | 'rate_limited' | 'error' | null>(null);
+
+  const groups = groupedTypes();
+
+  async function detectPermission() {
+    const ua = navigator.userAgent;
+    const touch = navigator.maxTouchPoints ?? 0;
+    const native = Capacitor.isNativePlatform();
+    ios = isIosUserAgent(ua, touch);
+    device = deviceLabel(ua, touch, native);
+    let nativeStatus: 'granted' | 'denied' | 'prompt' | null = null;
+    if (native) {
+      try {
+        const { PushNotifications } = await import('@capacitor/push-notifications');
+        const s = await PushNotifications.checkPermissions();
+        nativeStatus = s.receive === 'granted' ? 'granted' : s.receive === 'denied' ? 'denied' : 'prompt';
+      } catch {
+        nativeStatus = null;
+      }
+    }
+    const webPermission = 'Notification' in window ? Notification.permission : null;
+    perm = permissionState({
+      native,
+      nativeStatus,
+      webPermission,
+      ios,
+      standalone: isStandaloneDisplayMode(),
+      pushManager: 'PushManager' in window,
+      // "On" needs a real subscription, not just the permission.
+      subscribed: !native && webPermission === 'granted' ? await hasWebPushSubscription() : false
+    });
+    if (perm === 'granted') {
+      const d = await api.getNotificationDevices();
+      devicesCount = d ? d.count : null;
+    }
+  }
 
   onMount(async () => {
     try {
       await athleteStore.fetchAll();
     } catch {
-      // ignore; UI can still function with defaults
+      // defaults still render
     }
-
-    if (initialized) return;
-    const fromProfile = athleteStore.profile?.notification_settings;
-    settings = effectiveNotificationSettings(fromProfile);
-    initialized = true;
-
-    // Check current permission state for the UI hint.
-    if ('Notification' in window) {
-      permissionGranted = Notification.permission === 'granted';
-    } else {
-      permissionGranted = true; // native — assume OK until the OS says otherwise
-    }
+    prefs = effectiveNotificationPrefs(athleteStore.profile?.notification_settings);
+    loaded = true;
+    await detectPermission();
   });
 
-
-  async function toggleSetting(key: keyof typeof settings) {
-    const turningOn = !settings[key];
-    settings[key] = turningOn;
-
-    // If the user is enabling something for the first time, request permission
-    // and register the token so notifications actually arrive.
-    if (turningOn && permissionGranted !== true) {
-      const granted = await requestPushPermission();
-      permissionGranted = granted;
-      if (granted) {
-        await initPushNotifications();
-      }
-    }
-
+  /** Optimistic save: show the change now, put it back if the server refuses it. */
+  async function save(next: NotificationPrefs) {
+    const prev = prefs;
+    prefs = next;
     saving = true;
-    const ok = await athleteStore.updateProfile({
-      notification_settings: { ...settings }
-    });
+    saveError = null;
+    const ok = await athleteStore.updateProfile({ notification_settings: $state.snapshot(next) });
     saving = false;
-    // Don't leave a toggle showing a state that wasn't saved.
-    if (!ok) settings[key] = !turningOn;
-  }
-
-  async function enableNotifications() {
-    const granted = await requestPushPermission();
-    permissionGranted = granted;
-    if (granted) {
-      await initPushNotifications();
+    if (!ok) {
+      prefs = prev;
+      saveError = "Couldn't save that change. Check your connection and try again.";
     }
   }
+
+  function toggleType(id: NotificationTypeId) {
+    void save(toggleTypePrefs(prefs, id));
+  }
+
+  function setOption(id: NotificationTypeId, value: string) {
+    if (prefs.types[id].opt === value) return;
+    void save(withType(prefs, id, { opt: value }));
+  }
+
+  function setChannel(id: NotificationTypeId, channel: 'push' | 'email') {
+    const next = toggleChannel(prefs, id, channel);
+    if (next) void save(next);
+  }
+
+  async function enablePush() {
+    enabling = true;
+    pushError = null;
+    try {
+      const granted = await requestPushPermission();
+      const webPermission = 'Notification' in window ? Notification.permission : null;
+      pushError = granted ? enablePushMessage(await initPushNotifications()) : permissionNotGrantedMessage(webPermission);
+    } finally {
+      enabling = false;
+      await detectPermission();
+    }
+  }
+
+  async function sendTest() {
+    testing = true;
+    testStatus = null;
+    const res = await api.sendTestNotification();
+    testing = false;
+    testStatus = res.status;
+  }
+
+  const wide = $derived(viewport.wide);
+  const testResult = $derived(testResultMessage(testStatus, device));
 </script>
+
+{#snippet sectionLabel(text: string)}
+  <span class="px-1 pt-1.5 font-mono text-[11px] tracking-[0.14em] text-text2">{text}</span>
+{/snippet}
 
 <div class="flex flex-col gap-4 pb-6">
   <SubpageHeader title="Notifications" />
 
-  {#if permissionGranted === false}
-    <div class="flex flex-col gap-2 px-4 py-3.5 rounded-[18px] bg-amber-dim border border-amber/30">
-      <p class="m-0 text-sm font-medium text-amber">Notifications are blocked</p>
-      <p class="m-0 text-xs text-text1">Allow notifications in your device or browser settings, then tap below.</p>
-      <button type="button" class="self-start h-10 px-3.5 rounded-xl border border-amber/40 bg-transparent text-[13px] font-medium text-amber cursor-pointer" onclick={enableNotifications}>Enable notifications</button>
-    </div>
-  {:else if permissionGranted === true}
-    <div class="flex items-center gap-3 px-4 py-3.5 rounded-[18px] bg-blue-dim border border-blue/25">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="shrink-0 text-blue"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"></path><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"></path></svg>
-      <span class="text-sm text-text0">Push notifications are on for this device.</span>
-    </div>
+  {#if saveError}
+    <p role="alert" class="m-0 px-4 py-3 rounded-[14px] bg-red-dim border border-red/30 text-[13px] text-red">{saveError}</p>
   {/if}
 
-  <section aria-label="Push notifications" class="bg-bg2 border border-border rounded-[24px] px-[18px] py-1 flex flex-col">
-    {#each [
-      { key: 'readiness', title: 'Daily readiness', desc: 'Morning alert when your recovery score is ready.' },
-      { key: 'workouts', title: 'Workout reminders', desc: '1 hour before scheduled sessions.' },
-      { key: 'coach', title: 'Coach messages', desc: 'When your coach adjusts the plan or replies.' },
-      { key: 'insights', title: 'Weekly insights', desc: 'Sunday summary of load, form and sleep trends.' }
-    ] as row, i (row.key)}
-      <div class="flex items-center gap-4 py-3.5 {i ? 'border-t border-border' : ''}">
-        <div class="flex-1 min-w-0 flex flex-col gap-0.5">
-          <span class="text-base font-medium">{row.title}</span>
-          <span class="text-[13px] leading-[1.4] text-text2">{row.desc}</span>
-        </div>
-        <ToggleSwitch
-          label={row.title}
-          checked={settings[row.key as keyof typeof settings]}
-          disabled={saving}
-          onchange={() => toggleSetting(row.key as keyof typeof settings)}
-        />
-      </div>
-    {/each}
-  </section>
+  <div class={wide ? 'grid grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)] gap-5 items-start' : 'flex flex-col gap-2.5'}>
+    <div class="flex flex-col gap-2.5 min-w-0">
+      <PermissionCard status={perm} {device} {ios} {devicesCount} busy={enabling} onenable={enablePush} onrecheck={detectPermission} />
+      {#if pushError && perm !== 'granted'}
+        <p role="alert" class="m-0 px-4 py-3 rounded-[14px] bg-red-dim border border-red/30 text-[13px] text-red">{pushError}</p>
+      {/if}
+
+      {#each groups as g (g.name)}
+        {@render sectionLabel(g.name)}
+        <section aria-label={g.name} class="bg-bg2 border border-border rounded-[24px] px-4 flex flex-col">
+          {#each g.rows as meta, i (meta.id)}
+            <NotificationTypeRow
+              {meta}
+              prefs={prefs.types[meta.id]}
+              first={i === 0}
+              disabled={!loaded || saving}
+              ontoggle={() => toggleType(meta.id)}
+              onoption={(v) => setOption(meta.id, v)}
+              onchannel={(c) => setChannel(meta.id, c)}
+            />
+          {/each}
+        </section>
+      {/each}
+      <span class="px-1 text-[11px] leading-normal text-text3">Email is coming soon. For now every notification arrives as push, so turning push off turns that notification off.</span>
+    </div>
+
+    <div class="flex flex-col gap-2.5 min-w-0">
+      {@render sectionLabel('QUIET HOURS')}
+      <QuietHoursCard
+        on={prefs.quiet.on}
+        from={prefs.quiet.from}
+        to={prefs.quiet.to}
+        note={quietNote(prefs)}
+        disabled={!loaded || saving}
+        ontoggle={() => save({ ...prefs, quiet: { ...prefs.quiet, on: !prefs.quiet.on } })}
+        onchange={(from, to) => save({ ...prefs, quiet: { ...prefs.quiet, from, to } })}
+      />
+
+      {@render sectionLabel('CHECK IT WORKS')}
+      <TestNotificationCard enabled={perm === 'granted'} {device} sending={testing} result={testResult} onsend={sendTest} />
+
+      <span class="px-1 text-[11px] leading-normal text-text3">We send at most one debrief per workout and nothing during quiet hours. Every notification opens the exact chat, session or page it's about.</span>
+    </div>
+  </div>
 </div>

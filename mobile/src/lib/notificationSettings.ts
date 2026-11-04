@@ -1,27 +1,79 @@
 /**
- * Notification types and their defaults. Must match the backend
- * (app/services/push.py: a missing key means *on*), so the toggles and the Me
- * page show what will actually be sent.
+ * Notification settings (athletes.notification_settings). Mirrors the backend
+ * (app/services/notification_prefs.py): five types with a timing option, push / email
+ * per type, quiet hours, and coach texts (Photon; not shown in the app).
+ * Email is stored but not sent yet.
  */
-export const NOTIFICATION_DEFAULTS = {
-  readiness: true,
-  coach: true,
-  workouts: true,
-  insights: true
-} as const;
+export type NotificationTypeId = 'debrief' | 'reply' | 'ready' | 'weekly' | 'sync';
 
-export type NotificationKey = keyof typeof NOTIFICATION_DEFAULTS;
+export type NotificationTypePrefs = { on: boolean; opt?: string; push: boolean; email?: boolean };
 
-export function effectiveNotificationSettings(raw: unknown): Record<NotificationKey, boolean> {
+export type NotificationPrefs = {
+  v: 2;
+  types: Record<NotificationTypeId, NotificationTypePrefs>;
+  quiet: { on: boolean; from: string; to: string };
+  texts: 'active' | 'off';
+};
+
+export const NOTIFICATION_TYPE_IDS: NotificationTypeId[] = ['debrief', 'reply', 'ready', 'weekly', 'sync'];
+
+/** Allowed timing options per type (value, label), as on the settings screen. */
+export const NOTIFICATION_OPTIONS: Partial<Record<NotificationTypeId, { label: string; values: [string, string][] }>> = {
+  debrief: { label: 'When', values: [['now', 'Right away'], ['evening', 'Evening digest · 19:00']] },
+  weekly: { label: 'Day', values: [['Sun', 'Sunday 18:00'], ['Mon', 'Monday 07:00']] }
+};
+
+/** Types that can also go by email (stored; the app doesn't send notification email yet). */
+export const EMAIL_CAPABLE: NotificationTypeId[] = ['weekly', 'sync'];
+
+export const NOTIFICATION_DEFAULTS: NotificationPrefs = {
+  v: 2,
+  types: {
+    debrief: { on: true, opt: 'now', push: true },
+    reply: { on: true, push: true },
+    ready: { on: true, push: true },
+    weekly: { on: true, opt: 'Sun', push: true, email: false },
+    sync: { on: true, push: true, email: false }
+  },
+  quiet: { on: true, from: '22:00', to: '07:00' },
+  texts: 'active'
+};
+
+const LEGACY: Record<string, NotificationTypeId[]> = {
+  readiness: ['ready'],
+  coach: ['debrief', 'reply'],
+  insights: ['weekly']
+};
+
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+/** Saved settings merged over the defaults; old flat flags are read as a fallback. */
+export function effectiveNotificationPrefs(raw: unknown): NotificationPrefs {
+  const out: NotificationPrefs = structuredClone(NOTIFICATION_DEFAULTS);
   const saved = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
-  const out = { ...NOTIFICATION_DEFAULTS } as Record<NotificationKey, boolean>;
-  for (const key of Object.keys(NOTIFICATION_DEFAULTS) as NotificationKey[]) {
-    if (typeof saved[key] === 'boolean') out[key] = saved[key] as boolean;
+  for (const [legacy, ids] of Object.entries(LEGACY)) {
+    if (typeof saved[legacy] === 'boolean') for (const id of ids) out.types[id].on = saved[legacy] as boolean;
   }
+  const types = (saved.types && typeof saved.types === 'object' ? saved.types : {}) as Record<string, Record<string, unknown>>;
+  for (const id of NOTIFICATION_TYPE_IDS) {
+    const t = types[id];
+    if (!t || typeof t !== 'object') continue;
+    for (const k of ['on', 'push', 'email'] as const) if (typeof t[k] === 'boolean') out.types[id][k] = t[k] as boolean;
+    const opts = NOTIFICATION_OPTIONS[id]?.values.map(([v]) => v);
+    if (opts && typeof t.opt === 'string' && opts.includes(t.opt)) out.types[id].opt = t.opt;
+  }
+  const q = saved.quiet as Record<string, unknown> | undefined;
+  if (q && typeof q === 'object') {
+    if (typeof q.on === 'boolean') out.quiet.on = q.on;
+    if (typeof q.from === 'string' && HHMM.test(q.from)) out.quiet.from = q.from;
+    if (typeof q.to === 'string' && HHMM.test(q.to)) out.quiet.to = q.to;
+  }
+  if (saved.texts === 'active' || saved.texts === 'off') out.texts = saved.texts;
   return out;
 }
 
-/** How many notification types are on (as the backend would decide). */
+/** How many notification types are on (Me page summary). */
 export function enabledNotificationCount(raw: unknown): number {
-  return Object.values(effectiveNotificationSettings(raw)).filter(Boolean).length;
+  const p = effectiveNotificationPrefs(raw);
+  return NOTIFICATION_TYPE_IDS.filter((id) => p.types[id].on).length;
 }

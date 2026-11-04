@@ -56,17 +56,32 @@ async def send_test_notification(
     athlete_id: str = Depends(get_current_athlete),
     db=Depends(get_user_db),
 ):
-    """Send a test push to all registered tokens. Development only."""
-    if settings.APP_ENV == "production":
-        raise HTTPException(status_code=403, detail="Test endpoint disabled in production")
+    """Settings → "Check it works": a test push to this athlete's devices (one per 30 s)."""
+    import time
 
+    from app.services.coach_notifications import claim
     from app.services.push import send_push_to_athlete
 
+    if not claim(athlete_id, "test", str(int(time.time() // 30))):
+        raise HTTPException(status_code=429, detail="A test was just sent. Try again in a few seconds.")
     sent = send_push_to_athlete(
         athlete_id=athlete_id,
-        title="ASTRAPHE",
-        body="Push notifications are working!",
+        title="Test notification",
+        body="Notifications are working. Tap to open settings.",
         db=db,
-        data={"url": "/dashboard"},
+        data={"url": "/profile/notifications", "type": "test"},
     )
-    return {"status": "sent", "delivered_to": sent}
+    return {"status": "sent" if sent else "no_devices", "delivered_to": sent}
+
+
+@router.get("/devices")
+def list_devices(
+    athlete_id: str = Depends(get_current_athlete),
+    db=Depends(get_user_db),
+):
+    """How many devices get push ("Push is on for this iPhone · signed in on 2 devices")."""
+    rows = db.table("push_tokens").select("platform,updated_at").eq("athlete_id", athlete_id).execute().data or []
+    return {
+        "count": len(rows),
+        "platforms": sorted({r.get("platform") for r in rows if r.get("platform")}),
+    }

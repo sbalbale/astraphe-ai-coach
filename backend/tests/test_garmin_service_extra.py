@@ -470,7 +470,7 @@ def test_save_one_activity_texts_after_enrichment():
     ), patch.object(
         garmin_service, "_persist_activity_laps", side_effect=lambda *a, **k: order.append("laps")
     ), patch(
-        "app.services.messaging.maybe_text_workout",
+        "app.services.coach_notifications.post_workout_debrief",
         AsyncMock(side_effect=lambda *a, **k: order.append("text")),
     ) as mock_text:
         _run_async(garmin_service._save_one_activity(MagicMock(), activity, "ath-1", db))

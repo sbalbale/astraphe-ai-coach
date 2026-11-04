@@ -301,8 +301,9 @@
             : 'overflow-y-auto p-3 px-4'}"
     >
       {#if wide && $page.url.pathname.startsWith('/profile')}
-        <!-- Settings forms read best at a phone-like width rather than stretched across the screen. -->
-        <div class="w-full max-w-[720px] mx-auto">{@render props.children()}</div>
+        <!-- Settings forms read best at a phone-like width rather than stretched across the
+             screen; Notifications is a two-column layout (design: ~1040 px). -->
+        <div class="w-full mx-auto {$page.url.pathname === '/profile/notifications' ? 'max-w-[1080px]' : 'max-w-[720px]'}">{@render props.children()}</div>
       {:else}
         {@render props.children()}
       {/if}
