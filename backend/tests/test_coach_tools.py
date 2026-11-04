@@ -152,7 +152,8 @@ def test_schedule_workout_vo2max_inserts_training_plan():
     assert out.get("training_plan_id") == "mock-plan-id"
     assert db.inserts and db.inserts[0][0] == "training_plans"
     row = db.inserts[0][1]
-    assert row["duration_min"] == 45
+    # A session is as long as its blocks (the generated 45' VO2 set adds up to 39').
+    assert row["duration_min"] == round(sum(b["duration_minutes"] for b in row["structure"]))
     assert row["status"] == "planned"
     assert row["primary_zone"] == "VO2Max"
     assert isinstance(row.get("structure"), list)
@@ -168,8 +169,8 @@ def test_schedule_workout_vo2max_inserts_training_plan():
     assert any(b["name"].lower().startswith("recovery") for b in struct)
     assert all(b["sub_intervals"] == [] for b in struct)
     assert out["garmin_push"]["status"] == "stubbed"
-    # 45 min * 1.1^2 * (45/60) * 100 ≈ 90.75 TSS
-    assert 85 <= float(out["target_tss_estimate"]) <= 95
+    # TSS for the saved length: hours * 1.1^2 * 100
+    assert float(out["target_tss_estimate"]) == pytest.approx(row["duration_min"] / 60 * 1.21 * 100, abs=0.1)
     strict = out.get("workout_strict") or {}
     assert strict.get("id") == "mock-plan-id"
     assert strict.get("date") == planned
