@@ -88,10 +88,19 @@ export function parseMinSec(text: string): number | null {
   return /^\d{1,3}(\.\d+)?$/.test(t) ? Number(t) : null;
 }
 
-/** 1.5 → "1:30", 90 → "90:00", 0 → "0:00". */
+/**
+ * Under 2 hours as m:ss (1.5 → "1:30", 90 → "90:00", 0 → "0:00"); 2 hours or more as
+ * h:mm:ss (120 → "2:00:00", 135.5 → "2:15:30").
+ */
 export function formatMinSec(minutes: number): string {
   const total = Math.round(Math.max(0, Number(minutes) || 0) * 60);
-  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+  const ss = String(total % 60).padStart(2, '0');
+  if (total >= 120 * 60) {
+    const h = Math.floor(total / 3600);
+    const mm = String(Math.floor((total % 3600) / 60)).padStart(2, '0');
+    return `${h}:${mm}:${ss}`;
+  }
+  return `${Math.floor(total / 60)}:${ss}`;
 }
 
 /** A blank session to plan by hand on `date`. */
