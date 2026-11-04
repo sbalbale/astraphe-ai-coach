@@ -20,7 +20,7 @@
   import { api } from "$lib/api";
   import { addDays, format, parseISO, subDays } from "date-fns";
   import { calculateSleepScore, currentRecoveryState } from "$lib/utils/biometrics";
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import { pageHeader, resetPageHeader } from '$lib/stores/pageHeader.svelte';
   import { bodyDate, rememberBodyDate } from '$lib/stores/bodyDate.svelte';
   import { page } from "$app/stores";
@@ -80,16 +80,19 @@
   const windowEnd = $derived(clampedEndDay);
   const rangeLabel = $derived(`${format(windowStart, "MMM d")} – ${format(windowEnd, "MMM d, yyyy")}`);
   const canGoForward = $derived(format(windowEnd, "yyyy-MM-dd") !== todayStr);
+  /** The day picked in the 7-day strip; the header shows it. */
+  const selectedDayStr = $derived(format(addDays(windowStart, nightIndex), 'yyyy-MM-dd'));
 
   $effect(() => {
-    pageHeader.prev = () => { endPickerValue = format(subDays(windowEnd, 1), 'yyyy-MM-dd'); nightIndex = 6; };
-    pageHeader.next = () => { if (canGoForward) { endPickerValue = format(addDays(windowEnd, 1), 'yyyy-MM-dd'); nightIndex = 6; } };
-    pageHeader.canNext = canGoForward;
+    // Prev / next step the picked day; past either end of the 7-day strip, the strip moves.
+    pageHeader.prev = () => { if (nightIndex > 0) nightIndex -= 1; else { endPickerValue = format(subDays(windowStart, 1), 'yyyy-MM-dd'); nightIndex = 6; } };
+    pageHeader.next = () => { if (nightIndex < 6) nightIndex += 1; else if (canGoForward) { endPickerValue = format(addDays(windowEnd, 1), 'yyyy-MM-dd'); nightIndex = 6; } };
+    pageHeader.canNext = selectedDayStr !== todayStr;
     pageHeader.today = () => { endPickerValue = todayStr; nightIndex = 6; };
     pageHeader.dateMax = todayStr;
-    pageHeader.dateLabel = canGoForward ? format(clampedEndDay, 'EEE d MMM') : 'Today';
+    pageHeader.dateLabel = selectedDayStr === todayStr ? 'Today' : format(addDays(windowStart, nightIndex), 'EEE d MMM');
     pageHeader.dateMarks = (athleteStore.biometrics?.series ?? []).filter((r: any) => r?.date && (Number(r?.sleep_duration_min) > 0 || Number(r?.sleep_score) > 0)).map((r: any) => r.date);
-    pageHeader.dateValue = format(clampedEndDay, "yyyy-MM-dd");
+    pageHeader.dateValue = selectedDayStr;
     // Wide layouts show Recovery, Sleep and Strain as one "Body" screen.
     const wideDay = nights[nightIndex]?.rawDate ?? todayStr;
     pageHeader.wideTitle = 'Body';
@@ -104,8 +107,9 @@
 
   // The header calendar writes pageHeader.dateValue; follow it.
   $effect(() => {
+    // Runs only when the calendar writes (not when a day in the strip is picked).
     const picked = pageHeader.dateValue;
-    if (picked && picked !== endPickerValue && picked <= todayStr) { endPickerValue = picked; nightIndex = 6; }
+    if (picked && picked !== untrack(() => selectedDayStr) && picked <= todayStr) { endPickerValue = picked; nightIndex = 6; }
   });
 
   // Map biometrics to nights array (filling in missing dates for the last 7 days)
