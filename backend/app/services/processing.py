@@ -809,7 +809,7 @@ async def find_or_create_canonical_workout(
 def _fetch_athlete_for_workout_sync(db: Any, athlete_id: str) -> dict[str, Any]:
     athlete_res = (
         db.table("athletes")
-        .select("max_hr,resting_hr,threshold_hr,threshold_hr_source,threshold_pace,gender,hr_zone_method")
+        .select("max_hr,resting_hr,threshold_hr,threshold_hr_source,threshold_pace,gender,hr_zone_method,ftp_watts")
         .eq("id", athlete_id)
         .single()
         .execute()
@@ -937,6 +937,18 @@ def recalculate_tss_history(athlete_id: str, db):
         db.table("tss_history").delete().eq("athlete_id", athlete_id).lt("date", start_date.isoformat()).execute()
         db.table("tss_history").upsert(records, on_conflict="athlete_id,date").execute()
 
+def workout_ftp(given: Any, profile: Any) -> int | None:
+    """FTP to score a workout's power with: the one given with it, else the profile's, else None."""
+    for v in (given, profile):
+        try:
+            n = int(v)
+        except (TypeError, ValueError):
+            continue
+        if n > 0:
+            return n
+    return None
+
+
 async def process_and_save_workout(
     payload: WorkoutPayload,
     athlete_id: str,
@@ -1000,11 +1012,12 @@ async def process_and_save_workout(
     anchor_threshold_hr_source = athlete.get("threshold_hr_source")
     anchor_gender = athlete.get("gender") or "male"
     threshold_pace_sec_km = _parse_pace_to_sec_per_km(athlete.get("threshold_pace"))
+    # Power TSS uses the FTP given with the workout, else the athlete's profile FTP. With neither,
+    # power isn't scored and the heart-rate / pace / provider TSS below applies instead.
+    ftp = workout_ftp(payload.ftp_at_time, athlete.get("ftp_watts"))
 
-    if canonical == "bike" and payload.normalized_power:
-        tss = compute_tss_power(
-            payload.duration_seconds, payload.normalized_power, payload.ftp_at_time
-        )
+    if canonical == "bike" and payload.normalized_power and ftp:
+        tss = compute_tss_power(payload.duration_seconds, payload.normalized_power, ftp)
     elif (
         mapped_sport == "run"
         and payload.duration_seconds
@@ -1035,9 +1048,9 @@ async def process_and_save_workout(
             threshold_hr_source=anchor_threshold_hr_source,
             hr_zone_method=athlete.get("hr_zone_method"),
         )
-    elif canonical == "row" and payload.average_power and payload.duration_seconds:
+    elif canonical == "row" and payload.average_power and payload.duration_seconds and ftp:
         norm_watts = normalize_rowing_watts(payload.average_power)
-        tss = compute_tss_power(payload.duration_seconds, int(norm_watts), payload.ftp_at_time)
+        tss = compute_tss_power(payload.duration_seconds, int(norm_watts), ftp)
     elif getattr(payload, "tss", None):
         tss = getattr(payload, "tss")
 
