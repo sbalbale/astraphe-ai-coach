@@ -189,3 +189,52 @@ def test_process_and_save_workout_computes_duration_from_ended_at():
         )
     update_data = mock_update.call_args[0][2]
     assert update_data["duration_seconds"] == 1800
+
+
+# --- Re-sync of an existing workout (e.g. the Garmin poll's 2-day window) -------------------------
+
+_STREAMED_RIDE = {
+    "id": "w1",
+    "source": "garmin",
+    "primary_source": "garmin",
+    "strain_score": 0,  # already reset by the bug; the stored zones still say ~32
+    "tss": 48.0,
+    "hr_zone_1_pct": 17,
+    "hr_zone_2_pct": 80,
+}
+
+
+def test_resync_without_zones_recomputes_strain_from_stored_zones():
+    """Production: a ride's strain went to 0 because the 15-min re-poll saved Garmin's
+    zone-less summary over the strain its FIT stream had given it."""
+    payload = _base_payload(source="garmin", sport="indoor_cycling", avg_hr=149, duration_seconds=3610)
+    p1, p2, p3 = _patch_common(row=dict(_STREAMED_RIDE))
+    with p1, p2, p3 as mock_update:
+        _run_async(processing.process_and_save_workout(payload, "a", MagicMock(), skip_tss_recalc=True, skip_daily_strain_refresh=True))
+    update_data = mock_update.call_args[0][2]
+    assert update_data["strain_score"] == processing.compute_strain_score(
+        {1: 0.17 * 3610 / 60, 2: 0.80 * 3610 / 60, 3: 0, 4: 0, 5: 0}, sport="bike"
+    )
+    assert update_data["strain_score"] > 0
+    assert "tss" not in update_data  # a 0.0 the summary can't derive doesn't replace 48
+
+
+def test_resync_without_any_zones_keeps_the_stored_strain():
+    row = {"id": "w1", "source": "garmin", "primary_source": "garmin", "strain_score": 12, "tss": 20.0}
+    payload = _base_payload(source="garmin", sport="strength", duration_seconds=1800)
+    p1, p2, p3 = _patch_common(row=row)
+    with p1, p2, p3 as mock_update:
+        _run_async(processing.process_and_save_workout(payload, "a", MagicMock(), skip_tss_recalc=True, skip_daily_strain_refresh=True))
+    update_data = mock_update.call_args[0][2]
+    assert "strain_score" not in update_data
+    assert "tss" not in update_data
+
+
+def test_new_workout_without_zones_still_starts_at_zero():
+    payload = _base_payload(source="garmin", sport="strength", duration_seconds=1800)
+    p1, p2, p3 = _patch_common(created=True)
+    with p1, p2, p3 as mock_update:
+        _run_async(processing.process_and_save_workout(payload, "a", MagicMock(), skip_tss_recalc=True, skip_daily_strain_refresh=True))
+    update_data = mock_update.call_args[0][2]
+    assert update_data["strain_score"] == 0
+    assert update_data["tss"] == 0.0
