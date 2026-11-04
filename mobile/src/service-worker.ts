@@ -9,6 +9,7 @@
  */
 import {
 	OPEN_CHAT_ACTION,
+	chatIsOnScreen,
 	coachThreadUrl,
 	focusOrOpenClient,
 	parseQuickReplies,
@@ -89,8 +90,24 @@ self.addEventListener('push', (event) => {
 		options.renotify = true;
 	}
 	if (actions.length) options.actions = actions;
+	const title = payload.title ?? 'ASTRAPHE';
 
-	event.waitUntil(self.registration.showNotification(payload.title ?? 'ASTRAPHE', options));
+	event.waitUntil(
+		(async () => {
+			// A coach reply while the chat is on screen: the athlete is watching it arrive.
+			// Still show a notification (browsers penalise pushes that show none: Chrome posts
+			// its own "updated in the background" one, Safari can drop the subscription), but
+			// silently, under its own tag, and close it straight away.
+			if (data.type === 'reply' && (await chatIsOnScreen(self.clients, self.location.origin))) {
+				const tag = `onscreen-${Date.now()}`;
+				await self.registration.showNotification(title, { ...options, tag, silent: true, renotify: false, actions: undefined });
+				const shown = await self.registration.getNotifications({ tag });
+				shown.forEach((n) => n.close());
+				return;
+			}
+			await self.registration.showNotification(title, options);
+		})()
+	);
 });
 
 self.addEventListener('notificationclick', (event) => {

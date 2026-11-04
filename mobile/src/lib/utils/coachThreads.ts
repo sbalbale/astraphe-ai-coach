@@ -125,7 +125,12 @@ export function outgoingMessage<D>(
   return { text, images: composer.images, docs: composer.docs, fromComposer: true };
 }
 
-type SwWindowClient ={ url: string; navigate?: (url: string) => Promise<unknown>; focus: () => Promise<unknown> };
+type SwWindowClient = {
+  url: string;
+  visibilityState?: 'visible' | 'hidden' | 'prerender';
+  navigate?: (url: string) => Promise<unknown>;
+  focus: () => Promise<unknown>;
+};
 type SwClients = {
   matchAll: (opts: { type: 'window'; includeUncontrolled: boolean }) => Promise<readonly SwWindowClient[]>;
   openWindow: (url: string) => Promise<unknown>;
@@ -157,6 +162,23 @@ export async function focusOrOpenClient(clients: SwClients, origin: string, targ
     }
   }
   await clients.openWindow(targetUrl);
+}
+
+/**
+ * A coach-reply push while the chat is on screen: the athlete is watching the reply arrive,
+ * so the notification is pointless. True when a visible app window is on /chat.
+ * (The chat page doesn't keep the open conversation in its URL, so it's any chat.)
+ */
+export async function chatIsOnScreen(clients: Pick<SwClients, 'matchAll'>, origin: string): Promise<boolean> {
+  const list = await clients.matchAll({ type: 'window', includeUncontrolled: true });
+  return list.some((c) => {
+    if (!c.url.startsWith(origin) || c.visibilityState !== 'visible') return false;
+    try {
+      return new URL(c.url).pathname.replace(/\/+$/, '') === '/chat';
+    } catch {
+      return false;
+    }
+  });
 }
 
 /** Last message from the coach that still offers quick replies (only when it is the latest message). */

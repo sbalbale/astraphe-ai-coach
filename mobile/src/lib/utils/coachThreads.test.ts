@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  chatIsOnScreen,
   coachThreadUrl,
   contextKindLabel,
   focusOrOpenClient,
@@ -114,5 +115,24 @@ describe('notification click (focusOrOpenClient)', () => {
     const clients = clientsWith({ navigate: vi.fn().mockResolvedValue({ url: '', focus: vi.fn().mockRejectedValue(new Error('no')) }) });
     await focusOrOpenClient(clients, ORIGIN, '/readiness');
     expect(clients.openWindow).not.toHaveBeenCalled();
+  });
+});
+
+describe('coach reply while the chat is on screen (chatIsOnScreen)', () => {
+  const ORIGIN = 'https://app.example';
+  const clients = (...list: { url: string; visibilityState?: 'visible' | 'hidden' }[]) => ({
+    matchAll: vi.fn().mockResolvedValue(list.map((c) => ({ focus: vi.fn(), ...c })))
+  });
+
+  it('is on screen when a visible window shows the chat', async () => {
+    expect(await chatIsOnScreen(clients({ url: `${ORIGIN}/chat`, visibilityState: 'visible' }), ORIGIN)).toBe(true);
+    expect(await chatIsOnScreen(clients({ url: `${ORIGIN}/chat/?x=1`, visibilityState: 'visible' }), ORIGIN)).toBe(true);
+  });
+
+  it('is not when the chat is in the background, another page is open, or no window', async () => {
+    expect(await chatIsOnScreen(clients({ url: `${ORIGIN}/chat`, visibilityState: 'hidden' }), ORIGIN)).toBe(false);
+    expect(await chatIsOnScreen(clients({ url: `${ORIGIN}/dashboard`, visibilityState: 'visible' }), ORIGIN)).toBe(false);
+    expect(await chatIsOnScreen(clients({ url: 'https://other.example/chat', visibilityState: 'visible' }), ORIGIN)).toBe(false);
+    expect(await chatIsOnScreen(clients(), ORIGIN)).toBe(false);
   });
 });

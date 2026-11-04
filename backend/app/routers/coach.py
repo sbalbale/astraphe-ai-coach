@@ -652,7 +652,7 @@ async def _run_coach_response_and_notify(
                 title="ASTRAPHE Coach",
                 body=preview,
                 db=db,
-                data={"url": "/chat", "conversation_id": conversation_id},
+                data={"url": "/chat", "conversation_id": conversation_id, "type": "reply"},
                 notification_type="reply",
             )
         except Exception:
@@ -776,7 +776,7 @@ async def chat_with_coach(
                 title="ASTRAPHE Coach",
                 body=preview,
                 db=db,
-                data={"url": "/chat"},
+                data={"url": "/chat", "type": "reply"},
                 notification_type="reply",
             )
         except Exception:
