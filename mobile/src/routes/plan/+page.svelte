@@ -51,6 +51,9 @@
   import PlanSessionEditor from '$lib/components/plan/PlanSessionEditor.svelte';
   import { blankWorkout } from '$lib/utils/planEditor';
   import { sessionNotesSummary } from '$lib/utils/sessionNotes';
+  import PlanLinkPanel from '$lib/components/linking/PlanLinkPanel.svelte';
+  import PlanDayMark from '$lib/components/linking/PlanDayMark.svelte';
+  import { dayMark, sessionLinkState, type SessionLinkState } from '$lib/utils/linking';
 
   type AgendaView = 'day' | 'week';
 
@@ -282,23 +285,27 @@
     return true;
   }
 
-  /** Whether a phone-view row's plan session is marked done (from the store's `completed`). */
-  function isPlanDone(w: PlannedWorkout | null): boolean {
+  /** The store's training_plans row behind a phone-view row (link fields, completed). */
+  function rawPlan(w: PlannedWorkout | null): Workout | null {
     const id = backendTrainingPlanId(w);
-    return !!id && !!trainingStore.workouts.find((x) => x.id === id)?.completed;
+    return id ? (trainingStore.workouts.find((x) => x.id === id) ?? null) : null;
   }
-  let togglingDone = $state(false);
-  async function toggleSelectedDone() {
-    const planId = backendTrainingPlanId(selectedWorkout);
-    if (!planId) return;
-    togglingDone = true;
-    planActionError = null;
-    try {
-      const ok = await trainingStore.setCompleted(planId, !isPlanDone(selectedWorkout), viewMonthRange.startIso, viewMonthRange.endIso);
-      if (!ok) planActionError = "Couldn't update the session. Try again.";
-    } finally {
-      togglingDone = false;
-    }
+  /** Linked / done by hand / missed / not done yet (null when it isn't a plan row). */
+  function linkStateOf(w: PlannedWorkout | null): SessionLinkState | null {
+    const r = rawPlan(w);
+    return r ? sessionLinkState(r, todayIso) : null;
+  }
+  /** Calendar mark for a day: its first session's state. */
+  function dayMarkFor(iso: string) {
+    const first = (workoutsByIso[iso] ?? [])[0];
+    return dayMark(first ? linkStateOf(first) : null);
+  }
+  const STATE_LABEL: Record<SessionLinkState, string> = { linked: 'Linked', mark: 'Done', missed: 'Missed', today: '', future: '' };
+  async function setPlanDone(planId: string, done: boolean): Promise<boolean> {
+    return trainingStore.setCompleted(planId, done, viewMonthRange.startIso, viewMonthRange.endIso);
+  }
+  async function reloadPlan(): Promise<void> {
+    await trainingStore.fetchWorkouts(viewMonthRange.startIso, viewMonthRange.endIso);
   }
 
   async function removeSelectedTrainingPlan() {
@@ -844,19 +851,6 @@
     void wideApply(t.undo, 'Change undone.', focus, false);
   }
 
-  async function wideToggleDone() {
-    const s = wideSelected;
-    if (!s) return;
-    wideSaving = true;
-    wideError = null;
-    try {
-      const ok = await trainingStore.setCompleted(s.id, !s.completed, viewMonthRange.startIso, viewMonthRange.endIso);
-      if (!ok) wideError = "Couldn't update the session. Try again.";
-    } finally {
-      wideSaving = false;
-    }
-  }
-
   async function wideRemove() {
     const s = wideSelected;
     if (!s) return;
@@ -964,7 +958,9 @@
       onask={() => askCoach(`Add a session to my plan on ${format(selectedDate, 'EEEE d MMMM')}: `)}
       onremove={wideRemove}
       onedit={() => (editingWorkout = (wideSelected && trainingStore.workouts.find((x) => x.id === wideSelected?.id)) || null)}
-      ontoggledone={wideToggleDone}
+      plan={wideSelected ? (trainingStore.workouts.find((x) => x.id === wideSelected.id) ?? null) : null}
+      onsetdone={(done) => (wideSelected ? setPlanDone(wideSelected.id, done) : Promise.resolve(false))}
+      onlinkchanged={reloadPlan}
       onopen={wideOpenFull}
       onundo={wideUndo}
       ondismiss={() => (wideToast = null)}
@@ -1011,6 +1007,7 @@
         {@const iso = format(d, 'yyyy-MM-dd')}
         {@const sel = iso === selectedIso}
         {@const first = (workoutsByIso[iso] ?? [])[0]}
+        {@const mark = dayMarkFor(iso)}
         <button
           type="button"
           role="tab"
@@ -1020,7 +1017,9 @@
         >
           <span class="font-mono text-[10px] tracking-[0.08em] opacity-75 uppercase">{format(d, 'EEE')}</span>
           <span class="text-base font-medium">{format(d, 'd')}</span>
-          <span aria-hidden="true" class="w-[5px] h-[5px] rounded-full" style="background: {first ? sessionColor(first) : 'transparent'}"></span>
+          <span class="h-4 flex items-center justify-center">
+            {#if mark}<PlanDayMark {mark} size={14} />{:else}<span aria-hidden="true" class="w-[5px] h-[5px] rounded-full" style="background: {first ? sessionColor(first) : 'transparent'}"></span>{/if}
+          </span>
         </button>
       {/each}
     </div>
@@ -1038,7 +1037,7 @@
         {@const steps = structuredSteps(w)}
         <section aria-label="Selected session" class="bg-bg2 border border-border rounded-[24px] p-5 flex flex-col gap-3.5">
           <div class="flex justify-between items-center">
-            <span class="font-mono text-[11px] tracking-[0.14em] uppercase" style="color: var(--blue)">{format(w.date, 'EEE')} · {sessionLabel(w)}{#if isPlanDone(w)}<span class="text-green"> · ✓ Done</span>{/if}</span>
+            <span class="font-mono text-[11px] tracking-[0.14em] uppercase" style="color: var(--blue)">{format(w.date, 'EEE')} · {sessionLabel(w)}{#if linkStateOf(w) && STATE_LABEL[linkStateOf(w)!]}<span class={linkStateOf(w) === 'missed' ? 'text-text2' : 'text-green'}> · {linkStateOf(w) === 'missed' ? '' : '✓ '}{STATE_LABEL[linkStateOf(w)!]}</span>{/if}</span>
             <button type="button" class="min-h-8 flex items-center gap-1 border-0 bg-transparent p-0 font-mono text-[11px] text-text1 cursor-pointer" onclick={() => openWorkout(w)}>
               {Number.isFinite(Number(w.tss)) ? `${w.tss} TSS · ` : ''}DETAILS
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m9 6 6 6-6 6"></path></svg>
@@ -1094,6 +1093,7 @@
           {@const isToday = iso === todayIso}
           {@const past = iso < todayIso}
           {@const first = (workoutsByIso[iso] ?? [])[0]}
+          {@const mark = dayMarkFor(iso)}
           <button
             type="button"
             aria-label="{format(d, 'EEEE d MMMM')}{first ? ': ' + (first.title ?? 'Session') : ''}"
@@ -1101,7 +1101,11 @@
             onclick={() => selectDate(d)}
           >
             <span class="text-[13px] {isToday ? 'font-semibold text-blue' : inMonth ? (past ? 'font-medium text-text2' : 'font-medium text-text0') : 'font-medium text-text2/50'}">{format(d, 'd')}</span>
-            <span aria-hidden="true" class="w-[18px] h-1 rounded-sm" style="background: {first ? sessionColor(first) : 'transparent'}; opacity: {inMonth && !past ? 1 : 0.35}"></span>
+            {#if mark}
+              <PlanDayMark {mark} size={12} />
+            {:else}
+              <span aria-hidden="true" class="w-[18px] h-1 rounded-sm" style="background: {first ? sessionColor(first) : 'transparent'}; opacity: {inMonth && !past ? 1 : 0.35}"></span>
+            {/if}
           </button>
         {/each}
       </div>
@@ -1121,7 +1125,7 @@
         <button type="button" class="flex items-center gap-3.5 px-[18px] py-4 rounded-[20px] bg-bg2 border border-border text-left w-full cursor-pointer" onclick={() => openWorkout(w)}>
           <span aria-hidden="true" class="shrink-0 w-1.5 h-11 rounded-[3px]" style="background: {sessionColor(w)}"></span>
           <span class="flex-1 min-w-0 flex flex-col gap-[3px]">
-            <span class="font-mono text-[10px] tracking-[0.12em] text-text2 uppercase">{format(w.date, 'EEE d MMM')}{#if isPlanDone(w)}<span class="text-green"> · ✓ Done</span>{/if}</span>
+            <span class="font-mono text-[10px] tracking-[0.12em] text-text2 uppercase">{format(w.date, 'EEE d MMM')}{#if linkStateOf(w) && STATE_LABEL[linkStateOf(w)!]}<span class={linkStateOf(w) === 'missed' ? 'text-text2' : 'text-green'}> · {linkStateOf(w) === 'missed' ? '' : '✓ '}{STATE_LABEL[linkStateOf(w)!]}</span>{/if}</span>
             <span class="text-base font-medium truncate">{w.title ?? w.type ?? 'Session'}</span>
             <span class="text-xs text-text2">{[w.duration, Number.isFinite(Number(w.tss)) ? `${w.tss} TSS` : null].filter(Boolean).join(' · ')}</span>
           </span>
@@ -1319,20 +1323,17 @@
         {#if planActionError}
           <p class="m-0 text-[13px] text-red">{planActionError}</p>
         {/if}
-        {#if backendTrainingPlanId(sw)}
-          {@const swDone = isPlanDone(sw)}
-          <button
-            type="button"
-            aria-pressed={swDone}
-            disabled={togglingDone}
-            class="mt-auto shrink-0 h-12 rounded-[14px] text-sm font-medium cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50 {swDone ? 'border border-green/40 bg-green-dim text-green' : 'border border-border bg-transparent text-text0'}"
-            onclick={toggleSelectedDone}
-          >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 5 5 9-10"></path></svg>
-            {swDone ? 'Done · tap to undo' : 'Mark as done'}
-          </button>
+        {@const plan = rawPlan(sw)}
+        {#if plan}
+          <PlanLinkPanel
+            {plan}
+            {todayIso}
+            {wide}
+            onsetdone={(done) => setPlanDone(plan.id, done)}
+            onchanged={reloadPlan}
+          />
         {/if}
-        <div class="{backendTrainingPlanId(sw) ? '' : 'mt-auto'} shrink-0 flex gap-2">
+        <div class="{plan ? '' : 'mt-auto'} shrink-0 flex gap-2">
           <button type="button" class="flex-1 h-12 rounded-[14px] border border-border bg-transparent text-text0 text-sm font-medium cursor-pointer {sheetMode === 'move' ? 'bg-bg3' : ''}" onclick={() => { moveDate = sw.isoDate; sheetMode = sheetMode === 'move' ? 'none' : 'move'; }}>Move</button>
           <button type="button" class="flex-1 h-12 rounded-[14px] border border-border bg-transparent text-text0 text-sm font-medium cursor-pointer {sheetMode === 'swap' ? 'bg-bg3' : ''}" onclick={() => (sheetMode = sheetMode === 'swap' ? 'none' : 'swap')}>Swap</button>
           {#if backendTrainingPlanId(sw)}

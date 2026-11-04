@@ -784,7 +784,7 @@ async def find_or_create_canonical_workout(
     strava_activity_payload: dict | None = None,
     garmin_activity_id: int | None = None,
 ) -> tuple[dict, bool]:
-    return await asyncio.to_thread(
+    row, created = await asyncio.to_thread(
         _find_or_create_canonical_workout_sync,
         db,
         athlete_id,
@@ -797,6 +797,13 @@ async def find_or_create_canonical_workout(
         strava_activity_payload,
         garmin_activity_id,
     )
+    # A new recording completes the matching planned session (same day, sport, similar
+    # length). Best-effort: never fails the sync.
+    if created and row.get("id"):
+        from app.services.plan_matching import auto_match_safe
+
+        await asyncio.to_thread(auto_match_safe, db, athlete_id, row["id"])
+    return row, created
 
 
 def _fetch_athlete_for_workout_sync(db: Any, athlete_id: str) -> dict[str, Any]:

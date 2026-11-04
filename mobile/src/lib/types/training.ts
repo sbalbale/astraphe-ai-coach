@@ -19,5 +19,9 @@ export interface Workout {
   description: string;
   structure: Interval[];
   completed: boolean;
+  /** Recorded workout that completed this session (null when done by hand or not done). */
+  completed_workout_id?: string | null;
+  link_source?: 'auto' | 'manual' | null;
+  linked_workout?: import('./linking').LinkedWorkout | null;
 }
 

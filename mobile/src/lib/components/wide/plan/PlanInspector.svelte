@@ -7,6 +7,8 @@
    */
   import { format } from 'date-fns';
   import { fmtDur, isMovable, type WideSession } from './planWide';
+  import type { Workout } from '$lib/types/training';
+  import PlanLinkPanel from '$lib/components/linking/PlanLinkPanel.svelte';
 
   let {
     date,
@@ -26,7 +28,9 @@
     onremove,
     onedit,
     onask,
-    ontoggledone,
+    plan = null,
+    onsetdone,
+    onlinkchanged,
     onopen,
     onundo,
     ondismiss
@@ -50,8 +54,12 @@
     onedit: () => void;
     /** Asks the coach to add a session on this day. */
     onask: () => void;
-    /** Marks the selected session done / not done. */
-    ontoggledone: () => void;
+    /** The selected session's training_plans row (link fields), for the completion panel. */
+    plan?: Workout | null;
+    /** Marks the selected session done / not done without a workout. */
+    onsetdone: (done: boolean) => Promise<boolean>;
+    /** Reload after a link change. */
+    onlinkchanged: () => Promise<void>;
     onopen: () => void;
     onundo: () => void;
     ondismiss: () => void;
@@ -170,17 +178,8 @@
     <p role="alert" class="m-0 text-[13px] text-red">{error}</p>
   {/if}
 
-  {#if s}
-    <button
-      type="button"
-      aria-pressed={done}
-      disabled={saving}
-      class="mt-auto shrink-0 h-[42px] rounded-xl text-[13px] font-medium cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50 {done ? 'border border-green/40 bg-green-dim text-green' : 'border border-popover-border bg-transparent text-text0 hover:border-text3'}"
-      onclick={ontoggledone}
-    >
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 5 5 9-10"></path></svg>
-      {done ? 'Done · tap to undo' : 'Mark as done'}
-    </button>
+  {#if s && plan}
+    <PlanLinkPanel {plan} {todayIso} wide onsetdone={onsetdone} onchanged={onlinkchanged} />
   {/if}
 
   {#if canAct || (!s && !past)}
