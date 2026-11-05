@@ -538,11 +538,19 @@ jobs:
         # including auth.email.template.*.content_path — so the referenced
         # supabase/templates/*.html must be synced too, or config validation
         # fails before it ever gets to the migrations.
+        #
+        # One tar stream over a single ssh connection, retried: per-file scp through the tunnel
+        # dropped mid-copy ("Broken pipe" / "Connection closed") and failed the deploy twice.
         run: |
-          ssh root@ssh.astrapheai.com 'rm -rf /root/ci-migrate && mkdir -p /root/ci-migrate/supabase'
-          scp -r supabase/migrations root@ssh.astrapheai.com:/root/ci-migrate/supabase/migrations
-          scp -r supabase/templates root@ssh.astrapheai.com:/root/ci-migrate/supabase/templates
-          scp supabase/config.toml root@ssh.astrapheai.com:/root/ci-migrate/supabase/config.toml
+          for attempt in 1 2 3; do
+            if tar czf - supabase/migrations supabase/templates supabase/config.toml                 | ssh -o ServerAliveInterval=15 root@ssh.astrapheai.com                     'rm -rf /root/ci-migrate && mkdir -p /root/ci-migrate && tar xzf - -C /root/ci-migrate'; then
+              exit 0
+            fi
+            echo "::warning::migration sync attempt ${attempt} failed; retrying"
+            sleep $((attempt * 10))
+          done
+          echo "::error::migration sync failed after 3 attempts"
+          exit 1
 
       - name: Run new migrations
         # Postgres runs as supabase-db-0 in the k3s cluster (namespace

@@ -42,7 +42,10 @@ def main() -> None:
 
     changes: dict[str, list[tuple[dict, int]]] = {}
     for r in _fetch_all_rows(query):
-        if not r.get("duration_min"):
+        blocks = [b for b in (r.get("structure") or []) if isinstance(b, dict) and (b.get("duration_minutes") or 0) > 0]
+        if not r.get("duration_min") or not blocks:
+            # No blocks: nothing better to compute from than the stored value (an imported
+            # plan's own estimate), so it's kept rather than replaced by a zone default.
             continue
         new = int(round(planned_tss(r.get("structure"), r.get("duration_min"), r.get("primary_zone"))))
         if new != int(r.get("target_tss") or 0):
