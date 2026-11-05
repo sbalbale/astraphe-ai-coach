@@ -56,6 +56,10 @@ class Settings(BaseSettings):
     # purpose: a busy box can queue a request (its slowest benchmarked hop, long context p90,
     # was ~32 s).
     CHAT_REQUEST_TIMEOUT_SEC: int = 120
+    # Time budget for a whole coach turn on that chat model. Each request to it is also capped
+    # at what is left of this (minus a reserve for Gemini); once too little is left, the rest of
+    # the turn runs on GEMINI_FALLBACK_MODEL instead of waiting on the chat model again.
+    CHAT_TURN_DEADLINE_SEC: int = 180
 
     # --- Gemini AI ---
     # Also used for LLM_PROVIDER=openai: these hold whatever model id

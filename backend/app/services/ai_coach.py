@@ -1434,14 +1434,135 @@ _WRAP_UP_NOTE = (
 )
 
 
-def _wrap_up_after_tool_budget(contents: list[types.Content], system_instruction: str, candidates: list[str]) -> str:
+# Gemini 3 rejects a request whose earlier function_call parts carry no thought_signature, and
+# tool calls made by the self-hosted chat model never have one. Google's documented placeholder
+# for history that came from another model lets Gemini take over a turn mid-way.
+_PLACEHOLDER_THOUGHT_SIGNATURE = b"skip_thought_signature_validator"
+
+# Seconds of a turn's time budget kept for the Gemini fallback, and the shortest request the
+# self-hosted chat model is still given (below that the step goes straight to Gemini).
+_FALLBACK_RESERVE_SEC = 30.0
+_MIN_CHAT_MODEL_TIMEOUT_SEC = 15.0
+
+
+def _unsigned_function_call(part: Any) -> bool:
+    return getattr(part, "function_call", None) is not None and not getattr(part, "thought_signature", None)
+
+
+def _as_genai_part(part: Any) -> types.Part | None:
+    if isinstance(part, types.Part):
+        return part
+    if getattr(part, "function_call", None) is not None:
+        return types.Part(function_call=part.function_call)
+    if getattr(part, "function_response", None) is not None:
+        return types.Part(function_response=part.function_response)
+    text = getattr(part, "text", None)
+    return types.Part(text=text, thought=bool(getattr(part, "thought", False)) or None) if text else None
+
+
+def _contents_for_gemini(contents: Any) -> Any:
+    """`contents` as sent to Gemini: function calls without a thought_signature (made by the
+    self-hosted chat model earlier in the turn) get the placeholder signature. Real Gemini
+    signatures are kept; `contents` itself is not changed."""
+    if isinstance(contents, str):
+        return contents
+    out = []
+    for c in contents:
+        parts = list(getattr(c, "parts", None) or [])
+        if not any(_unsigned_function_call(p) for p in parts):
+            out.append(c)
+            continue
+        new_parts: list[types.Part] = []
+        for p in parts:
+            if _unsigned_function_call(p):
+                new_parts.append(types.Part(function_call=p.function_call, thought_signature=_PLACEHOLDER_THOUGHT_SIGNATURE))
+            else:
+                gp = _as_genai_part(p)
+                if gp is not None:
+                    new_parts.append(gp)
+        out.append(types.Content(role=getattr(c, "role", None) or "model", parts=new_parts))
+    return out
+
+
+def _generate(model: str, contents: Any, config: Any, *, timeout: float | None = None) -> Any:
+    """One chat model call: the self-hosted chat model (with a per-request timeout) or Gemini
+    (with placeholder signatures on the self-hosted model's tool calls)."""
+    client = client_for_chat_model(model, _client)
+    if is_chat_openai_model(model):
+        kwargs = {"timeout": timeout} if timeout else {}
+        return client.models.generate_content(model=model, contents=contents, config=config, **kwargs)
+    return client.models.generate_content(model=model, contents=_contents_for_gemini(contents), config=config)
+
+
+def _usage_summary(resp: Any) -> dict[str, Any]:
+    """Token counts (and server timings, for the self-hosted model) of one model response."""
+    if resp is None:
+        return {}
+    usage = getattr(resp, "usage", None)
+    if isinstance(usage, dict):
+        return usage
+    meta = getattr(resp, "usage_metadata", None)
+    if meta is None:
+        return {}
+    out = {
+        "prompt_tokens": getattr(meta, "prompt_token_count", None),
+        "cached_tokens": getattr(meta, "cached_content_token_count", None),
+        "output_tokens": getattr(meta, "candidates_token_count", None),
+        "thought_tokens": getattr(meta, "thoughts_token_count", None),
+    }
+    return {k: v for k, v in out.items() if isinstance(v, int) and not isinstance(v, bool)}
+
+
+def _log_model_call(hop: Any, model: str, started: float, resp: Any = None, error: Exception | None = None) -> None:
+    ms = round((time.perf_counter() - started) * 1000)
+    u = _usage_summary(resp) if error is None else {}
+    server_ms = u.get("server_ms")
+    # Wall time the server spent not working on this request: queueing or loading the model.
+    wait_ms = max(0, ms - server_ms) if isinstance(server_ms, (int, float)) else None
+    logger.info(
+        "[coach] model_call hop=%s model=%s ok=%s ms=%s prompt_tokens=%s cached_tokens=%s output_tokens=%s "
+        "thought_tokens=%s server_ms=%s wait_ms=%s%s",
+        hop, model, error is None, ms, u.get("prompt_tokens"), u.get("cached_tokens"), u.get("output_tokens"),
+        u.get("thought_tokens"), server_ms, wait_ms,
+        f" error={type(error).__name__}: {str(error)[:300]}" if error is not None else "",
+    )
+
+
+def _chat_model_timeout(turn_deadline: float | None) -> float | None:
+    """Timeout for the next self-hosted chat model request: CHAT_REQUEST_TIMEOUT_SEC, capped at
+    what is left of the turn minus the Gemini reserve. None when too little is left."""
+    cap = float(settings.CHAT_REQUEST_TIMEOUT_SEC)
+    if turn_deadline is None:
+        return cap
+    left = turn_deadline - time.perf_counter() - _FALLBACK_RESERVE_SEC
+    if left < _MIN_CHAT_MODEL_TIMEOUT_SEC:
+        return None
+    return min(cap, left)
+
+
+def _wrap_up_after_tool_budget(
+    contents: list[types.Content],
+    system_instruction: str,
+    candidates: list[str],
+    turn_deadline: float | None = None,
+) -> str:
     wrap = list(contents) + [types.Content(role="user", parts=[types.Part.from_text(text=_WRAP_UP_NOTE)])]
     config = types.GenerateContentConfig(system_instruction=system_instruction, temperature=0.4)
     for model in candidates:
+        timeout = None
+        if is_chat_openai_model(model):
+            timeout = _chat_model_timeout(turn_deadline)
+            if timeout is None:
+                if model != candidates[-1]:
+                    continue
+                timeout = float(settings.CHAT_REQUEST_TIMEOUT_SEC)
+        started = time.perf_counter()
         try:
             gemini_quota.wait_for_slot(model, max_wait_sec=20.0)
-            resp = client_for_chat_model(model, _client).models.generate_content(model=model, contents=wrap, config=config)
+            resp = _generate(model, wrap, config, timeout=timeout)
+            _log_model_call("wrap_up", model, started, resp)
         except Exception as e:
+            _log_model_call("wrap_up", model, started, error=e)
             logger.warning("[coach] wrap-up call failed model=%s: %r", model, e)
             continue
         text = _extract_athlete_message_from_text(_extract_non_thought_text_from_response(resp))
@@ -1695,6 +1816,42 @@ def get_coach_response_agentic(
     tools_enabled: bool = True,
 ) -> tuple[str, list[dict[str, str]]]:
     """
+    Non-streaming coach reply with manual Gemini function calling (tool loop); see
+    _get_coach_response_agentic. Logs one summary line per turn.
+    """
+    stats: dict[str, Any] = {"hops": 0, "models": [], "fallback": None}
+    t0 = time.perf_counter()
+    outcome = "error"
+    try:
+        reply, sources = _get_coach_response_agentic(
+            athlete_id, message, current_tss=current_tss, db=db, conversation_id=conversation_id,
+            model_name=model_name, timezone_offset_min=timezone_offset_min, max_tool_hops=max_tool_hops,
+            progress_callback=progress_callback, tools_enabled=tools_enabled, _stats=stats,
+        )
+        outcome = "failure_reply" if reply in COACH_FAILURE_REPLIES else "ok"
+        return reply, sources
+    finally:
+        logger.info(
+            "[coach] turn ms=%s hops=%s models=%s fallback=%s outcome=%s",
+            round((time.perf_counter() - t0) * 1000), stats["hops"], ",".join(stats["models"]) or "-",
+            stats["fallback"] or "-", outcome,
+        )
+
+
+def _get_coach_response_agentic(
+    athlete_id: str,
+    message: str,
+    current_tss: float = 0.0,
+    db: Client | None = None,
+    conversation_id: str | None = None,
+    model_name: str | None = None,
+    timezone_offset_min: int | None = None,
+    max_tool_hops: int = 15,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
+    tools_enabled: bool = True,
+    _stats: dict[str, Any] | None = None,
+) -> tuple[str, list[dict[str, str]]]:
+    """
     Non-streaming coach reply with manual Gemini function calling (tool loop).
     tools_enabled=False skips every tool: one model call, for callers that already put the
     data in the prompt (each extra tool hop is a full model round trip).
@@ -1702,6 +1859,7 @@ def get_coach_response_agentic(
     """
     system_instruction = load_coach_instructions()
     coach_t0 = time.perf_counter()
+    stats = _stats if _stats is not None else {"hops": 0, "models": [], "fallback": None}
     if db:
         try:
             asyncio.get_running_loop()
@@ -1833,7 +1991,11 @@ def get_coach_response_agentic(
     last_tool_names: list[str] = []
     max_hops = _agentic_max_tool_hops(message, has_images=history_has_images)
     self_hosted_failed = False
+    # The self-hosted chat model gets what is left of this budget (minus a Gemini reserve);
+    # after that the turn continues on Gemini.
+    turn_deadline = coach_t0 + float(settings.CHAT_TURN_DEADLINE_SEC) if chat_uses_openai() else None
     for _hop in range(max_hops):
+        stats["hops"] = _hop + 1
         hop_t0 = time.perf_counter()
         _coach_progress(progress_callback, "thinking", hop=_hop)
         _hop_error: Exception | None = None
@@ -1841,10 +2003,24 @@ def get_coach_response_agentic(
         for _model_idx, effective_model in enumerate(hop_candidates):
             _hop_error = None
             _transient = False
+            chat_timeout = None
+            if is_chat_openai_model(effective_model):
+                chat_timeout = _chat_model_timeout(turn_deadline)
+                if chat_timeout is None:
+                    if _model_idx < len(hop_candidates) - 1:
+                        logger.warning(
+                            "[coach] turn time limit: %.0fs used, rest of the turn on %s",
+                            time.perf_counter() - coach_t0, hop_candidates[_model_idx + 1],
+                        )
+                        self_hosted_failed = True
+                        stats["fallback"] = stats["fallback"] or "turn_time_limit"
+                        continue
+                    chat_timeout = float(settings.CHAT_REQUEST_TIMEOUT_SEC)
             # Only the last candidate is retried: a failing call can itself take 10+ s, so when
             # a fallback model exists it is tried after one failure instead of after 3 retries.
             max_attempts = 3 if _model_idx == len(hop_candidates) - 1 else 1
             for _attempt in range(max_attempts):
+                call_t0 = time.perf_counter()
                 try:
                     # Blocks (bounded) rather than firing and getting a 429 —
                     # the free-tier RPM budget for the Gemma models here is
@@ -1855,14 +2031,19 @@ def get_coach_response_agentic(
                     # into the existing _should_fallback_chat_model() check
                     # below like any other overload signal.
                     gemini_quota.wait_for_slot(effective_model, max_wait_sec=20.0)
-                    last_response = client_for_chat_model(effective_model, _client).models.generate_content(
-                        model=effective_model,
-                        contents=contents,
-                        config=forced_config if (force_tools_next and forced_config is not None) else config,
+                    call_t0 = time.perf_counter()
+                    last_response = _generate(
+                        effective_model,
+                        contents,
+                        forced_config if (force_tools_next and forced_config is not None) else config,
+                        timeout=chat_timeout,
                     )
+                    _log_model_call(_hop, effective_model, call_t0, last_response)
+                    stats["models"].append(effective_model)
                     _hop_error = None
                     break
                 except Exception as e:
+                    _log_model_call(_hop, effective_model, call_t0, error=e)
                     _hop_error = e
                     err_str = str(e)
                     # Catch broad transient errors and connection-level failures
@@ -1882,8 +2063,9 @@ def get_coach_response_agentic(
                     _transient = is_transient
                     if _attempt < max_attempts - 1 and is_transient:
                         wait = 1.5 * (_attempt + 1)
-                        print(
-                            f"[coach] Gemini transient error (hop {_hop}, attempt {_attempt + 1}): {e}. Retrying in {wait}s…"
+                        logger.warning(
+                            "[coach] transient error model=%s hop=%s attempt=%s: %s; retrying in %ss",
+                            effective_model, _hop, _attempt + 1, e, wait,
                         )
                         time.sleep(wait)
                         continue
@@ -1901,7 +2083,11 @@ def get_coach_response_agentic(
                 or _should_fallback_chat_model(str(_hop_error))
                 or is_chat_openai_model(effective_model)
             ):
-                print(f"[coach] Primary model unavailable; trying fallback model={hop_candidates[_model_idx + 1]}")
+                logger.warning(
+                    "[coach] model=%s failed (hop %s), trying fallback model=%s",
+                    effective_model, _hop, hop_candidates[_model_idx + 1],
+                )
+                stats["fallback"] = stats["fallback"] or type(_hop_error).__name__
                 if is_chat_openai_model(effective_model):
                     # Stay on Gemini for the rest of this turn rather than waiting on the
                     # self-hosted model again at every tool hop.
@@ -1921,7 +2107,7 @@ def get_coach_response_agentic(
         )
 
         if _hop_error is not None:
-            print(f"CRITICAL: generate_content failed after retry (hop {_hop}): {_hop_error}")
+            logger.error("[coach] generate_content failed after retries (hop %s): %r", _hop, _hop_error)
             # last_tool_names only sees model-issued function calls; the
             # backward scan also catches the deterministic pre-loop
             # backstops (e.g. clear_training_plans below) and skips past a
@@ -1981,6 +2167,7 @@ def get_coach_response_agentic(
                 args = coach_tools.parse_function_args(fc)
                 args = _normalize_relative_tool_dates(name, args, message=message, calendar=calendar)
                 handler = coach_tools.TOOL_HANDLERS.get(name)
+                tool_t0 = time.perf_counter()
                 try:
                     if name == "clear_training_plans" and not explicit_clear:
                         result = _defer_clear(args, pending_clears)
@@ -2011,9 +2198,12 @@ def get_coach_response_agentic(
                         d = item.get("date") if isinstance(item, dict) else None
                         if isinstance(d, str) and d:
                             planned_dates_from_tools.append(d[:10])
-                print(f"\n--- [TOOL EXECUTED: {name}] ---")
-                print(f"Args: {args}")
-                print(f"Result: {result}\n")
+                # Name, time and outcome only: arguments and results carry the athlete's data.
+                logger.info(
+                    "[coach] tool hop=%s name=%s ms=%s ok=%s",
+                    _hop, name, round((time.perf_counter() - tool_t0) * 1000),
+                    not (isinstance(result, dict) and result.get("error")),
+                )
                 if name in _CALENDAR_CHANGE_TOOLS:
                     hop_dates.extend(_dates_touched(args, result))
                 fr_parts.append(types.Part.from_function_response(name=name, response=result))
@@ -2064,7 +2254,10 @@ def get_coach_response_agentic(
         # are already in `contents`; ask once more with tools off so the athlete gets an
         # honest summary of what was done and what is left, not a generic failure.
         final = _wrap_up_after_tool_budget(
-            contents, system_for_models, [m for m in candidates if not (self_hosted_failed and is_chat_openai_model(m))]
+            contents,
+            system_for_models,
+            [m for m in candidates if not (self_hosted_failed and is_chat_openai_model(m))],
+            turn_deadline=turn_deadline,
         )
     if (
         final
