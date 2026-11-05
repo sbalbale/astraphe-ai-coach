@@ -28,6 +28,48 @@ ZONE_IF: dict[str, float] = {
 }
 
 FOCUS_ZONES = tuple(ZONE_IF.keys())
+
+# Intensity factor per HR zone number (Z1..Z5), same scale as ZONE_IF and the app's plan editor.
+_ZONE_NUMBER_IF = (0.0, 0.55, 0.70, 0.85, 0.97, 1.10)
+
+
+def planned_tss(structure: Any, duration_minutes: Any, focus_zone: Any) -> float:
+    """Planned TSS from the session's blocks, the way the app's plan editor estimates it:
+    each block's (minutes / 60) x IF^2 x 100, with IF its %FTP target, else its HR zone, else the
+    session's focus zone. Without blocks, the whole duration at the focus zone.
+
+    (It used to be the whole duration at one fixed IF per focus zone, and never recomputed when
+    the coach edited a session: a 60-min 55% / 65% FTP ride kept the 73 TSS of its original
+    90-min version instead of ~39.)"""
+    fallback = ZONE_IF.get(str(focus_zone or ""), ZONE_IF["Endurance"])
+    total = 0.0
+    counted = 0.0
+    for b in structure if isinstance(structure, list) else []:
+        if not isinstance(b, dict):
+            continue
+        try:
+            mins = float(b.get("duration_minutes") or 0)
+        except (TypeError, ValueError):
+            continue
+        if mins <= 0:
+            continue
+        pct = b.get("target_power_percent_ftp")
+        zone = b.get("target_hr_zone")
+        if isinstance(pct, (int, float)) and not isinstance(pct, bool) and pct > 0:
+            intensity = float(pct) / 100.0
+        elif isinstance(zone, (int, float)) and not isinstance(zone, bool) and 1 <= int(zone) <= 5:
+            intensity = _ZONE_NUMBER_IF[int(zone)]
+        else:
+            intensity = fallback
+        total += (mins / 60.0) * intensity * intensity * 100.0
+        counted += mins
+    if counted > 0:
+        return round(total, 1)
+    try:
+        dur = float(duration_minutes or 0)
+    except (TypeError, ValueError):
+        dur = 0.0
+    return round((dur / 60.0) * fallback * fallback * 100.0, 1)
 DEFAULT_SPORT = "other"
 
 
@@ -614,6 +656,8 @@ def handle_schedule_workout(
         est_tss = round((duration_minutes / 60.0) * (ZONE_IF[focus_zone] ** 2) * 100.0, 1)
         workout_json["duration_minutes"] = duration_minutes  # what the coach reads back
     workout_json["structure"] = clean_structure
+    if duration_minutes > 0:
+        est_tss = planned_tss(clean_structure, duration_minutes, focus_zone)
 
     try:
         dup = (

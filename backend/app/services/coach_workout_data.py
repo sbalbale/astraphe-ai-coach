@@ -784,6 +784,20 @@ def update_planned_workout_sync(db: Client, athlete_id: str, args: dict[str, Any
     if not update:
         return {"error": "no_fields_to_update"}
 
+    # Planned TSS follows the session as edited (it used to keep the original value).
+    if any(k in update for k in ("duration_min", "primary_zone", "structure")):
+        from app.services.coach_tools import planned_tss
+
+        update["target_tss"] = int(
+            round(
+                planned_tss(
+                    update.get("structure", row.get("structure")),
+                    update.get("duration_min", row.get("duration_min")),
+                    update.get("primary_zone", row.get("primary_zone")),
+                )
+            )
+        )
+
     plan_id = str(row["id"])
     try:
         upd = (

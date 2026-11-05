@@ -920,3 +920,38 @@ def test_update_planned_workout_sync_updates_title_and_focus_zone():
         db, "athlete-1", {"plan_id": "p1", "title": "New title", "focus_zone": "Threshold"}
     )
     assert result["status"] == "updated"
+
+
+def test_editing_a_planned_session_recomputes_its_tss():
+    """The coach shortened a 90-min Endurance ride (73 TSS) to 60 min of 55% / 65% FTP blocks;
+    its planned TSS stayed 73."""
+    db = MagicMock()
+    db.table.return_value.select.return_value.eq.return_value.eq.return_value.maybe_single.return_value.execute.return_value = SimpleNamespace(
+        data={"id": "p1", "duration_min": 90, "primary_zone": "Endurance", "target_tss": 73, "structure": []}
+    )
+    upd = db.table.return_value.update
+    upd.return_value.eq.return_value.eq.return_value.execute.return_value = SimpleNamespace(data=[{"id": "p1"}])
+    cwd.update_planned_workout_sync(
+        db,
+        "athlete-1",
+        {
+            "plan_id": "p1",
+            "duration_minutes": 60,
+            "structure": [
+                {"name": "Warmup", "duration_minutes": 15, "target_power_percent_ftp": 55},
+                {"name": "Main set", "duration_minutes": 45, "target_power_percent_ftp": 65},
+            ],
+        },
+    )
+    assert upd.call_args[0][0]["target_tss"] == 39
+
+
+def test_moving_a_planned_session_leaves_its_tss_alone():
+    db = MagicMock()
+    db.table.return_value.select.return_value.eq.return_value.eq.return_value.maybe_single.return_value.execute.return_value = SimpleNamespace(
+        data={"id": "p1", "duration_min": 90, "primary_zone": "Endurance", "target_tss": 73, "structure": []}
+    )
+    upd = db.table.return_value.update
+    upd.return_value.eq.return_value.eq.return_value.execute.return_value = SimpleNamespace(data=[{"id": "p1"}])
+    cwd.update_planned_workout_sync(db, "athlete-1", {"plan_id": "p1", "new_date": "2026-11-10"})
+    assert "target_tss" not in upd.call_args[0][0]
