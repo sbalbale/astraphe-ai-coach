@@ -7,7 +7,6 @@
   import { format } from 'date-fns';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { boundedScoreCssColor } from '$lib/scoreColors';
-  import { currentRecoveryState } from '$lib/utils/biometrics';
   import { baselineBefore, dayStrain, finite, formatMinutes, workoutsOn } from '$lib/utils/bodyWide';
 
   type Tab = 'recovery' | 'sleep' | 'strain';
@@ -17,17 +16,10 @@
 
   const series = $derived((athleteStore.biometrics?.series ?? []) as Record<string, any>[]);
   const todayStr = $derived(format(new Date(), 'yyyy-MM-dd'));
-  const current = $derived(currentRecoveryState(athleteStore.biometrics?.series, athleteStore.profile?.timezone_offset_min));
   const dayRow = $derived(series.find((r) => r?.date === day) ?? null);
-  /** Today with no row yet carries last night's row forward, as the Recovery page does. */
-  const row = $derived(dayRow ?? (day === todayStr ? (current.row as Record<string, any> | null) : null));
-  // Like the Recovery / Sleep pages, today also carries forward when its row exists but has no
-  // score yet (e.g. a weight-only row saved before the overnight sync). Otherwise the tile read
-  // "No score" next to a page showing yesterday's score as carried over.
-  const carried = $derived(day === todayStr ? (current.row as Record<string, any> | null) : null);
-  const recoveryRow = $derived(pos(row?.recovery_score) === null && carried ? carried : row);
-  // Sleep is never carried over: before last night syncs, the tile says so instead of showing
-  // the previous night's sleep as today's.
+  // Nothing is carried over from an earlier night: before last night syncs, the tiles say so
+  // instead of showing yesterday's recovery and sleep as today's.
+  const recoveryRow = $derived(dayRow);
   const sleepRow = $derived(dayRow);
 
   function pos(v: unknown): number | null {
@@ -37,7 +29,14 @@
 
   const recovery = $derived.by(() => {
     const score = pos(recoveryRow?.recovery_score);
-    if (score === null) return { value: '--', p: 0, color: 'var(--text2)', state: 'No score', blurb: 'Recovery needs an overnight reading from WHOOP or Garmin.' };
+    if (score === null)
+      return {
+        value: '--',
+        p: 0,
+        color: 'var(--text2)',
+        state: 'No score',
+        blurb: day === todayStr ? 'Last night has not synced yet.' : 'Recovery needs an overnight reading from WHOOP or Garmin.'
+      };
     const bits: string[] = [];
     const hrv = pos(recoveryRow?.hrv_rmssd);
     const hrvBase = baselineBefore(series, day, 'hrv_rmssd');

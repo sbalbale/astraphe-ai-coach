@@ -125,7 +125,7 @@
     pageHeader.dateValue = selectedDayStr;
     // Wide layouts show Recovery, Sleep and Strain as one "Body" screen.
     pageHeader.wideTitle = 'Body';
-    pageHeader.wideEyebrow = bodyEyebrow(days[dayIndex]?.date ?? todayStr, days[dayIndex]?.data ?? (current.row as any));
+    pageHeader.wideEyebrow = bodyEyebrow(days[dayIndex]?.date ?? todayStr, days[dayIndex]?.data);
     return resetPageHeader;
   });
 
@@ -174,29 +174,10 @@
     )
   );
 
-  const useHeadlineCarryForward = $derived(
-    d?.date === todayStr &&
-      (d.missing || !Number.isFinite(Number(d?.data?.recovery_score)))
-  );
-
-  const headlineRow = $derived(
-    useHeadlineCarryForward && current.row ? current.row : (d?.data ?? null)
-  );
-
-  const showRecoveryHero = $derived(!d.missing || (useHeadlineCarryForward && current.row != null));
-
-  const carryOverLabel = $derived.by(() => {
-    if (!useHeadlineCarryForward || !current.row || current.hasTodayRow) return null;
-    if (current.ageHours !== null && current.ageHours < 36) return 'Carried over from last night';
-    if (current.date) {
-      try {
-        return `Carried over from ${format(new Date(current.date + 'T12:00:00'), 'MMM d')}`;
-      } catch {
-        return 'Carried over from previous night';
-      }
-    }
-    return 'Carried over from previous night';
-  });
+  // Only the selected day's own recovery: before last night syncs, today shows "waiting for
+  // sync" rather than yesterday's score as today's.
+  const headlineRow = $derived(d?.data ?? null);
+  const showRecoveryHero = $derived(!d.missing);
 
   const hasData = $derived(
     days.some((day) => !day.missing) || current.row != null || athleteStore.readiness > 0
@@ -355,8 +336,10 @@
       icon="refresh"
       tone="amber"
       eyebrow="Waiting for sync"
-      title="No recovery for {d.label}"
-      message="There's no overnight HRV or resting heart rate for this day yet. Your watch may not have synced, or it wasn't worn that night."
+      title={d.date === todayStr ? "Last night hasn't synced yet" : `No recovery for ${d.label}`}
+      message={d.date === todayStr
+        ? 'Recovery appears once last night syncs from your watch, usually within 30 minutes of waking.'
+        : "There's no overnight HRV or resting heart rate for this day yet. Your watch may not have synced, or it wasn't worn that night."}
       actionLabel={checking ? 'Checking…' : 'Check sync now'}
       onAction={checkSync}
     />
@@ -379,7 +362,6 @@
             : score >= 34 ? 'Moderate physiological state. Listen to your body during training.'
             : 'Significant fatigue detected. Prioritize sleep and active recovery today.'}
         </p>
-        {#if carryOverLabel}<span class="font-mono text-[11px] text-text2">{carryOverLabel}</span>{/if}
         {#if spo2Pct !== null || bodyTempDeltaDisplay !== null}
           <span class="font-mono text-[11px] text-text2">
             {#if spo2Pct !== null}SpO2 {spo2Pct}%{/if}{#if spo2Pct !== null && bodyTempDeltaDisplay !== null} · {/if}{#if bodyTempDeltaDisplay !== null}Skin {formatSigned1dp(bodyTempDeltaDisplay, '°')}{/if}
