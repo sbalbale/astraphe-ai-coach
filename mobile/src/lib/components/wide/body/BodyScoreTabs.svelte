@@ -26,9 +26,9 @@
   // "No score" next to a page showing yesterday's score as carried over.
   const carried = $derived(day === todayStr ? (current.row as Record<string, any> | null) : null);
   const recoveryRow = $derived(pos(row?.recovery_score) === null && carried ? carried : row);
-  const sleepRow = $derived(
-    pos(row?.sleep_duration_min) === null && pos(row?.sleep_score) === null && carried ? carried : row
-  );
+  // Sleep is never carried over: before last night syncs, the tile says so instead of showing
+  // the previous night's sleep as today's.
+  const sleepRow = $derived(dayRow);
 
   function pos(v: unknown): number | null {
     const n = finite(v);
@@ -65,7 +65,14 @@
   const sleep = $derived.by(() => {
     const mins = pos(sleepRow?.sleep_duration_min);
     const score = pos(sleepRow?.sleep_score);
-    if (mins === null && score === null) return { value: '--', p: 0, color: 'var(--text2)', state: 'No sleep', blurb: 'Nothing recorded for this night.' };
+    if (mins === null && score === null)
+      return {
+        value: '--',
+        p: 0,
+        color: 'var(--text2)',
+        state: 'No sleep',
+        blurb: day === todayStr ? 'Last night has not synced yet.' : 'Nothing recorded for this night.'
+      };
     let inBed = pos(sleepRow?.sleep_in_bed_min);
     if (inBed === null && sleepRow?.sleep_bedtime && sleepRow?.sleep_wakeup) {
       const span = (Date.parse(sleepRow.sleep_wakeup) - Date.parse(sleepRow.sleep_bedtime)) / 60000;
