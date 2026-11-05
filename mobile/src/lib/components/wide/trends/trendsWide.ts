@@ -74,7 +74,7 @@ export function rampRatePerWeek(rows: LoadRow[]): number | null {
 }
 
 /** Average TSS of completed (non-current) weeks that had any load. */
-export function averageCompletedTss(buckets: WeekBucket[]): number {
+export function averageCompletedTss(buckets: Pick<WeekBucket, 'tss' | 'current'>[]): number {
   const done = buckets.filter((b) => !b.current && b.tss > 0);
   return done.length ? Math.round(done.reduce((a, b) => a + b.tss, 0) / done.length) : 0;
 }

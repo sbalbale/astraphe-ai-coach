@@ -55,7 +55,7 @@ describe('planWide', () => {
     const s = toWideSession(wk(), 262);
     expect(s.zone).toBe(4);
     expect(s.tss).toBe(92);
-    expect(s.steps[1]).toEqual({ name: 'Block', minutes: 12, zone: 4, target: '234–248 W' });
+    expect(s.steps[1]).toEqual({ name: 'Block', minutes: 12, zone: 4, target: '230–255 W' });
     expect(s.steps[2].target).toBe('Z1 HR');
     expect(s.bars.map((b) => b.hard)).toEqual([false, true, false]);
   });

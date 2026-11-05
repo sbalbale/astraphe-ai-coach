@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { workoutStrainContribution } from '$lib/utils/bodyWide';
   /**
    * Wide Training log, detail pane (design: WTraining detail, "option D"): map hero when the
    * workout has GPS, the sheet with title, stats and Overview / Charts / Laps / Data tabs.
@@ -75,7 +76,8 @@
 
   const secs = $derived(getDurationSecs(workout));
   const tss = $derived(positiveRounded(workout?.tss));
-  const strain = $derived(positiveRounded(workout?.strain_score));
+  // Same as the Strain page's contribution (strain, else TSS-based), so the two never disagree.
+  const strain = $derived(Math.round(workoutStrainContribution(workout ?? {})) || null);
   const np = $derived(Number(workout?.norm_power_w) || 0);
   const elev = $derived(Number(workout?.elevation_gain_m) || 0);
   const started = $derived(workout?.started_at ? new Date(workout.started_at) : null);

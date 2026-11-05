@@ -39,7 +39,15 @@
   const row = $derived(current.row as Row | null);
   const score = $derived(readinessScoreFromRow(row));
   const recovery = $derived(firstPositiveFiniteNumber(row?.recovery_score));
-  /** Form as the backend uses it for readiness: that day's fitness minus the previous day's fatigue. */
+  /** Form as every other page shows it: that day's fitness minus that day's fatigue. */
+  function sameDayForm(dateIso: string): number | null {
+    const r = loadByDate.get(dateIso);
+    const ctl = Number(r?.ctl);
+    const atl = Number(r?.atl);
+    return Number.isFinite(ctl) && Number.isFinite(atl) ? ctl - atl : null;
+  }
+  /** The readiness formula's load term (as the backend computes it): that day's fitness minus
+   * the previous day's fatigue. Shown in the breakdown as "Load balance", not as "Form". */
   function formFor(dateIso: string): number | null {
     const ctl = Number(loadByDate.get(dateIso)?.ctl);
     const atl = Number(loadByDate.get(format(subDays(new Date(dateIso + 'T12:00:00'), 1), 'yyyy-MM-dd'))?.atl);
@@ -130,7 +138,7 @@
         date: d,
         score: readinessScoreFromRow(r),
         recovery: firstPositiveFiniteNumber(r?.recovery_score),
-        form: formFor(d),
+        form: sameDayForm(d),
         workouts: (athleteStore.workouts ?? [])
           .filter((w: any) => localDay(w?.started_at) === d)
           .map((w: any) => w?.title || w?.sport || 'Workout') as string[]
@@ -190,7 +198,7 @@
         {/if}
         <div class="grid grid-cols-[10px_1fr_auto] gap-2.5 items-center py-2.5 border-t border-border">
           <span aria-hidden="true" class="w-2.5 h-2.5 rounded-[3px] bg-text2"></span>
-          <span class="flex flex-col gap-0.5"><span class="text-sm font-medium">Form · {Number.isFinite(tsb) ? `${tsb > 0 ? '+' : ''}${tsb.toFixed(1)}` : '--'} → {Number.isFinite(tsb) ? Math.round(breakdown.formScore) : '--'}</span><span class="text-xs text-text2">Fitness minus fatigue, scaled 0–100{breakdown.recovery != null ? ` · weighted ${FORM_WEIGHT * 100}%` : ''}</span></span>
+          <span class="flex flex-col gap-0.5"><span class="text-sm font-medium">Load balance · {Number.isFinite(tsb) ? `${tsb > 0 ? '+' : ''}${tsb.toFixed(1)}` : '--'} → {Number.isFinite(tsb) ? Math.round(breakdown.formScore) : '--'}</span><span class="text-xs text-text2">Today's fitness minus yesterday's fatigue, scaled 0–100{breakdown.recovery != null ? ` · weighted ${FORM_WEIGHT * 100}%` : ''}</span></span>
           <span class="font-mono text-sm">{breakdown.formPart.toFixed(1)}</span>
         </div>
         <div class="flex justify-between pt-2.5 border-t border-border text-[13px]">

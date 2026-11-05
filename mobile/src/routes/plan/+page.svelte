@@ -1,6 +1,7 @@
 <script lang="ts">
   import { formatStepClock, formatStepDuration } from '$lib/utils/stepDuration';
   import { WEEKDAY_LETTERS } from '$lib/utils/week';
+  import { powerBand } from '$lib/utils/powerBand';
   import { WEEK_STARTS_ON } from '$lib/utils/week';
   import type { Action } from 'svelte/action';
   import EmptyStateCard from '$lib/components/ui/EmptyStateCard.svelte';
@@ -701,10 +702,8 @@
       const zone = pct != null ? targetZone(`${pct}% FTP`) : hrZone ?? 0;
       const start = t;
       t += minutes;
-      // Prescribed targets are a single % of FTP; show the usual ±2.5% working band.
-      const watts = pct != null && planFtp
-        ? `${Math.round((planFtp * (pct - 2.5)) / 100)}–${Math.round((planFtp * (pct + 2.5)) / 100)} W`
-        : undefined;
+      // Prescribed targets are a single % of FTP; show the same ±5% band planned vs actual uses.
+      const watts = pct != null && planFtp ? `${powerBand(planFtp, pct).join('–')} W` : undefined;
       return {
         title: i.name || 'Step',
         note: i.description,
