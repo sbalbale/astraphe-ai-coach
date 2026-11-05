@@ -769,7 +769,7 @@ def test_recompute_workout_tss_for_athlete_reprocesses_zero_tss(monkeypatch):
         "tss": 0.0,
     }
     fake_db = MagicMock()
-    fake_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = MagicMock(
+    fake_db.table.return_value.select.return_value.eq.return_value.order.return_value.range.return_value.execute.return_value = MagicMock(
         data=[row]
     )
 

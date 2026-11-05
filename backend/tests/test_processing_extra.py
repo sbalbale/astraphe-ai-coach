@@ -250,6 +250,8 @@ class _StrainQuery:
 
     def order(self, *_a, **_k):
         return self
+    def range(self, *_a, **_k):
+        return self
 
     def range(self, *_a, **_k):
         return self
@@ -368,6 +370,8 @@ class _TssQuery:
 
     def order(self, *_a, **_k):
         return self
+    def range(self, *_a, **_k):
+        return self
 
     def single(self):
         return self
@@ -439,7 +443,7 @@ def test_workout_row_to_payload_builds_payload_from_row():
 
 def test_recompute_workout_tss_for_athlete_skips_rows_with_existing_tss():
     db = MagicMock()
-    db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = SimpleNamespace(
+    db.table.return_value.select.return_value.eq.return_value.order.return_value.range.return_value.execute.return_value = SimpleNamespace(
         data=[
             {"started_at": "2026-05-20T10:00:00Z", "tss": 50.0},
             {"started_at": "2026-05-21T10:00:00Z", "tss": None, "sport": "run"},
@@ -529,3 +533,25 @@ def test_local_day_helpers_use_the_athlete_offset():
     assert processing._local_day_of(evening, 0) == date(2026, 11, 3)
     start, end = processing._local_day_window_utc(date(2026, 11, 2), -300)
     assert start.startswith("2026-11-02T05:00:00") and end.startswith("2026-11-03T05:00:00")
+
+
+def test_fetch_rows_newest_first_reads_newest_first_and_returns_oldest_first():
+    """Pages are requested newest first (a cut-short read loses the oldest rows, not the
+    latest), and rows come back in chronological order for charts."""
+    rows = [{"date": f"2026-{m:02d}-01"} for m in (3, 1, 2)]
+    orders = []
+
+    class _Q:
+        def order(self, col, desc=False):
+            orders.append((col, desc))
+            return self
+
+        def range(self, *_a):
+            return self
+
+        def execute(self):
+            return SimpleNamespace(data=rows)
+
+    out = processing.fetch_rows_newest_first(lambda: _Q(), "date")
+    assert orders == [("date", True)]
+    assert [r["date"] for r in out] == ["2026-01-01", "2026-02-01", "2026-03-01"]

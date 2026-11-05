@@ -513,6 +513,17 @@ def _fetch_all_rows(build_query: Any, page_size: int = _PAGE_SIZE) -> list[dict[
         start += page_size
 
 
+def fetch_rows_newest_first(build_query: Any, column: str, page_size: int = _PAGE_SIZE) -> list[dict[str, Any]]:
+    """
+    Every row of ``build_query()`` (an unordered query), returned oldest to newest by ``column``.
+    Pages are read newest first, so if a read is ever cut short it is the oldest rows that go
+    missing, never the most recent ones.
+    """
+    rows = _fetch_all_rows(lambda: build_query().order(column, desc=True), page_size)
+    rows.sort(key=lambda r: str(r.get(column) or ""))
+    return rows
+
+
 def refresh_all_daily_strain_sync(db: Any, athlete_id: str) -> dict[str, int]:
     """Fast path: refresh biometrics.strain_score for every day that has a workout."""
     rows = _fetch_all_rows(
@@ -1691,9 +1702,11 @@ def _workout_row_to_payload(row: dict) -> WorkoutPayload:
 
 async def recompute_workout_tss_for_athlete(athlete_id: str, db) -> int:
     """Recompute TSS/strain for workouts missing tss. Returns count updated."""
-    res = await asyncio.to_thread(db.table("workouts").select("*").eq("athlete_id", athlete_id).order("started_at").execute)
+    rows = await asyncio.to_thread(
+        fetch_rows_newest_first, lambda: db.table("workouts").select("*").eq("athlete_id", athlete_id), "started_at"
+    )
     updated = 0
-    for row in res.data or []:
+    for row in rows:
         # process_and_save_workout() always writes a numeric "tss" (defaulting
         # to 0.0, never NULL — see its `tss = 0.0` default above), so every
         # workout row has a non-None tss by construction. An `is not None`

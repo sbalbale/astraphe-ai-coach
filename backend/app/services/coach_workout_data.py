@@ -13,6 +13,7 @@ from app.models.biometrics import DailyBiometrics
 from app.models.workout import WorkoutPayload
 from app.services.hr_zones import get_athlete_zones
 from app.services.processing import (
+    fetch_rows_newest_first,
     find_or_create_canonical_workout,
     normalize_sport,
     process_and_save_biometrics,
@@ -905,16 +906,14 @@ def get_training_load_series(db: Client, athlete_id: str, args: dict[str, Any]) 
         return {"error": f"invalid date: {e}"}
 
     try:
-        res = (
-            db.table("tss_history")
+        rows = fetch_rows_newest_first(
+            lambda: db.table("tss_history")
             .select("date,daily_tss,ctl,atl,tsb")
             .eq("athlete_id", athlete_id)
             .gte("date", start.isoformat())
-            .lte("date", end.isoformat())
-            .order("date")
-            .execute()
+            .lte("date", end.isoformat()),
+            "date",
         )
-        rows = list(res.data or [])
     except Exception as e:
         return {"error": f"tss_history_query_failed: {e}"}
 

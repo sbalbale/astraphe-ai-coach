@@ -36,7 +36,7 @@ def test_safe_float_and_safe_int():
 
 def test_fetch_tss_history_rows_returns_error_dict_on_exception():
     db = MagicMock()
-    db.table.return_value.select.return_value.eq.return_value.gte.return_value.order.return_value.execute.side_effect = (
+    db.table.return_value.select.return_value.eq.return_value.gte.return_value.order.return_value.range.return_value.execute.side_effect = (
         RuntimeError("db down")
     )
     rows = coach_tools._fetch_tss_history_rows(db, "athlete-1", today=date(2026, 5, 20))

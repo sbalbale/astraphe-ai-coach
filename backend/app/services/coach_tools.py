@@ -106,15 +106,12 @@ def _fetch_tss_history_rows(
     local_today = today or athlete_local_date(db, athlete_id)
     start = (local_today - timedelta(days=days_back)).isoformat()
     try:
-        res = (
-            db.table("tss_history")
-            .select("date,daily_tss,ctl,atl")
-            .eq("athlete_id", athlete_id)
-            .gte("date", start)
-            .order("date", desc=False)
-            .execute()
+        from app.services.processing import fetch_rows_newest_first
+
+        return fetch_rows_newest_first(
+            lambda: db.table("tss_history").select("date,daily_tss,ctl,atl").eq("athlete_id", athlete_id).gte("date", start),
+            "date",
         )
-        return list(res.data or [])
     except Exception as e:
         return [{"_error": str(e)}]
 

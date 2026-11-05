@@ -39,6 +39,8 @@ class _Query:
 
     def order(self, *_a, **_k):
         return self
+    def range(self, *_a, **_k):
+        return self
 
     def limit(self, *_a, **_k):
         return self
@@ -719,7 +721,7 @@ def test_get_training_load_series_query_failure():
     db.table.return_value.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = SimpleNamespace(
         data={"timezone_offset_min": 0}
     )
-    db.table.return_value.select.return_value.eq.return_value.gte.return_value.lte.return_value.order.return_value.execute.side_effect = RuntimeError(
+    db.table.return_value.select.return_value.eq.return_value.gte.return_value.lte.return_value.order.return_value.range.return_value.execute.side_effect = RuntimeError(
         "down"
     )
     result = cwd.get_training_load_series(db, "athlete-1", {})

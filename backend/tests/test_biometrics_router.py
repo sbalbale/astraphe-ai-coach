@@ -68,6 +68,11 @@ class _BiometricsQuery:
     def limit(self, *_a, **_k):
         return self
 
+    def range(self, start, end):
+        # Like PostgREST: one page of an ordered result, at most 1000 rows.
+        q = _BiometricsQuery(self._rows[start : min(end + 1, start + 1000)])
+        return q
+
     def execute(self):
         return SimpleNamespace(data=self._rows)
 
@@ -221,3 +226,25 @@ def test_ingest_daily_biometrics_queues_background_task():
     args = mock_process.call_args[0]
     assert args[0].date.isoformat() == "2026-05-20"
     assert args[1] == "athlete-1"
+
+
+def test_newest_nights_keep_their_sleep_stage_timeline_past_1000_segments():
+    """Production: 1065 segments in a 60-day page; one request returned the oldest 1000, so the
+    newest nights (Nov 2-4) lost their hypnogram after a Garmin sleep backfill."""
+    segs = [
+        {"date": f"2026-10-{d:02d}", "stage": "light", "start_at": f"2026-10-{d:02d}T{h:02d}:00:00+00:00", "end_at": f"2026-10-{d:02d}T{h:02d}:30:00+00:00"}
+        for d in range(1, 32)
+        for h in range(0, 24)
+        for _ in range(2)
+    ]  # 31 nights x 48 = 1488 segments
+    rows = [{"date": "2026-10-31"}, {"date": "2026-10-01"}]
+    _override(_BiometricsDb(rows, segment_rows=segs))
+    try:
+        with TestClient(app) as client:
+            res = client.get("/v1/biometrics", params={"start_date": "2026-10-01", "end_date": "2026-10-31"})
+    finally:
+        app.dependency_overrides = {}
+    assert res.status_code == 200
+    by_date = {r["date"]: r for r in res.json()["series"]}
+    assert len(by_date["2026-10-31"]["stage_segments"]) == 48
+    assert len(by_date["2026-10-01"]["stage_segments"]) == 48
