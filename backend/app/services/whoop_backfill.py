@@ -404,7 +404,7 @@ async def _backfill_historical_data_impl(
         sport_name_raw = (w.get("sport_name") or "other")
         sport_name = str(sport_name_raw).strip().lower()
         # Normalize common WHOOP sport names into our internal enums.
-        if sport_name in ("weightlifting", "weight lifting", "strength training", "strength_training", "gym", "strength"):
+        if sport_name in ("weightlifting", "weightlifting_msk", "powerlifting", "weight lifting", "strength training", "strength_training", "gym", "strength"):
             sport_name = "strength"
         elif sport_name in ("cycling", "bike", "biking", "indoor cycling", "spin", "spinning", "stationary bike", "peloton"):
             # processing.py will normalize cycling -> bike
