@@ -21,7 +21,7 @@
     series: Record<string, any>[];
     /** The picked day (YYYY-MM-DD). */
     day: string;
-    /** That day's row (today may carry last night's forward); null when missing. */
+    /** That day's own row; null when missing (today before last night syncs). */
     row: Record<string, any> | null;
     /** The 7-day window, oldest first. */
     days: Day[];
@@ -135,7 +135,11 @@
       <span class="font-mono text-[11px] text-text2">7-DAY</span>
     </div>
     {#if drivers.length === 0}
-      <p class="m-0 py-4 border-t border-rail-border text-[13px] text-text2">No HRV, resting HR or sleep readings for this day.</p>
+      <p class="m-0 py-4 border-t border-rail-border text-[13px] text-text2">
+        {day === format(new Date(), 'yyyy-MM-dd')
+          ? "Last night hasn't synced yet. Recovery appears once it does, usually within 30 minutes of waking."
+          : 'No HRV, resting HR or sleep readings for this day.'}
+      </p>
     {/if}
     {#each drivers as dr (dr.name)}
       <BaselineBar name={dr.name} value={dr.value} delta={dr.delta} z={dr.z} color={dr.color} labelWidth={110} valueWidth={90} size="lg" />

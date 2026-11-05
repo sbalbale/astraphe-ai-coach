@@ -106,7 +106,7 @@
     // Wide layouts show Recovery, Sleep and Strain as one "Body" screen.
     const wideDay = nights[nightIndex]?.rawDate ?? todayStr;
     pageHeader.wideTitle = 'Body';
-    pageHeader.wideEyebrow = bodyEyebrow(wideDay, (athleteStore.biometrics?.series ?? []).find((r: any) => r?.date === wideDay) ?? (current.row as any));
+    pageHeader.wideEyebrow = bodyEyebrow(wideDay, (athleteStore.biometrics?.series ?? []).find((r: any) => r?.date === wideDay));
     return resetPageHeader;
   });
 
@@ -173,95 +173,6 @@
 
   function isNightData(x: Night): x is NightData {
     return x.missing === false;
-  }
-
-  function buildNightDataFromBio(
-    b: Record<string, any>,
-    displayDateStr: string,
-    dateLabel: string,
-    shortLabel: string,
-    dayLabel: string
-  ): NightData | null {
-    if (!b?.sleep_score && !b?.sleep_duration_min) return null;
-
-    const h = Math.floor((b.sleep_duration_min || 0) / 60);
-    const m = Math.round((b.sleep_duration_min || 0) % 60);
-    const bedtime = b.sleep_bedtime ? new Date(b.sleep_bedtime) : null;
-    const wakeup = b.sleep_wakeup ? new Date(b.sleep_wakeup) : null;
-    const timeInBedMin =
-      b.sleep_in_bed_min ||
-      (bedtime && wakeup ? Math.round((wakeup.getTime() - bedtime.getTime()) / 60000) : 0);
-    const inBedH = Math.floor(timeInBedMin / 60);
-    const inBedM = timeInBedMin % 60;
-    const hour12 = (athleteStore.profile as any)?.time_format !== "24h";
-
-    const stagesAvailable =
-      metricPresent(b.sleep_deep_pct) ||
-      metricPresent(b.sleep_rem_pct) ||
-      metricPresent(b.sleep_light_pct) ||
-      metricPresent(b.sleep_awake_pct);
-
-    const res: NightData = {
-      rawDate: displayDateStr,
-      date: dateLabel,
-      label: shortLabel,
-      day: dayLabel,
-      missing: false,
-      score: Number(b.sleep_score) > 0 ? Number(b.sleep_score) : null,
-      duration: b.sleep_duration_min ? `${h}h ${m}m` : "0h 0m",
-      durationRaw: b.sleep_duration_min || 0,
-      inBed: timeInBedMin > 0 ? `${inBedH}h ${inBedM}m` : "0h 0m",
-      inBedRaw: timeInBedMin,
-      quality: sleepQuality(b.sleep_score),
-      bedtime: bedtime
-        ? bedtime.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", hour12 })
-        : "N/A",
-      wakeup: wakeup
-        ? wakeup.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", hour12 })
-        : "N/A",
-      deep: b.sleep_deep_pct || 0,
-      rem: b.sleep_rem_pct || 0,
-      light: b.sleep_light_pct || 0,
-      awake: b.sleep_awake_pct || 0,
-      stagesAvailable,
-      awakeMins: 0,
-      hr: b.resting_hr || 0,
-      hrv: b.hrv_rmssd || 0,
-      hrvZ: typeof b.hrv_z === "number" && Number.isFinite(b.hrv_z) ? Number(b.hrv_z) : null,
-      rhrZ: typeof b.rhr_z === "number" && Number.isFinite(b.rhr_z) ? Number(b.rhr_z) : null,
-      debt: Number.isFinite(Number(b.sleep_debt_min)) && b.sleep_debt_min != null ? Number(b.sleep_debt_min) : null,
-      need: Number(b.sleep_need_min) > 0 ? Number(b.sleep_need_min) : null,
-      stageSegments: b.stage_segments || [],
-        periods: (b.periods || []).map((p: any) => {
-        const pStart = new Date(p.started_at);
-        const pEnd = new Date(p.ended_at);
-        const pInBedMin = p.in_bed_min || Math.round((pEnd.getTime() - pStart.getTime()) / 60000);
-        const pAwakeMins = Math.round((pInBedMin * (p.awake_pct || 0)) / 100);
-        const pSleepMins = Math.max(0, pInBedMin - pAwakeMins);
-        return {
-          ...p,
-          label: p.is_nap ? "Nap" : "Main Sleep",
-          timeRange: `${pStart.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", hour12 })} – ${pEnd.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", hour12 })}`,
-          duration: `${Math.floor(pSleepMins / 60)}h ${pSleepMins % 60}m`,
-          durationRaw: pSleepMins,
-          inBed: `${Math.floor(pInBedMin / 60)}h ${pInBedMin % 60}m`,
-          inBedRaw: pInBedMin,
-          awakeMins: pAwakeMins,
-          deep: p.deep_pct || 0,
-          rem: p.rem_pct || 0,
-          light: p.light_pct || 0,
-          awake: p.awake_pct || 0
-        };
-      })
-    };
-
-    const aggInBed = res.periods.reduce((sum: number, p: any) => sum + p.inBedRaw, 0);
-    if (aggInBed > res.inBedRaw) {
-      res.inBedRaw = aggInBed;
-      res.inBed = `${Math.floor(aggInBed / 60)}h ${aggInBed % 60}m`;
-    }
-    res.awakeMins = Math.round((res.inBedRaw * (res.awake || 0)) / 100);
-    return res;
   }
 
   const nights = $derived.by<Night[]>(() => {
@@ -399,33 +310,10 @@
     )
   );
 
-  const nightData = $derived.by<NightData | null>(() => {
-    if (n && isNightData(n)) return n;
-    if (n?.rawDate === todayStr && current.row) {
-      return buildNightDataFromBio(
-        current.row,
-        todayStr,
-        "Today",
-        format(new Date(), "MMM d"),
-        n.day
-      );
-    }
-    return null;
-  });
+  // Only the selected night's own sleep: before last night syncs, today shows "waiting for sync"
+  // rather than the previous night's sleep under today's dates.
+  const nightData = $derived<NightData | null>(n && isNightData(n) ? n : null);
 
-  const carryOverLabel = $derived.by(() => {
-    if (n?.rawDate !== todayStr || !current.row || current.hasTodayRow) return null;
-    if (isNightData(n)) return null;
-    if (current.ageHours !== null && current.ageHours < 36) return "Carried over from last night";
-    if (current.date) {
-      try {
-        return `Carried over from ${format(new Date(current.date + "T12:00:00"), "MMM d")}`;
-      } catch {
-        return "Carried over from previous night";
-      }
-    }
-    return "Carried over from previous night";
-  });
   const avg7d = $derived.by(() => {
     const vals = nights.map((x) => Number(x.score)).filter((v) => Number.isFinite(v) && v > 0);
     if (vals.length === 0) return null;
