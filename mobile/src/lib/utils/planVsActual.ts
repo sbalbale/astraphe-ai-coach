@@ -135,21 +135,46 @@ function samples(s: Stream): { t: number; dt: number; v: number }[] {
 }
 
 const HR_GRACE_SEC = 60;
+/** Power is judged on a 30-s rolling average: second-by-second trainer power swings ±15-20 W, so
+ * raw samples put a ride steadily inside a ±5% FTP window "46% in target". */
+export const POWER_SMOOTH_SEC = 30;
+
+/** Time-weighted trailing average over `windowSec` (restarting at the first sample given). */
+export function rollingMean(pts: { t: number; dt: number; v: number }[], windowSec: number): number[] {
+  const out: number[] = [];
+  let sum = 0;
+  let wsum = 0;
+  let j = 0;
+  for (let i = 0; i < pts.length; i++) {
+    sum += pts[i].v * pts[i].dt;
+    wsum += pts[i].dt;
+    while (j < i && pts[i].t - pts[j].t >= windowSec) {
+      sum -= pts[j].v * pts[j].dt;
+      wsum -= pts[j].dt;
+      j++;
+    }
+    out.push(wsum > 0 ? sum / wsum : pts[i].v);
+  }
+  return out;
+}
 
 export function blockStats(stream: Stream, t0Min: number, min: number, w: TargetWindow | null, metric: Metric): BlockStats {
   const start = t0Min * 60;
   const end = (t0Min + min) * 60;
   let secs = 0, fitSecs = 0, below = 0, inn = 0, above = 0, sum = 0;
   let lo: number | null = null, hi: number | null = null;
-  for (const { t, dt, v } of samples(stream)) {
-    if (t < start || t >= end) continue;
+  const inBlock = samples(stream).filter(({ t }) => t >= start && t < end);
+  // What's judged against the target: smoothed power (within the block), raw heart rate.
+  const judged = metric === 'power' ? rollingMean(inBlock, POWER_SMOOTH_SEC) : inBlock.map((p) => p.v);
+  for (let k = 0; k < inBlock.length; k++) {
+    const { t, dt, v } = inBlock[k];
     secs += dt;
     sum += v * dt;
     lo = lo == null ? v : Math.min(lo, v);
     hi = hi == null ? v : Math.max(hi, v);
     if (!w || (metric === 'hr' && t - start < HR_GRACE_SEC)) continue;
     fitSecs += dt;
-    const f = fitOf(v, w);
+    const f = fitOf(judged[k], w);
     if (f === 'below') below += dt;
     else if (f === 'above') above += dt;
     else inn += dt;

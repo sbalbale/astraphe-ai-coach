@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   blockStats,
+  rollingMean,
   hrOnPowerScale,
   inTargetPct,
   mins,
@@ -57,10 +58,22 @@ describe('blockStats', () => {
   const w = { lo: 230, hi: 260, zone: 3, label: '' };
 
   it('splits the block into below, in and above target and averages it', () => {
-    // 1 minute block: 15 s below, 30 s in, 15 s above.
-    const s = blockStats(stream([15, 200], [30, 245], [15, 280]), 0, 1, w, 'power');
-    expect(s).toMatchObject({ secs: 60, fitSecs: 60, below: 15, inn: 30, above: 15, min: 200, max: 280 });
-    expect(s.avg).toBe(Math.round((15 * 200 + 30 * 245 + 15 * 280) / 60));
+    // 15 minute block: 5 min below, 5 min in, 5 min above. Power is judged on a 30-s rolling
+    // average, so each boundary moves by a few seconds.
+    const s = blockStats(stream([300, 200], [300, 245], [300, 280]), 0, 15, w, 'power');
+    expect(s).toMatchObject({ secs: 900, fitSecs: 900, min: 200, max: 280 });
+    expect(s.below).toBeGreaterThanOrEqual(300);
+    expect(s.below).toBeLessThan(330);
+    expect(s.inn).toBeGreaterThan(270);
+    expect(s.above).toBeGreaterThan(270);
+    expect(s.below + s.inn + s.above).toBe(900);
+    expect(s.avg).toBe(Math.round((200 + 245 + 280) / 3));
+  });
+
+  it('judges heart rate sample by sample', () => {
+    const hr = { lo: 156, hi: 176, zone: 4, label: '' };
+    const s = blockStats(stream([60, 165], [30, 150], [30, 165]), 0, 2, hr, 'hr');
+    expect(s.below).toBe(30);
   });
 
   it("ignores heart rate's first 60 s of each block while it catches up", () => {
@@ -149,5 +162,26 @@ describe('hrOnPowerScale ("Both")', () => {
   it('needs HR zones and an FTP', () => {
     expect(hrOnPowerScale(150, 200, [])).toBeNull();
     expect(hrOnPowerScale(150, 0, ZONES)).toBeNull();
+  });
+});
+
+describe('power is judged on a 30-s rolling average', () => {
+  it('counts a steady ride with noisy second-by-second power as in target', () => {
+    // 172 W average alternating 160 / 184 every second: half the raw seconds sit below a
+    // 170-195 W window, the effort itself doesn't.
+    const values = Array.from({ length: 600 }, (_, i) => (i % 2 ? 184 : 160));
+    const s = blockStats({ values, time: values.map((_, i) => i), step: 1 }, 0, 10, { lo: 170, hi: 195, zone: 2, label: '' }, 'power');
+    expect(s.avg).toBe(172);
+    expect(s.inn / s.fitSecs).toBeGreaterThan(0.95);
+  });
+
+  it('still catches a sustained drop', () => {
+    const values = [...Array(300).fill(180), ...Array(300).fill(150)];
+    const s = blockStats({ values, time: values.map((_, i) => i), step: 1 }, 0, 10, { lo: 170, hi: 195, zone: 2, label: '' }, 'power');
+    expect(s.below / s.fitSecs).toBeGreaterThan(0.4);
+  });
+
+  it('averages over time, not sample count', () => {
+    expect(rollingMean([{ t: 0, dt: 1, v: 100 }, { t: 1, dt: 1, v: 200 }], 30)).toEqual([100, 150]);
   });
 });
