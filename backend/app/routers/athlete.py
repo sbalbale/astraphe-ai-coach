@@ -519,6 +519,10 @@ async def update_athlete_profile(
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields provided for update")
 
+    if "max_hr" in update_data:
+        # Entered by the athlete: never replaced by the app's estimate (cleared -> estimated again).
+        update_data["max_hr_source"] = "manual" if update_data.get("max_hr") else None
+
     if "threshold_hr" in update_data and update_data.get("threshold_hr") is not None:
         try:
             if int(update_data["threshold_hr"]) > 0:

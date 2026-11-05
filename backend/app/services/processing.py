@@ -1430,6 +1430,10 @@ def process_and_save_biometrics(
         profile_updates["threshold_hr_source"] = "estimated"
     
     db.table("athletes").update(profile_updates).eq("id", athlete_id).execute()
+    if not athlete_data.get("max_hr") or athlete_data.get("max_hr_source") == "estimated":
+        from app.services.hr_anchors import ensure_hr_anchors
+
+        ensure_hr_anchors(db, athlete_id)
     
     # 5. Fetch ATL Data for Readiness Modeling
     start_date_30d = (payload.date - timedelta(days=30)).isoformat()
@@ -1710,6 +1714,11 @@ async def reprocess_athlete_metrics(athlete_id: str, db) -> dict[str, int]:
 
     (The PMC used to be rebuilt last, so every readiness / recovery value was computed against
     the old TSS and stayed wrong until a second pass.)"""
+    # Heart-rate anchors first, so workouts are scored with an estimated max HR when the athlete
+    # never set one (otherwise every HR-scored workout is TSS 0).
+    from app.services.hr_anchors import ensure_hr_anchors
+
+    await asyncio.to_thread(ensure_hr_anchors, db, athlete_id)
     workouts_res = SimpleNamespace(data=_fetch_all_rows(
         lambda: db.table("workouts").select("*").eq("athlete_id", athlete_id).order("started_at")
     ))
