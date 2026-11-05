@@ -171,6 +171,8 @@ class _GenericQuery:
 
     def order(self, *_a, **_k):
         return self
+    def range(self, *_a, **_k):
+        return self
 
     def limit(self, *_a, **_k):
         return self
@@ -582,6 +584,8 @@ class _StateQuery:
         return self
 
     def order(self, *_a, **_k):
+        return self
+    def range(self, *_a, **_k):
         return self
 
     def limit(self, *_a, **_k):

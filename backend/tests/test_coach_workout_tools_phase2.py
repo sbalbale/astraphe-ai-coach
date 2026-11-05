@@ -58,6 +58,8 @@ class _P2Table:
     def order(self, col: str, desc: bool = False) -> "_P2Table":
         self._order_desc = desc
         return self
+    def range(self, *_a, **_k):
+        return self
 
     def limit(self, n: int) -> "_P2Table":
         self._limit = n

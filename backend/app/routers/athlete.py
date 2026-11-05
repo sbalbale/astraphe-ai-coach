@@ -12,6 +12,7 @@ from app.services.hr_zones import athlete_dict_with_hr_zones, get_athlete_zones,
 from app.services.resend_service import sync_marketing_contact
 from app.services.anchor_history import ANCHOR_FIELDS, record_change as record_anchor_change, rescore_and_rebuild
 from app.services.background import spawn as spawn_background
+from app.services.processing import fetch_rows_newest_first
 from app.dependencies import get_current_athlete, get_current_user_email, get_user_db, get_admin_db, run_supabase_call
 from app.core.redis import get_redis
 from app.services.time_utils import athlete_local_date, coerce_timezone_offset_min, local_datetime_from_timezone_offset
@@ -333,18 +334,19 @@ async def get_athlete_metrics(
         start_date = start_date or (today - timedelta(days=42))
         end_date = end_date or today
 
-    tss_res = await asyncio.to_thread(
-        db.table("tss_history")
+    # Paged newest first: a long range passes PostgREST's 1000-row cap.
+    tss_rows = await asyncio.to_thread(
+        fetch_rows_newest_first,
+        lambda: db.table("tss_history")
         .select("date,daily_tss,ctl,atl,tsb")
         .eq("athlete_id", athlete_id)
         .gte("date", start_date.isoformat())
-        .lte("date", end_date.isoformat())
-        .order("date")
-        .execute
+        .lte("date", end_date.isoformat()),
+        "date",
     )
-    
+
     training_load_data = []
-    for row in tss_res.data:
+    for row in tss_rows:
         d = date.fromisoformat(row["date"])
         training_load_data.append({
             # Keep ISO date for reliable client-side matching, plus a short label for charts.

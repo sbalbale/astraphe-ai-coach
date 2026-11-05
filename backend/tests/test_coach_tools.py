@@ -52,6 +52,8 @@ class _Table:
 
     def order(self, *args: Any, **kwargs: Any) -> "_Table":
         return self
+    def range(self, *_a, **_k):
+        return self
 
     def gte(self, *args: Any, **kwargs: Any) -> "_Table":
         return self

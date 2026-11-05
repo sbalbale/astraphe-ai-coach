@@ -12,7 +12,7 @@ from app.services import whoop
 from app.models.biometrics import DailyBiometrics
 from app.models.workout import WorkoutPayload
 from app.services.ai_coach import invalidate_context_cache
-from app.services.processing import process_and_save_biometrics, process_and_save_workout, recalculate_tss_history
+from app.services.processing import fetch_rows_newest_first, process_and_save_biometrics, process_and_save_workout, recalculate_tss_history
 from app.dependencies import get_admin_db
 from app.services.token_crypto import decrypt_oauth_row
 from app.services.token_refresh import claim_and_refresh_whoop_token
@@ -457,17 +457,15 @@ async def _backfill_historical_data_impl(
 
     # Refresh readiness scores now that PMC exists (skipped per-row during batch ingest).
     if bio_rows and bio_rows > 0:
-        dates_res = (
-            await asyncio.to_thread(
-                db.table("biometrics")
-                .select("date,hrv_rmssd,resting_hr,recovery_score,sleep_score")
-                .eq("athlete_id", athlete_id)
-                .gte("date", start.date().isoformat())
-                .order("date")
-                .execute
-            )
+        bio_dates = await asyncio.to_thread(
+            fetch_rows_newest_first,
+            lambda: db.table("biometrics")
+            .select("date,hrv_rmssd,resting_hr,recovery_score,sleep_score")
+            .eq("athlete_id", athlete_id)
+            .gte("date", start.date().isoformat()),
+            "date",
         )
-        for row in dates_res.data or []:
+        for row in bio_dates:
             try:
                 d_raw = row.get("date")
                 if not d_raw:

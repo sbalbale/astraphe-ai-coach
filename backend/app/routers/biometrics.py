@@ -6,7 +6,7 @@ import math
 
 from app.core.cache_invalidation import invalidate_athlete_caches
 from app.models.biometrics import DailyBiometrics
-from app.services.processing import _fetch_all_rows, process_and_save_biometrics
+from app.services.processing import fetch_rows_newest_first, process_and_save_biometrics
 from app.dependencies import get_current_athlete, get_user_db
 
 router = APIRouter(prefix="/v1/biometrics", tags=["Biometrics"])
@@ -100,11 +100,15 @@ async def get_biometrics(
         resolved_end = (before - timedelta(days=1)) if before else today
         resolved_start = resolved_end - timedelta(days=safe_limit - 1)
 
-    q = db.table("biometrics").select("*").eq("athlete_id", athlete_id)
-    if resolved_start:
-        q = q.gte("date", resolved_start.isoformat())
-    if resolved_end:
-        q = q.lte("date", resolved_end.isoformat())
+    def bio_q():
+        q = db.table("biometrics").select("*").eq("athlete_id", athlete_id)
+        if resolved_start:
+            q = q.gte("date", resolved_start.isoformat())
+        if resolved_end:
+            q = q.lte("date", resolved_end.isoformat())
+        return q
+
+    q = bio_q()
 
     # If not explicitly asking for "all", cap the response size
     if not all and not (start_date or end_date):
@@ -116,8 +120,7 @@ async def get_biometrics(
         bio_rows.reverse()
         next_before = bio_rows[0]["date"] if has_more and bio_rows else None
     else:
-        bio_res = await asyncio.to_thread(q.order("date").execute)
-        bio_rows = bio_res.data or []
+        bio_rows = await asyncio.to_thread(fetch_rows_newest_first, bio_q, "date")
         has_more = False
         next_before = None
     
@@ -128,9 +131,9 @@ async def get_biometrics(
             q = q.gte("date", resolved_start.isoformat())
         if resolved_end:
             q = q.lte("date", resolved_end.isoformat())
-        return q.order("started_at")
+        return q
 
-    periods_rows = await asyncio.to_thread(_fetch_all_rows, periods_q)
+    periods_rows = await asyncio.to_thread(fetch_rows_newest_first, periods_q, "started_at")
     periods_by_date = {}
     for p in periods_rows:
         d = p["date"]
@@ -139,18 +142,18 @@ async def get_biometrics(
         periods_by_date[d].append(p)
 
     # Sleep-stage timeline (hypnogram) segments, keyed by the same night date.
-    # Paged: ~20 segments a night pass PostgREST's 1000-row cap within a 60-day page, and the
-    # cap dropped the *newest* nights' segments (ordered by start time), so their sleep-stage
-    # timeline disappeared once enough nights had stages.
+    # Paged, newest first: ~20 segments a night pass PostgREST's 1000-row cap within a 60-day
+    # page, and a single oldest-first read dropped the *newest* nights' segments, so their
+    # sleep-stage timeline disappeared once enough nights had stages.
     def seg_q():
         q = db.table("sleep_stage_segments").select("date, stage, start_at, end_at").eq("athlete_id", athlete_id)
         if resolved_start:
             q = q.gte("date", resolved_start.isoformat())
         if resolved_end:
             q = q.lte("date", resolved_end.isoformat())
-        return q.order("start_at")
+        return q
 
-    seg_rows = await asyncio.to_thread(_fetch_all_rows, seg_q)
+    seg_rows = await asyncio.to_thread(fetch_rows_newest_first, seg_q, "start_at")
     segments_by_date: dict = {}
     for s in seg_rows:
         segments_by_date.setdefault(s["date"], []).append(
