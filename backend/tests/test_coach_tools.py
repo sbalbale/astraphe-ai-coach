@@ -401,3 +401,41 @@ def test_schedule_workout_length_is_the_blocks_total():
     row = db.inserts[0][1]
     assert row["duration_min"] == 60
     assert row["target_tss"] == 49  # 1 h at Endurance
+
+
+# --- Planned TSS from the session's blocks ------------------------------------------------------
+
+
+def test_planned_tss_adds_up_the_blocks():
+    """Production: a 60-min ride (15 min @ 55% FTP + 45 min @ 65%) showed 73 TSS."""
+    blocks = [
+        {"name": "Warmup", "duration_minutes": 15, "target_power_percent_ftp": 55},
+        {"name": "Main set", "duration_minutes": 45, "target_power_percent_ftp": 65},
+    ]
+    assert coach_tools.planned_tss(blocks, 60, "Endurance") == round(0.25 * 0.55**2 * 100 + 0.75 * 0.65**2 * 100, 1)
+    # HR-zone blocks use the zone's IF; a block with neither uses the session's focus zone.
+    assert coach_tools.planned_tss([{"duration_minutes": 60, "target_hr_zone": 4}], 60, "Endurance") == round(0.97**2 * 100, 1)
+    assert coach_tools.planned_tss([{"duration_minutes": 60}], 60, "Tempo") == round(0.85**2 * 100, 1)
+    # No blocks: the whole duration at the focus zone.
+    assert coach_tools.planned_tss([], 90, "Endurance") == round(1.5 * 0.70**2 * 100, 1)
+
+
+def test_schedule_workout_scores_the_blocks_it_was_given():
+    db = MockCoachDB()
+    planned = (date.today() + timedelta(days=3)).isoformat()
+    out = coach_tools.handle_schedule_workout(
+        {
+            "duration_minutes": 60,
+            "focus_zone": "Endurance",
+            "date": planned,
+            "sport": "bike",
+            "structure": [
+                {"name": "Warmup", "duration_minutes": 15, "target_power_percent_ftp": 55},
+                {"name": "Main set", "duration_minutes": 45, "target_power_percent_ftp": 65},
+            ],
+        },
+        athlete_id="ath-1",
+        db=db,  # type: ignore[arg-type]
+    )
+    assert "error" not in out
+    assert db.inserts[0][1]["target_tss"] == 39
