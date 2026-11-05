@@ -846,3 +846,28 @@ def test_a_profile_change_without_anchors_leaves_history_alone():
             _teardown()
     assert res.status_code == 200
     record.assert_not_called()
+
+
+def test_entering_max_hr_marks_it_manual_so_the_estimate_never_replaces_it():
+    db = _AthleteDb()
+    q = db.table("athletes")
+    _override(db, email=None)
+    sent: list = []
+    real_update = q.update
+
+    def _capture(payload):
+        sent.append(dict(payload))
+        return real_update(payload)
+
+    with patch.object(athlete_router, "_cache_del", AsyncMock()), patch.object(
+        athlete_router, "_increment_zones_version", AsyncMock()
+    ), patch.object(q, "update", side_effect=_capture), patch.object(
+        q, "execute", side_effect=[SimpleNamespace(data=[{"id": "athlete-1"}]), SimpleNamespace(data={"id": "athlete-1"})]
+    ):
+        try:
+            with TestClient(app) as client:
+                res = client.patch("/v1/athlete/profile", json={"max_hr": 188})
+        finally:
+            _teardown()
+    assert res.status_code == 200
+    assert sent and sent[0]["max_hr_source"] == "manual"
