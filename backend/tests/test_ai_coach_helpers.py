@@ -724,3 +724,12 @@ def test_fallback_title_from_history_no_user_messages():
 def test_fallback_title_from_history_skips_blank_user_messages():
     rows = [{"role": "user", "content": "   "}, {"role": "user", "content": "real question"}]
     assert ai_coach._fallback_title_from_history(rows) == "real question"
+
+
+def test_coach_gets_threshold_pace_with_its_unit():
+    from app.services.coach_workout_data import pace_with_unit
+
+    assert pace_with_unit("8:00", "imperial") == "8:00 /mi"
+    assert pace_with_unit("4:30", "metric") == "4:30 /km"
+    assert pace_with_unit("8:00/mi", "metric") == "8:00/mi"
+    assert pace_with_unit(None, "imperial") is None

@@ -1,4 +1,5 @@
 from __future__ import annotations
+import pytest
 
 import asyncio
 from datetime import datetime, timedelta, timezone
@@ -238,3 +239,83 @@ def test_new_workout_without_zones_still_starts_at_zero():
     update_data = mock_update.call_args[0][2]
     assert update_data["strain_score"] == 0
     assert update_data["tss"] == 0.0
+
+
+# --- Power TSS uses the athlete's FTP --------------------------------------------------------------
+
+
+def _ride(**kw):
+    return _base_payload(source="garmin", sport="bike", duration_seconds=3610, normalized_power=173, **kw)
+
+
+def test_synced_ride_is_scored_with_the_profile_ftp():
+    """Production: every synced ride was scored against a hardcoded FTP 250 (TSS 48.0 for a ride
+    that is 38.3 at the athlete's 280 W), because no sync source set ftp_at_time."""
+    p1, p2, p3 = _patch_common(athlete={"ftp_watts": 280}, created=True)
+    with p1, p2, p3 as mock_update:
+        _run_async(processing.process_and_save_workout(_ride(), "a", MagicMock(), skip_tss_recalc=True, skip_daily_strain_refresh=True))
+    assert mock_update.call_args[0][2]["tss"] == pytest.approx(3610 * 173 * (173 / 280) / (280 * 3600) * 100)
+
+
+def test_an_ftp_given_with_the_workout_wins_over_the_profile():
+    p1, p2, p3 = _patch_common(athlete={"ftp_watts": 280}, created=True)
+    with p1, p2, p3 as mock_update:
+        _run_async(processing.process_and_save_workout(_ride(ftp_at_time=255), "a", MagicMock(), skip_tss_recalc=True, skip_daily_strain_refresh=True))
+    assert mock_update.call_args[0][2]["tss"] == pytest.approx(3610 * 173 * (173 / 255) / (255 * 3600) * 100)
+
+
+def test_without_any_ftp_power_is_not_scored_and_heart_rate_is():
+    payload = _ride(avg_hr=149, hr_zone_1_pct=17, hr_zone_2_pct=80, hr_zone_3_pct=3)
+    athlete = {"max_hr": 204, "resting_hr": 52, "threshold_hr": 185, "threshold_hr_source": "manual"}
+    p1, p2, p3 = _patch_common(athlete=athlete, created=True)
+    with p1, p2, p3 as mock_update:
+        _run_async(processing.process_and_save_workout(payload, "a", MagicMock(), skip_tss_recalc=True, skip_daily_strain_refresh=True))
+    hr_only = processing.compute_hrss_from_zones(
+        zone_minutes={1: 0.17 * 3610 / 60, 2: 0.80 * 3610 / 60, 3: 0.03 * 3610 / 60, 4: 0.0, 5: 0.0},
+        max_hr=204, resting_hr=52, threshold_hr=185, sport="bike", gender="male",
+        threshold_hr_source="manual", hr_zone_method=None,
+    )
+    assert mock_update.call_args[0][2]["tss"] == pytest.approx(hr_only)
+
+
+def test_erg_power_uses_the_profile_ftp():
+    payload = _base_payload(source="garmin", sport="rowing", duration_seconds=3600, avg_power_w=200)
+    p1, p2, p3 = _patch_common(athlete={"ftp_watts": 280}, created=True)
+    with p1, p2, p3 as mock_update:
+        _run_async(processing.process_and_save_workout(payload, "a", MagicMock(), skip_tss_recalc=True, skip_daily_strain_refresh=True))
+    np_ = 200 * 1.12
+    assert mock_update.call_args[0][2]["tss"] == pytest.approx(3600 * int(np_) * (int(np_) / 280) / (280 * 3600) * 100)
+
+
+def test_workout_ftp_ignores_missing_and_zero_values():
+    assert processing.workout_ftp(None, 280) == 280
+    assert processing.workout_ftp(255, 280) == 255
+    assert processing.workout_ftp(0, None) is None
+    assert processing.workout_ftp(None, "290") == 290
+
+
+# --- Threshold pace is stored in the athlete's units ----------------------------------------------
+
+
+def test_threshold_pace_is_read_in_the_athletes_units():
+    p = processing._parse_pace_to_sec_per_km
+    assert p("8:00", "imperial") == pytest.approx(480 / 1.609344)
+    assert p("8:00", "metric") == 480
+    assert p("8:00", None) == 480
+    assert p("5:00/km", "imperial") == 300  # an explicit unit wins
+    assert p("8:00/mi", "metric") == pytest.approx(480 / 1.609344)
+    assert p("bad", "imperial") == 0.0
+    assert p(None, "imperial") == 0.0
+
+
+def test_imperial_run_is_scored_against_the_per_mile_threshold():
+    """Production: threshold '8:00' (per mile, imperial athlete) was read as 8:00/km, so an
+    82-min run at 7:48/mi was stored at TSS 344.5 instead of ~132."""
+    payload = _base_payload(source="garmin", sport="run", duration_seconds=82 * 60, avg_pace_sec_km=303)
+    athlete = {"threshold_pace": "8:00", "measurement_units": "imperial"}
+    p1, p2, p3 = _patch_common(athlete=athlete, created=True)
+    with p1, p2, p3 as mock_update:
+        _run_async(processing.process_and_save_workout(payload, "a", MagicMock(), skip_tss_recalc=True, skip_daily_strain_refresh=True))
+    tss = mock_update.call_args[0][2]["tss"]
+    assert tss == pytest.approx(82 / 60 * (480 / 1.609344 / 303) ** 2 * 100, rel=1e-3)
+    assert 125 < tss < 140

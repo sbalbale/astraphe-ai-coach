@@ -9,7 +9,7 @@ from app.services.processing import (
     recalculate_tss_history,
 )
 from app.dependencies import get_current_athlete, get_user_db
-from app.services.coach_workout_data import WORKOUT_LIST_COLUMNS
+from app.services.coach_workout_data import WORKOUT_LIST_COLUMNS, fetch_athlete_ftp
 from datetime import datetime, timezone, timedelta
 from uuid import UUID
 
@@ -285,11 +285,15 @@ def delete_workout(
 async def process_workout(
     payload: WorkoutPayload,
     athlete_id: str = Depends(get_current_athlete),
+    db=Depends(get_user_db),
 ):
     if payload.workout_type.lower() == "cycling":
         if not payload.normalized_power:
             raise HTTPException(status_code=400, detail="Normalized power is required for cycling TSS.")
-        tss = compute_tss_power(payload.duration_seconds, payload.normalized_power, payload.ftp_at_time)
+        ftp = payload.ftp_at_time or fetch_athlete_ftp(db, athlete_id)
+        if not ftp:
+            raise HTTPException(status_code=400, detail="Set your FTP to calculate cycling TSS.")
+        tss = compute_tss_power(payload.duration_seconds, payload.normalized_power, ftp)
         return {"status": "success", "message": "Workout processed", "data": {"calculated_tss": tss}}
     raise HTTPException(status_code=400, detail="Not implemented.")
 

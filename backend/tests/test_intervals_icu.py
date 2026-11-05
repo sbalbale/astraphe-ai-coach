@@ -320,6 +320,7 @@ def test_update_athlete_hr_anchors_from_intervals_activity():
 
     assert update == {
         "max_hr": 204,
+        "max_hr_source": "manual",
         "resting_hr": 61,
         "threshold_hr": 185,
         "threshold_hr_source": "estimated",

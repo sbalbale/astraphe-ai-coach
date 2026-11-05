@@ -22,6 +22,7 @@ from app.services.algorithms import (
     SLEEP_DEBT_DECAY_RATE,
     normalize_rowing_watts,
     compute_strain_score,
+    NEUROMUSCULAR_MULTIPLIER,
     compute_recovery_score,
     compute_readiness_score,
     calculate_rhr_baseline,
@@ -175,6 +176,9 @@ def _source_quality_rank(field: str, source: str | None) -> int:
         return len(order)
 
 
+_FILL_ZERO_FIELDS = ("tss", "strain_score")
+
+
 def _has_existing_metric_value(value: Any) -> bool:
     if value is None:
         return False
@@ -187,6 +191,7 @@ def _quality_filter_workout_update(
     existing_row: dict[str, Any],
     incoming_source: str,
     update_data: dict[str, Any],
+    recompute: bool = False,
 ) -> dict[str, Any]:
     current_source = existing_row.get("primary_source") or existing_row.get("source") or "manual"
     filtered: dict[str, Any] = {}
@@ -196,7 +201,14 @@ def _quality_filter_workout_update(
         if field not in _QUALITY_FIELD_SOURCES:
             filtered[field] = value
             continue
-        if not _has_existing_metric_value(existing_row.get(field)):
+        existing = existing_row.get(field)
+        # A stored 0 TSS / strain means "couldn't compute it then" (e.g. a zone-less first
+        # sync), not a measurement: any source that can compute it may fill it. Otherwise a
+        # lower-ranked source's real value was dropped and 12 workouts stayed at TSS 0.
+        if field in _FILL_ZERO_FIELDS and (recompute or not existing):
+            filtered[field] = value
+            continue
+        if not _has_existing_metric_value(existing):
             filtered[field] = value
             continue
         if _source_quality_rank(field, incoming_source) <= _source_quality_rank(field, current_source):
@@ -387,9 +399,13 @@ def _compute_daily_strain_from_workout_rows(rows: list[dict]) -> int:
         dur_sec = _workout_duration_seconds_from_row(w)
         if not dur_sec:
             continue
+        # Strength load counts with the same neuromuscular multiplier as the workout's own
+        # strain (compute_strain_score scales linearly before saturating, so scaling the
+        # session's zone minutes is equivalent).
+        scale = NEUROMUSCULAR_MULTIPLIER if w.get("sport") == "strength" else 1.0
         for z in range(1, 6):
             pct = w.get(f"hr_zone_{z}_pct") or 0
-            day_zone_minutes[z] += (float(pct) / 100.0) * (dur_sec / 60.0)
+            day_zone_minutes[z] += (float(pct) / 100.0) * (dur_sec / 60.0) * scale
     return compute_strain_score(day_zone_minutes)
 
 def _compute_sleep_score_without_architecture(actual_sleep_min: float, sleep_need_min: float, awake_min: float = 0.0) -> int:
@@ -451,7 +467,7 @@ def _refresh_daily_strain_for_day_sync(
         db.table("workouts")
         .select(
             "hr_zone_1_pct,hr_zone_2_pct,hr_zone_3_pct,hr_zone_4_pct,hr_zone_5_pct,"
-            "duration_seconds,started_at,ended_at"
+            "duration_seconds,started_at,ended_at,sport"
         )
         .eq("athlete_id", athlete_id)
         .gte("started_at", day_start)
@@ -809,7 +825,7 @@ async def find_or_create_canonical_workout(
 def _fetch_athlete_for_workout_sync(db: Any, athlete_id: str) -> dict[str, Any]:
     athlete_res = (
         db.table("athletes")
-        .select("max_hr,resting_hr,threshold_hr,threshold_hr_source,threshold_pace,gender,hr_zone_method")
+        .select("max_hr,resting_hr,threshold_hr,threshold_hr_source,threshold_pace,gender,hr_zone_method,ftp_watts,measurement_units,timezone_offset_min")
         .eq("id", athlete_id)
         .single()
         .execute()
@@ -823,43 +839,55 @@ def _workouts_update_by_id_sync(db: Any, workout_id: str, update_data: dict[str,
         db.table("workouts").update(payload).eq("id", workout_id).execute()
 
 
-def _parse_pace_to_sec_per_km(pace: object) -> float:
+MILE_KM = 1.609344
+
+
+def _parse_pace_to_sec_per_km(pace: object, units: str | None = None) -> float:
     """
-    Accepts pace like '5:00', '05:00', '5:00/km', returns seconds per km.
+    Threshold pace ('5:00', '05:00', '5:00/km', '8:00/mi', or seconds) in seconds per km.
+
+    The app stores threshold_pace in the athlete's own units (the profile field reads /mi for
+    imperial athletes), so a bare value is per mile when ``units`` is 'imperial'. An explicit
+    /km or /mi suffix wins. (It used to always be read as per km: an imperial 8:00/mi became
+    8:00/km, and every pace-scored run's TSS came out ~2.6x too high.)
     Returns 0.0 for invalid inputs.
     """
     if pace is None:
         return 0.0
+    per_mile = (units or "").strip().lower() == "imperial"
     if isinstance(pace, (int, float)):
-        return float(pace) if float(pace) > 0 else 0.0
+        v = float(pace)
+        return (v / MILE_KM if per_mile else v) if v > 0 else 0.0
 
     s = str(pace).strip().lower()
     if not s:
         return 0.0
-
-    # remove common suffixes
-    for suffix in ("/km", "per km", "km", "min/km"):
+    if any(x in s for x in ("/mi", "per mi", "min/mi", "mile")):
+        per_mile = True
+    elif "km" in s:
+        per_mile = False
+    for suffix in ("min/km", "per km", "/km", "km", "min/mi", "per mile", "per mi", "/mile", "/mi", "mile", "mi"):
         s = s.replace(suffix, "")
     s = s.strip()
 
-    # Support "m:ss" or "mm:ss"
+    total = 0.0
     if ":" in s:
-        parts = [p for p in s.split(":") if p != ""]
+        parts = s.split(":")
         if len(parts) == 2:
             try:
-                mins = int(parts[0])
-                secs = int(parts[1])
-                total = mins * 60 + secs
-                return float(total) if total > 0 else 0.0
+                total = float(int(parts[0]) * 60 + int(parts[1]))
             except Exception:
                 return 0.0
-
-    # Fallback: treat as numeric seconds
-    try:
-        v = float(s)
-        return v if v > 0 else 0.0
-    except Exception:
+        else:
+            return 0.0
+    else:
+        try:
+            total = float(s)
+        except Exception:
+            return 0.0
+    if total <= 0:
         return 0.0
+    return total / MILE_KM if per_mile else total
 
 def recalculate_tss_history(athlete_id: str, db):
     """
@@ -937,13 +965,32 @@ def recalculate_tss_history(athlete_id: str, db):
         db.table("tss_history").delete().eq("athlete_id", athlete_id).lt("date", start_date.isoformat()).execute()
         db.table("tss_history").upsert(records, on_conflict="athlete_id,date").execute()
 
+def workout_ftp(given: Any, profile: Any) -> int | None:
+    """FTP to score a workout's power with: the one given with it, else the profile's, else None."""
+    for v in (given, profile):
+        try:
+            n = int(v)
+        except (TypeError, ValueError):
+            continue
+        if n > 0:
+            return n
+    return None
+
+
 async def process_and_save_workout(
     payload: WorkoutPayload,
     athlete_id: str,
     db: Any,
     skip_tss_recalc: bool = False,
     skip_daily_strain_refresh: bool = False,
+    recompute: bool = False,
 ) -> str:
+    """Save a workout and its derived metrics.
+
+    ``recompute``: re-scoring a stored workout (reprocess / backfill). Its TSS and strain then
+    replace the stored ones even when the payload's source ranks below the row's primary source
+    (a re-save as the creating provider otherwise had its recomputed values dropped).
+    """
     tss = 0.0
     wt_raw = (payload.workout_type or "").strip()
     low = wt_raw.lower()
@@ -999,12 +1046,21 @@ async def process_and_save_workout(
     anchor_threshold_hr = athlete.get("threshold_hr")
     anchor_threshold_hr_source = athlete.get("threshold_hr_source")
     anchor_gender = athlete.get("gender") or "male"
-    threshold_pace_sec_km = _parse_pace_to_sec_per_km(athlete.get("threshold_pace"))
+    # FTP / threshold pace in effect on the workout's date (anchor history, else the profile).
+    from app.services.anchor_history import anchors_on, load_history, local_day
 
-    if canonical == "bike" and payload.normalized_power:
-        tss = compute_tss_power(
-            payload.duration_seconds, payload.normalized_power, payload.ftp_at_time
-        )
+    anchors = anchors_on(
+        await asyncio.to_thread(load_history, db, athlete_id),
+        local_day(start_utc, athlete.get("timezone_offset_min")),
+        athlete,
+    )
+    threshold_pace_sec_km = _parse_pace_to_sec_per_km(anchors.get("threshold_pace"), anchors.get("measurement_units"))
+    # Power TSS uses the FTP given with the workout, else the athlete's FTP on that date. With
+    # neither, power isn't scored and the heart-rate / pace / provider TSS below applies instead.
+    ftp = workout_ftp(payload.ftp_at_time, anchors.get("ftp_watts"))
+
+    if canonical == "bike" and payload.normalized_power and ftp:
+        tss = compute_tss_power(payload.duration_seconds, payload.normalized_power, ftp)
     elif (
         mapped_sport == "run"
         and payload.duration_seconds
@@ -1035,9 +1091,9 @@ async def process_and_save_workout(
             threshold_hr_source=anchor_threshold_hr_source,
             hr_zone_method=athlete.get("hr_zone_method"),
         )
-    elif canonical == "row" and payload.average_power and payload.duration_seconds:
+    elif canonical == "row" and payload.average_power and payload.duration_seconds and ftp:
         norm_watts = normalize_rowing_watts(payload.average_power)
-        tss = compute_tss_power(payload.duration_seconds, int(norm_watts), payload.ftp_at_time)
+        tss = compute_tss_power(payload.duration_seconds, int(norm_watts), ftp)
     elif getattr(payload, "tss", None):
         tss = getattr(payload, "tss")
 
@@ -1058,7 +1114,7 @@ async def process_and_save_workout(
         zone_minutes = {
             k: (v / 100.0) * (duration_seconds / 60.0) for k, v in safe_hr_zones.items()
         }
-        strain_score = compute_strain_score(zone_minutes)
+        strain_score = compute_strain_score(zone_minutes, sport=mapped_sport)
     elif not created:
         # A re-sync without zones (Garmin's activity summary has none; they come from the FIT
         # stream, which the poll doesn't download again) must not reset the strain the stream
@@ -1099,7 +1155,7 @@ async def process_and_save_workout(
         "hr_zone_5_pct": hr_zones.get(5),
     }
 
-    update_data = _quality_filter_workout_update(row, source, update_data)
+    update_data = _quality_filter_workout_update(row, source, update_data, recompute=recompute)
     await asyncio.to_thread(_workouts_update_by_id_sync, db, workout_id, update_data)
     # Post-workout debrief. Batch/backfill callers pass skip_tss_recalc, and
     # post_workout_debrief also checks recency and claims each workout once, so history
@@ -1189,6 +1245,10 @@ def process_and_save_biometrics(
     weighted_rem = 0.0
     weighted_light = 0.0
     weighted_awake = 0.0
+    # In-bed minutes of periods that came with stages. A period without stages (a nap, an
+    # unstaged night) used to count as 0% deep / 0% REM, which then scored the night with the
+    # strict architecture formula and its 0.25 penalty for no restorative sleep.
+    staged_in_bed = 0.0
     
     main_sleep = None
     max_in_bed = -1
@@ -1202,10 +1262,12 @@ def process_and_save_biometrics(
         awake_min = (awake_pct / 100.0) * in_bed
         total_awake_min += awake_min
         
-        # Weight percentages by in_bed_min
-        weighted_deep += (p.get("deep_pct") or 0) * in_bed
-        weighted_rem += (p.get("rem_pct") or 0) * in_bed
-        weighted_light += (p.get("light_pct") or 0) * in_bed
+        # Weight percentages by in_bed_min (stages only over periods that have them)
+        if p.get("deep_pct") is not None or p.get("rem_pct") is not None:
+            staged_in_bed += in_bed
+            weighted_deep += (p.get("deep_pct") or 0) * in_bed
+            weighted_rem += (p.get("rem_pct") or 0) * in_bed
+            weighted_light += (p.get("light_pct") or 0) * in_bed
         weighted_awake += awake_pct * in_bed
         
         if in_bed > max_in_bed:
@@ -1213,9 +1275,9 @@ def process_and_save_biometrics(
             main_sleep = p
 
     # Final aggregated architecture (weighted by in-bed duration)
-    agg_deep = round(weighted_deep / total_in_bed_min, 1) if total_in_bed_min > 0 else None
-    agg_rem = round(weighted_rem / total_in_bed_min, 1) if total_in_bed_min > 0 else None
-    agg_light = round(weighted_light / total_in_bed_min, 1) if total_in_bed_min > 0 else None
+    agg_deep = round(weighted_deep / staged_in_bed, 1) if staged_in_bed > 0 else None
+    agg_rem = round(weighted_rem / staged_in_bed, 1) if staged_in_bed > 0 else None
+    agg_light = round(weighted_light / staged_in_bed, 1) if staged_in_bed > 0 else None
     agg_awake = round(weighted_awake / total_in_bed_min, 1) if total_in_bed_min > 0 else None
 
     # Time Asleep MUST equal Time in Bed minus Awake Time
@@ -1368,6 +1430,10 @@ def process_and_save_biometrics(
         profile_updates["threshold_hr_source"] = "estimated"
     
     db.table("athletes").update(profile_updates).eq("id", athlete_id).execute()
+    if not athlete_data.get("max_hr") or athlete_data.get("max_hr_source") == "estimated":
+        from app.services.hr_anchors import ensure_hr_anchors
+
+        ensure_hr_anchors(db, athlete_id)
     
     # 5. Fetch ATL Data for Readiness Modeling
     start_date_30d = (payload.date - timedelta(days=30)).isoformat()
@@ -1414,7 +1480,7 @@ def process_and_save_biometrics(
         db.table("workouts")
         .select(
             "hr_zone_1_pct,hr_zone_2_pct,hr_zone_3_pct,hr_zone_4_pct,hr_zone_5_pct,"
-            "duration_seconds,started_at,ended_at"
+            "duration_seconds,started_at,ended_at,sport"
         )
         .eq("athlete_id", athlete_id)
         .gte("started_at", _day_start_utc)
@@ -1491,13 +1557,16 @@ def process_and_save_biometrics(
         if final_deep is not None and final_in_bed_for_score > 0
         else 0.0
     )
+    # Stage data only counts when it has some deep or REM: 0 / 0 (or none at all) means the
+    # device didn't stage the night, not that there was no restorative sleep.
+    has_stages = bool((final_rem or 0) > 0 or (final_deep or 0) > 0)
     if final_sleep_duration is None:
         # No night stored for this date (yet): don't score it as 0, which dragged
         # recovery down; keep whatever the row already had.
         sleep_score = existing.get("sleep_score")
         next_night_debt = existing.get("sleep_debt_min")
     else:
-        if final_rem is not None or final_deep is not None:
+        if has_stages:
             sleep_score = compute_sleep_score(
                 actual_sleep_min=final_sleep_for_score,
                 sleep_need_min=sleep_need,
@@ -1506,11 +1575,11 @@ def process_and_save_biometrics(
                 awake_min=final_awake_min,
             )
         else:
-            # Backup score for providers like Intervals.icu that expose duration but no
-            # stage architecture: a duration curve anchored to the baseline nightly need.
+            # Backup score for a night without stage architecture (Intervals.icu, or a device
+            # night that recorded no deep / REM): a duration curve against tonight's need.
             sleep_score = _compute_sleep_score_without_architecture(
                 final_sleep_for_score,
-                DEFAULT_BASELINE_SLEEP_MIN,
+                sleep_need or DEFAULT_BASELINE_SLEEP_MIN,
                 final_awake_min,
             )
         next_night_debt = float(np.clip(float(sleep_need) - float(final_sleep_for_score), 0.0, MAX_SLEEP_DEBT_MIN))
@@ -1533,7 +1602,7 @@ def process_and_save_biometrics(
         ("sleep_wakeup", wakeup_source, final_wakeup),
     ):
         _set_metric_source(metric_sources, field, src, value)
-    metric_sources["sleep_score"] = "astraphe" if (final_rem is not None or final_deep is not None) else "astraphe_backup"
+    metric_sources["sleep_score"] = "astraphe" if has_stages else "astraphe_backup"
     metric_sources["recovery_score"] = "astraphe"
     metric_sources["readiness_score"] = "astraphe"
     metric_sources["strain_score"] = "astraphe"
@@ -1633,13 +1702,23 @@ async def recompute_workout_tss_for_athlete(athlete_id: str, db) -> int:
         # value as "missing" instead, which is what callers actually mean.
         if row.get("tss"):
             continue
-        await process_and_save_workout(_workout_row_to_payload(row), athlete_id, db, skip_tss_recalc=True)
+        await process_and_save_workout(_workout_row_to_payload(row), athlete_id, db, skip_tss_recalc=True, recompute=True)
         updated += 1
     return updated
 
 
 async def reprocess_athlete_metrics(athlete_id: str, db) -> dict[str, int]:
-    """Rebuild workout TSS, biometrics aggregates, and PMC (CTL/ATL/TSB) for one athlete."""
+    """Rebuild one athlete's derived metrics, in dependency order:
+    workout TSS / strain -> PMC (CTL/ATL/TSB) -> each day's sleep, recovery and readiness
+    (which read the PMC) -> daily strain.
+
+    (The PMC used to be rebuilt last, so every readiness / recovery value was computed against
+    the old TSS and stayed wrong until a second pass.)"""
+    # Heart-rate anchors first, so workouts are scored with an estimated max HR when the athlete
+    # never set one (otherwise every HR-scored workout is TSS 0).
+    from app.services.hr_anchors import ensure_hr_anchors
+
+    await asyncio.to_thread(ensure_hr_anchors, db, athlete_id)
     workouts_res = SimpleNamespace(data=_fetch_all_rows(
         lambda: db.table("workouts").select("*").eq("athlete_id", athlete_id).order("started_at")
     ))
@@ -1651,8 +1730,11 @@ async def reprocess_athlete_metrics(athlete_id: str, db) -> dict[str, int]:
             db,
             skip_tss_recalc=True,
             skip_daily_strain_refresh=True,
+            recompute=True,
         )
         workout_count += 1
+
+    await asyncio.to_thread(recalculate_tss_history, athlete_id, db)
 
     biometrics_res = SimpleNamespace(data=_fetch_all_rows(
         lambda: db.table("biometrics").select("*").eq("athlete_id", athlete_id).order("date")
@@ -1684,6 +1766,6 @@ async def reprocess_athlete_metrics(athlete_id: str, db) -> dict[str, int]:
         process_and_save_biometrics(payload, athlete_id, db, skip_pmc_recalc=True)
         bio_count += 1
 
-    await asyncio.to_thread(recalculate_tss_history, athlete_id, db)
+    await asyncio.to_thread(refresh_all_daily_strain_sync, db, athlete_id)
     return {"workouts": workout_count, "biometrics": bio_count}
 

@@ -500,6 +500,7 @@ def _update_athlete_hr_anchors_from_activity(
     threshold_hr = _int(activity, "lthr", "threshold_hr", "thresholdHr")
     if max_hr is not None and 80 <= max_hr <= 260:
         update["max_hr"] = max_hr
+        update["max_hr_source"] = "manual"  # from the athlete's Intervals.icu settings
     if resting_hr is not None and 25 <= resting_hr <= 120:
         update["resting_hr"] = resting_hr
     if threshold_hr is not None and 80 <= threshold_hr <= 230:

@@ -1752,7 +1752,7 @@ def map_whoop_sport(sport: object) -> str:
     # If we get the sport_name string, map it first.
     if isinstance(sport, str):
         s = sport.strip().lower()
-        if s in ("weightlifting", "weight lifting", "strength training", "strength_training", "gym", "strength"):
+        if s in ("weightlifting", "weightlifting_msk", "powerlifting", "weight lifting", "strength training", "strength_training", "gym", "strength"):
             return "strength"
         if s in ("running", "run"):
             return "run"
