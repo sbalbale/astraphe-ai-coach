@@ -77,6 +77,11 @@ class _ListQuery:
     def limit(self, *_a, **_k):
         return self
 
+    def lt(self, col, value):
+        self.lt_calls = getattr(self, "lt_calls", []) + [(col, value)]
+        _ListQuery.last_lt = (col, value)
+        return self
+
     def execute(self):
         return SimpleNamespace(data=self._rows)
 
@@ -101,6 +106,20 @@ def test_get_workouts_adds_computed_duration_secs():
 
     assert res.status_code == 200
     assert res.json()[0]["duration_secs"] == 3600
+
+
+def test_get_workouts_pages_back_with_before():
+    """The app stopped at the newest 200 workouts; `before` loads older pages."""
+    _ListQuery.last_lt = None
+    _override(_ListDb([]))
+    try:
+        with TestClient(app) as client:
+            res = client.get("/v1/workouts", params={"limit": 200, "before": "2026-06-13T10:00:00Z"})
+    finally:
+        _teardown()
+    assert res.status_code == 200
+    assert _ListQuery.last_lt[0] == "started_at"
+    assert _ListQuery.last_lt[1].startswith("2026-06-13T10:00:00")
 
 
 # ---------------------------------------------------------------------------

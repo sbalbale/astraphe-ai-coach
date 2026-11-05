@@ -11,6 +11,7 @@ from app.services.processing import (
 from app.dependencies import get_current_athlete, get_user_db
 from app.services.coach_workout_data import WORKOUT_LIST_COLUMNS, fetch_athlete_ftp
 from datetime import datetime, timezone, timedelta
+from typing import Optional
 from uuid import UUID
 
 router = APIRouter(prefix="/v1/workouts", tags=["Workouts"])
@@ -143,18 +144,22 @@ def _patch_refresh_days(existing: dict, updated: dict) -> set:
 @router.get("")
 def get_workouts(
     limit: int = Query(20, ge=1, le=200),
+    before: Optional[datetime] = Query(None, description="Only workouts that started before this instant (older pages)"),
     athlete_id: str = Depends(get_current_athlete),
     db = Depends(get_user_db)
 ):
-    """Fetch past workouts for the training history tab."""
-    res = (
+    """Past workouts, newest first. ``before`` pages back through history (the app used to stop
+    at the newest 200, so older weeks and months showed nothing)."""
+    q = (
         db.table("workouts")
         .select(_WORKOUT_LIST_COLUMNS)
         .eq("athlete_id", athlete_id)
-        .order("started_at", desc=True)
-        .limit(limit)
-        .execute()
     )
+    if before is not None:
+        if before.tzinfo is None:
+            before = before.replace(tzinfo=timezone.utc)
+        q = q.lt("started_at", before.isoformat())
+    res = q.order("started_at", desc=True).limit(limit).execute()
     rows = res.data or []
     # Add a computed duration_secs for the mobile app + any clients expecting it.
     for r in rows:

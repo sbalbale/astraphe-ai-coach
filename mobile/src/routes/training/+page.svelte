@@ -20,6 +20,7 @@
   import { resolve } from '$app/paths';
   import { page } from '$app/stores';
   import { endOfWeek, format, startOfWeek } from 'date-fns';
+  import { untrack } from 'svelte';
   import {
     mergeWorkoutZoneDefs,
     HR_ZONE_HEX,
@@ -313,6 +314,15 @@
 
   const selectedWeekStart = $derived.by(() => startOfWeek(parseDateInputLocal(weekPickerValue), { weekStartsOn: WEEK_STARTS_ON }));
   const selectedWeekEnd = $derived(endOfWeek(selectedWeekStart, { weekStartsOn: WEEK_STARTS_ON }));
+  // Load older workouts when this view reaches back past what's loaded (the store starts with
+  // the newest 200 workouts / 60 days of biometrics).
+  $effect(() => {
+    const day = format(selectedWeekStart, 'yyyy-MM-dd');
+    untrack(() => {
+      void athleteStore.ensureWorkoutsFrom(day);
+    });
+  });
+
 
   const workoutIdFromUrl = $derived($page.url.searchParams.get('workout_id'));
 

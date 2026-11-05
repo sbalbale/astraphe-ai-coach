@@ -75,6 +75,16 @@
   });
 
   const windowStart = $derived(subDays(clampedEndDay, 6));
+  // Load older workouts and biometrics when this view reaches back past what's loaded (the store starts with
+  // the newest 200 workouts / 60 days of biometrics).
+  $effect(() => {
+    const day = format(subDays(windowStart, 7), 'yyyy-MM-dd');
+    untrack(() => {
+      void athleteStore.ensureWorkoutsFrom(day);
+      void athleteStore.ensureBiometricsFrom(day);
+    });
+  });
+
   const windowEnd = $derived(clampedEndDay);
   const rangeLabel = $derived(`${format(windowStart, 'MMM d')} – ${format(windowEnd, 'MMM d, yyyy')}`);
   const canGoForward = $derived(format(windowEnd, 'yyyy-MM-dd') !== todayStr);
