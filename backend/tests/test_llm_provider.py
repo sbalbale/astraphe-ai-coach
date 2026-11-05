@@ -190,3 +190,34 @@ def test_get_llm_client_sets_a_request_timeout(monkeypatch):
     client = llm_provider.get_llm_client()
     assert client._api_client._http_options.timeout == 30_000
     llm_provider.get_llm_client.cache_clear()
+
+
+def test_chat_completion_usage_and_server_timings_are_kept():
+    msg = SimpleNamespace(content="ok", tool_calls=None, reasoning_content=None)
+    resp = SimpleNamespace(
+        choices=[SimpleNamespace(message=msg)],
+        usage=SimpleNamespace(
+            prompt_tokens=12000, completion_tokens=300, prompt_tokens_details=SimpleNamespace(cached_tokens=11000)
+        ),
+        timings={"cache_n": 11000, "prompt_ms": 900.4, "predicted_ms": 7600.2},
+    )
+    out = llm_provider._wrap_chat_completion(resp)
+    assert out.usage == {
+        "prompt_tokens": 12000,
+        "output_tokens": 300,
+        "cached_tokens": 11000,
+        "prompt_ms": 900,
+        "gen_ms": 7600,
+        "server_ms": 8501,
+    }
+
+
+def test_generate_content_passes_a_per_request_timeout():
+    raw = MagicMock()
+    msg = SimpleNamespace(content="ok", tool_calls=None, reasoning_content=None)
+    raw.with_options.return_value.chat.completions.create.return_value = SimpleNamespace(
+        choices=[SimpleNamespace(message=msg)]
+    )
+    llm_provider._OpenAICompatModels(raw).generate_content(model="m", contents="hi", timeout=42.0)
+    raw.with_options.assert_called_once_with(timeout=42.0)
+    raw.chat.completions.create.assert_not_called()

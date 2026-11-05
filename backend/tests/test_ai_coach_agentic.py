@@ -564,3 +564,119 @@ def test_after_a_self_hosted_failure_the_rest_of_the_turn_stays_on_gemini():
     assert text == "done"
     assert strata.models.generate_content.call_count == 1  # not asked again on hop 2
     assert gemini_calls == ["gemini-3.1-flash-lite", "gemini-3.1-flash-lite"]
+
+
+# --- Gemini taking over a turn the self-hosted model started (thought signatures) -----------------
+
+
+def _gemini_rejecting_unsigned_calls(reply_text, seen):
+    """Fake Gemini 3: a 400 for any function_call part without a thought_signature, as the real
+    API does."""
+
+    def _gemini(*, model, contents, config):
+        seen.append(contents)
+        for c in contents:
+            for p in getattr(c, "parts", None) or []:
+                if getattr(p, "function_call", None) is not None and not getattr(p, "thought_signature", None):
+                    raise RuntimeError("400 INVALID_ARGUMENT. Function call is missing a thought_signature")
+        return _response([_text_part(f"<response>{reply_text}</response>")])
+
+    return _gemini
+
+
+def test_gemini_can_take_over_after_the_self_hosted_model_made_tool_calls(caplog):
+    """Strata calls a tool on hop 0 and times out on hop 1: Gemini must finish the turn. It used
+    to answer 400 (missing thought_signature) and the athlete got the error reply."""
+    db = MagicMock()
+    strata = MagicMock()
+    strata.models.generate_content.side_effect = [
+        _response([_fc_part("get_recent_workouts", {"note": "private-note-text"})]),
+        TimeoutError("Request timed out."),
+    ]
+    seen: list = []
+    with _strata_settings(), _db_patches(), patch(
+        "app.services.llm_provider.get_chat_openai_client", return_value=strata
+    ), patch.object(
+        ai_coach._client.models, "generate_content", side_effect=_gemini_rejecting_unsigned_calls("from gemini", seen)
+    ), patch.dict(
+        coach_tools.TOOL_HANDLERS, {"get_recent_workouts": lambda args, athlete_id, db: {"workouts": ["private-result"]}}
+    ), caplog.at_level("INFO", logger="app.services.ai_coach"):
+        text, _ = ai_coach.get_coach_response_agentic("ath-1", "how many rides this week", db=db)
+
+    assert text == "from gemini"
+    fc_parts = [p for c in seen[0] for p in (c.parts or []) if getattr(p, "function_call", None)]
+    assert [p.thought_signature for p in fc_parts] == [ai_coach._PLACEHOLDER_THOUGHT_SIGNATURE]
+    logs = caplog.text
+    # Per-call and per-turn lines; tool arguments and results stay out of the logs.
+    assert "model_call hop=1 model=strata-model ok=False" in logs
+    assert "model_call hop=1 model=gemini-3.1-flash-lite ok=True" in logs
+    assert "turn ms=" in logs and "fallback=TimeoutError" in logs and "outcome=ok" in logs
+    assert "tool hop=0 name=get_recent_workouts" in logs
+    assert "private-note-text" not in logs and "private-result" not in logs
+
+
+def test_contents_for_gemini_keeps_real_signatures_and_leaves_the_turn_unchanged():
+    unsigned = types.Part(function_call=types.FunctionCall(name="a", args={}))
+    signed = types.Part(function_call=types.FunctionCall(name="b", args={}), thought_signature=b"real-sig")
+    text = types.Part.from_text(text="hi")
+    contents = [
+        types.Content(role="user", parts=[text]),
+        types.Content(role="model", parts=[unsigned, signed]),
+    ]
+    out = ai_coach._contents_for_gemini(contents)
+    assert out[0] is contents[0]  # nothing to change
+    assert [p.thought_signature for p in out[1].parts] == [ai_coach._PLACEHOLDER_THOUGHT_SIGNATURE, b"real-sig"]
+    assert contents[1].parts[0].thought_signature is None  # the turn's own contents are untouched
+    assert ai_coach._contents_for_gemini("plain prompt") == "plain prompt"
+
+
+def test_self_hosted_request_timeout_is_capped_by_the_turn_time_limit():
+    db = MagicMock()
+    strata = MagicMock()
+    strata.models.generate_content.return_value = _response([_text_part("<response>ok</response>")])
+    with _strata_settings(), patch.object(ai_coach.settings, "CHAT_TURN_DEADLINE_SEC", 100), _db_patches(), patch(
+        "app.services.llm_provider.get_chat_openai_client", return_value=strata
+    ):
+        ai_coach.get_coach_response_agentic("ath-1", "hi", db=db)
+    timeout = strata.models.generate_content.call_args.kwargs["timeout"]
+    # 100 s turn minus the 30 s Gemini reserve (minus the few ms already used), not the 120 s cap.
+    assert 60 < timeout <= 70
+
+
+def test_self_hosted_request_keeps_its_120s_cap_with_time_to_spare():
+    db = MagicMock()
+    strata = MagicMock()
+    strata.models.generate_content.return_value = _response([_text_part("<response>ok</response>")])
+    with _strata_settings(), patch.object(ai_coach.settings, "CHAT_TURN_DEADLINE_SEC", 600), _db_patches(), patch(
+        "app.services.llm_provider.get_chat_openai_client", return_value=strata
+    ):
+        ai_coach.get_coach_response_agentic("ath-1", "hi", db=db)
+    assert strata.models.generate_content.call_args.kwargs["timeout"] == 120
+
+
+def test_past_the_turn_time_limit_the_turn_goes_straight_to_gemini(caplog):
+    db = MagicMock()
+    strata = MagicMock()
+    with _strata_settings(), patch.object(ai_coach.settings, "CHAT_TURN_DEADLINE_SEC", 40), _db_patches(), patch(
+        "app.services.llm_provider.get_chat_openai_client", return_value=strata
+    ), patch.object(
+        ai_coach._client.models, "generate_content", return_value=_response([_text_part("<response>from gemini</response>")])
+    ), caplog.at_level("INFO", logger="app.services.ai_coach"):
+        text, _ = ai_coach.get_coach_response_agentic("ath-1", "hi", db=db)
+    assert text == "from gemini"
+    strata.models.generate_content.assert_not_called()  # 40 s - 30 s reserve leaves < 15 s
+    assert "fallback=turn_time_limit" in caplog.text
+
+
+def test_wrap_up_on_gemini_accepts_self_hosted_tool_calls():
+    seen: list = []
+    contents = [
+        types.Content(role="user", parts=[types.Part.from_text(text="import my plan")]),
+        types.Content(role="model", parts=[types.Part(function_call=types.FunctionCall(name="import_plan", args={}))]),
+        types.Content(role="user", parts=[types.Part.from_function_response(name="import_plan", response={"ok": True})]),
+    ]
+    with _strata_settings(), patch.object(ai_coach.gemini_quota, "wait_for_slot"), patch.object(
+        ai_coach._client.models, "generate_content", side_effect=_gemini_rejecting_unsigned_calls("summary", seen)
+    ):
+        text = ai_coach._wrap_up_after_tool_budget(contents, "sys", ["gemini-3.1-flash-lite"])
+    assert text == "summary"
