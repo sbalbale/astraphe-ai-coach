@@ -1,6 +1,8 @@
 <script lang="ts">
   /** Time in zones (design: WTrends): week / month, HR or power ranges, split read-out. */
   import { format } from 'date-fns';
+  import { untrack } from 'svelte';
+  import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { navTo } from '$lib/nav';
   import { HR_ZONE_HEX, HR_ZONE_LABELS } from '$lib/hrZoneDisplay';
   import {
@@ -35,6 +37,15 @@
   let basis = $state<'hr' | 'power'>('hr');
   const atNow = $derived(offset === 0);
   const win = $derived(zoneWindow(period, offset, today));
+  // Load older workouts when this view reaches back past what's loaded (the store starts with
+  // the newest 200 workouts / 60 days of biometrics).
+  $effect(() => {
+    const day = format(win.start, 'yyyy-MM-dd');
+    untrack(() => {
+      void athleteStore.ensureWorkoutsFrom(day);
+    });
+  });
+
   const secs = $derived(zoneSecondsInWindow(workouts as never, win.start, win.end));
   const total = $derived(secs.reduce((a, b) => a + b, 0));
   const pcts = $derived(percentages(secs));

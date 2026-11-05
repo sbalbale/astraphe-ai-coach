@@ -99,6 +99,15 @@
   });
 
   const windowStart = $derived(subDays(clampedEndDay, 6));
+  // Load older biometrics when this view reaches back past what's loaded (the store starts with
+  // the newest 200 workouts / 60 days of biometrics).
+  $effect(() => {
+    const day = format(subDays(windowStart, 7), 'yyyy-MM-dd');
+    untrack(() => {
+      void athleteStore.ensureBiometricsFrom(day);
+    });
+  });
+
   const windowEnd = $derived(clampedEndDay);
   const canGoForward = $derived(format(windowEnd, 'yyyy-MM-dd') !== todayStr);
   /** The day picked in the 7-day strip; the header shows it. */

@@ -5,6 +5,7 @@
 </script>
 
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { workoutDurationSecs } from '$lib/utils/workoutDuration';
   import EmptyStateCard from '$lib/components/ui/EmptyStateCard.svelte';
   import DashedNote from '$lib/components/ui/DashedNote.svelte';
@@ -136,6 +137,15 @@
     }
     const monthDate = new Date(`${selectedMonth}-01T00:00:00`);
     return startOfMonth(monthDate);
+  });
+
+  // Load older workouts when this week / month reaches back past what's loaded (the store
+  // starts with the newest 200, so earlier months showed "No heart-rate zone data").
+  $effect(() => {
+    const day = format(windowStart, 'yyyy-MM-dd');
+    untrack(() => {
+      void athleteStore.ensureWorkoutsFrom(day);
+    });
   });
 
   const windowEnd = $derived.by(() => {

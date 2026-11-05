@@ -482,3 +482,44 @@ describe('stale responses vs saves', () => {
     expect(athleteStore.profile.weight_kg).toBe(83.91);
   });
 });
+
+describe('loading older history on demand', () => {
+  it('pages older workouts back to the requested day, then stops', async () => {
+    // Newest 200 reach back to 2026-06-13: a view of early June asks for more.
+    athleteStore.workouts = [{ id: 'a', started_at: '2026-06-13T10:00:00Z' }];
+    athleteStore.workoutsComplete = false;
+    apiMock.getCompletedWorkouts.mockReset();
+    apiMock.getCompletedWorkouts.mockResolvedValueOnce([{ id: 'b', started_at: '2026-06-01T09:00:00Z' }, { id: 'a', started_at: '2026-06-13T10:00:00Z' }]);
+    await athleteStore.ensureWorkoutsFrom('2026-06-02');
+    expect(apiMock.getCompletedWorkouts).toHaveBeenCalledWith(200, '2026-06-13T10:00:00Z');
+    expect(athleteStore.workouts.map((w) => w.id)).toEqual(['a', 'b']); // no duplicate
+    expect(athleteStore.workoutsComplete).toBe(true); // a short page means the end
+    await athleteStore.ensureWorkoutsFrom('2026-01-01');
+    expect(apiMock.getCompletedWorkouts).toHaveBeenCalledTimes(1);
+  });
+
+  it("doesn't fetch when the loaded workouts already reach the day", async () => {
+    athleteStore.workouts = [{ id: 'a', started_at: '2026-05-01T10:00:00Z' }];
+    athleteStore.workoutsComplete = false;
+    apiMock.getCompletedWorkouts.mockReset();
+    await athleteStore.ensureWorkoutsFrom('2026-06-01');
+    expect(apiMock.getCompletedWorkouts).not.toHaveBeenCalled();
+  });
+
+  it('loads biometrics pages until the series reaches the day', async () => {
+    athleteStore.biometrics = {
+      series: [{ date: '2026-09-06' }],
+      page: { has_more: true, next_before: '2026-09-05' },
+      hrvData: [], sleepData: [], sleepScores: []
+    };
+    apiMock.getBiometricsPage.mockReset();
+    apiMock.getBiometricsPage.mockResolvedValueOnce({
+      series: [{ date: '2026-07-08' }],
+      page: { has_more: true, next_before: '2026-07-07' },
+      hrvData: [], sleepData: [], sleepScores: []
+    });
+    await athleteStore.ensureBiometricsFrom('2026-08-01');
+    expect(apiMock.getBiometricsPage).toHaveBeenCalledTimes(1);
+    expect(athleteStore.biometrics.series[0].date).toBe('2026-07-08');
+  });
+});

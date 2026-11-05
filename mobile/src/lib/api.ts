@@ -171,10 +171,13 @@ export const api = {
     return null;
   },
 
-  async getCompletedWorkouts(limit = 20) {
+  /** Past workouts, newest first; `before` (an ISO instant) pages back through older ones. */
+  async getCompletedWorkouts(limit = 20, before?: string) {
     try {
       const headers = await getAuthHeaders();
-      const res = await fetch(`${API_URL}/v1/workouts?limit=${limit}`, { headers });
+      const qs = new URLSearchParams({ limit: String(limit) });
+      if (before) qs.set('before', before);
+      const res = await fetch(`${API_URL}/v1/workouts?${qs.toString()}`, { headers });
       if (res.ok) return await res.json();
     } catch (e) {
       console.warn("Failed to fetch workouts from backend.", e);

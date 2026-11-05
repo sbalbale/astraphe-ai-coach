@@ -81,6 +81,9 @@ export class AthleteState {
   loading = $state(false);
   initialLoadDone = $state(false);
   biometricsLoadingMore = $state(false);
+  /** True once every older workout has been loaded (see ensureWorkoutsFrom). */
+  workoutsComplete = $state(false);
+  private _workoutsLoadingMore: Promise<void> | null = null;
   lastProfileSaveError = $state<string | null>(null);
 
   // Non-reactive dedup flag so two simultaneous fetchAll() calls don't trigger
@@ -134,6 +137,7 @@ export class AthleteState {
     this.plan = null;
     this.profile = null;
     this.workouts = [];
+    this.workoutsComplete = false;
     this.syncStatus = null;
     this.initialLoadDone = false;
     clearCache();
@@ -361,7 +365,10 @@ export class AthleteState {
         }
       }
       if (planData) this.plan = planData;
-      if (workoutsData) this.workouts = workoutsData;
+      if (workoutsData) {
+        this.workouts = workoutsData;
+        this.workoutsComplete = workoutsData.length < 200;
+      }
 
       console.log('[AthleteStore] Tier 2 complete — charts and history ready');
 
@@ -403,6 +410,45 @@ export class AthleteState {
       return false;
     } finally {
       if (this.current(gen)) this.biometricsLoadingMore = false;
+    }
+  }
+
+  /**
+   * Load older workouts until the store reaches back to `day` (YYYY-MM-DD) or there are no more.
+   * The first load is the newest 200, so views showing an older week or month used to come up
+   * empty (e.g. nothing before mid-June for an athlete with 684 workouts).
+   */
+  async ensureWorkoutsFrom(day: string): Promise<void> {
+    if (this._workoutsLoadingMore) return this._workoutsLoadingMore;
+    const gen = this._gen;
+    const run = async () => {
+      for (let i = 0; i < 20 && !this.workoutsComplete && this.current(gen); i++) {
+        const oldest = this.workouts.reduce<string | null>(
+          (m, w) => (w?.started_at && (!m || w.started_at < m) ? w.started_at : m),
+          null
+        );
+        if (!oldest || oldest.slice(0, 10) < day) return;
+        const more = await api.getCompletedWorkouts(200, oldest);
+        if (!this.current(gen)) return;
+        if (!Array.isArray(more)) return; // network error: try again next time
+        const seen = new Set(this.workouts.map((w) => w?.id));
+        this.workouts = [...this.workouts, ...more.filter((w: any) => !seen.has(w?.id))];
+        if (more.length < 200) this.workoutsComplete = true;
+      }
+    };
+    this._workoutsLoadingMore = run().finally(() => {
+      this._workoutsLoadingMore = null;
+    });
+    return this._workoutsLoadingMore;
+  }
+
+  /** Load older biometrics pages until the series reaches back to `day` (YYYY-MM-DD). */
+  async ensureBiometricsFrom(day: string): Promise<void> {
+    for (let i = 0; i < 20; i++) {
+      const series = this.biometrics?.series;
+      const oldest = Array.isArray(series) && series.length ? String(series[0]?.date ?? '') : '';
+      if (!oldest || oldest <= day || !this.biometrics?.page?.has_more) return;
+      if (!(await this.loadMoreBiometrics())) return;
     }
   }
 
