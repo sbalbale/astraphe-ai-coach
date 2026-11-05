@@ -463,15 +463,23 @@ def test_reprocess_athlete_metrics_rebuilds_workouts_and_biometrics():
         SimpleNamespace(data=[{"date": "2026-05-20", "hrv_rmssd": 55.0}]),
     ]
 
-    with patch.object(processing, "process_and_save_workout", AsyncMock()) as mock_save_workout, patch.object(
-        processing, "process_and_save_biometrics", MagicMock()
-    ) as mock_save_bio, patch.object(processing, "recalculate_tss_history", MagicMock()) as mock_recalc:
+    order: list[str] = []
+    with patch.object(processing, "process_and_save_workout", AsyncMock(side_effect=lambda *a, **k: order.append("workout"))) as mock_save_workout, patch.object(
+        processing, "process_and_save_biometrics", MagicMock(side_effect=lambda *a, **k: order.append("biometrics"))
+    ) as mock_save_bio, patch.object(
+        processing, "recalculate_tss_history", MagicMock(side_effect=lambda *a, **k: order.append("pmc"))
+    ) as mock_recalc, patch.object(
+        processing, "refresh_all_daily_strain_sync", MagicMock(side_effect=lambda *a, **k: order.append("strain"))
+    ):
         result = _run_async(processing.reprocess_athlete_metrics("athlete-1", db))
 
     assert result == {"workouts": 1, "biometrics": 1}
     mock_save_workout.assert_awaited_once()
+    assert mock_save_workout.await_args.kwargs["recompute"] is True
     mock_save_bio.assert_called_once()
     mock_recalc.assert_called_once_with("athlete-1", db)
+    # Readiness / recovery read the PMC, so it has to be rebuilt before the daily scores.
+    assert order == ["workout", "pmc", "biometrics", "strain"]
 
 
 # ---------------------------------------------------------------------------

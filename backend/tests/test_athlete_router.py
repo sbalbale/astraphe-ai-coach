@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -799,3 +800,49 @@ def test_manual_weight_skipped_when_it_matches_latest_reading():
     db = _WeightDb(latest=83.91)
     assert athlete_router._record_manual_weight_sync(db, "athlete-1", 83.93) is False
     assert db.upserts == []
+
+
+def test_changing_ftp_records_anchor_history_and_rescores_from_today():
+    """FTP / threshold pace changes are dated: earlier workouts keep the values they were done
+    at, and only workouts from today on are re-scored."""
+    db = _AthleteDb()
+    q = db.table("athletes")
+    fresh = {"id": "athlete-1", "ftp_watts": 255, "threshold_pace": "8:00", "measurement_units": "imperial"}
+    _override(db, email=None)
+    admin = MagicMock()
+    with patch.object(athlete_router, "_cache_del", AsyncMock()), patch.object(
+        athlete_router, "_increment_zones_version", AsyncMock()
+    ), patch.object(q, "execute", side_effect=[SimpleNamespace(data=[{"id": "athlete-1"}]), SimpleNamespace(data=fresh)]), patch.object(
+        athlete_router, "get_admin_db", return_value=admin
+    ), patch.object(athlete_router, "athlete_local_date", return_value=date(2026, 11, 10)), patch.object(
+        athlete_router, "record_anchor_change"
+    ) as record, patch.object(athlete_router, "spawn_background") as spawn, patch.object(
+        athlete_router, "rescore_and_rebuild", MagicMock()
+    ):
+        try:
+            with TestClient(app) as client:
+                res = client.patch("/v1/athlete/profile", json={"ftp_watts": 255})
+        finally:
+            _teardown()
+
+    assert res.status_code == 200
+    record.assert_called_once_with(admin, "athlete-1", fresh, date(2026, 11, 10))
+    spawn.assert_called_once()
+
+
+def test_a_profile_change_without_anchors_leaves_history_alone():
+    db = _AthleteDb()
+    q = db.table("athletes")
+    _override(db, email=None)
+    with patch.object(athlete_router, "_cache_del", AsyncMock()), patch.object(
+        athlete_router, "_increment_zones_version", AsyncMock()
+    ), patch.object(q, "execute", side_effect=[SimpleNamespace(data=[{"id": "athlete-1"}]), SimpleNamespace(data={"id": "athlete-1"})]), patch.object(
+        athlete_router, "record_anchor_change"
+    ) as record:
+        try:
+            with TestClient(app) as client:
+                res = client.patch("/v1/athlete/profile", json={"time_format": "24h"})
+        finally:
+            _teardown()
+    assert res.status_code == 200
+    record.assert_not_called()
