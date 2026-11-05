@@ -185,3 +185,33 @@ describe('replies written in HTML', () => {
     expect(htmlTagsToMarkdown('Keep HR <150 and > 120')).toBe('Keep HR <150 and > 120');
   });
 });
+
+describe('tables followed directly by text', () => {
+  // Production: a coach reply put its paragraphs right under a table and a second table after
+  // them; the paragraphs became rows and both tables merged into one.
+  const reply = [
+    'Looking at your calendar:',
+    '| Day | Session | Planned TSS |',
+    '| :--- | :--- | :--- |',
+    '| Wed | Cat 1 bike, 90 min | 49 |',
+    'At FTP 255, your sweet spot band is 224-239W. **Not one of your bike sessions touches it.**',
+    '**The progression I would run:**',
+    '| Block | Session shape | Watts |',
+    '| :--- | :--- | :--- |',
+    '| Nov 9 – Nov 23 | 2 x 15 min | 215-228W |',
+    'Heart rate for these should land 165-180 bpm.'
+  ].join('\n');
+
+  it('keeps two tables apart and the text between them out of the cells', () => {
+    const html = renderCoachMarkdownToSafeHtml(reply);
+    expect(html.match(/<table>/g)?.length).toBe(2);
+    expect(html).not.toMatch(/<td>At FTP 255/);
+    expect(html).toContain('<strong>Not one of your bike sessions touches it.</strong>');
+    expect(html).not.toMatch(/<td>Heart rate for these/);
+  });
+
+  it('leaves code fences alone', () => {
+    const src = '```\n| a | b |\ntext\n```';
+    expect(normalizeMarkdownBlockStructure(src)).toBe(src);
+  });
+});
