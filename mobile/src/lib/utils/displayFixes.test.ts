@@ -11,8 +11,10 @@ describe('display fixes from the app audit', () => {
     expect(splitPace(301)).toBe('5:01');
   });
 
-  it('numbers a Sunday-start week by its Monday (ISO)', () => {
-    expect(weekEyebrow(new Date(2026, 10, 1), true)).toBe('WEEK 45 · THIS WEEK'); // Sun 1 Nov 2026
+  it('labels a week by its dates, not a week number', () => {
+    expect(weekEyebrow(new Date(2026, 10, 1), true)).toBe('1 – 7 NOV · THIS WEEK'); // Sun 1 Nov 2026
+    expect(weekEyebrow(new Date(2026, 9, 25), false)).toBe('25 – 31 OCT');
+    expect(weekEyebrow(new Date(2026, 9, 29), false)).toBe('29 OCT – 4 NOV');
   });
 
   it('shows [min, max) zone edges as the athlete reads them', () => {

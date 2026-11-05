@@ -2,7 +2,7 @@
  * Display helpers for the Training log (phone list/detail and the wide master–detail).
  * Workouts are API rows (`/v1/workouts`), so fields are read defensively.
  */
-import { format, addDays, getISOWeek } from 'date-fns';
+import { format, addDays } from 'date-fns';
 import type { Units as MeasurementUnits } from '$lib/utils/units';
 
 type W = Record<string, any> | null | undefined;
@@ -94,9 +94,13 @@ export function positiveRounded(v: unknown): number | null {
 
 /** Wide list eyebrow: "WEEK 45 · THIS WEEK" / "WEEK 44". */
 export function weekEyebrow(weekStart: Date, isCurrentWeek: boolean): string {
-  // Weeks start on Sunday, which is the last day of the previous ISO week: number the week by
-  // its Monday (Nov 1-7, 2026 is ISO week 45, not 44).
-  return `WEEK ${getISOWeek(addDays(weekStart, 1))}${isCurrentWeek ? ' · THIS WEEK' : ''}`;
+  // The week's dates, not a week number: "1 – 7 NOV · THIS WEEK", "25 OCT – 31 OCT".
+  const end = addDays(weekStart, 6);
+  const range =
+    format(weekStart, 'MMM') === format(end, 'MMM')
+      ? `${format(weekStart, 'd')} – ${format(end, 'd MMM')}`
+      : `${format(weekStart, 'd MMM')} – ${format(end, 'd MMM')}`;
+  return `${range.toUpperCase()}${isCurrentWeek ? ' · THIS WEEK' : ''}`;
 }
 
 // --- Splits table cells (units live in the column header, not the cell) ---
