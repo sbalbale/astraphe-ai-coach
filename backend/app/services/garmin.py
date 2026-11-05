@@ -436,6 +436,9 @@ def _parse_garmin_datetime(value: str | None) -> datetime | None:
     return None
 
 
+MAX_PACE_SEC_KM = 3600
+
+
 def _avg_pace_sec_km_from_speed(average_speed_mps: Any) -> int | None:
     try:
         speed = float(average_speed_mps)
@@ -443,7 +446,11 @@ def _avg_pace_sec_km_from_speed(average_speed_mps: Any) -> int | None:
         return None
     if speed <= 0:
         return None
-    return int(round(1000.0 / speed))
+    pace = int(round(1000.0 / speed))
+    # A near-zero average speed (a stopwatch / pickleball / stationary session with a few metres
+    # of GPS drift) gives a "pace" like 250,000 s/km, which isn't a pace and overflowed the
+    # smallint column, failing the whole sync. Slower than an hour per km: no pace.
+    return pace if pace <= MAX_PACE_SEC_KM else None
 
 
 def build_workout_payload(activity: dict[str, Any]) -> WorkoutPayload | None:
@@ -950,6 +957,14 @@ async def sync_activities_for_athlete(
             )
             rate_limited = True
             break
+        except Exception as exc:
+            # One activity that can't be stored mustn't abort the rest of the sync (and, in a
+            # backfill, the biometrics after it): log it and carry on.
+            logger.warning(
+                "garmin activity %s skipped athlete=%s: %r",
+                activity.get("activityId"), athlete_id, exc,
+            )
+            continue
         if saved_workout:
             workout_count += 1
         if saved_streams:

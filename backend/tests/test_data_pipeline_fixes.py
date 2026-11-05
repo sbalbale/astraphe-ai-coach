@@ -242,3 +242,39 @@ def test_a_synced_ride_is_scored_with_the_ftp_on_its_date():
     with p1, p2, p3 as upd, patch.object(anchor_history, "load_history", return_value=_HISTORY):
         _run(processing.process_and_save_workout(payload, "a", MagicMock(), skip_tss_recalc=True, skip_daily_strain_refresh=True))
     assert upd.call_args[0][2]["tss"] == pytest.approx(3600 * 200 * (200 / 280) / (280 * 3600) * 100)
+
+
+# --- Garmin activity sync robustness ------------------------------------------------------------
+
+
+def test_a_near_zero_speed_is_not_a_pace():
+    """Production: a stopwatch / pickleball session's ~0.004 m/s average speed became a
+    250,000 s/km 'pace', overflowed the column and aborted the whole backfill."""
+    assert garmin._avg_pace_sec_km_from_speed(0.004) is None
+    assert garmin._avg_pace_sec_km_from_speed(3.27) == 306
+    assert garmin._avg_pace_sec_km_from_speed(0) is None
+
+
+def test_one_failing_activity_does_not_abort_the_sync():
+    saved: list = []
+
+    async def _save(client, activity, athlete_id, db):
+        if activity["activityId"] == 2:
+            raise RuntimeError('value "250000" is out of range for type smallint')
+        saved.append(activity["activityId"])
+        return True, False
+
+    client = MagicMock()
+    client.get_activities_by_date.return_value = [
+        {"activityId": i, "activityType": {"typeKey": "running"}} for i in (1, 2, 3)
+    ]
+    with patch.object(garmin, "get_client_for_athlete", return_value=client), patch.object(
+        garmin, "_save_one_activity", side_effect=_save
+    ), patch.object(garmin, "persist_session"), patch.object(
+        garmin, "recompute_workout_tss_for_athlete", MagicMock(return_value=asyncio.sleep(0))
+    ), patch.object(garmin, "recalculate_tss_history"), patch.object(garmin, "GARMIN_REQUEST_GAP_S", 0):
+        try:
+            _run(garmin.sync_activities_for_athlete("a", MagicMock(), date(2026, 9, 9), date(2026, 9, 9)))
+        except Exception:
+            pass  # later steps (caches etc.) aren't under test here
+    assert saved == [1, 3]
