@@ -45,15 +45,32 @@ function isStandaloneBoldHeading(line: string): boolean {
   return STANDALONE_BOLD_HEADING_RE.test(line.trim());
 }
 
+/** A line that GFM would read as a table row ("| a | b |"). */
+function isPipeRow(line: string): boolean {
+  return /^\s*\|/.test(line);
+}
+
 /**
  * Inserts blank lines so CommonMark closes lists before the next block.
- * Fixes models that omit \n\n between the last bullet and a **Section** heading.
+ * Fixes models that omit \n\n between the last bullet and a **Section** heading,
+ * and between a table and the text right under it (see below).
  */
 export function normalizeMarkdownBlockStructure(markdown: string): string {
   const lines = (markdown ?? '').replace(/\r\n/g, '\n').split('\n');
   const out: string[] = [];
+  let inFence = false;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
+    if (/^\s*```/.test(line)) inFence = !inFence;
+    const prev = out.length ? out[out.length - 1] : '';
+    if (!inFence && line.trim() !== '') {
+      // GFM keeps any line after a table as another row, so text written right under a
+      // table (no blank line) became a row, and a second table after it merged into the
+      // first. End the table at the first line that isn't a row.
+      if (isPipeRow(prev) && !isPipeRow(line)) out.push('');
+      // And give a table its own block when it follows text directly.
+      else if (isPipeRow(line) && isGfmDelimiterRow(lines[i + 1] ?? '') && prev.trim() !== '' && !isPipeRow(prev)) out.push('');
+    }
     if (isStandaloneBoldHeading(line)) {
       let j = out.length - 1;
       while (j >= 0 && out[j].trim() === '') j--;
