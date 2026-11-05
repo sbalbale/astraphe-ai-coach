@@ -330,10 +330,85 @@ _SPORT_MAP: dict[str, str] = {
 }
 
 
+_TRANSITION_TYPES = {"transition", "transition_v2"}
+_logged_unknown_types: set[str] = set()
+
+
 def map_garmin_connect_sport(type_key: str | None) -> str:
     """Map a Garmin Connect ``activityType.typeKey`` to an ASTRAPHE canonical sport."""
     key = (type_key or "").strip().lower()
-    return _SPORT_MAP.get(key, "other")
+    if key in _SPORT_MAP:
+        return _SPORT_MAP[key]
+    # Garmin versions some keys (on-water rowing came through as something other than
+    # "rowing", so 27 sessions were stored as "other" and never matched Strava's "row").
+    if "rowing" in key:
+        return "row"
+    if key and key not in _logged_unknown_types:
+        _logged_unknown_types.add(key)
+        logger.info("garmin: unmapped activity typeKey=%r stored as other", key)
+    return "other"
+
+
+def is_multisport_parent(activity: dict[str, Any]) -> bool:
+    """A Garmin multisport activity (triathlon, erg + run, ...): a parent of separate legs."""
+    key = ((activity.get("activityType") or {}).get("typeKey") or "").lower()
+    return bool(activity.get("parent") or activity.get("isParent")) or key == "multi_sport"
+
+
+def leg_as_list_activity(detail: dict[str, Any]) -> dict[str, Any]:
+    """A multisport leg from ``get_activity`` (summaryDTO shape) in the shape of a
+    ``get_activities_by_date`` entry, so build_workout_payload can map it."""
+    s = detail.get("summaryDTO") or {}
+    return {
+        "activityId": detail.get("activityId"),
+        "activityName": detail.get("activityName"),
+        "activityType": {"typeKey": (detail.get("activityTypeDTO") or {}).get("typeKey")},
+        "startTimeGMT": s.get("startTimeGMT"),
+        "duration": s.get("duration"),
+        "distance": s.get("distance"),
+        "elevationGain": s.get("elevationGain"),
+        "calories": s.get("calories"),
+        "avgPower": s.get("averagePower"),
+        "normPower": s.get("normalizedPower"),
+        "averageHR": s.get("averageHR"),
+        "maxHR": s.get("maxHR"),
+        "averageSpeed": s.get("averageSpeed"),
+    }
+
+
+def multisport_leg_ids(client: Garmin, parent_id: Any) -> list[int]:
+    """The parent's legs, in order, without transitions."""
+    detail = client.get_activity(parent_id) or {}
+    meta = detail.get("metadataDTO") or {}
+    ids = meta.get("childIds") or []
+    types = meta.get("childActivityTypes") or [None] * len(ids)
+    return [int(i) for i, t in zip(ids, types) if (t or "").lower() not in _TRANSITION_TYPES]
+
+
+def _stored_garmin_ids(db: Any, athlete_id: str, ids: list[int]) -> set[int]:
+    if not ids:
+        return set()
+    res = (
+        db.table("workouts")
+        .select("garmin_activity_id")
+        .eq("athlete_id", athlete_id)
+        .in_("garmin_activity_id", ids)
+        .execute()
+    )
+    return {int(r["garmin_activity_id"]) for r in (res.data or []) if r.get("garmin_activity_id")}
+
+
+def _delete_garmin_parent(db: Any, athlete_id: str, parent_id: Any) -> int:
+    """Drop a stored multisport parent: its legs are stored instead (streams and laps cascade;
+    a plan linked to it is unlinked by the FK)."""
+    res = (
+        db.table("workouts")
+        .delete()
+        .eq("athlete_id", athlete_id)
+        .eq("garmin_activity_id", int(parent_id))
+        .execute()
+    )
+    return len(res.data or [])
 
 
 # --------------------------------------------------------------------------
@@ -805,6 +880,25 @@ async def _save_one_activity(
     return True, streams_saved
 
 
+async def split_multisport(client: Garmin, db: Any, athlete_id: str, parent_id: Any) -> list[dict[str, Any]]:
+    """The legs of a multisport parent still to be stored (list-entry shape); also deletes a
+    stored copy of the parent. Legs already stored aren't fetched again (the poll sees the
+    same parent every 15 minutes)."""
+    if parent_id is None:
+        return []
+    leg_ids = await asyncio.to_thread(multisport_leg_ids, client, parent_id)
+    await asyncio.to_thread(_delete_garmin_parent, db, athlete_id, parent_id)
+    have = await asyncio.to_thread(_stored_garmin_ids, db, athlete_id, leg_ids)
+    legs: list[dict[str, Any]] = []
+    for leg_id in leg_ids:
+        if leg_id in have:
+            continue
+        detail = await asyncio.to_thread(client.get_activity, leg_id)
+        legs.append(leg_as_list_activity(detail or {}))
+        await asyncio.sleep(GARMIN_REQUEST_GAP_S)
+    return legs
+
+
 async def sync_activities_for_athlete(
     athlete_id: str, db: Any, start_date: date, end_date: date
 ) -> dict[str, int]:
@@ -824,7 +918,21 @@ async def sync_activities_for_athlete(
     workout_count = 0
     stream_count = 0
     rate_limited = False
+    expanded: list[dict[str, Any]] = []
     for activity in activities:
+        if not is_multisport_parent(activity):
+            expanded.append(activity)
+            continue
+        # Garmin is the source of truth for multisport: store its legs (each scored as its own
+        # sport), not the parent, which double-counted the whole session next to the legs.
+        try:
+            legs = await split_multisport(client, db, athlete_id, activity.get("activityId"))
+        except GarminConnectTooManyRequestsError as exc:
+            await asyncio.to_thread(persist_session, db, athlete_id, client)
+            raise GarminRateLimitedError(str(exc)) from exc
+        expanded.extend(legs)
+
+    for activity in expanded:
         try:
             saved_workout, saved_streams = await _save_one_activity(
                 client, activity, athlete_id, db
@@ -838,7 +946,7 @@ async def sync_activities_for_athlete(
             # later instead of retrying on the very next tick.
             logger.warning(
                 "garmin activity sync rate-limited athlete=%s after %s/%s activities; stopping this pass",
-                athlete_id, workout_count, len(activities),
+                athlete_id, workout_count, len(expanded),
             )
             rate_limited = True
             break

@@ -10,9 +10,11 @@ from app.models.athlete import AthleteState, AthleteProfileUpdate
 from app.services.algorithms import compute_z_score
 from app.services.hr_zones import athlete_dict_with_hr_zones, get_athlete_zones, optional_canonical_hr_zone_method
 from app.services.resend_service import sync_marketing_contact
+from app.services.anchor_history import ANCHOR_FIELDS, record_change as record_anchor_change, rescore_and_rebuild
+from app.services.background import spawn as spawn_background
 from app.dependencies import get_current_athlete, get_current_user_email, get_user_db, get_admin_db, run_supabase_call
 from app.core.redis import get_redis
-from app.services.time_utils import coerce_timezone_offset_min, local_datetime_from_timezone_offset
+from app.services.time_utils import athlete_local_date, coerce_timezone_offset_min, local_datetime_from_timezone_offset
 
 router = APIRouter(prefix="/v1/athlete", tags=["Athlete"])
 
@@ -510,11 +512,16 @@ async def update_athlete_profile(
 ):
     """
     Update athlete physiological anchors (e.g., FTP, max HR).
-    Should trigger async recalculation of historical TSS if FTP changes.
+    A change to FTP, threshold pace or units is recorded in the anchor history from today and
+    re-scores workouts from today on (earlier ones keep the values they were done at).
     """
     update_data = payload.model_dump(exclude_unset=True)
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields provided for update")
+
+    if "max_hr" in update_data:
+        # Entered by the athlete: never replaced by the app's estimate (cleared -> estimated again).
+        update_data["max_hr_source"] = "manual" if update_data.get("max_hr") else None
 
     if "threshold_hr" in update_data and update_data.get("threshold_hr") is not None:
         try:
@@ -608,6 +615,16 @@ async def update_athlete_profile(
         except Exception as e:
             # The profile is saved; a failed reading only means the old scale value still shows.
             print(f"[athlete.profile.patch] manual weight reading failed: {repr(e)}")
+
+    if any(k in update_data for k in ANCHOR_FIELDS):
+        try:
+            admin = get_admin_db()
+            today = await asyncio.to_thread(athlete_local_date, admin, athlete_id)
+            await asyncio.to_thread(record_anchor_change, admin, athlete_id, fresh.data, today)
+            spawn_background(asyncio.to_thread(rescore_and_rebuild, admin, athlete_id, today))
+        except Exception as e:
+            # The profile is saved; history / re-scoring catch up on the next change.
+            print(f"[athlete.profile.patch] anchor history update failed: {repr(e)}")
 
     await _cache_del(f"profile:{athlete_id}")
     await _cache_del(f"zones:{athlete_id}")

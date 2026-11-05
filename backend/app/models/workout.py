@@ -26,7 +26,9 @@ class WorkoutPayload(BaseModel):
     avg_pace_sec_km: Optional[int] = None
     tss: Optional[float] = None
     title: Optional[str] = None
-    ftp_at_time: int = Field(default=250)
+    # FTP to score power TSS with. Leave unset to use the athlete's profile FTP (synced workouts
+    # never know it); there used to be a hardcoded 250 W default here that every sync used.
+    ftp_at_time: Optional[int] = None
     
     # HR Zones
     hr_zone_0_pct: Optional[int] = None
