@@ -108,8 +108,6 @@
   );
   const stoppedEarly = $derived(actualMin > 0 && actualMin < planned - 1);
 
-  let sel = $state<number | null>(null);
-  const toggle = (i: number) => (sel = sel === i ? null : i);
   const zoneVar = (z: number) => (z > 0 ? `var(--zone-${z})` : 'var(--text2)');
   const avgColor = (b: (typeof blocks)[number]) =>
     b.stats.avg == null ? 'var(--text3, var(--text2))' : b.window ? FIT_COLOR[b.stats.avg > b.window.hi ? 'above' : b.stats.avg < b.window.lo ? 'below' : 'in'] : 'var(--text0)';
@@ -118,12 +116,6 @@
     if (!b.stats.secs) return `— / ${mins(b.min)}`;
     return done < b.min - 0.5 ? `${mins(done)} / ${mins(b.min)}` : mins(b.min);
   };
-  function spark(b: (typeof blocks)[number]): string {
-    const pts = tracePoints(stream, [], 60).filter((p) => p.tMin >= b.t0 && p.tMin < b.t0 + b.min);
-    const sy = (v: number) => 42 - ((Math.max(yLo, Math.min(yHi, v)) - yLo) / (yHi - yLo)) * 40;
-    return pts.map((p, j) => `${((j / Math.max(pts.length - 1, 1)) * 100).toFixed(1)},${sy(p.v).toFixed(1)}`).join(' ');
-  }
-  const sparkY = (v: number) => 42 - ((Math.max(yLo, Math.min(yHi, v)) - yLo) / (yHi - yLo)) * 40;
   const showChart = $derived(blocks.length > 0 && (hasStream || blocks.some((b) => b.window)));
   const unitLabel = $derived(
     metric === 'power' ? `Targets from FTP ${ftp} W` : 'Targets from your HR zones'
@@ -183,7 +175,7 @@
             height={Math.max(Y(b.window.lo) - Y(b.window.hi), 2)}
             rx="2"
             fill={zoneVar(b.window.zone)}
-            fill-opacity={sel === b.i ? 0.36 : b.stats.secs ? 0.2 : 0.07}
+            fill-opacity={b.stats.secs ? 0.2 : 0.07}
             stroke={zoneVar(b.window.zone)}
             stroke-opacity="0.7"
             stroke-dasharray="3 2"
@@ -217,21 +209,6 @@
         <span class="flex items-center font-mono text-[9px] opacity-75" style="flex: {z.hi - z.lo} 1 0; color: {zoneVar(z.zone)}">Z{z.zone}</span>
       {/each}
     </div>
-    <div class="absolute inset-0 flex">
-      {#each blocks as b (b.i)}
-        <button
-          type="button"
-          aria-label="{b.name}, {Math.round(b.min)} minutes"
-          aria-pressed={sel === b.i}
-          class="h-full p-0 border-0 bg-transparent cursor-pointer rounded [@media(hover:hover)]:hover:bg-glass"
-          style="flex: {b.min} 1 0"
-          onclick={() => toggle(b.i)}
-        ></button>
-      {/each}
-      {#if span > planned}
-        <span style="flex: {span - planned} 1 0"></span>
-      {/if}
-    </div>
   </div>
   <div class="flex justify-between font-mono text-[10px] text-text3">
     <span>0′</span>
@@ -249,16 +226,7 @@
   <ul class="list-none m-0 p-0 flex flex-col gap-1">
     {#each blocks as b (b.i)}
       {@const s = b.stats}
-      {@const open = sel === b.i}
-      <li>
-        <button
-          type="button"
-          aria-expanded={open}
-          class="w-full flex gap-2.5 p-2.5 rounded-xl border cursor-pointer text-text0 text-left {open
-            ? 'bg-accent-surface border-accent-surface-border'
-            : 'bg-bg1 border-transparent [@media(hover:hover)]:hover:bg-bg3'} {s.secs ? '' : 'opacity-[0.55]'}"
-          onclick={() => toggle(b.i)}
-        >
+      <li class="flex gap-2.5 p-2.5 rounded-xl bg-bg1 text-text0 {s.secs ? '' : 'opacity-[0.55]'}">
           <span aria-hidden="true" class="shrink-0 w-1 self-stretch rounded-sm" style="background: {zoneVar(b.window?.zone ?? 0)}; opacity: {s.secs ? 1 : 0.35}"></span>
           <span class="flex-1 min-w-0 flex flex-col gap-[5px]">
             <span class="flex justify-between gap-2">
@@ -278,22 +246,7 @@
                 avg <span style="color: {avgColor(b)}">{s.avg != null ? `${s.avg} ${unit}` : '—'}</span>{b.window && s.fitSecs ? ` · ${pct(s.inn, s.fitSecs)}% in` : ''}
               </span>
             </span>
-            {#if open && s.secs}
-              <svg width="100%" height="44" viewBox="0 0 100 44" preserveAspectRatio="none" aria-hidden="true" class="block mt-0.5">
-                {#if b.window}
-                  <rect x="0" y={sparkY(b.window.hi)} width="100" height={Math.max(sparkY(b.window.lo) - sparkY(b.window.hi), 1)} fill={zoneVar(b.window.zone)} fill-opacity="0.18"></rect>
-                {/if}
-                <polyline points={spark(b)} fill="none" stroke="var(--text0)" stroke-width="1.5" vector-effect="non-scaling-stroke"></polyline>
-              </svg>
-              <span class="text-[11px] text-text2">
-                {#if b.window && s.fitSecs}
-                  {pct(s.inn, s.fitSecs)}% in target · {pct(s.above, s.fitSecs)}% above · {pct(s.below, s.fitSecs)}% below{metric === 'hr' ? ' · first 60 s ignored while HR catches up' : ''}
-                {/if}
-                {s.max != null ? ` · max ${s.max} ${unit}` : ''}
-              </span>
-            {/if}
           </span>
-        </button>
       </li>
     {/each}
   </ul>
@@ -303,7 +256,6 @@
       <span class="flex items-center gap-[5px]"><span aria-hidden="true" class="w-2.5 h-1 rounded-sm bg-green"></span>In target</span>
       <span class="flex items-center gap-[5px]"><span aria-hidden="true" class="w-2.5 h-1 rounded-sm bg-amber"></span>Above</span>
       <span class="flex items-center gap-[5px]"><span aria-hidden="true" class="w-2.5 h-1 rounded-sm" style="background: {FIT_COLOR.below}"></span>Below</span>
-      <span class="ml-auto text-text3">Tap a block for its trace</span>
     </div>
   {/if}
 {/if}
