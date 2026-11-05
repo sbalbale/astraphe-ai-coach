@@ -92,10 +92,32 @@ export function mergeWorkoutZoneDefs(
 }
 
 /** Human-readable BPM span for UI labels; open-ended Z5 uses max_bpm sentinel from API (999). */
+/**
+ * A zone's bpm range as the athlete reads it. Zones share boundaries and each is [min, max)
+ * (backend classify_hr: 143 bpm is Z2 when Z1 is 0–143 and Z2 143–158), so the shown upper
+ * bound is max - 1. Screens used to show "< 144" for Z1 and "143–158" for Z2.
+ */
+export function bpmRangeLabel(min: number, max: number, unit = ''): string {
+  const u = unit ? ` ${unit}` : '';
+  if (max >= 500) return `≥ ${min}${u}`;
+  if (min <= 0) return `< ${max}${u}`;
+  return `${min}–${max - 1}${u}`;
+}
+
 export function formatZoneBpmRange(z: ZoneDef | null | undefined): string {
   if (!z) return '—';
-  const lo = z.min_bpm;
-  const hi = z.max_bpm;
-  if (hi >= 999) return `${lo}+ bpm`;
-  return `${lo}–${hi} bpm`;
+  if (z.max_bpm >= 500) return `${z.min_bpm}+ bpm`;
+  return bpmRangeLabel(z.min_bpm, z.max_bpm, 'bpm');
+}
+
+/**
+ * What the athlete's HR zones are built from, e.g. "Max HR 204 / RHR 52" (heart-rate reserve)
+ * or "LTHR 185" (the backend's hr_zones.anchor_label). Screens used to print "LTHR 185" even
+ * when the zones came from heart-rate reserve.
+ */
+export function hrZoneAnchorLabel(profile: Record<string, any> | null | undefined): string | null {
+  const label = profile?.hr_zones?.anchor_label;
+  if (typeof label === 'string' && label.trim()) return label.trim().replace(/\s*bpm$/, '');
+  const lthr = Number(profile?.lthr ?? profile?.threshold_hr) || 0;
+  return lthr ? `LTHR ${lthr}` : null;
 }

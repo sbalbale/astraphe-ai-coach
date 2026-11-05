@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { athleteStore } from '$lib/stores/athleteStore.svelte';
   /**
    * "Link a workout" / "Change workout" picker (design: Plan · link a workout, picker sheet).
    * Recorded workouts within two days of the session, grouped SAME DAY / WITHIN 2 DAYS, with
@@ -105,7 +106,7 @@
         <span aria-hidden="true" class="shrink-0 w-10 h-10 rounded-xl bg-border text-text1 flex items-center justify-center font-mono text-[10px]">{sportBadge(pending.sport)}</span>
         <span class="flex-1 min-w-0 flex flex-col gap-0.5">
           <span class="text-[14px] font-medium truncate">{pending.title}</span>
-          <span class="text-[12px] text-text2">{workoutMeta(pending)}</span>
+          <span class="text-[12px] text-text2">{workoutMeta(pending, athleteStore.profile?.time_format)}</span>
         </span>
       </div>
       {#if error}<p role="alert" class="m-0 text-[13px] text-red">{error}</p>{/if}
@@ -162,7 +163,7 @@
               <span aria-hidden="true" class="shrink-0 w-10 h-10 rounded-xl bg-border text-text1 flex items-center justify-center font-mono text-[10px]">{sportBadge(r.sport)}</span>
               <span class="flex-1 min-w-0 flex flex-col gap-[3px]">
                 <span class="text-[14px] font-medium truncate">{r.title}</span>
-                <span class="text-[12px] text-text2">{workoutMeta(r)}</span>
+                <span class="text-[12px] text-text2">{workoutMeta(r, athleteStore.profile?.time_format)}</span>
                 <span class="text-[12px] {fitClass(r)}">{r.fit.reason}{r.dismissed ? ' · you said not this one' : ''}</span>
               </span>
               {#if tag}

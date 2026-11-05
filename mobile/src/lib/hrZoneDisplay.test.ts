@@ -114,6 +114,7 @@ describe('formatZoneBpmRange', () => {
     expect(formatZoneBpmRange(zones[4])).toBe('180+ bpm');
   });
   it('bounded zone shows range', () => {
-    expect(formatZoneBpmRange(zones[1])).toBe('120–140 bpm');
+    // Zones are [min, max): 140 belongs to the next zone.
+    expect(formatZoneBpmRange(zones[1])).toBe('120–139 bpm');
   });
 });

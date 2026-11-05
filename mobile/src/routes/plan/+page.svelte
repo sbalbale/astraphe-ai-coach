@@ -2,6 +2,7 @@
   import { formatStepClock, formatStepDuration } from '$lib/utils/stepDuration';
   import { WEEKDAY_LETTERS } from '$lib/utils/week';
   import { powerBand } from '$lib/utils/powerBand';
+  import { bpmRangeLabel } from '$lib/hrZoneDisplay';
   import { WEEK_STARTS_ON } from '$lib/utils/week';
   import type { Action } from 'svelte/action';
   import EmptyStateCard from '$lib/components/ui/EmptyStateCard.svelte';
@@ -665,9 +666,7 @@
   function hrRange(zone: number): string | undefined {
     const z = (athleteStore.profile?.hr_zones?.zones ?? []).find((x: { zone: number }) => x.zone === zone);
     if (!z) return undefined;
-    if (z.max >= 500) return `≥ ${z.min} bpm`;
-    if (z.min <= 0) return `< ${z.max + 1} bpm`;
-    return `${z.min}–${z.max} bpm`;
+    return bpmRangeLabel(z.min, z.max, 'bpm');
   }
   // Steps can be fractional minutes (1:30 = 1.5): clock times and lengths keep the seconds.
   const mmss = formatStepClock;

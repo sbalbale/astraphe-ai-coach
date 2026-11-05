@@ -95,9 +95,10 @@ export function targetWindow(block: Interval, metric: Metric, ftp: number, zones
   const zone = hrZone ?? (pct != null ? zoneForFtpPct(pct) : null);
   const def = zone != null ? zones.find((z) => z.zone === zone) : undefined;
   if (zone == null || !def || !(def.max_bpm > 0)) return null;
+  // Zones are [min, max): the top bpm of a zone is max - 1 (so the window and its label agree).
   const lo = zone === 1 ? 0 : Math.round(def.min_bpm);
-  const hi = Math.round(def.max_bpm);
-  return { lo, hi, zone, label: rangeLabel(zone, lo, hi, 'bpm') };
+  const hi = Math.round(def.max_bpm) - 1;
+  return { lo, hi, zone, label: rangeLabel(zone, lo, hi + (zone === 1 ? 1 : 0), 'bpm') };
 }
 
 /** Planned blocks with their start times (blocks without a duration are skipped). */
