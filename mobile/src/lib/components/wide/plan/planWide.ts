@@ -5,6 +5,7 @@
 import { addDays, endOfMonth, endOfWeek, format, startOfMonth, startOfWeek } from 'date-fns';
 import type { Interval, Workout, WorkoutZone } from '$lib/types/training';
 import { WEEK_STARTS_ON } from '$lib/utils/week';
+import { powerBand } from '$lib/utils/powerBand';
 
 export type WideStep = { name: string; minutes: number; zone: number; target?: string };
 export type WideBar = { minutes: number; pct: number; hard: boolean };
@@ -67,7 +68,7 @@ function stepTarget(i: Interval, ftp: number): string | undefined {
   const pct = i.target_power_percent_ftp;
   if (typeof pct === 'number') {
     // Prescribed targets are one % of FTP; show the usual ±2.5 % working band (as the phone sheet).
-    if (ftp > 0) return `${Math.round((ftp * (pct - 2.5)) / 100)}–${Math.round((ftp * (pct + 2.5)) / 100)} W`;
+    if (ftp > 0) return `${powerBand(ftp, pct).join('–')} W`;
     return `${pct}% FTP`;
   }
   if (typeof i.target_hr_zone === 'number') return `Z${i.target_hr_zone} HR`;

@@ -8,6 +8,7 @@
  */
 import type { Interval } from '$lib/types/training';
 import { zoneForFtpPct } from '$lib/components/wide/today/todayWide';
+import { powerBand } from '$lib/utils/powerBand';
 
 export type Metric = 'power' | 'hr';
 export type Fit = 'below' | 'in' | 'above' | 'none';
@@ -79,8 +80,7 @@ export function targetWindow(block: Interval, metric: Metric, ftp: number, zones
     if (!(ftp > 0)) return null;
     if (pct != null) {
       // A ±5% FTP window around the prescribed power.
-      const lo = round5((ftp * Math.max(0, pct - 5)) / 100);
-      const hi = round5((ftp * (pct + 5)) / 100);
+      const [lo, hi] = powerBand(ftp, pct);
       const zone = zoneForFtpPct(pct);
       return { lo, hi, zone, label: rangeLabel(zone, lo, hi, 'W') };
     }

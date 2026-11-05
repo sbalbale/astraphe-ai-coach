@@ -1,5 +1,6 @@
 /** Pure helpers for the wide (tablet / desktop) Today layout. */
 import type { Interval, Workout, WorkoutZone } from '$lib/types/training';
+import { powerBand } from '$lib/utils/powerBand';
 
 const ZONE_NUMBER: Record<WorkoutZone, number> = {
   Recovery: 1,
@@ -103,7 +104,7 @@ export function workPctFtp(w: Pick<Workout, 'structure'>): number {
 export function workWattRange(w: Pick<Workout, 'sport' | 'structure'>, ftp: number): string | null {
   const work = workPctFtp(w);
   if (w.sport !== 'bike' || ftp <= 0 || work <= 0) return null;
-  return `${Math.round((ftp * (work - 2.5)) / 100)}–${Math.round((ftp * (work + 2.5)) / 100)}`;
+  return powerBand(ftp, work).join('–');
 }
 
 /** Target for the session card: a watt range for bike sessions with FTP, else the zone. */

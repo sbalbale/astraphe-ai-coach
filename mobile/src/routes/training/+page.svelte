@@ -20,6 +20,7 @@
   import { resolve } from '$app/paths';
   import { page } from '$app/stores';
   import { endOfWeek, format, startOfWeek } from 'date-fns';
+  import { workoutStrainContribution } from '$lib/utils/bodyWide';
   import { untrack } from 'svelte';
   import {
     mergeWorkoutZoneDefs,
@@ -792,7 +793,7 @@
         <!-- Detailed Workout View (map hero + tabs) -->
         {@const sel = selectedWorkout}
         {@const selTss = Number.isFinite(Number(sel?.tss)) && Number(sel.tss) > 0 ? Math.round(Number(sel.tss)) : null}
-        {@const selStrain = Number.isFinite(Number(sel?.strain_score)) && Number(sel.strain_score) > 0 ? Math.round(Number(sel.strain_score)) : null}
+        {@const selStrain = Math.round(workoutStrainContribution(sel)) || null}
         {@const selSecs = getDurationSecs(sel)}
         {@const selNp = Number(sel?.norm_power_w) || 0}
         {@const selLatlng = detailStreams?.time_series?.latlng}

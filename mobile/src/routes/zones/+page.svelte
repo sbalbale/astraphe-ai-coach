@@ -5,6 +5,7 @@
 </script>
 
 <script lang="ts">
+  import { percentages, splitInsight } from '$lib/components/wide/trends/trendsWide';
   import { untrack } from 'svelte';
   import { workoutDurationSecs } from '$lib/utils/workoutDuration';
   import EmptyStateCard from '$lib/components/ui/EmptyStateCard.svelte';
@@ -294,10 +295,8 @@
   const zoneSummary = $derived.by(() => {
     const total = zoneSeconds.reduce((a, b) => a + b, 0);
     if (total === 0) return "Log a few heart-rate workouts and your zone split will show up here.";
-    const easy = zoneRows.filter((z) => z.zone <= 2).reduce((a, z) => a + z.pct, 0);
-    const hard = 100 - easy;
-    const verdict = easy >= 75 ? "close to a polarized split" : easy >= 60 ? "a moderate-leaning split" : "heavy on intensity";
-    return `${easy}% easy, ${hard}% at tempo or above — ${verdict}. ${fmtDuration(total)} recorded.`;
+    // Same wording and thresholds as desktop (percentages from the same rounding).
+    return splitInsight(percentages(zoneSeconds), total);
   });
 
   // Wide layouts show zones on the combined Trends & zones page.

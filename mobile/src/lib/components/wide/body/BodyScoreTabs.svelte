@@ -21,6 +21,14 @@
   const dayRow = $derived(series.find((r) => r?.date === day) ?? null);
   /** Today with no row yet carries last night's row forward, as the Recovery page does. */
   const row = $derived(dayRow ?? (day === todayStr ? (current.row as Record<string, any> | null) : null));
+  // Like the Recovery / Sleep pages, today also carries forward when its row exists but has no
+  // score yet (e.g. a weight-only row saved before the overnight sync). Otherwise the tile read
+  // "No score" next to a page showing yesterday's score as carried over.
+  const carried = $derived(day === todayStr ? (current.row as Record<string, any> | null) : null);
+  const recoveryRow = $derived(pos(row?.recovery_score) === null && carried ? carried : row);
+  const sleepRow = $derived(
+    pos(row?.sleep_duration_min) === null && pos(row?.sleep_score) === null && carried ? carried : row
+  );
 
   function pos(v: unknown): number | null {
     const n = finite(v);
@@ -28,16 +36,16 @@
   }
 
   const recovery = $derived.by(() => {
-    const score = pos(row?.recovery_score);
+    const score = pos(recoveryRow?.recovery_score);
     if (score === null) return { value: '--', p: 0, color: 'var(--text2)', state: 'No score', blurb: 'Recovery needs an overnight reading from WHOOP or Garmin.' };
     const bits: string[] = [];
-    const hrv = pos(row?.hrv_rmssd);
+    const hrv = pos(recoveryRow?.hrv_rmssd);
     const hrvBase = baselineBefore(series, day, 'hrv_rmssd');
     if (hrv !== null && hrvBase !== null) {
       const pct = ((hrv - hrvBase) / hrvBase) * 100;
       bits.push(Math.abs(pct) < 3 ? 'HRV at baseline' : `HRV ${pct > 0 ? 'above' : 'below'} baseline`);
     }
-    const rhr = pos(row?.resting_hr);
+    const rhr = pos(recoveryRow?.resting_hr);
     const rhrBase = baselineBefore(series, day, 'resting_hr');
     if (rhr !== null && rhrBase !== null) {
       const d = Math.round(rhr - rhrBase);
@@ -55,17 +63,17 @@
   });
 
   const sleep = $derived.by(() => {
-    const mins = pos(row?.sleep_duration_min);
-    const score = pos(row?.sleep_score);
+    const mins = pos(sleepRow?.sleep_duration_min);
+    const score = pos(sleepRow?.sleep_score);
     if (mins === null && score === null) return { value: '--', p: 0, color: 'var(--text2)', state: 'No sleep', blurb: 'Nothing recorded for this night.' };
-    let inBed = pos(row?.sleep_in_bed_min);
-    if (inBed === null && row?.sleep_bedtime && row?.sleep_wakeup) {
-      const span = (Date.parse(row.sleep_wakeup) - Date.parse(row.sleep_bedtime)) / 60000;
+    let inBed = pos(sleepRow?.sleep_in_bed_min);
+    if (inBed === null && sleepRow?.sleep_bedtime && sleepRow?.sleep_wakeup) {
+      const span = (Date.parse(sleepRow.sleep_wakeup) - Date.parse(sleepRow.sleep_bedtime)) / 60000;
       if (span > 0) inBed = span;
     }
     const bits: string[] = [];
     if (mins !== null && inBed !== null && inBed > 0) bits.push(`${Math.min(100, Math.round((mins / inBed) * 100))}% efficient`);
-    const debt = finite(row?.sleep_debt_min);
+    const debt = finite(sleepRow?.sleep_debt_min);
     if (debt !== null) bits.push(debt <= 0 ? 'no sleep debt' : `${Math.round(debt)} min of debt left`);
     return {
       value: score !== null ? String(Math.round(score)) : '--',

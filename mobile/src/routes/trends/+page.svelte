@@ -10,7 +10,7 @@
   import { formCssColor } from '$lib/scoreColors';
   import { viewport } from '$lib/stores/viewport.svelte';
   import WideTrends from '$lib/components/wide/trends/WideTrends.svelte';
-  import { rangeStart, sportsLabel } from '$lib/components/wide/trends/trendsWide';
+  import { averageCompletedTss, rangeStart, sportsLabel } from '$lib/components/wide/trends/trendsWide';
 
   let planned = $state<Workout[]>([]);
   /** 12 weeks of daily load rows; null until loaded (falls back to the store's shorter window). */
@@ -91,7 +91,8 @@
     return buckets.map((b) => ({ ...b, tss: Math.round(b.tss), planned: Math.round(b.planned) }));
   });
   const maxTss = $derived(Math.max(1, ...weeks.map((w) => Math.max(w.tss, w.planned))));
-  const avgTss = $derived(Math.round(weeks.reduce((a, w) => a + w.tss, 0) / Math.max(1, weeks.filter((w) => w.tss > 0).length)));
+  // Completed weeks only (the current, partial week would drag it down), as on desktop.
+  const avgTss = $derived(averageCompletedTss(weeks.map((w, i) => ({ ...w, current: i === weeks.length - 1 }))));
   // Calculated by the backend and stored on the athlete.
   const target = $derived(Number((athleteStore.profile as any)?.weekly_tss_target) || null);
   let pickedWeek = $state<number | null>(null);
