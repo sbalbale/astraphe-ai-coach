@@ -65,10 +65,13 @@ export function sportWord(sport: string | null | undefined): string {
 }
 
 /** "Mon 2 Nov · 07:42 · 1h 25 · 92 TSS" (local time of the recording). */
-export function workoutMeta(w: Pick<LinkedWorkout, 'started_at' | 'duration_seconds' | 'tss'>): string {
+export function workoutMeta(
+  w: Pick<LinkedWorkout, 'started_at' | 'duration_seconds' | 'tss'>,
+  timeFormat: string | null | undefined = '24h'
+): string {
   const parts: string[] = [];
   const d = w.started_at ? new Date(w.started_at) : null;
-  if (d && !Number.isNaN(d.getTime())) parts.push(format(d, 'EEE d MMM'), format(d, 'HH:mm'));
+  if (d && !Number.isNaN(d.getTime())) parts.push(format(d, 'EEE d MMM'), format(d, timeFormat === '12h' ? 'h:mm a' : 'HH:mm'));
   parts.push(hm((w.duration_seconds || 0) / 60));
   if (w.tss != null) parts.push(`${Math.round(w.tss)} TSS`);
   return parts.join(' · ');

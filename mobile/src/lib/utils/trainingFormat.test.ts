@@ -61,9 +61,9 @@ describe('trainingFormat', () => {
     expect(positiveRounded('x')).toBeNull();
   });
 
-  it('labels the ISO week', () => {
-    expect(weekEyebrow(new Date(2026, 10, 2), true)).toBe('WEEK 45 · THIS WEEK');
-    expect(weekEyebrow(new Date(2026, 9, 26), false)).toBe('WEEK 44');
+  it('labels the week by its dates', () => {
+    expect(weekEyebrow(new Date(2026, 10, 1), true)).toBe('1 – 7 NOV · THIS WEEK');
+    expect(weekEyebrow(new Date(2026, 9, 25), false)).toBe('25 – 31 OCT');
   });
 
   it('lists stored stream channels and the sample rate', () => {

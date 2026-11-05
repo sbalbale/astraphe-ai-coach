@@ -27,6 +27,7 @@
     HR_ZONE_HEX,
     formatZoneBpmRange,
     canonicalHrZoneShortName,
+    hrZoneAnchorLabel,
   } from '$lib/hrZoneDisplay';
   import {
     getActivityDetail,
@@ -72,6 +73,7 @@
     splitSpeed as formatSplitSpeed,
     splitTime,
     weekEyebrow,
+    formatHoursMinutes,
   } from '$lib/utils/trainingFormat';
 
   let addActivityOpen = $state(false);
@@ -599,11 +601,9 @@
     }
     const imperial = measurementUnits === "imperial";
     const dist = imperial ? meters / 1609.344 : meters / 1000;
-    const h = Math.floor(secs / 3600);
-    const m = Math.round((secs % 3600) / 60);
     return {
       tss: Math.round(tss),
-      time: h > 0 ? `${h}h ${String(m).padStart(2, "0")}m` : `${m}m`,
+      time: formatHoursMinutes(secs),
       distance: dist >= 100 ? String(Math.round(dist)) : String(Math.round(dist * 10) / 10),
       distanceUnit: imperial ? "mi" : "km"
     };
@@ -908,7 +908,7 @@
               <section aria-label="Heart-rate zones" class="bg-bg2 border border-border rounded-[24px] px-[18px] py-4 flex flex-col gap-3">
                 <div class="flex justify-between items-baseline">
                   <h2 class="m-0 font-display font-normal text-[22px]">Heart-rate zones</h2>
-                  {#if selLthr}<span class="font-mono text-[11px] text-text2">LTHR {selLthr}</span>{/if}
+                  {#if hrZoneAnchorLabel(athleteStore.profile)}<span class="font-mono text-[11px] text-text2">{hrZoneAnchorLabel(athleteStore.profile)}</span>{/if}
                 </div>
                 {#if hasAnyHrZone(sel)}
                   {@const zp = getHrZonePcts(sel)}

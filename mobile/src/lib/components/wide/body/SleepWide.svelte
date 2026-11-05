@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { stageMinutes } from '$lib/utils/sleepStages';
   /**
    * Wide Body view, Sleep (design: WBody): a large hypnogram with stage highlight, the
    * night's summary, naps, and the last 7 nights. Gets the Sleep page's own night data.
@@ -75,13 +76,13 @@
 
   const stages = $derived.by(() => {
     if (!night) return [];
-    const inBed = Number(night.inBedRaw) || 0;
-    const mins = (pct: number) => Math.round((inBed * pct) / 100);
+    const pct = { deep: Number(night.deep) || 0, rem: Number(night.rem) || 0, light: Number(night.light) || 0, awake: Number(night.awake) || 0 };
+    const m = stageMinutes(Number(night.inBedRaw) || 0, Number(night.durationRaw) || 0, pct);
     return [
-      { key: 'awake' as const, name: 'Awake', pct: Number(night.awake) || 0, mins: Number(night.awakeMins) || mins(Number(night.awake) || 0) },
-      { key: 'light' as const, name: 'Light', pct: Number(night.light) || 0, mins: mins(Number(night.light) || 0) },
-      { key: 'deep' as const, name: 'Deep', pct: Number(night.deep) || 0, mins: mins(Number(night.deep) || 0) },
-      { key: 'rem' as const, name: 'REM', pct: Number(night.rem) || 0, mins: mins(Number(night.rem) || 0) }
+      { key: 'awake' as const, name: 'Awake', pct: pct.awake, mins: m.awake },
+      { key: 'light' as const, name: 'Light', pct: pct.light, mins: m.light },
+      { key: 'deep' as const, name: 'Deep', pct: pct.deep, mins: m.deep },
+      { key: 'rem' as const, name: 'REM', pct: pct.rem, mins: m.rem }
     ];
   });
 

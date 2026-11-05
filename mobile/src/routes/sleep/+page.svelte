@@ -21,6 +21,7 @@
   import { addDays, format, parseISO, subDays } from "date-fns";
   import { calculateSleepScore, currentRecoveryState } from "$lib/utils/biometrics";
   import { onMount, untrack } from "svelte";
+  import { stageMinutes } from "$lib/utils/sleepStages";
   import { pageHeader, resetPageHeader } from '$lib/stores/pageHeader.svelte';
   import { bodyDate, rememberBodyDate } from '$lib/stores/bodyDate.svelte';
   import { page } from "$app/stores";
@@ -571,6 +572,10 @@
       }
     })();
   });
+  /** Stage minutes that add up to the night (light / deep / REM split the time asleep). */
+  const stageMins = $derived(
+    nightData ? stageMinutes(nightData.inBedRaw, nightData.durationRaw, nightData) : { awake: 0, light: 0, deep: 0, rem: 0 }
+  );
 </script>
 
 <AddSleepModal
@@ -712,10 +717,10 @@
         {/if}
         <div class="grid grid-cols-4 gap-2">
           {#each [
-            { key: 'awake', name: 'Awake', pct: nightData.awake, mins: nightData.awakeMins },
-            { key: 'light', name: 'Light', pct: nightData.light, mins: Math.round((nightData.inBedRaw * nightData.light) / 100) },
-            { key: 'deep', name: 'Deep', pct: nightData.deep, mins: Math.round((nightData.inBedRaw * nightData.deep) / 100) },
-            { key: 'rem', name: 'REM', pct: nightData.rem, mins: Math.round((nightData.inBedRaw * nightData.rem) / 100) }
+            { key: 'awake', name: 'Awake', pct: nightData.awake, mins: stageMins.awake },
+            { key: 'light', name: 'Light', pct: nightData.light, mins: stageMins.light },
+            { key: 'deep', name: 'Deep', pct: nightData.deep, mins: stageMins.deep },
+            { key: 'rem', name: 'REM', pct: nightData.rem, mins: stageMins.rem }
           ] as s (s.key)}
             <div class="flex flex-col gap-[3px]">
               <span class="flex items-center gap-1.5 text-[11px] text-text2"><span aria-hidden="true" class="w-2 h-2 rounded-[2px]" style="background: {stageColors[s.key]}"></span>{s.name}</span>

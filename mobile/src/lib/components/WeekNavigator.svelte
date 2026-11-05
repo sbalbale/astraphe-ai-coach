@@ -108,26 +108,32 @@
     <button type="button" aria-label="Previous week" class="w-10 h-10 shrink-0 rounded-xl border-0 bg-transparent text-text1 flex items-center justify-center cursor-pointer" onclick={() => step(-1)}>
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m15 6-6 6 6 6"></path></svg>
     </button>
-    <button
-      type="button"
-      aria-haspopup="dialog"
-      aria-expanded={open}
-      aria-label="Pick a week"
-      class="flex-1 min-w-0 flex flex-col items-center gap-0.5 rounded-2xl px-3 py-1.5 bg-transparent cursor-pointer border {open ? 'border-text0' : 'border-transparent'}"
-      onclick={toggle}
-    >
-      <span class="flex items-center gap-1.5">
-        <span class="font-display text-[26px] leading-none text-text0 whitespace-nowrap">{isCurrent ? 'This week' : range}</span>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true" class="text-text2 transition-transform {open ? 'rotate-180' : ''}"><path d="m6 9 6 6 6-6"></path></svg>
+    <!-- The jump back to the current week lives under the dates (a big "This week" button next to
+         the arrows squeezed a two-month range like "27 Sep – 3 Oct" over the arrows). -->
+    <div class="flex-1 min-w-0 flex flex-col items-center gap-0.5">
+      <button
+        type="button"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-label="Pick a week"
+        class="max-w-full min-w-0 flex items-center gap-1.5 rounded-2xl px-3 py-1 bg-transparent cursor-pointer border {open ? 'border-text0' : 'border-transparent'}"
+        onclick={toggle}
+      >
+        <span class="font-display text-[26px] leading-none text-text0 whitespace-nowrap overflow-hidden text-ellipsis min-w-0">{isCurrent ? 'This week' : range}</span>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true" class="shrink-0 text-text2 transition-transform {open ? 'rotate-180' : ''}"><path d="m6 9 6 6 6-6"></path></svg>
+      </button>
+      <span class="flex items-center gap-1.5 font-mono text-[11px] tracking-[0.14em] uppercase text-text2">
+        {#if isCurrent}
+          {range} · so far
+        {:else}
+          {format(start, 'yyyy')} ·
+          <button type="button" class="border-0 bg-transparent p-0 font-mono text-[11px] tracking-[0.14em] uppercase text-blue cursor-pointer" onclick={jumpToCurrent}>{currentLabel}</button>
+        {/if}
       </span>
-      <span class="font-mono text-[11px] tracking-[0.14em] uppercase text-text2">{isCurrent ? `${range} · so far` : format(start, 'yyyy')}</span>
-    </button>
+    </div>
     <button type="button" aria-label="Next week" disabled={!canNext} class="w-10 h-10 shrink-0 rounded-xl border-0 bg-transparent flex items-center justify-center {canNext ? 'text-text1 cursor-pointer' : 'text-text2/40 cursor-not-allowed'}" onclick={() => step(1)}>
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m9 6 6 6-6 6"></path></svg>
     </button>
-    {#if !isCurrent}
-      <button type="button" class="shrink-0 h-10 px-3.5 rounded-[14px] border-0 bg-blue text-[#0B1420] text-[13px] font-semibold cursor-pointer" onclick={jumpToCurrent}>{currentLabel}</button>
-    {/if}
   </div>
 
   {#if open}

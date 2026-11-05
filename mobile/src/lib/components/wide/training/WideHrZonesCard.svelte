@@ -1,6 +1,7 @@
 <script lang="ts">
   /** Heart-rate zones for one workout: stacked bar plus Z5→Z1 rows (time and share). */
-  import { HR_ZONE_HEX, canonicalHrZoneShortName, formatZoneBpmRange } from '$lib/hrZoneDisplay';
+  import { HR_ZONE_HEX, canonicalHrZoneShortName, formatZoneBpmRange, hrZoneAnchorLabel } from '$lib/hrZoneDisplay';
+  import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import type { ZoneDef } from '$lib/services/activityService';
   import { formatMMSS, getHrZonePcts, getHrZonePctsTopDown, hasAnyHrZone } from '$lib/utils/trainingFormat';
 
@@ -15,12 +16,14 @@
     zoneDefs: ZoneDef[];
     lthr?: number;
   } = $props();
+  // What the zones are built from (HR reserve, LTHR or max HR), not always "LTHR".
+  const anchor = $derived(hrZoneAnchorLabel(athleteStore.profile as any) ?? (lthr ? `LTHR ${lthr}` : null));
 </script>
 
 <section aria-label="Heart-rate zones" class="bg-bg2 border border-border rounded-[24px] px-[18px] py-4 flex flex-col gap-3 min-w-0">
   <div class="flex justify-between items-baseline">
     <h2 class="m-0 font-display font-normal text-[22px]">Heart-rate zones</h2>
-    {#if lthr}<span class="font-mono text-[11px] text-text2">LTHR {lthr}</span>{/if}
+    {#if anchor}<span class="font-mono text-[11px] text-text2">{anchor}</span>{/if}
   </div>
   {#if hasAnyHrZone(workout)}
     {@const zp = getHrZonePcts(workout)}

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { athleteStore } from '$lib/stores/athleteStore.svelte';
   /**
    * Planned session ↔ recorded workout, on the Plan sheet (phone) and Plan inspector (wide).
    * Design: Plan · link a workout. States:
@@ -200,7 +201,7 @@
       <span aria-hidden="true" class="shrink-0 w-10 h-10 rounded-xl bg-accent-surface text-blue flex items-center justify-center font-mono text-[10px]">{sportBadge(w.sport)}</span>
       <span class="flex-1 min-w-0 flex flex-col gap-0.5">
         <span class="text-[14px] font-medium truncate">{w.title}</span>
-        <span class="text-[12px] text-text2">{workoutMeta(w)}</span>
+        <span class="text-[12px] text-text2">{workoutMeta(w, athleteStore.profile?.time_format)}</span>
       </span>
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true" class="text-text3 shrink-0"><path d="m9 6 6 6-6 6"></path></svg>
     </button>
@@ -242,7 +243,7 @@
       <div class="flex flex-col gap-2.5 p-3.5 rounded-2xl bg-accent-surface border border-accent-surface-border">
         <span class="font-mono text-[10px] tracking-[0.14em] text-blue">LOOKS LIKE A MATCH</span>
         <span class="text-[15px] leading-snug">
-          <strong class="font-semibold">{suggestion.title}</strong> · {workoutMeta(suggestion)} — link it?
+          <strong class="font-semibold">{suggestion.title}</strong> · {workoutMeta(suggestion, athleteStore.profile?.time_format)} — link it?
         </span>
         <span class="text-[12px] text-text1">{suggestionWhy(suggestion.fit)}</span>
         <div class="grid grid-cols-2 gap-2">

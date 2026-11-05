@@ -18,7 +18,7 @@
   import { analysisNavEpoch } from '$lib/analysisNavEpoch.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { api } from '$lib/api';
-  import { HR_ZONE_HEX, HR_ZONE_LABELS } from '$lib/hrZoneDisplay';
+  import { HR_ZONE_HEX, HR_ZONE_LABELS, bpmRangeLabel, hrZoneAnchorLabel } from '$lib/hrZoneDisplay';
   import {
     addDays,
     addMonths,
@@ -263,6 +263,7 @@
   // --- Design view: time per zone, definitions with power ranges ---
   const ftp = $derived(Number(athleteStore.profile?.ftp_watts) || 0);
   const lthr = $derived(Number((athleteStore.profile as any)?.lthr ?? (athleteStore.profile as any)?.threshold_hr) || 0);
+  const zoneAnchor = $derived(hrZoneAnchorLabel(athleteStore.profile as any));
   const fmtDuration = (secs: number) => {
     const m = Math.round(secs / 60);
     if (m <= 0) return '0m';
@@ -285,7 +286,7 @@
       .sort((a: any, b: any) => a.zone - b.zone)
       .map((z: any) => {
         const secs = zoneSeconds[z.zone - 1] ?? 0;
-        const hr = z.hi >= 500 ? `≥ ${z.lo}` : z.lo <= 0 ? `< ${z.hi + 1}` : `${z.lo}–${z.hi}`;
+        const hr = bpmRangeLabel(z.lo, z.hi);
         const lo = ftp && z.zone > 1 ? Math.round(ftp * POWER_ZONE_UPPER_PCT[z.zone - 2]) + 1 : 0;
         const hi = ftp && z.zone <= 4 ? Math.round(ftp * POWER_ZONE_UPPER_PCT[z.zone - 1]) : 0;
         const watts = !ftp ? '—' : z.zone === 1 ? `< ${hi + 1} W` : z.zone === 5 ? `≥ ${lo} W` : `${lo}–${hi}`;
@@ -368,7 +369,7 @@
     <section aria-label="Zone definitions" class="bg-bg2 border border-border rounded-[24px] px-[18px] py-4 flex flex-col">
       <div class="flex justify-between items-baseline pb-2">
         <h2 class="m-0 font-display font-normal text-[22px]">Your zones</h2>
-        <span class="font-mono text-[11px] text-text2">{#if lthr}LTHR {lthr}{/if}{#if lthr && ftp} · {/if}{#if ftp}FTP {ftp}{/if}</span>
+        <span class="font-mono text-[11px] text-text2">{#if zoneAnchor}{zoneAnchor}{/if}{#if zoneAnchor && ftp} · {/if}{#if ftp}FTP {ftp}{/if}</span>
       </div>
       {#each zoneRows as z (z.zone)}
         <div class="grid grid-cols-[14px_1fr_auto_auto] gap-2.5 items-center py-[9px] border-t border-border text-[13px]">

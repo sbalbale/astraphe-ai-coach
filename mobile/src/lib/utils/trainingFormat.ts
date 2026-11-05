@@ -2,7 +2,7 @@
  * Display helpers for the Training log (phone list/detail and the wide master–detail).
  * Workouts are API rows (`/v1/workouts`), so fields are read defensively.
  */
-import { format, getISOWeek } from 'date-fns';
+import { format, addDays } from 'date-fns';
 import type { Units as MeasurementUnits } from '$lib/utils/units';
 
 type W = Record<string, any> | null | undefined;
@@ -65,8 +65,10 @@ export function sportGlyph(sport: string | null | undefined): string {
 
 /** "1h 05m" / "42m". */
 export function formatHoursMinutes(secs: number): string {
-  const h = Math.floor(secs / 3600);
-  const m = Math.round((secs % 3600) / 60);
+  // Round to whole minutes first, so 1h 59m 30s reads "2h 00m", not "1h 60m".
+  const total = Math.round(Math.max(0, Number(secs) || 0) / 60);
+  const h = Math.floor(total / 60);
+  const m = total % 60;
   return h > 0 ? `${h}h ${String(m).padStart(2, '0')}m` : `${m}m`;
 }
 
@@ -92,7 +94,13 @@ export function positiveRounded(v: unknown): number | null {
 
 /** Wide list eyebrow: "WEEK 45 · THIS WEEK" / "WEEK 44". */
 export function weekEyebrow(weekStart: Date, isCurrentWeek: boolean): string {
-  return `WEEK ${getISOWeek(weekStart)}${isCurrentWeek ? ' · THIS WEEK' : ''}`;
+  // The week's dates, not a week number: "1 – 7 NOV · THIS WEEK", "25 OCT – 31 OCT".
+  const end = addDays(weekStart, 6);
+  const range =
+    format(weekStart, 'MMM') === format(end, 'MMM')
+      ? `${format(weekStart, 'd')} – ${format(end, 'd MMM')}`
+      : `${format(weekStart, 'd MMM')} – ${format(end, 'd MMM')}`;
+  return `${range.toUpperCase()}${isCurrentWeek ? ' · THIS WEEK' : ''}`;
 }
 
 // --- Splits table cells (units live in the column header, not the cell) ---
@@ -114,7 +122,8 @@ export function splitDistance(meters: number, units: MeasurementUnits): string {
 export function splitPace(secs: number | null): string {
   const p = Number(secs);
   if (!Number.isFinite(p) || p <= 0) return '—';
-  return `${Math.floor(p / 60)}:${String(Math.round(p % 60)).padStart(2, '0')}`;
+  const s = Math.round(p); // whole seconds first: 299.6 s is "5:00", not "4:60"
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
 export function splitSpeed(r: any, units: MeasurementUnits): string {

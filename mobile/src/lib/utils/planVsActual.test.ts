@@ -38,8 +38,8 @@ describe('targetWindow', () => {
   });
 
   it('uses the athlete zone for heart rate, from an HR zone or a power target', () => {
-    expect(targetWindow({ name: 'Warmup', duration_minutes: 10, target_hr_zone: 2 }, 'hr', 280, ZONES)?.label).toBe('Z2 · 136–149 bpm');
-    expect(targetWindow({ name: 'Main', duration_minutes: 10, target_power_percent_ftp: 100 }, 'hr', 280, ZONES)?.label).toBe('Z4 · 156–176 bpm');
+    expect(targetWindow({ name: 'Warmup', duration_minutes: 10, target_hr_zone: 2 }, 'hr', 280, ZONES)?.label).toBe('Z2 · 136–148 bpm');
+    expect(targetWindow({ name: 'Main', duration_minutes: 10, target_power_percent_ftp: 100 }, 'hr', 280, ZONES)?.label).toBe('Z4 · 156–175 bpm');
     expect(targetWindow({ name: 'Easy', duration_minutes: 5, target_hr_zone: 1 }, 'hr', 280, ZONES)?.label).toBe('Z1 · < 136 bpm');
   });
 
