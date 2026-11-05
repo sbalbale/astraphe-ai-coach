@@ -71,9 +71,36 @@ class _FakeCandidate:
 
 
 class _FakeResponse:
-    def __init__(self, candidates: list[_FakeCandidate], text: str):
+    def __init__(self, candidates: list[_FakeCandidate], text: str, usage: dict[str, Any] | None = None):
         self.candidates = candidates
         self.text = text
+        # Token counts and server timings for logging (see _usage_from_completion).
+        self.usage = usage or {}
+
+
+def _usage_from_completion(resp: Any) -> dict[str, Any]:
+    """Token counts from the OpenAI `usage` block, plus llama.cpp-style `timings` when the server
+    sends them (prompt/generation time on the server, so the rest of a request's wall time is
+    queueing or a model load)."""
+    out: dict[str, Any] = {}
+    u = getattr(resp, "usage", None)
+    if u is not None:
+        out["prompt_tokens"] = getattr(u, "prompt_tokens", None)
+        out["output_tokens"] = getattr(u, "completion_tokens", None)
+        details = getattr(u, "prompt_tokens_details", None)
+        out["cached_tokens"] = getattr(details, "cached_tokens", None) if details is not None else None
+    timings = getattr(resp, "timings", None)
+    if timings is None:
+        timings = (getattr(resp, "model_extra", None) or {}).get("timings")
+    if isinstance(timings, dict):
+        prompt_ms, gen_ms = timings.get("prompt_ms"), timings.get("predicted_ms")
+        if isinstance(prompt_ms, (int, float)) and isinstance(gen_ms, (int, float)):
+            out["prompt_ms"] = round(prompt_ms)
+            out["gen_ms"] = round(gen_ms)
+            out["server_ms"] = round(prompt_ms + gen_ms)
+        if isinstance(timings.get("cache_n"), int) and out.get("cached_tokens") is None:
+            out["cached_tokens"] = timings["cache_n"]
+    return {k: v for k, v in out.items() if isinstance(v, (int, float)) and not isinstance(v, bool)}
 
 
 def _wrap_chat_completion(resp: Any) -> _FakeResponse:
@@ -106,7 +133,7 @@ def _wrap_chat_completion(resp: Any) -> _FakeResponse:
     if content_text:
         parts.append(_FakePart(text=content_text))
 
-    return _FakeResponse([_FakeCandidate(_FakeContent(parts))], text=content_text)
+    return _FakeResponse([_FakeCandidate(_FakeContent(parts))], text=content_text, usage=_usage_from_completion(resp))
 
 
 # ---------------------------------------------------------------------------
@@ -223,7 +250,7 @@ class _OpenAICompatModels:
     def __init__(self, raw_client: Any):
         self._client = raw_client
 
-    def generate_content(self, *, model: str, contents, config=None, **_ignored) -> _FakeResponse:
+    def generate_content(self, *, model: str, contents, config=None, timeout: float | None = None, **_ignored) -> _FakeResponse:
         system_instruction = getattr(config, "system_instruction", None) if config is not None else None
         messages = _gemini_contents_to_openai_messages(contents, system_instruction)
         tools = _gemini_tools_to_openai(getattr(config, "tools", None) if config is not None else None)
@@ -238,7 +265,8 @@ class _OpenAICompatModels:
         if tools:
             kwargs["tools"] = tools
 
-        resp = self._client.chat.completions.create(model=model, messages=messages, **kwargs)
+        client = self._client.with_options(timeout=timeout) if timeout else self._client
+        resp = client.chat.completions.create(model=model, messages=messages, **kwargs)
         return _wrap_chat_completion(resp)
 
 
