@@ -71,23 +71,29 @@ def format_duration_min(minutes: Any, style: str = "workout") -> str | None:
     """A duration the way the coach should say it (the model repeated raw values such as
     "449 minutes" or "322 minutes").
 
-    workout (sessions and blocks, like the plan page's session sheet): minutes up to 90
-    ("45 min", "90 min", "1:30 min" for short reps), then "1h 45m" / "3h 10m" / "4h".
-    sleep: hours and minutes from an hour up ("7h 29m"), else "45 min"."""
+    workout (sessions, blocks, moving time):
+      - short reps, i.e. anything with seconds or under 2 minutes: "M:SS min"
+        (0.5 -> "0:30 min", 1 -> "1:00 min", 1.5 -> "1:30 min", 2.25 -> "2:15 min")
+      - up to 90 minutes: "45 min", "90 min"
+      - over 90: hours and minutes, "1h 31m", "3h 10m", whole hours "2h"
+    sleep (sleep, time in bed, naps): always "Xh Ym" ("0h 45m", "7h 29m", "8h 0m")."""
     try:
         total = float(minutes)
     except (TypeError, ValueError):
         return None
     if total != total or total < 0:  # NaN / negative
         return None
-    # Workouts: minutes up to and including 90 ("90 min"), then "1h 45m". Sleep: from an hour.
-    in_minutes = total <= 90 if style == "workout" else total < 60
-    if in_minutes:
-        secs = int(round(total * 60))
-        m, s = divmod(secs, 60)
-        return f"{m}:{s:02d} min" if s and style == "workout" else f"{int(round(total))} min"
-    h, rest = divmod(int(round(total)), 60)
-    return f"{h}h {rest}m" if rest else f"{h}h"
+    secs = int(round(total * 60))
+    if style == "sleep":
+        h, m = divmod(int(round(secs / 60)), 60)
+        return f"{h}h {m}m"
+    if secs > 90 * 60:
+        h, rest = divmod(int(round(secs / 60)), 60)
+        return f"{h}h {rest}m" if rest else f"{h}h"
+    m, s = divmod(secs, 60)
+    if s or m < 2:
+        return f"{m}:{s:02d} min"
+    return f"{m} min"
 
 
 _SLEEP_HINTS = ("sleep", "bed", "nap")

@@ -9,20 +9,31 @@ from app.services.notification_scheduler import week_numbers
 from app.services.time_utils import format_duration_min, with_duration_text
 
 
-def test_workout_style_keeps_minutes_under_two_hours():
-    assert format_duration_min(45) == "45 min"
-    assert format_duration_min(90) == "90 min"
-    assert format_duration_min(1.5) == "1:30 min"
-    assert format_duration_min(105) == "1h 45m"
-    assert format_duration_min(120) == "2h"
-    assert format_duration_min(190) == "3h 10m"
-    assert format_duration_min(322.4) == "5h 22m"
+import pytest
+
+
+@pytest.mark.parametrize("raw, text", [
+    (45, "45 min"), (60, "60 min"), (90, "90 min"), (91, "1h 31m"), (105, "1h 45m"),
+    (119, "1h 59m"), (120, "2h"), (190, "3h 10m"), (322, "5h 22m"), (95.5, "1h 36m"),
+])
+def test_workout_durations(raw, text):
+    assert format_duration_min(raw) == text
+
+
+@pytest.mark.parametrize("raw, text", [
+    (0.5, "0:30 min"), (0.75, "0:45 min"), (1.0, "1:00 min"), (1.5, "1:30 min"), (2.25, "2:15 min"),
+])
+def test_short_reps(raw, text):
+    assert format_duration_min(raw) == text
+
+
+@pytest.mark.parametrize("raw, text", [(45, "0h 45m"), (449, "7h 29m"), (510, "8h 30m"), (480, "8h 0m")])
+def test_sleep_always_hours_and_minutes(raw, text):
+    assert format_duration_min(raw, "sleep") == text
+
+
+def test_bad_input():
     assert format_duration_min(None) is None
-
-
-def test_sleep_style_is_hours_and_minutes():
-    assert format_duration_min(449, "sleep") == "7h 29m"
-    assert format_duration_min(45, "sleep") == "45 min"
 
 
 def test_tool_results_get_text_next_to_durations():
