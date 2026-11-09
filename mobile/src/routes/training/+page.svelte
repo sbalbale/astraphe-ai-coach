@@ -11,7 +11,7 @@
   import { isManualWorkout } from '$lib/utils/manualWorkout';
   import { confirm } from '$lib/confirm';
   import WeekNavigator from '$lib/components/WeekNavigator.svelte';
-  import { pageHeader, resetPageHeader } from '$lib/stores/pageHeader.svelte';
+  import { pageHeader, claimPageHeader } from '$lib/stores/pageHeader.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { authStore } from '$lib/stores/authStore.svelte';
   import { hasPremiumAccess } from '$lib/utils/tier';
@@ -654,11 +654,12 @@
   });
 
   $effect(() => {
+    const releaseHeader = claimPageHeader();
     pageHeader.eyebrow = weekRangeLabel;
     pageHeader.add = () => (addActivityOpen = true);
     pageHeader.addLabel = "Log activity";
     pageHeader.hideOnWide = wideLayout;
-    return resetPageHeader;
+    return releaseHeader;
   });
 
   // --- Workout detail (design) ---

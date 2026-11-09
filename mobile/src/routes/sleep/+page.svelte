@@ -22,7 +22,7 @@
   import { calculateSleepScore, currentRecoveryState } from "$lib/utils/biometrics";
   import { onMount, untrack } from "svelte";
   import { stageMinutes } from "$lib/utils/sleepStages";
-  import { pageHeader, resetPageHeader } from '$lib/stores/pageHeader.svelte';
+  import { pageHeader, claimPageHeader } from '$lib/stores/pageHeader.svelte';
   import { bodyDate, rememberBodyDate } from '$lib/stores/bodyDate.svelte';
   import { page } from "$app/stores";
   import AddSleepModal from "$lib/components/AddSleepModal.svelte";
@@ -94,6 +94,7 @@
   const selectedDayStr = $derived(format(addDays(windowStart, nightIndex), 'yyyy-MM-dd'));
 
   $effect(() => {
+    const releaseHeader = claimPageHeader();
     // Prev / next step the picked day; past either end of the 7-day strip, the strip moves.
     pageHeader.prev = () => { if (nightIndex > 0) nightIndex -= 1; else { endPickerValue = format(subDays(windowStart, 1), 'yyyy-MM-dd'); nightIndex = 6; } };
     pageHeader.next = () => { if (nightIndex < 6) nightIndex += 1; else if (canGoForward) { endPickerValue = format(addDays(windowEnd, 1), 'yyyy-MM-dd'); nightIndex = 6; } };
@@ -107,7 +108,7 @@
     const wideDay = nights[nightIndex]?.rawDate ?? todayStr;
     pageHeader.wideTitle = 'Body';
     pageHeader.wideEyebrow = bodyEyebrow(wideDay, (athleteStore.biometrics?.series ?? []).find((r: any) => r?.date === wideDay));
-    return resetPageHeader;
+    return releaseHeader;
   });
 
   // Share the picked day with the other Body sub-tabs (Recovery / Sleep / Strain).

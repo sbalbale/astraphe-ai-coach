@@ -6,7 +6,7 @@
   import type { Workout } from '$lib/types/training';
   import EmptyStateCard from '$lib/components/ui/EmptyStateCard.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
-  import { pageHeader, resetPageHeader } from '$lib/stores/pageHeader.svelte';
+  import { pageHeader, claimPageHeader } from '$lib/stores/pageHeader.svelte';
   import { formCssColor } from '$lib/scoreColors';
   import { viewport } from '$lib/stores/viewport.svelte';
   import WideTrends from '$lib/components/wide/trends/WideTrends.svelte';
@@ -40,6 +40,7 @@
   const wideSports = $derived(sportsLabel(athleteStore.workouts ?? [], rangeStart(new Date(), wideRange)));
 
   $effect(() => {
+    const releaseHeader = claimPageHeader();
     pageHeader.eyebrow = 'Last 12 weeks';
     if (viewport.wide) {
       pageHeader.wideTitle = 'Trends & zones';
@@ -48,7 +49,7 @@
       pageHeader.segment = String(wideRange);
       pageHeader.onSegment = (v) => (wideRange = Number(v) || 12);
     }
-    return resetPageHeader;
+    return releaseHeader;
   });
 
   type LoadRow = { date: string; day: string; ctl: number; atl: number; tsb?: number; daily_tss?: number };
