@@ -4,6 +4,7 @@ Gemini function-calling tool schemas and handlers for the ASTRAPHE agentic coach
 from __future__ import annotations
 
 import json
+import re
 from datetime import date, timedelta
 from typing import Any, Callable
 
@@ -565,6 +566,63 @@ def consistent_plan_fields(
     if not blocks_min and str(sport or "").lower() in ("strength", "mobility"):
         focus_zone = "Recovery"
     return duration, int(round(planned_tss(structure, duration, focus_zone)))
+
+
+_REP_NAME = re.compile(r"^(work|recovery)\s+(\d+)\s*/\s*(\d+)$", re.IGNORECASE)
+
+
+def prescription_table(structure: Any) -> str:
+    """The Prescription table (Phase | Duration | Intensity | Target) built from a session's
+    blocks. Expanded interval sets ("Work 1/5", "Recovery 1/4", ...) fold back into one row,
+    "5 x 4:00 min / 2:00 min easy"."""
+    from app.services.time_utils import format_duration_min
+
+    def cell(s: Any) -> str:
+        return str(s or "").replace("|", "/").replace("\n", " ").strip()
+
+    def intensity(b: dict) -> str:
+        pct = b.get("target_power_percent_ftp")
+        if isinstance(pct, (int, float)) and not isinstance(pct, bool) and pct > 0:
+            return f"{int(round(pct))}% FTP"
+        zone = b.get("target_hr_zone")
+        return f"Z{int(zone)}" if isinstance(zone, (int, float)) and not isinstance(zone, bool) and zone > 0 else ""
+
+    blocks = [b for b in structure if isinstance(b, dict)] if isinstance(structure, list) else []
+    rows: list[str] = []
+    i = 0
+    while i < len(blocks):
+        b = blocks[i]
+        m = _REP_NAME.match(str(b.get("name") or "").strip())
+        if m and m.group(1).lower() == "work":
+            reps = int(m.group(3))
+            work = [x for x in blocks[i:] if _REP_NAME.match(str(x.get("name") or "").strip())][: reps * 2 - 1]
+            rest = next((x for x in work if str(x.get("name") or "").lower().startswith("recovery")), None)
+            dur = f"{reps} x {format_duration_min(b.get('duration_minutes'))}"
+            if rest:
+                dur += f" / {format_duration_min(rest.get('duration_minutes'))} easy"
+            rows.append(f"| Intervals | {dur} | {intensity(b)} | {cell(b.get('description'))} |")
+            i += len(work)
+            continue
+        rows.append(
+            f"| {cell(b.get('name'))} | {format_duration_min(b.get('duration_minutes')) or ''} "
+            f"| {intensity(b)} | {cell(b.get('description'))} |"
+        )
+        i += 1
+    if not rows:
+        return ""
+    return "| Phase | Duration | Intensity | Target |\n| :--- | :---: | :---: | :--- |\n" + "\n".join(rows)
+
+
+def with_prescription_table(description: Any, structure: Any) -> str:
+    """The session's notes with their Prescription table rebuilt from the blocks, so it
+    can't keep the old lengths after an edit (prod: blocks 90', table still 60 min). Prose
+    around the table is kept."""
+    text = str(description or "")
+    prose = "\n".join(line for line in text.splitlines() if not line.strip().startswith("|")).strip()
+    table = prescription_table(structure)
+    if not table:
+        return text
+    return f"{prose}\n\n{table}" if prose else table
 
 
 def _minutes_value(v: Any) -> float | int:

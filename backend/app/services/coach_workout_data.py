@@ -723,7 +723,7 @@ def query_planned_workouts(
 ) -> list[dict[str, Any]]:
     res = (
         db.table("training_plans")
-        .select("id, planned_date, sport, title, duration_min, target_tss, primary_zone, status, structure")
+        .select("id, planned_date, sport, title, duration_min, target_tss, primary_zone, status, structure, description")
         .eq("athlete_id", athlete_id)
         .gte("planned_date", start_date.isoformat())
         .lte("planned_date", end_date.isoformat())
@@ -804,6 +804,12 @@ def update_planned_workout_sync(db: Client, athlete_id: str, args: dict[str, Any
                 }
             if resized:
                 update["structure"] = structure = resized
+        if "structure" in update:
+            # The Prescription table is part of the notes; rebuild it from the new blocks, or it
+            # keeps the old lengths (prod: blocks 90', table still "60 min").
+            from app.services.coach_tools import with_prescription_table
+
+            update["description"] = with_prescription_table(row.get("description"), update["structure"])
         update["duration_min"], update["target_tss"] = consistent_plan_fields(
             structure,
             update.get("duration_min", row.get("duration_min")),

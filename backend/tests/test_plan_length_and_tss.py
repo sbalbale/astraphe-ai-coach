@@ -110,3 +110,30 @@ def test_session_picked_by_date_is_resized_too():
     db = MagicMock()
     query_planned_workouts(db, "a1", __import__("datetime").date(2026, 11, 11), __import__("datetime").date(2026, 11, 11))
     assert "structure" in db.table.return_value.select.call_args.args[0]
+
+
+def test_prescription_table_follows_new_blocks():
+    """Prod: the coach stretched Wednesday to 90' but its Prescription still said 60 min."""
+    notes = "Keep it conversational.\n\n| Phase | Duration | Intensity | Target |\n| :--- | :---: | :---: | :--- |\n| Steady State | 60 min | Z2 | Cat 1 |"
+    db, saved = _update_db(_row(description=notes))
+    cwd.update_planned_workout_sync(db, "a1", {"plan_id": "p1", "duration_minutes": 90})
+    assert "| Steady state | 90 min | Z2 | Cat 1 |" in saved["description"]
+    assert "60 min" not in saved["description"]
+    assert saved["description"].startswith("Keep it conversational.")
+
+
+def test_prescription_table_folds_interval_sets():
+    from app.services.coach_tools import prescription_table
+
+    blocks = [
+        {"name": "Work 1/2", "duration_minutes": 4, "target_power_percent_ftp": 105, "description": "294 W"},
+        {"name": "Recovery 1/1", "duration_minutes": 2, "target_hr_zone": 1},
+        {"name": "Work 2/2", "duration_minutes": 4, "target_power_percent_ftp": 105, "description": "294 W"},
+    ]
+    assert "| Intervals | 2 x 4:00 min / 2:00 min easy | 105% FTP | 294 W |" in prescription_table(blocks)
+
+
+def test_title_only_edit_leaves_notes_alone():
+    db, saved = _update_db(_row(description="My notes"))
+    cwd.update_planned_workout_sync(db, "a1", {"plan_id": "p1", "title": "Renamed"})
+    assert "description" not in saved
