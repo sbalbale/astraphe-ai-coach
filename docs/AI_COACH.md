@@ -84,6 +84,7 @@ The coach exposes custom Python tools through Gemini function declarations:
 | `update_workout` | Correct duration, power, or date on an existing workout. |
 | `log_biometrics` | Save manual sleep, HRV, resting HR, or weight. |
 | `get_athlete_zones` | HR zone boundaries plus FTP/threshold anchors. |
+| `update_profile` | Change FTP, threshold pace/HR, max/resting HR, zone method, weight, height, units, time format or notification settings (same validation, anchor history and re-scoring as Settings). |
 | `update_planned_workout` | Reschedule or edit one future planned workout. |
 | `delete_planned_workout` | Remove one future planned workout. |
 | `list_planned_workouts` | List future planned workouts for a date range. |
@@ -94,7 +95,7 @@ The coach exposes custom Python tools through Gemini function declarations:
 | `save_memory` | Persist an important athlete fact to `coach_memories`. |
 | `internal_scratchpad` | Sink private model reasoning so it is never shown to the athlete. |
 
-The tool list also enables Google Search grounding through `types.Tool(google_search=types.GoogleSearch())`.
+The tool list also enables Google Search grounding through `types.Tool(google_search=types.GoogleSearch())`. Models that can't use it (the self-hosted chat model on the OpenAI-compatible endpoint, and Gemini 3+ on the free tier) get the SearXNG-backed `web_search` tool instead when `SEARXNG_URL` is set.
 
 ## Memory Pipeline
 

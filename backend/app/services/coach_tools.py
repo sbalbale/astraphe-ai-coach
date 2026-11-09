@@ -1239,6 +1239,17 @@ def handle_get_athlete_zones(
     return workout_data.get_athlete_zones_payload(db, athlete_id)
 
 
+def handle_update_profile(
+    args: dict[str, Any],
+    *,
+    athlete_id: str,
+    db: Client,
+) -> dict[str, Any]:
+    from app.services.athlete_profile import update_profile_from_coach
+
+    return update_profile_from_coach(db, athlete_id, args)
+
+
 def handle_update_planned_workout(
     args: dict[str, Any],
     *,
@@ -1717,6 +1728,72 @@ _get_athlete_zones_decl = types.FunctionDeclaration(
     parameters=types.Schema(type=types.Type.OBJECT, properties={}, required=[]),
 )
 
+def _notification_type_schema(what: str, opt: str | None = None) -> types.Schema:
+    props = {
+        "on": types.Schema(type=types.Type.BOOLEAN, description=f"Whether {what} is on at all"),
+        "push": types.Schema(type=types.Type.BOOLEAN, description="Send it as a push notification"),
+    }
+    if opt:
+        props["opt"] = types.Schema(type=types.Type.STRING, description=opt)
+    return types.Schema(type=types.Type.OBJECT, description=what, properties=props)
+
+
+_update_profile_decl = types.FunctionDeclaration(
+    name="update_profile",
+    description=(
+        "Change the athlete's profile and settings, exactly as the Settings screen does: training "
+        "anchors (FTP, threshold pace, threshold / max / resting HR, HR zone method), weight, height, "
+        "units, time format and notification settings. Pass only the values to change. "
+        "Changing FTP or threshold pace re-scores workouts from today on; HR changes recalculate the "
+        "zones (returned). Use only when the athlete asked for the change or agreed to the exact "
+        "value you proposed. Returns each changed value as from -> to: tell the athlete what changed."
+    ),
+    parameters=types.Schema(
+        type=types.Type.OBJECT,
+        properties={
+            "ftp_watts": types.Schema(type=types.Type.INTEGER, description="Cycling FTP in watts (20-800)"),
+            "threshold_pace": types.Schema(
+                type=types.Type.STRING,
+                description="Run threshold pace as M:SS per km (metric) or per mile (imperial), e.g. '4:30'",
+            ),
+            "threshold_hr": types.Schema(type=types.Type.INTEGER, description="Lactate threshold HR, bpm (60-240)"),
+            "max_hr": types.Schema(type=types.Type.INTEGER, description="Max HR, bpm (80-250)"),
+            "resting_hr": types.Schema(type=types.Type.INTEGER, description="Resting HR, bpm (20-140)"),
+            "hr_zone_method": types.Schema(
+                type=types.Type.STRING,
+                description="How HR zones are computed: lthr (from threshold HR), hrr (heart-rate reserve) or max_hr (% of max)",
+            ),
+            "weight_kg": types.Schema(type=types.Type.NUMBER, description="Body weight in kg (convert from lb)"),
+            "height_cm": types.Schema(type=types.Type.NUMBER, description="Height in cm"),
+            "measurement_units": types.Schema(type=types.Type.STRING, description="metric or imperial"),
+            "time_format": types.Schema(type=types.Type.STRING, description="12h or 24h"),
+            "notifications": types.Schema(
+                type=types.Type.OBJECT,
+                description="Notification types to change; leave out the ones that stay the same",
+                properties={
+                    "debrief": _notification_type_schema(
+                        "post-workout debriefs", "When: 'now' (right after the workout) or 'evening'"
+                    ),
+                    "reply": _notification_type_schema("coach replies that finish after the athlete left the chat"),
+                    "ready": _notification_type_schema("the morning readiness message"),
+                    "weekly": _notification_type_schema("the weekly summary", "Day: 'Sun' or 'Mon'"),
+                    "sync": _notification_type_schema("device sync problems"),
+                },
+            ),
+            "quiet_hours": types.Schema(
+                type=types.Type.OBJECT,
+                description="Quiet hours (no notifications)",
+                properties={
+                    "on": types.Schema(type=types.Type.BOOLEAN),
+                    "from": types.Schema(type=types.Type.STRING, description="Start, HH:MM 24-hour"),
+                    "to": types.Schema(type=types.Type.STRING, description="End, HH:MM 24-hour"),
+                },
+            ),
+        },
+        required=[],
+    ),
+)
+
 _update_planned_workout_decl = types.FunctionDeclaration(
     name="update_planned_workout",
     description=(
@@ -1926,6 +2003,7 @@ TOOLS: list[types.Tool] = [
         _update_workout_decl,
         _log_biometrics_decl,
         _get_athlete_zones_decl,
+        _update_profile_decl,
         _update_planned_workout_decl,
         _delete_planned_workout_decl,
         _list_planned_workouts_decl,
@@ -1945,7 +2023,13 @@ TOOLS: list[types.Tool] = [
 def search_grounding_available(model: str | None) -> bool:
     """Google Search grounding has no free-tier quota on Gemini 3+ models: attaching the
     google_search tool there returns a bare 429 RESOURCE_EXHAUSTED on every request, which
-    would fail the whole coach call, not just the search."""
+    would fail the whole coach call, not just the search.
+    The self-hosted chat model (OpenAI-compatible endpoint) has no Google Search either: the
+    request translation drops it, so without this it would get no search at all."""
+    from app.services.llm_provider import is_chat_openai_model
+
+    if is_chat_openai_model(model):
+        return False
     if not settings.GEMINI_FREE_TIER:
         return True
     return not (model or "").strip().lower().startswith("gemini-3")
@@ -2015,6 +2099,7 @@ TOOL_HANDLERS: dict[str, ToolHandler] = {
     "update_workout": lambda args, aid, db: handle_update_workout(args, athlete_id=aid, db=db),
     "log_biometrics": lambda args, aid, db: handle_log_biometrics(args, athlete_id=aid, db=db),
     "get_athlete_zones": lambda args, aid, db: handle_get_athlete_zones(args, athlete_id=aid, db=db),
+    "update_profile": lambda args, aid, db: handle_update_profile(args, athlete_id=aid, db=db),
     "update_planned_workout": lambda args, aid, db: handle_update_planned_workout(args, athlete_id=aid, db=db),
     "delete_planned_workout": lambda args, aid, db: handle_delete_planned_workout(args, athlete_id=aid, db=db),
     "list_planned_workouts": lambda args, aid, db: handle_list_planned_workouts(args, athlete_id=aid, db=db),

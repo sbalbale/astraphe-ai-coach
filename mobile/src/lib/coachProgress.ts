@@ -16,6 +16,7 @@ const TOOL_LABELS: Record<string, string> = {
   get_training_load_series: 'Checked your training load',
   get_biometrics_for_dates: 'Checked your recovery and sleep',
   get_athlete_zones: 'Looked up your zones',
+  update_profile: 'Updated your settings',
   list_planned_workouts: 'Checked your plan',
   schedule_workout: 'Scheduled a workout',
   update_planned_workout: 'Updated a planned workout',
