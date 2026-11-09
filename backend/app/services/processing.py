@@ -18,7 +18,7 @@ from app.services.algorithms import (
     compute_sleep_score,
     compute_sleep_need,
     DEFAULT_BASELINE_SLEEP_MIN,
-    MAX_SLEEP_DEBT_MIN,
+    MAX_DEBT_LEFT_MIN,
     SLEEP_DEBT_DECAY_RATE,
     normalize_rowing_watts,
     compute_strain_score,
@@ -1607,10 +1607,11 @@ def process_and_save_biometrics(
                 sleep_need or DEFAULT_BASELINE_SLEEP_MIN,
                 final_awake_min,
             )
-        # Naps don't count toward the night's score, but they do pay down the debt.
-        next_night_debt = float(
-            np.clip(float(sleep_need) - float(final_sleep_for_score) - nap_sleep_min, 0.0, MAX_SLEEP_DEBT_MIN)
-        )
+        # Debt left: the night's shortfall, capped, then paid down by naps. (Naps used to come
+        # off before the cap, so after a short night most of a nap vanished into the capped-off
+        # part: a 1h 37m nap lowered tonight's need by 14 minutes.)
+        night_shortfall = float(np.clip(float(sleep_need) - float(final_sleep_for_score), 0.0, MAX_DEBT_LEFT_MIN))
+        next_night_debt = max(0.0, night_shortfall - nap_sleep_min)
 
     for field, src, value in (
         ("hrv_rmssd", hrv_source, final_hrv),

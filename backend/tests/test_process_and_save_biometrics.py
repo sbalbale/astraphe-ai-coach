@@ -513,3 +513,18 @@ def test_reprocess_replaces_a_stored_nap_inflated_night_from_a_better_source():
     assert row["sleep_duration_min"] == 420
     assert row["sleep_in_bed_min"] == 420
     assert row["metric_sources"]["sleep_duration_min"] == "garmin"
+
+
+def test_nap_comes_off_after_the_debt_cap():
+    """A 3h 20m shortfall caps at 2h 30m, then the 1h 37m nap comes off in full: 53m left.
+    (The nap used to come off before the cap, so most of it was lost in the part above it.)"""
+    short_night = {**_MAIN_NIGHT, "in_bed_min": 280}
+    long_nap = {**_NAP, "in_bed_min": 97}
+    row = _night_row([short_night, long_nap])
+    assert row["sleep_debt_min"] == 150 - 97
+
+
+def test_carried_debt_can_reach_two_hours():
+    from app.services.algorithms import MAX_DEBT_LEFT_MIN, SLEEP_DEBT_DECAY_RATE, compute_sleep_need
+
+    assert compute_sleep_need(480, 0, MAX_DEBT_LEFT_MIN * SLEEP_DEBT_DECAY_RATE) == 480 + 120
