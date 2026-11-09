@@ -550,12 +550,21 @@ def test_extract_non_thought_text_from_response_skips_function_parts():
     assert ai_coach._extract_non_thought_text_from_response(response) == "fallback text"
 
 
-def test_extract_non_thought_text_from_response_all_thought_falls_back_to_thoughts():
+def test_extract_non_thought_text_from_response_never_returns_bare_reasoning():
+    """Prod: a Qwen turn that ended mid-thought (reasoning_content only) was sent to the athlete."""
     part1 = SimpleNamespace(function_call=None, function_response=None, text="secret reasoning", thought=True)
     content = SimpleNamespace(parts=[part1])
     candidate = SimpleNamespace(content=content)
     response = SimpleNamespace(candidates=[candidate], text=None)
-    assert ai_coach._extract_non_thought_text_from_response(response, allow_text_fallback=False) == "secret reasoning"
+    assert ai_coach._extract_non_thought_text_from_response(response, allow_text_fallback=False) == ""
+
+
+def test_extract_non_thought_text_keeps_a_reply_marked_as_thought():
+    """Gemma can label its whole reply thought=True; the <response> inside still counts."""
+    part1 = SimpleNamespace(function_call=None, function_response=None, text="plan...\n<response>Rest today.</response>", thought=True)
+    response = SimpleNamespace(candidates=[SimpleNamespace(content=SimpleNamespace(parts=[part1]))], text=None)
+    out = ai_coach._extract_non_thought_text_from_response(response, allow_text_fallback=False)
+    assert ai_coach._extract_athlete_message_from_text(out) == "Rest today."
 
 
 def test_extract_non_thought_text_from_response_no_structured_parts_uses_text():
@@ -733,3 +742,24 @@ def test_coach_gets_threshold_pace_with_its_unit():
     assert pace_with_unit("4:30", "metric") == "4:30 /km"
     assert pace_with_unit("8:00/mi", "metric") == "8:00/mi"
     assert pace_with_unit(None, "imperial") is None
+
+
+def test_prose_reasoning_without_response_block_is_not_a_reply():
+    """Prod: this kind of text (8k characters of it) was sent to the athlete as the reply."""
+    leaked = (
+        'The athlete said "Yes update my values" — meaning update running threshold pace and threshold HR.\n'
+        "I don't have a direct tool to update athlete_profile anchors. Available tools: save_memory, update_memory. Hmm.\n"
+        "Let me save memories now."
+    )
+    assert ai_coach._is_failed_extraction(ai_coach._extract_athlete_message_from_text(leaked))
+
+
+def test_a_normal_reply_mentioning_let_me_know_still_goes_out():
+    reply = "Your threshold HR looks closer to 180. Let me know if you'd like the zones redone and I'll update them."
+    assert ai_coach._extract_athlete_message_from_text(reply) == reply
+
+
+def test_think_blocks_are_stripped():
+    assert ai_coach._extract_athlete_message_from_text("<think>planning...</think><response>Rest today.</response>") == "Rest today."
+    # Unclosed: the turn ended mid-thought, so nothing after <think> is a reply.
+    assert ai_coach._is_failed_extraction(ai_coach._extract_athlete_message_from_text("<think>The athlete wants..."))

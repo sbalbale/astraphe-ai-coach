@@ -936,9 +936,14 @@ def _extract_non_thought_text_from_response(
         if fallback_text:
             return fallback_text
 
-    # Gemma 4 sometimes labels the entire athlete reply as thought=True.
+    # Gemma 4 sometimes labels the entire athlete reply as thought=True, with the reply still
+    # marked (a <response> block or a "Draft:" line). Anything else in a thought part is
+    # reasoning and never reaches the athlete: a Qwen turn that ended mid-thought
+    # (reasoning_content, empty content) was sent as the coach's reply. Returning "" lets the
+    # caller recover with a proper wrap-up reply.
     if thought_parts:
-        return "".join(thought_parts).strip()
+        thought = "".join(thought_parts).strip()
+        return thought if (_RESPONSE_RE.search(thought) or _DRAFT_MARKER_RE.search(thought)) else ""
 
     if allow_text_fallback and not saw_structured_parts:
         return (getattr(response, "text", None) or "").strip()
@@ -961,6 +966,7 @@ def _is_failed_extraction(text: str) -> bool:
 
 _RESPONSE_RE = re.compile(r"<response>(.*?)</response>", re.DOTALL | re.IGNORECASE)
 _SCRATCHPAD_RE = re.compile(r"<scratchpad>.*?</scratchpad>", re.DOTALL | re.IGNORECASE)
+_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 _THOUGHT_BLOCK_RE = re.compile(r"(?:^|\n)\s*THOUGHT:\s*.*?(?=\n\s*\n|$)", re.DOTALL | re.IGNORECASE)
 _READY_MARKER_RE = re.compile(r"\*Ready\.\*", re.IGNORECASE)
 _DRAFT_MARKER_RE = re.compile(r"(?:^|\n)\s*(?:\*+\s*)?Draft:\s*", re.IGNORECASE | re.MULTILINE)
@@ -980,6 +986,32 @@ _PLANNING_DUMP_MARKERS = (
     "* draft:",
     "draft:",
 )
+
+
+_REASONING_MARKERS = (
+    "the athlete",
+    "the user",
+    "let me ",
+    "hmm",
+    "i should ",
+    "available tools",
+    "there's no tool",
+    "no tool for",
+    "direct tool",
+    "write the response",
+    "my response",
+    "the response",
+    "should i ",
+)
+
+
+def _looks_like_reasoning(text: str) -> bool:
+    """Prose chain-of-thought in the visible text (no <response> block): it talks about "the
+    athlete" and its own process ("Let me...", "Hmm", tools), which a reply to the athlete
+    doesn't. Several distinct markers, so a normal reply that says "let me know" passes.
+    (Prod: an 8k-character "The athlete said... Hmm... Let me save memories now." was sent.)"""
+    low = (text or "").lower()
+    return sum(1 for m in _REASONING_MARKERS if m in low) >= 3
 
 
 def _looks_like_planning_dump(text: str) -> bool:
@@ -1047,6 +1079,12 @@ def _extract_athlete_message_from_text(raw_text: str) -> str:
     Extract the athlete-facing message from XML output or sanitized fallback text.
     """
     raw = (raw_text or "").strip()
+    # Reasoning some models write into the visible text: <think>...</think>, or an unclosed
+    # <think> (the turn ended mid-thought) where everything after it is reasoning.
+    raw = _THINK_RE.sub("", raw)
+    if "<think>" in raw.lower():
+        raw = raw[: raw.lower().index("<think>")]
+    raw = raw.strip()
     if not raw:
         return ""
 
@@ -1072,6 +1110,9 @@ def _extract_athlete_message_from_text(raw_text: str) -> str:
             cleaned = _strip_internal_reasoning(draft)
         elif _looks_like_planning_dump(cleaned):
             cleaned = ""
+    if cleaned and _looks_like_reasoning(cleaned):
+        # Reasoning with no <response>: not a reply. Failing here lets the caller ask again.
+        cleaned = ""
     return cleaned or _EXTRACTION_FAILURE_MESSAGE
 
 
