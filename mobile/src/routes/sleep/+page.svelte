@@ -592,7 +592,7 @@
     </section>
 
     {#if needParts || tonightNeed}
-      <SleepNeedCard need={needParts} asleepMin={nightData.durationRaw} {napMin} tonight={tonightNeed} />
+      <SleepNeedCard need={needParts} asleepMin={nightData.durationRaw} {napMin} tonight={tonightNeed} nightLabel={nightData.rawDate === todayStr ? 'Last night' : nightLabel(nightData.rawDate)} />
     {/if}
 
     <!-- Stages -->

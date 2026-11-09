@@ -197,7 +197,7 @@
         {/each}
       </dl>
       {#if need || tonight}
-        <SleepNeedCard {need} asleepMin={Number(night.durationRaw) || 0} {napMin} {tonight} inset />
+        <SleepNeedCard {need} asleepMin={Number(night.durationRaw) || 0} {napMin} {tonight} nightLabel={title} inset />
       {/if}
     {/if}
     {#if naps.length}
