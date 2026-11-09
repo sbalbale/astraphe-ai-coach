@@ -538,7 +538,7 @@ async def initialize_coach(
     """
     _require_premium(config)
     try:
-        from app.services.memory import retrieve_relevant_memories
+        from app.services.memory import _athlete_local_today, memory_event_date, retrieve_relevant_memories
         from app.services.ai_coach import build_initialization_message
         
         # Parallelize the slow Gemini-based tasks
@@ -549,12 +549,19 @@ async def initialize_coach(
             config.gemini_model,
             None if payload is None else payload.timezone_offset_min,
         )
-        mem_task = asyncio.to_thread(retrieve_relevant_memories, athlete_id, "upcoming races, goals, trips, and injuries", db, top_k=5)
+        mem_task = asyncio.to_thread(retrieve_relevant_memories, athlete_id, "upcoming races, goals, trips, and injuries", db, top_k=10)
         
         [msg_res, memories] = await asyncio.gather(msg_task, mem_task)
         
         message, is_proactive = msg_res
-        memory_strings = [m.get("content") for m in memories if m.get("content")]
+        # Suggestion chips: nothing about an event that has already happened (a race months
+        # past kept showing up as the athlete's goal).
+        today = _athlete_local_today(athlete_id, db)
+        memory_strings = [
+            m["content"]
+            for m in memories
+            if m.get("content") and not ((d := memory_event_date(m)) and d < today)
+        ][:5]
 
         return {
             "status": "success", 
