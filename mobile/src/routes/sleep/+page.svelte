@@ -22,6 +22,9 @@
   import { calculateSleepScore, currentRecoveryState } from "$lib/utils/biometrics";
   import { onMount, untrack } from "svelte";
   import { stageMinutes } from "$lib/utils/sleepStages";
+  import { sleepNeedParts, tonightSleepNeed } from "$lib/utils/sleepNeed";
+  import SleepNeedCard from "$lib/components/SleepNeedCard.svelte";
+  import TotalSleepCard from "$lib/components/TotalSleepCard.svelte";
   import { pageHeader, claimPageHeader } from '$lib/stores/pageHeader.svelte';
   import { bodyDate, rememberBodyDate } from '$lib/stores/bodyDate.svelte';
   import { page } from "$app/stores";
@@ -282,8 +285,8 @@
         missing: false,
       };
 
-      // Aggregating Time in Bed from periods to ensure consistency if naps exist
-      const aggInBed = res.periods.reduce((sum: number, p: any) => sum + p.inBedRaw, 0);
+      // Time in bed from the main sleep periods; naps are not part of the night.
+      const aggInBed = res.periods.filter((p: any) => !p.is_nap).reduce((sum: number, p: any) => sum + p.inBedRaw, 0);
       if (aggInBed > res.inBedRaw) {
         res.inBedRaw = aggInBed;
         res.inBed = `${Math.floor(aggInBed / 60)}h ${aggInBed % 60}m`;
@@ -422,6 +425,7 @@
 
   // Naps for the selected night (the main sleep is already the page's subject).
   const naps = $derived(((nightData?.periods ?? []) as any[]).filter((p) => p?.is_nap));
+  const napMin = $derived(naps.reduce((s: number, p: any) => s + (Number(p.durationRaw) || 0), 0));
 
   let analysisText = $state<string | null>(null);
   let analysisLoading = $state(false);
@@ -461,6 +465,13 @@
       }
     })();
   });
+  // Sleep need for the selected night (and, on today, tonight's estimate).
+  const seriesRow = (iso: string) => (athleteStore.biometrics?.series ?? []).find((r: any) => r?.date === iso);
+  const needParts = $derived(
+    nightData ? sleepNeedParts(seriesRow(nightData.rawDate), seriesRow(format(subDays(parseISO(nightData.rawDate), 1), 'yyyy-MM-dd'))) : null
+  );
+  const tonightNeed = $derived(n?.rawDate === todayStr ? tonightSleepNeed(seriesRow(todayStr)) : null);
+
   /** Stage minutes that add up to the night (light / deep / REM split the time asleep). */
   const stageMins = $derived(
     nightData ? stageMinutes(nightData.inBedRaw, nightData.durationRaw, nightData) : { awake: 0, light: 0, deep: 0, rem: 0 }
@@ -488,6 +499,8 @@
       onCheckSync={checkSync}
       {checking}
       emptyTitle={`No sleep for ${nightLabel(n?.rawDate)} yet`}
+      need={needParts}
+      tonight={tonightNeed}
     />
   </div>
 {:else}
@@ -574,9 +587,13 @@
         <div><dt class="text-[11px] text-text2">Asleep</dt><dd class="m-0 text-[17px] font-medium">{nightData.duration}</dd></div>
         <div><dt class="text-[11px] text-text2">In bed</dt><dd class="m-0 text-[17px] font-medium">{nightData.inBed}</dd></div>
         <div><dt class="text-[11px] text-text2">Efficiency</dt><dd class="m-0 text-[17px] font-medium">{effPct === null ? '--' : `${effPct}%`}</dd></div>
-        <div><dt class="text-[11px] text-text2">Debt</dt><dd class="m-0 text-[17px] font-medium" style="color: {nightData.debt == null ? 'var(--text2)' : sleepDebtCssColor(nightData.debt)}">{nightData.debt == null ? '--' : formatHoursMinutesFromMinutes(nightData.debt)}</dd></div>
+        <div><dt class="text-[11px] text-text2">Debt left</dt><dd class="m-0 text-[17px] font-medium" style="color: {nightData.debt == null ? 'var(--text2)' : sleepDebtCssColor(nightData.debt)}">{nightData.debt == null ? '--' : formatHoursMinutesFromMinutes(nightData.debt)}</dd></div>
       </dl>
     </section>
+
+    {#if needParts || tonightNeed}
+      <SleepNeedCard need={needParts} asleepMin={nightData.durationRaw} {napMin} tonight={tonightNeed} />
+    {/if}
 
     <!-- Stages -->
     <section aria-label="Sleep stages" class="bg-bg2 border border-border rounded-[24px] px-[18px] py-4 flex flex-col gap-3">
@@ -624,6 +641,7 @@
     </section>
 
     {#if naps.length}
+      <TotalSleepCard nightMin={nightData.durationRaw} {napMin} napCount={naps.length} />
       <section aria-label="Naps" class="flex flex-col gap-2">
         <span class="font-mono text-[11px] tracking-[0.14em] text-text2">{naps.length > 1 ? 'NAPS' : 'NAP'}</span>
         {#each naps as nap (nap?.id ?? nap?.started_at)}
