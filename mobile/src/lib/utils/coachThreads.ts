@@ -125,10 +125,14 @@ export function outgoingMessage<D>(
   return { text, images: composer.images, docs: composer.docs, fromComposer: true };
 }
 
+/** Message the service worker sends an open app window: "go to this url" (a notification tap). */
+export const NOTIFICATION_OPEN_MESSAGE = 'astraphe:open-url';
+
 type SwWindowClient = {
   url: string;
   visibilityState?: 'visible' | 'hidden' | 'prerender';
   navigate?: (url: string) => Promise<unknown>;
+  postMessage?: (message: unknown) => void;
   focus: () => Promise<unknown>;
 };
 type SwClients = {
@@ -145,6 +149,22 @@ type SwClients = {
 export async function focusOrOpenClient(clients: SwClients, origin: string, targetUrl: string): Promise<void> {
   const list = await clients.matchAll({ type: 'window', includeUncontrolled: true });
   const client = list.find((c) => c.url.startsWith(origin));
+  if (client && typeof client.postMessage === 'function') {
+    // Ask the open app to go there itself (it calls goto). client.navigate() is unreliable on
+    // phones (an installed iPhone app especially), and openWindow() on an app that is already
+    // open only brings it to the front on whatever page it was showing.
+    try {
+      client.postMessage({ type: NOTIFICATION_OPEN_MESSAGE, url: targetUrl });
+      try {
+        await client.focus();
+      } catch {
+        // focus can be refused; the app still navigates
+      }
+      return;
+    } catch {
+      // fall through to navigate / openWindow
+    }
+  }
   if (client && typeof client.navigate === 'function') {
     let navigated: SwWindowClient | null = null;
     try {
