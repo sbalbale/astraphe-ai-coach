@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -242,6 +243,10 @@ class Settings(BaseSettings):
         # Prefer backend/.env over shell environment variables so stale shell
         # exports don't shadow local dev settings. In production no .env file
         # is present in the container, so env_settings wins by default.
+        # Tests set ASTRAPHE_IGNORE_DOTENV=1 so a developer's real keys can't change what
+        # the code under test does (or point it at a live database).
+        if os.environ.get("ASTRAPHE_IGNORE_DOTENV") == "1":
+            return init_settings, env_settings, file_secret_settings
         return init_settings, dotenv_settings, env_settings, file_secret_settings
 
 settings = Settings()
