@@ -280,7 +280,7 @@ def week_numbers(db: Any, aid: str, start: date, end: date) -> dict:
         "fitness_change": ctl_change,
         "form": round(float(loads[-1]["tsb"]), 1) if loads and loads[-1].get("tsb") is not None else None,
         # Already in hours and minutes, so the summary never says "449 minutes".
-        "avg_sleep": format_duration_min(sum(sleeps) / len(sleeps)) if sleeps else None,
+        "avg_sleep": format_duration_min(sum(sleeps) / len(sleeps), "sleep") if sleeps else None,
     }
 
 

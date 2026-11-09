@@ -16,6 +16,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 from app.services.time_utils import (
+    with_duration_text,
     coerce_timezone_offset_min,
     local_datetime_from_timezone_offset,
 )
@@ -481,7 +482,7 @@ def _build_system_context(
     recent = recent_workouts_teaser(db, athlete_id, limit=2)
     if recent:
         ctx["recent_workouts"] = recent
-    return "[SYSTEM CONTEXT - DO NOT SHOW TO USER]\n" + json.dumps(ctx, ensure_ascii=False) + "\n[END CONTEXT]"
+    return "[SYSTEM CONTEXT - DO NOT SHOW TO USER]\n" + json.dumps(with_duration_text(ctx), ensure_ascii=False) + "\n[END CONTEXT]"
 
 
 def detect_anomalies(db: Client, athlete_id: str) -> dict[str, Any] | None:
@@ -2206,7 +2207,8 @@ def _get_coach_response_agentic(
                 )
                 if name in _CALENDAR_CHANGE_TOOLS:
                     hop_dates.extend(_dates_touched(args, result))
-                fr_parts.append(types.Part.from_function_response(name=name, response=result))
+                # Durations also as text ("90 min", "7h 29m") so replies never say "449 minutes".
+                fr_parts.append(types.Part.from_function_response(name=name, response=with_duration_text(result)))
             if fr_parts:
                 contents.append(types.Content(role="user", parts=fr_parts))
                 if hop_dates:
@@ -2427,7 +2429,7 @@ async def _assemble_agentic_context_async(
             "id": conversation_id,
             "recent_messages": hist_rows,
         }
-    return "[SYSTEM CONTEXT - DO NOT SHOW TO USER]\n" + json.dumps(ctx, ensure_ascii=False) + "\n[END CONTEXT]"
+    return "[SYSTEM CONTEXT - DO NOT SHOW TO USER]\n" + json.dumps(with_duration_text(ctx), ensure_ascii=False) + "\n[END CONTEXT]"
 
 
 async def _build_system_context_string_async(
@@ -2496,7 +2498,7 @@ async def _build_system_context_string_async(
         }
     if recent_workouts:
         ctx["recent_workouts"] = recent_workouts
-    return "[SYSTEM CONTEXT - DO NOT SHOW TO USER]\n" + json.dumps(ctx, ensure_ascii=False) + "\n[END CONTEXT]"
+    return "[SYSTEM CONTEXT - DO NOT SHOW TO USER]\n" + json.dumps(with_duration_text(ctx), ensure_ascii=False) + "\n[END CONTEXT]"
 
 
 def get_coach_response(
