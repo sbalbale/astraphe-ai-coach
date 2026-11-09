@@ -72,8 +72,8 @@ def format_duration_min(minutes: Any, style: str = "workout") -> str | None:
     "449 minutes" or "322 minutes").
 
     workout (sessions, blocks, moving time):
-      - short reps, i.e. anything with seconds or under 2 minutes: "M:SS min"
-        (0.5 -> "0:30 min", 1 -> "1:00 min", 1.5 -> "1:30 min", 2.25 -> "2:15 min")
+      - short reps, i.e. anything under 10 minutes or with seconds: "M:SS min"
+        (0.5 -> "0:30 min", 1 -> "1:00 min", 2.25 -> "2:15 min", 5 -> "5:00 min")
       - up to 90 minutes: "45 min", "90 min"
       - over 90: hours and minutes, "1h 31m", "3h 10m", whole hours "2h"
     sleep (sleep, time in bed, naps): always "Xh Ym" ("0h 45m", "7h 29m", "8h 0m")."""
@@ -91,7 +91,7 @@ def format_duration_min(minutes: Any, style: str = "workout") -> str | None:
         h, rest = divmod(int(round(secs / 60)), 60)
         return f"{h}h {rest}m" if rest else f"{h}h"
     m, s = divmod(secs, 60)
-    if s or m < 2:
+    if s or m < 10:
         return f"{m}:{s:02d} min"
     return f"{m} min"
 

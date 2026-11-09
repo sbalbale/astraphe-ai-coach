@@ -22,6 +22,7 @@ def test_workout_durations(raw, text):
 
 @pytest.mark.parametrize("raw, text", [
     (0.5, "0:30 min"), (0.75, "0:45 min"), (1.0, "1:00 min"), (1.5, "1:30 min"), (2.25, "2:15 min"),
+    (5, "5:00 min"), (9.5, "9:30 min"), (10, "10 min"),
 ])
 def test_short_reps(raw, text):
     assert format_duration_min(raw) == text
