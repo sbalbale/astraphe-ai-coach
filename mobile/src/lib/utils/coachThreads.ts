@@ -187,3 +187,15 @@ export function latestQuickReplies(messages: { role: string; quick_replies?: str
   if (!last || last.role !== 'ai' || last.streaming) return [];
   return (last.quick_replies ?? []).filter((q) => typeof q === 'string' && q.trim()).slice(0, 4);
 }
+
+/**
+ * Where tapping a notification goes: its coach thread when it names one, else its url.
+ * (Coach replies sent url "/chat", which opened the chat tab instead of the thread.)
+ */
+export function notificationTarget(
+  data: { url?: unknown; conversation_id?: unknown; [key: string]: unknown } | null | undefined
+): string | undefined {
+  const id = data?.conversation_id;
+  if (typeof id === 'string' && id.trim()) return coachThreadUrl(id.trim());
+  return typeof data?.url === 'string' ? data.url : undefined;
+}

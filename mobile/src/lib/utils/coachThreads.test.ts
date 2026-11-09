@@ -7,6 +7,7 @@ import {
   outgoingMessage,
   isCoachThread,
   latestQuickReplies,
+  notificationTarget,
   parseQuickReplies,
   replyActionId,
   replyIndexFromAction,
@@ -134,5 +135,15 @@ describe('coach reply while the chat is on screen (chatIsOnScreen)', () => {
     expect(await chatIsOnScreen(clients({ url: `${ORIGIN}/dashboard`, visibilityState: 'visible' }), ORIGIN)).toBe(false);
     expect(await chatIsOnScreen(clients({ url: 'https://other.example/chat', visibilityState: 'visible' }), ORIGIN)).toBe(false);
     expect(await chatIsOnScreen(clients(), ORIGIN)).toBe(false);
+  });
+});
+
+describe('notificationTarget', () => {
+  it('opens the thread a coach notification names, even when its url is just /chat', () => {
+    expect(notificationTarget({ url: '/chat', conversation_id: 'c1', type: 'reply' })).toBe('/chat?conversation=c1');
+  });
+  it('uses the url for other notifications', () => {
+    expect(notificationTarget({ url: '/readiness' })).toBe('/readiness');
+    expect(notificationTarget(undefined)).toBeUndefined();
   });
 });
