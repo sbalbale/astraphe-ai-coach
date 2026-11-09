@@ -71,8 +71,8 @@ def format_duration_min(minutes: Any, style: str = "workout") -> str | None:
     """A duration the way the coach should say it (the model repeated raw values such as
     "449 minutes" or "322 minutes").
 
-    workout (sessions and blocks, like the plan page's session sheet): minutes under two
-    hours ("45 min", "90 min", "1:30 min" for short reps), then "3h 10m" / "4h".
+    workout (sessions and blocks, like the plan page's session sheet): minutes up to 90
+    ("45 min", "90 min", "1:30 min" for short reps), then "1h 45m" / "3h 10m" / "4h".
     sleep: hours and minutes from an hour up ("7h 29m"), else "45 min"."""
     try:
         total = float(minutes)
@@ -80,8 +80,9 @@ def format_duration_min(minutes: Any, style: str = "workout") -> str | None:
         return None
     if total != total or total < 0:  # NaN / negative
         return None
-    limit = 120 if style == "workout" else 60
-    if total < limit:
+    # Workouts: minutes up to and including 90 ("90 min"), then "1h 45m". Sleep: from an hour.
+    in_minutes = total <= 90 if style == "workout" else total < 60
+    if in_minutes:
         secs = int(round(total * 60))
         m, s = divmod(secs, 60)
         return f"{m}:{s:02d} min" if s and style == "workout" else f"{int(round(total))} min"

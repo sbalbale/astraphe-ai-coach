@@ -1,5 +1,5 @@
 """Durations reach the coach as words (prod: "your average was 449 minutes", a "322 minutes"
-hike, a "190 min" block). Sessions read like the plan page: minutes under two hours."""
+hike, a "190 min" block). Sessions read like the plan page: minutes up to 90."""
 
 from datetime import date
 from types import SimpleNamespace
@@ -13,6 +13,7 @@ def test_workout_style_keeps_minutes_under_two_hours():
     assert format_duration_min(45) == "45 min"
     assert format_duration_min(90) == "90 min"
     assert format_duration_min(1.5) == "1:30 min"
+    assert format_duration_min(105) == "1h 45m"
     assert format_duration_min(120) == "2h"
     assert format_duration_min(190) == "3h 10m"
     assert format_duration_min(322.4) == "5h 22m"
