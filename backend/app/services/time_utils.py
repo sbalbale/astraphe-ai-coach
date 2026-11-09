@@ -64,3 +64,16 @@ def athlete_local_datetime(db: Any, athlete_id: str) -> datetime:
 
 def athlete_local_date(db: Any, athlete_id: str) -> date:
     return athlete_local_datetime(db, athlete_id).date()
+
+
+def format_duration_min(minutes: Any) -> str | None:
+    """A duration the way the coach should say it: "45 min" under an hour, else "7h 29m"
+    ("4h" when whole). The model repeated raw values like "449 minutes" or "322 minutes"."""
+    try:
+        m = int(round(float(minutes)))
+    except (TypeError, ValueError):
+        return None
+    if m < 60:
+        return f"{max(m, 0)} min"
+    h, rest = divmod(m, 60)
+    return f"{h}h {rest}m" if rest else f"{h}h"
