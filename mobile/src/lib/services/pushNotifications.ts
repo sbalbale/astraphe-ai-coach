@@ -4,6 +4,7 @@ import { goto } from '$app/navigation';
 import { api } from '$lib/api';
 import { isStandaloneDisplayMode } from '$lib/utils/pwa';
 import { isIosUserAgent } from '$lib/utils/notificationUi';
+import { notificationTarget } from '$lib/utils/coachThreads';
 
 /**
  * Request push permission without registering.
@@ -109,7 +110,7 @@ async function _initNativePush(): Promise<void> {
 
     // User tapped a notification
     await PushNotifications.addListener('pushNotificationActionPerformed', (action) => {
-      Promise.resolve(goto(safeNotificationPath(action.notification.data?.url))).catch(() => {});
+      Promise.resolve(goto(safeNotificationPath(notificationTarget(action.notification.data)))).catch(() => {});
     });
   }
 

@@ -12,6 +12,7 @@ import {
 	chatIsOnScreen,
 	coachThreadUrl,
 	focusOrOpenClient,
+	notificationTarget,
 	parseQuickReplies,
 	replyActionId,
 	replyIndexFromAction,
@@ -122,7 +123,7 @@ self.addEventListener('notificationclick', (event) => {
 	} else if (data.conversation_id && event.action === OPEN_CHAT_ACTION) {
 		target = coachThreadUrl(data.conversation_id);
 	} else {
-		target = data.url ?? (data.conversation_id ? coachThreadUrl(data.conversation_id) : undefined) ?? '';
+		target = notificationTarget(data) ?? '';
 	}
 	event.waitUntil(focusOrOpenClient(self.clients, self.location.origin, resolveNotificationUrl(target)));
 });
