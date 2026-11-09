@@ -1248,7 +1248,15 @@ def process_and_save_biometrics(
     # One source per night. With Garmin and WHOOP both connected each writes its own
     # period for the same sleep, and summing them doubled time asleep / in bed.
     all_periods = _periods_from_best_source(all_periods)
-    
+    # Naps don't belong to the night: they stay out of its time asleep / in bed, stages and
+    # sleep score, and only pay down sleep debt (below).
+    nap_sleep_min = 0.0
+    for p in all_periods:
+        if p.get("is_nap"):
+            nap_in_bed = float(p.get("in_bed_min") or p.get("duration_min") or 0)
+            nap_sleep_min += max(0.0, nap_in_bed * (1.0 - float(p.get("awake_pct") or 0.0) / 100.0))
+    all_periods = [p for p in all_periods if not p.get("is_nap")]
+
     total_sleep_min = 0
     total_in_bed_min = 0
     total_awake_min = 0
@@ -1293,14 +1301,16 @@ def process_and_save_biometrics(
 
     # Time Asleep MUST equal Time in Bed minus Awake Time
     total_sleep_min = int(round(total_in_bed_min - total_awake_min))
-    if not all_periods and payload.sleep_duration_min is None:
+    # A nap payload's duration is the nap, never the night.
+    payload_night_min = None if payload.is_nap else payload.sleep_duration_min
+    if not all_periods and payload_night_min is None:
         # No sleep input at all (e.g. an HRV-only or weight-only payload): leave the
         # sleep fields unset so they can't overwrite a real night with 0.
         total_sleep_min = None
         total_in_bed_min = None
         total_awake_min = 0.0
-    if not all_periods and payload.sleep_duration_min is not None:
-        total_sleep_min = int(max(0, payload.sleep_duration_min))
+    if not all_periods and payload_night_min is not None:
+        total_sleep_min = int(max(0, payload_night_min))
         total_in_bed_min = int(max(0, payload.sleep_in_bed_min or total_sleep_min))
         awake_pct = float(payload.sleep_awake_pct or 0.0)
         total_awake_min = max(0.0, total_in_bed_min - total_sleep_min)
@@ -1503,6 +1513,10 @@ def process_and_save_biometrics(
 
     metric_sources = dict(existing.get("metric_sources") or {})
     incoming_source = payload.source or "manual"
+    # Sleep totals built from sleep_periods belong to those periods' source, which
+    # _periods_from_best_source already picked. Labelling them with the payload's source
+    # (e.g. a reprocess that passes the HRV source) let a stale stored night outrank them.
+    sleep_source = str((main_sleep or {}).get("source") or incoming_source)
 
     final_hrv, hrv_source = _choose_biometric_metric(
         existing, metric_sources, "hrv_rmssd", payload.hrv_rmssd, incoming_source
@@ -1526,30 +1540,30 @@ def process_and_save_biometrics(
         existing, metric_sources, "height_cm", payload.height_cm, incoming_source
     )
     final_sleep_duration, sleep_duration_source = _choose_biometric_metric(
-        existing, metric_sources, "sleep_duration_min", total_sleep_min, incoming_source
+        existing, metric_sources, "sleep_duration_min", total_sleep_min, sleep_source
     )
     final_sleep_in_bed, sleep_in_bed_source = _choose_biometric_metric(
-        existing, metric_sources, "sleep_in_bed_min", total_in_bed_min, incoming_source
+        existing, metric_sources, "sleep_in_bed_min", total_in_bed_min, sleep_source
     )
     final_deep, deep_source = _choose_biometric_metric(
-        existing, metric_sources, "sleep_deep_pct", agg_deep, incoming_source
+        existing, metric_sources, "sleep_deep_pct", agg_deep, sleep_source
     )
     final_rem, rem_source = _choose_biometric_metric(
-        existing, metric_sources, "sleep_rem_pct", agg_rem, incoming_source
+        existing, metric_sources, "sleep_rem_pct", agg_rem, sleep_source
     )
     final_light, light_source = _choose_biometric_metric(
-        existing, metric_sources, "sleep_light_pct", agg_light, incoming_source
+        existing, metric_sources, "sleep_light_pct", agg_light, sleep_source
     )
     final_awake, awake_source = _choose_biometric_metric(
-        existing, metric_sources, "sleep_awake_pct", agg_awake, incoming_source
+        existing, metric_sources, "sleep_awake_pct", agg_awake, sleep_source
     )
     incoming_bedtime = main_sleep.get("started_at") if main_sleep else None
     incoming_wakeup = main_sleep.get("ended_at") if main_sleep else None
     final_bedtime, bedtime_source = _choose_biometric_metric(
-        existing, metric_sources, "sleep_bedtime", incoming_bedtime, incoming_source
+        existing, metric_sources, "sleep_bedtime", incoming_bedtime, sleep_source
     )
     final_wakeup, wakeup_source = _choose_biometric_metric(
-        existing, metric_sources, "sleep_wakeup", incoming_wakeup, incoming_source
+        existing, metric_sources, "sleep_wakeup", incoming_wakeup, sleep_source
     )
 
     final_in_bed_for_score = int(final_sleep_in_bed or final_sleep_duration or 0)
@@ -1593,7 +1607,10 @@ def process_and_save_biometrics(
                 sleep_need or DEFAULT_BASELINE_SLEEP_MIN,
                 final_awake_min,
             )
-        next_night_debt = float(np.clip(float(sleep_need) - float(final_sleep_for_score), 0.0, MAX_SLEEP_DEBT_MIN))
+        # Naps don't count toward the night's score, but they do pay down the debt.
+        next_night_debt = float(
+            np.clip(float(sleep_need) - float(final_sleep_for_score) - nap_sleep_min, 0.0, MAX_SLEEP_DEBT_MIN)
+        )
 
     for field, src, value in (
         ("hrv_rmssd", hrv_source, final_hrv),
