@@ -8,6 +8,7 @@ import {
   isCoachThread,
   latestQuickReplies,
   notificationTarget,
+  NOTIFICATION_OPEN_MESSAGE,
   parseQuickReplies,
   replyActionId,
   replyIndexFromAction,
@@ -145,5 +146,22 @@ describe('notificationTarget', () => {
   it('uses the url for other notifications', () => {
     expect(notificationTarget({ url: '/readiness' })).toBe('/readiness');
     expect(notificationTarget(undefined)).toBeUndefined();
+  });
+});
+
+describe('notification click into an open app', () => {
+  it('asks the open app to go to the page instead of navigating it from the worker', async () => {
+    const postMessage = vi.fn();
+    const navigate = vi.fn();
+    const focus = vi.fn().mockResolvedValue(undefined);
+    const clients = {
+      matchAll: vi.fn().mockResolvedValue([{ url: 'https://app.example/dashboard', postMessage, navigate, focus }]),
+      openWindow: vi.fn()
+    };
+    await focusOrOpenClient(clients, 'https://app.example', '/chat?conversation=c1');
+    expect(postMessage).toHaveBeenCalledWith({ type: NOTIFICATION_OPEN_MESSAGE, url: '/chat?conversation=c1' });
+    expect(focus).toHaveBeenCalled();
+    expect(navigate).not.toHaveBeenCalled();
+    expect(clients.openWindow).not.toHaveBeenCalled();
   });
 });

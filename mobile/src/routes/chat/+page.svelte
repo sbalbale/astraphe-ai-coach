@@ -833,7 +833,7 @@
           {/if}
         </div>
       {:else}
-        <div class="self-end max-w-[78%] min-w-0 rounded-[18px_18px_6px_18px] bg-border text-text0 break-words whitespace-pre-wrap {wide ? 'px-4 py-3 text-[15px] leading-normal' : 'px-3.5 py-3 text-sm leading-[1.45]'}">
+        <div class="self-end max-w-[78%] min-w-0 rounded-[18px_18px_6px_18px] bg-border text-text0 break-words {wide ? 'px-4 py-3 text-[15px] leading-normal' : 'px-3.5 py-3 text-sm leading-[1.45]'}">
           {#if msg.attachments && msg.attachments.length > 0}
             <div class="flex gap-1.5 flex-wrap justify-end {msg.text.trim() || msg.image_urls?.length ? 'mb-2' : ''}">
               {#each msg.attachments as a, i (a.name + i)}
@@ -853,7 +853,9 @@
               {/each}
             </div>
           {/if}
-          {normalizeTypographyForWrap(msg.text)}
+          <!-- Only the text keeps its line breaks: with pre-wrap on the bubble, the template's own
+               whitespace before it showed as a leading space on the first line. -->
+          <span class="whitespace-pre-wrap">{normalizeTypographyForWrap(msg.text)}</span>
         </div>
       {/if}
     {/each}
@@ -928,7 +930,13 @@
         bind:value={input}
         rows="1"
         maxlength="8000"
-        oninput={resizeChatInput}
+        oninput={() => {
+          // The iPhone keyboard finishes its predicted word into the box after a send clears
+          // it, leaving a lone space the next message started with. Nothing but whitespace
+          // is never a message, so clear it.
+          if (input && !input.trim()) input = '';
+          resizeChatInput();
+        }}
         onkeydown={(e) => {
           if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();

@@ -23,6 +23,8 @@
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { clearUserScopedState } from '$lib/stores/userSession';
   import { authLinkTarget, sessionFromAuthLink } from '$lib/authDeepLink';
+  import { NOTIFICATION_OPEN_MESSAGE } from '$lib/utils/coachThreads';
+  import { safeNotificationPath } from '$lib/services/pushNotifications';
 
   afterNavigate(() => {
     analysisNavEpoch.bump();
@@ -114,6 +116,14 @@
     }
     const removeLinkInterceptor = installInAppLinkInterceptor();
 
+    // A notification tapped while the app is open: the service worker posts the page to open
+    // (navigating the window from the worker didn't work on phones).
+    const onWorkerMessage = (e: MessageEvent) => {
+      if (e.data?.type !== NOTIFICATION_OPEN_MESSAGE) return;
+      void goto(safeNotificationPath(e.data.url)).catch(() => {});
+    };
+    navigator.serviceWorker?.addEventListener('message', onWorkerMessage);
+
     // Dynamic import so a Capacitor bridge error can't crash the layout
     let cleanup: (() => void) | null = null;
     import('@capacitor/app')
@@ -138,6 +148,7 @@
 
     return () => {
       removeLinkInterceptor();
+      navigator.serviceWorker?.removeEventListener('message', onWorkerMessage);
       cleanup?.();
     };
   });
