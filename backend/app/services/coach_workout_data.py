@@ -723,7 +723,7 @@ def query_planned_workouts(
 ) -> list[dict[str, Any]]:
     res = (
         db.table("training_plans")
-        .select("id, planned_date, sport, title, duration_min, target_tss, primary_zone, status")
+        .select("id, planned_date, sport, title, duration_min, target_tss, primary_zone, status, structure")
         .eq("athlete_id", athlete_id)
         .gte("planned_date", start_date.isoformat())
         .lte("planned_date", end_date.isoformat())
@@ -785,18 +785,30 @@ def update_planned_workout_sync(db: Client, athlete_id: str, args: dict[str, Any
     if not update:
         return {"error": "no_fields_to_update"}
 
-    # Planned TSS follows the session as edited (it used to keep the original value).
+    # Length, blocks and TSS always agree. A new length without new blocks re-times the
+    # blocks: it used to change only duration_min, so the app (which draws the blocks) kept
+    # showing the old length and the coach, reading back duration_min, thought it had worked.
     if any(k in update for k in ("duration_min", "primary_zone", "structure")):
-        from app.services.coach_tools import planned_tss
+        from app.services.coach_tools import consistent_plan_fields, resize_structure
 
-        update["target_tss"] = int(
-            round(
-                planned_tss(
-                    update.get("structure", row.get("structure")),
-                    update.get("duration_min", row.get("duration_min")),
-                    update.get("primary_zone", row.get("primary_zone")),
-                )
-            )
+        structure = update.get("structure", row.get("structure"))
+        if "duration_min" in update and "structure" not in update:
+            resized = resize_structure(structure, update["duration_min"])
+            if resized is None:
+                return {
+                    "error": "cannot_resize_blocks",
+                    "detail": (
+                        f"This session's blocks can't be stretched to {update['duration_min']} min "
+                        "automatically (only interval sets). Send the full new `structure` instead."
+                    ),
+                }
+            if resized:
+                update["structure"] = structure = resized
+        update["duration_min"], update["target_tss"] = consistent_plan_fields(
+            structure,
+            update.get("duration_min", row.get("duration_min")),
+            update.get("primary_zone", row.get("primary_zone")),
+            update.get("sport", row.get("sport")),
         )
 
     plan_id = str(row["id"])
@@ -870,6 +882,8 @@ def _compact_plan_row(row: dict[str, Any]) -> dict[str, Any]:
         "target_tss": row.get("target_tss"),
         "primary_zone": row.get("primary_zone"),
         "status": row.get("status"),
+        # The blocks, so the coach can change a session's length by editing them.
+        "structure": row.get("structure") or [],
     }
 
 

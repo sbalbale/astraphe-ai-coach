@@ -528,6 +528,45 @@ def blocks_total_minutes(structure: list[dict[str, Any]]) -> int:
     return int(round(total)) if total > 0 else 0
 
 
+def resize_structure(structure: Any, new_minutes: int) -> list[dict[str, Any]] | None:
+    """Blocks re-timed to `new_minutes` in total, so a session's length and its blocks agree.
+    The change goes on the longest block without sub-intervals (the main set of a steady
+    session; warm-up, cool-down and reps keep their length). None when that can't be done
+    (no adjustable block, or it would drop to under a minute): send new blocks instead."""
+    blocks = [dict(b) for b in structure if isinstance(b, dict)] if isinstance(structure, list) else []
+    if not blocks:
+        return []
+    delta = float(new_minutes) - sum(float(b.get("duration_minutes") or 0) for b in blocks)
+    if abs(delta) < 0.5:
+        return blocks
+    simple = [i for i, b in enumerate(blocks) if not b.get("sub_intervals")]
+    if not simple:
+        return None
+    i = max(simple, key=lambda j: float(blocks[j].get("duration_minutes") or 0))
+    mins = float(blocks[i].get("duration_minutes") or 0) + delta
+    if mins < 1:
+        return None
+    blocks[i]["duration_minutes"] = int(mins) if float(mins).is_integer() else round(mins, 1)
+    return blocks
+
+
+def consistent_plan_fields(
+    structure: Any, duration_minutes: Any, focus_zone: Any, sport: Any = None
+) -> tuple[int, int]:
+    """(duration_min, target_tss) for a planned session, always computed here, never taken
+    from the coach or the app: a session with blocks lasts as long as its blocks, and its
+    TSS comes from them (planned_tss). Strength / mobility without blocks count as zone 1,
+    as in the app's plan editor."""
+    blocks_min = blocks_total_minutes(structure) if isinstance(structure, list) else 0
+    try:
+        duration = blocks_min or int(round(float(duration_minutes or 0)))
+    except (TypeError, ValueError):
+        duration = blocks_min
+    if not blocks_min and str(sport or "").lower() in ("strength", "mobility"):
+        focus_zone = "Recovery"
+    return duration, int(round(planned_tss(structure, duration, focus_zone)))
+
+
 def _minutes_value(v: Any) -> float | int:
     """Minutes as a number; decimals kept for short reps (1:30 = 1.5), whole numbers as int."""
     if isinstance(v, str) and ":" in v:  # "1:30"
@@ -1622,7 +1661,12 @@ _get_athlete_zones_decl = types.FunctionDeclaration(
 
 _update_planned_workout_decl = types.FunctionDeclaration(
     name="update_planned_workout",
-    description="Reschedule or edit one future planned workout on the calendar.",
+    description=(
+        "Reschedule or edit one future planned workout on the calendar (one call per session). "
+        "A session's length is the sum of its blocks: to change the length, send `structure` with "
+        "the block lengths edited. TSS is always computed by the server; don't send it. Check the "
+        "returned `plan` (structure and duration_min) before telling the athlete it changed."
+    ),
     parameters=types.Schema(
         type=types.Type.OBJECT,
         properties={
@@ -1630,10 +1674,25 @@ _update_planned_workout_decl = types.FunctionDeclaration(
             "on_date": types.Schema(type=types.Type.STRING),
             "sport": types.Schema(type=types.Type.STRING),
             "new_date": types.Schema(type=types.Type.STRING),
-            "duration_minutes": types.Schema(type=types.Type.INTEGER),
+            "duration_minutes": types.Schema(
+                type=types.Type.INTEGER,
+                description=(
+                    "Prefer editing `structure` instead; with `structure` this is ignored (the blocks "
+                    "decide the length). Fallback only, for sessions with no blocks or a single "
+                    "steady block: the main block is re-timed to fit. On error "
+                    "cannot_resize_blocks, send the full new `structure`."
+                ),
+            ),
             "title": types.Schema(type=types.Type.STRING),
             "focus_zone": types.Schema(type=types.Type.STRING),
-            "structure": types.Schema(type=types.Type.ARRAY, items=types.Schema(type=types.Type.OBJECT)),
+            "structure": types.Schema(
+                type=types.Type.ARRAY,
+                items=types.Schema(type=types.Type.OBJECT),
+                description=(
+                    "The session's full new block list (same shape as the plan's current blocks, each "
+                    "with duration_minutes). The session lasts as long as these blocks add up to."
+                ),
+            ),
         },
         required=[],
     ),
