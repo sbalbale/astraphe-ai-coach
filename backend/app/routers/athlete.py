@@ -12,10 +12,16 @@ from app.services.hr_zones import athlete_dict_with_hr_zones, get_athlete_zones,
 from app.services.resend_service import sync_marketing_contact
 from app.services.anchor_history import ANCHOR_FIELDS, record_change as record_anchor_change, rescore_and_rebuild
 from app.services.background import spawn as spawn_background
+from app.services.athlete_profile import (
+    ProfileValueError,
+    fetch_latest_weight_kg_sync,
+    normalize_profile_update,
+    record_manual_weight_sync,
+)
 from app.services.processing import fetch_rows_newest_first
 from app.dependencies import get_current_athlete, get_current_user_email, get_user_db, get_admin_db, run_supabase_call
 from app.core.redis import get_redis
-from app.services.time_utils import athlete_local_date, coerce_timezone_offset_min, local_datetime_from_timezone_offset
+from app.services.time_utils import athlete_local_date
 
 router = APIRouter(prefix="/v1/athlete", tags=["Athlete"])
 
@@ -136,73 +142,9 @@ def _fetch_latest_bio_sync(db, athlete_id: str) -> dict:
     return res.data[0] if res.data else {}
 
 
-def _fetch_latest_weight_kg_sync(db, athlete_id: str) -> float | None:
-    res = (
-        db.table("biometrics")
-        .select("weight_kg")
-        .eq("athlete_id", athlete_id)
-        .not_.is_("weight_kg", "null")
-        .order("date", desc=True)
-        .limit(1)
-        .execute()
-    )
-    if not res.data:
-        return None
-    raw = res.data[0].get("weight_kg")
-    if raw is None:
-        return None
-    return float(raw)
-
-
-def _record_manual_weight_sync(db, athlete_id: str, weight_kg: float) -> bool:
-    """
-    Record a weight the athlete typed in as today's biometrics reading (source "manual").
-
-    The app shows the newest biometrics weight, so without this a stale scale sync would
-    keep overriding what the athlete just entered. Nothing is written when the value
-    matches the newest reading, so re-saving the profile doesn't create readings.
-    Returns True when a reading was written.
-    """
-    latest = _fetch_latest_weight_kg_sync(db, athlete_id)
-    if latest is not None and abs(latest - weight_kg) < 0.05:
-        return False
-
-    offset = None
-    try:
-        res = db.table("athletes").select("timezone_offset_min").eq("id", athlete_id).maybe_single().execute()
-        row = getattr(res, "data", None) if res else None
-        if isinstance(row, dict):
-            offset = row.get("timezone_offset_min")
-    except Exception:
-        pass
-    today = local_datetime_from_timezone_offset(coerce_timezone_offset_min(offset)).date().isoformat()
-
-    metric_sources: dict = {}
-    try:
-        res = (
-            db.table("biometrics")
-            .select("metric_sources")
-            .eq("athlete_id", athlete_id)
-            .eq("date", today)
-            .limit(1)
-            .execute()
-        )
-        if res.data and isinstance(res.data[0].get("metric_sources"), dict):
-            metric_sources = dict(res.data[0]["metric_sources"])
-    except Exception:
-        pass
-    metric_sources["weight_kg"] = "manual"
-
-    db.table("biometrics").upsert(
-        {
-            "athlete_id": athlete_id,
-            "date": today,
-            "weight_kg": round(float(weight_kg), 2),
-            "metric_sources": metric_sources,
-        },
-        on_conflict="athlete_id,date",
-    ).execute()
-    return True
+# Moved to app.services.athlete_profile (shared with the coach's update_profile tool).
+_fetch_latest_weight_kg_sync = fetch_latest_weight_kg_sync
+_record_manual_weight_sync = record_manual_weight_sync
 
 
 def _fetch_bio_window_sync(db, athlete_id: str) -> list:
@@ -521,64 +463,11 @@ async def update_athlete_profile(
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields provided for update")
 
-    if "max_hr" in update_data:
-        # Entered by the athlete: never replaced by the app's estimate (cleared -> estimated again).
-        update_data["max_hr_source"] = "manual" if update_data.get("max_hr") else None
+    try:
+        update_data = normalize_profile_update(update_data)
+    except ProfileValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
 
-    if "threshold_hr" in update_data and update_data.get("threshold_hr") is not None:
-        try:
-            if int(update_data["threshold_hr"]) > 0:
-                update_data["threshold_hr_source"] = "manual"
-        except (TypeError, ValueError):
-            pass
-
-    # Supabase client JSON-encodes request bodies; normalize non-JSON types.
-    for k, v in list(update_data.items()):
-        if isinstance(v, (date, datetime)):
-            update_data[k] = v.isoformat()
-
-    # Normalize values that can vary by client implementation.
-    # - measurement_units: enforce known values
-    units = update_data.get("measurement_units")
-    if units is not None:
-        units_norm = str(units).strip().lower()
-        if units_norm in ("metric", "imperial"):
-            update_data["measurement_units"] = units_norm
-        else:
-            raise HTTPException(status_code=422, detail="measurement_units must be 'metric' or 'imperial'")
-
-    # - time_format: enforce known values ("12h" | "24h")
-    tf = update_data.get("time_format")
-    if tf is not None:
-        tf_norm = str(tf).strip().lower()
-        # Accept a few common variants from clients (e.g. "12-hour", "12 hour").
-        if tf_norm in ("12h", "12-hour", "12 hour", "12hour", "12"):
-            update_data["time_format"] = "12h"
-        elif tf_norm in ("24h", "24-hour", "24 hour", "24hour", "24"):
-            update_data["time_format"] = "24h"
-        else:
-            raise HTTPException(status_code=422, detail="time_format must be '12h' or '24h'")
-
-    # - gender: used by Banister TRIMP constants; keep supported values narrow
-    gender = update_data.get("gender")
-    if gender is not None:
-        gender_norm = str(gender).strip().lower()
-        if gender_norm in ("male", "female"):
-            update_data["gender"] = gender_norm
-        else:
-            raise HTTPException(status_code=422, detail="gender must be 'male' or 'female'")
-
-    # - hr_zone_method: must match CHECK constraint on athletes (alias max_hr_percent -> max_hr)
-    if "hr_zone_method" in update_data:
-        raw = update_data.get("hr_zone_method")
-        if raw is not None:
-            try:
-                update_data["hr_zone_method"] = optional_canonical_hr_zone_method(raw)
-            except ValueError:
-                raise HTTPException(
-                    status_code=422,
-                    detail="hr_zone_method must be lthr, hrr, or max_hr",
-                )
     # Note: supabase-py/postgrest does not always support chaining `.select()` after `.update()`
     # across versions. We do a follow-up SELECT to return the updated row consistently.
     try:

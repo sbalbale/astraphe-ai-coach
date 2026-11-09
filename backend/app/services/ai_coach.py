@@ -1837,6 +1837,7 @@ _MUTATING_TOOL_NAMES = frozenset({
     "log_workout",
     "update_workout",
     "log_biometrics",
+    "update_profile",
     "update_planned_workout",
     "delete_planned_workout",
     "clear_training_plans",
