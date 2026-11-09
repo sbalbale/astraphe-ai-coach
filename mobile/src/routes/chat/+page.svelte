@@ -9,7 +9,7 @@
   import { tick, onDestroy } from 'svelte';
   import { isStandaloneDisplayMode } from '$lib/utils/pwa';
   import { normalizeLeadingTimeOfDayGreeting } from '$lib/utils/greeting';
-  import { pageHeader, resetPageHeader } from '$lib/stores/pageHeader.svelte';
+  import { pageHeader, claimPageHeader } from '$lib/stores/pageHeader.svelte';
   import { page } from '$app/stores';
   import { replaceState } from '$app/navigation';
   import UiIcon from '$lib/components/ui/UiIcon.svelte';
@@ -693,12 +693,13 @@
   });
 
   $effect(() => {
+    const releaseHeader = claimPageHeader();
     pageHeader.eyebrow = 'Knows your training history';
     pageHeader.actions = [
       { key: 'history', label: 'Past conversations', icon: 'history', onclick: () => (convoMenuOpen = !convoMenuOpen) },
       { key: 'new', label: 'New conversation', icon: 'plus', onclick: () => { convoMenuOpen = false; newChat(); } }
     ];
-    return resetPageHeader;
+    return releaseHeader;
   });
 </script>
 

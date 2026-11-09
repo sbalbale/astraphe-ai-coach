@@ -370,6 +370,42 @@ def _parse_iso_date(value: Any) -> str | None:
         return None
 
 
+_MONTHS = {m: i for i, m in enumerate(
+    ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"], start=1
+)}
+_TEXT_DATE = re.compile(
+    r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?\b(?:,?\s+(\d{4}))?",
+    re.IGNORECASE,
+)
+
+
+def memory_event_date(m: dict[str, Any]) -> date | None:
+    """When the event a memory is about happens: its event_date, else the first date written
+    in it ("July 26, 2026", "June 28"). Without a year, the first such date on or after the
+    day the memory was saved. (Most race memories never got an event_date, so a race months
+    past still read as the athlete's goal.)"""
+    iso = _parse_iso_date(m.get("event_date")) if m.get("event_date") else None
+    if iso:
+        return date.fromisoformat(iso)
+    match = _TEXT_DATE.search(str(m.get("content") or ""))
+    if not match:
+        return None
+    month, day = _MONTHS[match.group(1).lower()[:3]], int(match.group(2))
+    saved = _parse_iso_date(str(m.get("created_at") or ""))
+    saved_on = date.fromisoformat(saved) if saved else None
+    year = int(match.group(3)) if match.group(3) else (saved_on.year if saved_on else datetime.now(timezone.utc).year)
+    try:
+        when = date(year, month, day)
+    except ValueError:
+        return None
+    if not match.group(3) and saved_on and when < saved_on:
+        try:
+            when = date(year + 1, month, day)
+        except ValueError:
+            return None
+    return when
+
+
 def _athlete_local_today(athlete_id: str, db: Client) -> date:
     """Today's date in the athlete's timezone (falls back to UTC)."""
     offset: Any = None
@@ -440,10 +476,10 @@ def memories_for_context(memories: list[dict], today_iso: str) -> list[dict[str,
         if noted:
             entry["noted_on"] = noted
             entry["noted_days_ago"] = (today - date.fromisoformat(noted)).days
-        event = _parse_iso_date(m.get("event_date")) if m.get("event_date") else None
-        if event:
-            entry["event_date"] = event
-            delta = (date.fromisoformat(event) - today).days
+        event_on = memory_event_date(m)
+        if event_on:
+            entry["event_date"] = event_on.isoformat()
+            delta = (event_on - today).days
             entry["event_status"] = "past" if delta < 0 else "today" if delta == 0 else "upcoming"
         out.append(entry)
     out.sort(key=lambda e: e.get("noted_on") or "", reverse=True)

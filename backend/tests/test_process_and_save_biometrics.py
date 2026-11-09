@@ -450,3 +450,81 @@ def test_sleep_period_upsert_failure_doesnt_sink_the_day():
     processing.process_and_save_biometrics(payload, "athlete-1", db, skip_pmc_recalc=True)
     bio_payload = db.upserts["biometrics"][0]
     assert bio_payload["hrv_rmssd"] == 62.0
+
+
+# ---------------------------------------------------------------------------
+# Naps: kept out of the night (time asleep, in bed, score), but pay down debt
+# ---------------------------------------------------------------------------
+
+_MAIN_NIGHT = {
+    "source": "whoop", "in_bed_min": 420, "awake_pct": 0.0, "deep_pct": 20.0, "rem_pct": 25.0,
+    "light_pct": 55.0, "started_at": "2026-05-19T23:00:00Z", "ended_at": "2026-05-20T06:00:00Z",
+}
+_NAP = {
+    "source": "whoop", "in_bed_min": 40, "awake_pct": 0.0, "is_nap": True,
+    "started_at": "2026-05-20T14:00:00Z", "ended_at": "2026-05-20T14:40:00Z",
+}
+
+
+def _night_row(periods):
+    db = _BioDb(_default_responses(sleep_periods=[SimpleNamespace(data=periods)]))
+    processing.process_and_save_biometrics(_payload(), "athlete-1", db, skip_pmc_recalc=True)
+    return db.upserts["biometrics"][0]
+
+
+def test_nap_stays_out_of_the_night_but_pays_down_debt():
+    without = _night_row([_MAIN_NIGHT])
+    with_nap = _night_row([_MAIN_NIGHT, _NAP])
+    assert with_nap["sleep_duration_min"] == 420
+    assert with_nap["sleep_in_bed_min"] == 420
+    assert with_nap["sleep_score"] == without["sleep_score"]
+    assert with_nap["sleep_bedtime"] == _MAIN_NIGHT["started_at"]
+    # need 480 (8 h, no strain or carried debt): 60 min short, 40 of it napped back
+    assert without["sleep_debt_min"] == 60
+    assert with_nap["sleep_debt_min"] == 20
+
+
+def test_nap_payload_alone_is_not_taken_as_the_night():
+    db = _BioDb(_default_responses(sleep_periods=[SimpleNamespace(data=None), SimpleNamespace(data=[_NAP])]))
+    payload = _payload(
+        is_nap=True, sleep_duration_min=40,
+        sleep_bedtime=datetime(2026, 5, 20, 14, 0, tzinfo=timezone.utc),
+        sleep_wakeup=datetime(2026, 5, 20, 14, 40, tzinfo=timezone.utc),
+    )
+    processing.process_and_save_biometrics(payload, "athlete-1", db, skip_pmc_recalc=True)
+    row = db.upserts["biometrics"][0]
+    assert row["sleep_duration_min"] is None
+    assert row["sleep_score"] is None
+
+
+def test_reprocess_replaces_a_stored_nap_inflated_night_from_a_better_source():
+    """A reprocess passes the HRV source; the night from sleep_periods must still replace
+    the stored (nap-inflated) total that came from the periods' own, higher-ranked source."""
+    main = {**_MAIN_NIGHT, "source": "garmin"}
+    nap = {**_NAP, "source": "garmin"}
+    stored = {"sleep_duration_min": 460, "sleep_in_bed_min": 460, "hrv_source": "intervals_icu",
+              "metric_sources": {"sleep_duration_min": "garmin", "sleep_in_bed_min": "garmin"}}
+    db = _BioDb(_default_responses(
+        sleep_periods=[SimpleNamespace(data=[main, nap])],
+        biometrics=[SimpleNamespace(data=None), SimpleNamespace(data=[]), SimpleNamespace(data=stored)],
+    ))
+    processing.process_and_save_biometrics(_payload(source="intervals_icu"), "athlete-1", db, skip_pmc_recalc=True)
+    row = db.upserts["biometrics"][0]
+    assert row["sleep_duration_min"] == 420
+    assert row["sleep_in_bed_min"] == 420
+    assert row["metric_sources"]["sleep_duration_min"] == "garmin"
+
+
+def test_nap_comes_off_after_the_debt_cap():
+    """A 3h 20m shortfall caps at 2h 30m, then the 1h 37m nap comes off in full: 53m left.
+    (The nap used to come off before the cap, so most of it was lost in the part above it.)"""
+    short_night = {**_MAIN_NIGHT, "in_bed_min": 280}
+    long_nap = {**_NAP, "in_bed_min": 97}
+    row = _night_row([short_night, long_nap])
+    assert row["sleep_debt_min"] == 150 - 97
+
+
+def test_carried_debt_can_reach_two_hours():
+    from app.services.algorithms import MAX_DEBT_LEFT_MIN, SLEEP_DEBT_DECAY_RATE, compute_sleep_need
+
+    assert compute_sleep_need(480, 0, MAX_DEBT_LEFT_MIN * SLEEP_DEBT_DECAY_RATE) == 480 + 120

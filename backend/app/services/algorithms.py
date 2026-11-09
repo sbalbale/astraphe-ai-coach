@@ -27,7 +27,8 @@ NEUROMUSCULAR_MULTIPLIER = 1.7
 
 # Sleep Debt model constants
 DEFAULT_BASELINE_SLEEP_MIN = 480.0  # 8 hours
-MAX_SLEEP_DEBT_MIN = 120.0          # 2 hours max physiological debt
+MAX_SLEEP_DEBT_MIN = 120.0          # most debt carried into a night's need: 2 hours
+MAX_DEBT_LEFT_MIN = 150.0           # most debt left after a night; 80% of it = the 2 h carry cap
 MAX_STRAIN_SLEEP_TAX_MIN = 120.0    # 100 Strain = 2 extra hours of sleep need
 SLEEP_DEBT_DECAY_RATE = 0.8         # Unpaid debt decays by 20% each day
 
@@ -447,7 +448,7 @@ def compute_sleep_debt_series(
         need_last_night = float(baseline_min) + float(strain_tax) + float(carried_debt)
 
         actual_i = float(np.nan_to_num(actual_sleep_series[i], nan=0.0))
-        debt[i] = np.clip(need_last_night - actual_i, 0.0, MAX_SLEEP_DEBT_MIN)
+        debt[i] = np.clip(need_last_night - actual_i, 0.0, MAX_DEBT_LEFT_MIN)
 
     return np.round(debt, 1)
 

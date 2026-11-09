@@ -30,6 +30,22 @@ export const pageHeader = $state<{
   hideOnWide: boolean;
 }>({ wideTitle: '', wideEyebrow: '', hideOnWide: false, title: '', eyebrow: '', prev: null, next: null, canNext: true, add: null, addLabel: '', today: null, dateValue: '', dateMax: '', dateLabel: '', dateMarks: [], segments: [], segment: '', onSegment: null, actions: [] });
 
+let owner = 0;
+
+/**
+ * Start a page's header: clears it and returns the cleanup for the page's `$effect`.
+ * The cleanup only clears the header while this claim is still the latest. On navigation
+ * the next page's `$effect.pre` can run before the old page's cleanup, and a plain reset
+ * there wiped what the new page had just set (Plan's Week / Month switch went missing).
+ */
+export function claimPageHeader(): () => void {
+  const id = ++owner;
+  resetPageHeader();
+  return () => {
+    if (owner === id) resetPageHeader();
+  };
+}
+
 export function resetPageHeader() {
   pageHeader.title = '';
   pageHeader.eyebrow = '';

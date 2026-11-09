@@ -17,7 +17,7 @@ from typing import Any, Optional
 
 from app.services import coach_notifications as cn
 from app.services import notification_prefs as np
-from app.services.time_utils import coerce_timezone_offset_min, local_datetime_from_timezone_offset
+from app.services.time_utils import coerce_timezone_offset_min, format_duration_min, local_datetime_from_timezone_offset
 
 logger = logging.getLogger(__name__)
 
@@ -279,7 +279,8 @@ def week_numbers(db: Any, aid: str, start: date, end: date) -> dict:
         "sessions_done": sum(1 for p in plans if p.get("status") == "done"),
         "fitness_change": ctl_change,
         "form": round(float(loads[-1]["tsb"]), 1) if loads and loads[-1].get("tsb") is not None else None,
-        "avg_sleep_min": round(sum(sleeps) / len(sleeps)) if sleeps else None,
+        # Already in hours and minutes, so the summary never says "449 minutes".
+        "avg_sleep": format_duration_min(sum(sleeps) / len(sleeps), "sleep") if sleeps else None,
     }
 
 

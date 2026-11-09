@@ -5,6 +5,9 @@ import os
 # backend/.env points at and could rotate real provider tokens. Tests also run as
 # development unless the environment says otherwise (the app default is production).
 os.environ["BACKGROUND_LOOPS_ENABLED"] = "false"
+# Never read backend/.env: a developer's real keys changed test behaviour (35 failures)
+# and pointed some tests at the live local database.
+os.environ["ASTRAPHE_IGNORE_DOTENV"] = "1"
 os.environ.setdefault("APP_ENV", "development")
 
 from types import SimpleNamespace

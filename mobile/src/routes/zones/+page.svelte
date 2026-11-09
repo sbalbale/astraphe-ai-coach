@@ -11,7 +11,7 @@
   import EmptyStateCard from '$lib/components/ui/EmptyStateCard.svelte';
   import DashedNote from '$lib/components/ui/DashedNote.svelte';
   import { goto } from '$app/navigation';
-  import { pageHeader, resetPageHeader } from '$lib/stores/pageHeader.svelte';
+  import { pageHeader, claimPageHeader } from '$lib/stores/pageHeader.svelte';
   import { viewport } from '$lib/stores/viewport.svelte';
   import MonthNavigator from '$lib/components/MonthNavigator.svelte';
   import WeekNavigator from '$lib/components/WeekNavigator.svelte';
@@ -306,11 +306,12 @@
   });
 
   $effect(() => {
+    const releaseHeader = claimPageHeader();
     pageHeader.eyebrow = 'Heart rate & power';
     pageHeader.segments = [{ value: 'week', label: 'Week' }, { value: 'month', label: 'Month' }];
     pageHeader.segment = windowMode;
     pageHeader.onSegment = (v) => (windowMode = v as WindowMode);
-    return resetPageHeader;
+    return releaseHeader;
   });
 </script>
 

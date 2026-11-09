@@ -127,7 +127,7 @@ strain_tax = (strain_score / 100) * 120 minutes
 sleep_need = baseline_min + strain_tax + current_debt_min
 ```
 
-Sleep debt decays by 20% per day and is capped at 120 minutes.
+Debt left after a night is the shortfall against that night's need, capped at 150 minutes, then paid down by that day's naps. 80% of it carries into the next night's need (20% decays per day), so at most 120 minutes are carried.
 
 ## Recovery Score
 

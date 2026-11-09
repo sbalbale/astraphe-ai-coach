@@ -13,7 +13,7 @@
   import DashedNote from '$lib/components/ui/DashedNote.svelte';
   import DatePicker from '$lib/components/DatePicker.svelte';
   import Modal from '$lib/components/Modal.svelte';
-  import { pageHeader, resetPageHeader } from '$lib/stores/pageHeader.svelte';
+  import { pageHeader, claimPageHeader } from '$lib/stores/pageHeader.svelte';
   import { bodyDate, rememberBodyDate } from '$lib/stores/bodyDate.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { authStore } from '$lib/stores/authStore.svelte';
@@ -92,6 +92,7 @@
   const selectedDayStr = $derived(format(addDays(windowStart, dayIndex), 'yyyy-MM-dd'));
 
   $effect(() => {
+    const releaseHeader = claimPageHeader();
     // Prev / next step the picked day; past either end of the 7-day strip, the strip moves.
     pageHeader.prev = () => { if (dayIndex > 0) dayIndex -= 1; else { endPickerValue = format(subDays(windowStart, 1), 'yyyy-MM-dd'); dayIndex = 6; } };
     pageHeader.next = () => { if (dayIndex < 6) dayIndex += 1; else if (canGoForward) { endPickerValue = format(addDays(windowEnd, 1), 'yyyy-MM-dd'); dayIndex = 6; } };
@@ -104,7 +105,7 @@
     // Wide layouts show Recovery, Sleep and Strain as one "Body" screen.
     pageHeader.wideTitle = 'Body';
     pageHeader.wideEyebrow = bodyEyebrow(days[dayIndex]?.date ?? todayStr, days[dayIndex]?.data);
-    return resetPageHeader;
+    return releaseHeader;
   });
 
   // Share the picked day with the other Body sub-tabs (Recovery / Sleep / Strain).

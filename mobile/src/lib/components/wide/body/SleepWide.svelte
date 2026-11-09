@@ -7,6 +7,9 @@
   import EmptyStateCard from '$lib/components/ui/EmptyStateCard.svelte';
   import { boundedScoreCssColor, sleepDebtCssColor } from '$lib/scoreColors';
   import { formatMinutes, hourTicks } from '$lib/utils/bodyWide';
+  import SleepNeedCard from '$lib/components/SleepNeedCard.svelte';
+  import TotalSleepCard from '$lib/components/TotalSleepCard.svelte';
+  import type { SleepNeedParts } from '$lib/utils/sleepNeed';
 
   type Seg = { stage: string; start_at: string; end_at: string };
   type Night = { rawDate: string; day: string; label: string; missing: boolean; durationRaw?: number; score?: number | null };
@@ -22,7 +25,9 @@
     onLog,
     onCheckSync,
     checking = false,
-    emptyTitle
+    emptyTitle,
+    need = null,
+    tonight = null
   }: {
     /** The Sleep page's NightData for the picked night, or null when none. */
     night: Record<string, any> | null;
@@ -36,6 +41,8 @@
     onCheckSync: () => void;
     checking?: boolean;
     emptyTitle: string;
+    need?: SleepNeedParts | null;
+    tonight?: SleepNeedParts | null;
   } = $props();
 
   type StageKey = 'awake' | 'light' | 'deep' | 'rem';
@@ -93,11 +100,12 @@
       { k: 'Asleep', v: night.duration, c: 'var(--text0)' },
       { k: 'In bed', v: night.inBed, c: 'var(--text0)' },
       { k: 'Efficiency', v: eff === null ? '--' : `${eff}%`, c: eff !== null && eff >= 85 ? 'var(--green)' : 'var(--text0)' },
-      { k: 'Sleep debt', v: night.debt == null ? '--' : formatMinutes(night.debt), c: night.debt == null ? 'var(--text2)' : sleepDebtCssColor(night.debt) }
+      { k: 'Debt left', v: night.debt == null ? '--' : formatMinutes(night.debt), c: night.debt == null ? 'var(--text2)' : sleepDebtCssColor(night.debt) }
     ];
   });
 
   const naps = $derived(((night?.periods ?? []) as any[]).filter((p) => p?.is_nap));
+  const napMin = $derived(naps.reduce((s: number, p: any) => s + (Number(p.durationRaw) || 0), 0));
 </script>
 
 <div class="flex-1 min-h-0 grid grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] gap-4">
@@ -188,8 +196,14 @@
           </div>
         {/each}
       </dl>
+      {#if need || tonight}
+        <SleepNeedCard {need} asleepMin={Number(night.durationRaw) || 0} {napMin} {tonight} nightLabel={title} inset />
+      {/if}
     {/if}
     {#if naps.length}
+      {#if night}
+        <TotalSleepCard nightMin={Number(night.durationRaw) || 0} {napMin} napCount={naps.length} inset />
+      {/if}
       <div class="flex flex-col gap-2">
         <span class="font-mono text-[10px] tracking-[0.14em] text-text2">{naps.length > 1 ? 'NAPS' : 'NAP'}</span>
         {#each naps as nap (nap?.id ?? nap?.started_at)}

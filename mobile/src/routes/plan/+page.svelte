@@ -15,7 +15,7 @@
   import DatePicker from '$lib/components/DatePicker.svelte';
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
-  import { pageHeader, resetPageHeader } from '$lib/stores/pageHeader.svelte';
+  import { pageHeader, claimPageHeader } from '$lib/stores/pageHeader.svelte';
   import MonthNavigator from '$lib/components/MonthNavigator.svelte';
   import { viewport } from '$lib/stores/viewport.svelte';
   import PlanWideHeader from '$lib/components/wide/plan/PlanWideHeader.svelte';
@@ -559,10 +559,8 @@
   }
 
   $effect.pre(() => {
-    if (noPlanYet || planCheckPending) {
-      resetPageHeader();
-      return resetPageHeader;
-    }
+    const releaseHeader = claimPageHeader();
+    if (noPlanYet || planCheckPending) return releaseHeader;
     pageHeader.eyebrow = periodSummary;
     // Wide: the page draws the design's header (arrows + Today + Week/Month) itself.
     pageHeader.hideOnWide = true;
@@ -572,7 +570,7 @@
     ];
     pageHeader.segment = planView;
     pageHeader.onSegment = (v) => (planView = v as 'week' | 'month');
-    return resetPageHeader;
+    return releaseHeader;
   });
 
   // --- Session sheet: interactive profile + per-step detail ---

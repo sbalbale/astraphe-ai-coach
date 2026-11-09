@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.dependencies import get_current_athlete, get_user_db
 from app.services import plan_matching
-from app.services.coach_tools import blocks_total_minutes
+from app.services.coach_tools import consistent_plan_fields
 
 
 router = APIRouter(prefix="/v1/training-plans", tags=["Training Plans"])
@@ -97,15 +97,13 @@ def _to_workout_row(row: dict[str, Any]) -> dict[str, Any]:
     # (PUT without completed=True), so it used to show moved future sessions as done.
     completed = status == "done"
 
-    # A session with blocks is as long as its blocks. Older rows could say 90' with one 60'
-    # block; show the blocks' total, with TSS scaled to it.
-    duration = int(row.get("duration_min") or 0)
-    tss = int(row.get("target_tss") or 0)
-    structure = row.get("structure") or []
-    blocks_min = blocks_total_minutes(structure) if isinstance(structure, list) else 0
-    if blocks_min and duration and blocks_min != duration:
-        tss = int(round(tss * blocks_min / duration))
-        duration = blocks_min
+    # Length and TSS from the session's blocks, the same way every write computes them.
+    # (Older rows can say 90' with one 60' block. This used to scale the stored TSS by
+    # 60/90, but that TSS already came from the 60' block, so the same session showed 33
+    # on one day and 49 on another.)
+    duration, tss = consistent_plan_fields(
+        row.get("structure") or [], row.get("duration_min"), row.get("primary_zone"), row.get("sport")
+    )
 
     return {
         "id": row.get("id"),
@@ -175,6 +173,10 @@ def create_training_plan(
     """
     Create a planned workout (training_plans row).
     """
+    blocks = [i.model_dump() for i in payload.structure]
+    # Length and TSS are computed here (the app's projected_tss is ignored), so a session
+    # always shows the same TSS for the same blocks.
+    duration, tss = consistent_plan_fields(blocks, payload.duration_minutes, payload.primary_zone, payload.sport)
     try:
         ins = (
             db.table("training_plans")
@@ -185,10 +187,10 @@ def create_training_plan(
                     "sport": payload.sport,
                     "title": payload.title,
                     "description": payload.description,
-                    "duration_min": payload.duration_minutes,
-                    "target_tss": payload.projected_tss,
+                    "duration_min": duration,
+                    "target_tss": tss,
                     "primary_zone": payload.primary_zone,
-                    "structure": [i.model_dump() for i in payload.structure],
+                    "structure": blocks,
                     "status": "done" if payload.completed else "planned",
                     "generated_by": "manual",
                 }
@@ -213,16 +215,18 @@ def update_training_plan(
     Update a planned workout (training_plans row). Marking it not done also unlinks the
     recorded workout (and keeps auto-match from relinking that one).
     """
+    blocks = [i.model_dump() for i in payload.structure]
+    duration, tss = consistent_plan_fields(blocks, payload.duration_minutes, payload.primary_zone, payload.sport)
     try:
         update: dict[str, Any] = {
             "planned_date": payload.date,
             "sport": payload.sport,
             "title": payload.title,
             "description": payload.description,
-            "duration_min": payload.duration_minutes,
-            "target_tss": payload.projected_tss,
+            "duration_min": duration,
+            "target_tss": tss,
             "primary_zone": payload.primary_zone,
-            "structure": [i.model_dump() for i in payload.structure],
+            "structure": blocks,
             "status": "done" if payload.completed else "modified",
         }
         if not payload.completed:
