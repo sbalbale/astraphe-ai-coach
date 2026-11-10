@@ -75,6 +75,16 @@ def oauth_state_secret(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def fresh_athlete_id_cache():
+    """user -> athlete ids are cached per process; tests mock different mappings."""
+    from app import dependencies
+
+    dependencies._athlete_ids.clear()
+    yield
+    dependencies._athlete_ids.clear()
+
+
+@pytest.fixture(autouse=True)
 def disable_startup_backfills(monkeypatch):
     """Prevent TestClient startup from scheduling real Strava/WHOOP API backfills."""
     monkeypatch.setattr(settings, "STRAVA_STARTUP_BACKFILL_ENABLED", False)

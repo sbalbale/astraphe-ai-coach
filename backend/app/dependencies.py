@@ -218,6 +218,62 @@ def unverified_jwt_claims(token: str) -> dict:
         return {}
 
 
+# Local verification of Supabase user JWTs. Asking GoTrue (auth.get_user) on every
+# request was ~50 ms, half of a typical request. Supabase signs user tokens with an
+# asymmetric key (ES256 here) and publishes the public half at
+# /auth/v1/.well-known/jwks.json, so the signature can be checked here, as supabase-js
+# getClaims() does. Trade-off (Supabase's own): a token stays valid until it expires
+# after sign-out (GOTRUE_JWT_EXP, default 1 h); a deleted account still fails the
+# athlete lookup. Anything not verified here goes to GoTrue as before, so a bad key
+# config degrades to the old path instead of locking users out.
+_LOCAL_JWT_ALGS = ("ES256", "RS256")
+_jwks_client = None
+_jwks_lock = threading.Lock()
+
+
+def _jwks():
+    global _jwks_client
+    if _jwks_client is None:
+        with _jwks_lock:
+            if _jwks_client is None:
+                from jwt import PyJWKClient
+
+                _jwks_client = PyJWKClient(
+                    f"{settings.SUPABASE_URL.rstrip('/')}/auth/v1/.well-known/jwks.json",
+                    cache_keys=True,
+                    lifespan=3600,
+                    timeout=5,
+                )
+    return _jwks_client
+
+
+def verify_jwt_locally(token: str) -> dict | None:
+    """
+    The token's claims if its signature verifies against Supabase Auth's published
+    public key and it's a live user token (exp, aud, role), else None (caller asks
+    GoTrue). Never trusts symmetric or unsigned algorithms locally.
+    """
+    import jwt
+
+    try:
+        alg = jwt.get_unverified_header(token).get("alg")
+        if alg not in _LOCAL_JWT_ALGS:
+            return None
+        key = _jwks().get_signing_key_from_jwt(token).key
+        claims = jwt.decode(
+            token,
+            key,
+            algorithms=[alg],
+            audience="authenticated",
+            options={"require": ["exp", "sub", "aud"]},
+        )
+    except Exception:
+        return None
+    if claims.get("role") != "authenticated" or not claims.get("sub"):
+        return None
+    return claims
+
+
 def reject_third_party_oauth_token(token: str) -> None:
     """
     Tokens minted by Supabase's OAuth server for third-party (MCP) clients carry a
@@ -239,7 +295,19 @@ def _dev_auth_fallback_allowed() -> bool:
     )
 
 
+# user id -> athlete id never changes once the athlete row exists, and every request
+# looked it up. Found ids are kept briefly (a miss isn't cached: onboarding creates
+# the row moments later); per process is enough for a fixed mapping.
+_ATHLETE_ID_TTL_SEC = 600
+_athlete_ids: dict[str, tuple[str, float]] = {}
+
+
 async def _fetch_athlete_id_for_user(db: Client, user_id: str) -> str:
+    import time
+
+    hit = _athlete_ids.get(user_id)
+    if hit is not None and hit[1] > time.monotonic():
+        return hit[0]
     athlete_res = await _run_supabase_call(
         lambda: db.table("athletes").select("id").eq("user_id", user_id).execute()
     )
@@ -247,7 +315,11 @@ async def _fetch_athlete_id_for_user(db: Client, user_id: str) -> str:
         print(f"Auth DEBUG: athlete_res={athlete_res.data}")
     if not athlete_res.data:
         raise HTTPException(status_code=404, detail="Athlete profile not found")
-    return athlete_res.data[0]["id"]
+    athlete_id = athlete_res.data[0]["id"]
+    if len(_athlete_ids) > 10_000:
+        _athlete_ids.clear()
+    _athlete_ids[user_id] = (athlete_id, time.monotonic() + _ATHLETE_ID_TTL_SEC)
+    return athlete_id
 
 
 async def get_current_user_email(
@@ -275,9 +347,13 @@ async def get_current_athlete(
         if delay:
             await asyncio.sleep(delay)
         try:
-            user = await _auth_get_user(db, token)
+            claims = await asyncio.to_thread(verify_jwt_locally, token)
+            if claims is not None:
+                user_id = claims["sub"]
+            else:
+                user = await _auth_get_user(db, token)
+                user_id = user.user.id
             reject_third_party_oauth_token(token)
-            user_id = user.user.id
             if settings.APP_ENV == "development":
                 print(f"Auth DEBUG: user_id={user_id}")
             return await _fetch_athlete_id_for_user(db, user_id)

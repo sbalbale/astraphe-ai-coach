@@ -568,6 +568,9 @@ async def delete_athlete_account(
     if not res or not res.data:
         raise HTTPException(status_code=404, detail="Athlete not found")
     user_id = res.data["user_id"]
+    from app.dependencies import _athlete_ids
+
+    _athlete_ids.pop(user_id, None)  # this process's user -> athlete cache
 
     revoked = await revoke_provider_grants(admin_db, athlete_id)
     if revoked:
