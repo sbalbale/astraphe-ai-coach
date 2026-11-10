@@ -270,6 +270,8 @@ class _StrainDb:
             return self.workouts_query
         if name == "biometrics":
             return self.bio_query
+        if name == "heart_rate_series":  # day strain: no all-day series -> workouts only
+            return _StrainQuery([])
         raise AssertionError(name)
 
 

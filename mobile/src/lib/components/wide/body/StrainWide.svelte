@@ -73,7 +73,7 @@
       <div class="flex flex-col gap-2 px-4 py-3.5 rounded-2xl bg-bg1 border border-rail-border">
         <span class="flex justify-between"><span class="text-[14px] font-medium">Daily activity</span><span class="font-mono text-[14px] text-text1">+{strain.activity}</span></span>
         <span aria-hidden="true" class="h-1.5 rounded-[3px] bg-border"><span class="block h-1.5 rounded-[3px] bg-steel" style="width: {share(strain.activity)}%"></span></span>
-        <span class="text-[12px] text-text2">All-day strain from your wearable, beyond logged workouts</span>
+        <span class="text-[12px] text-text2">Time active outside workouts, from your all-day heart rate</span>
       </div>
     {/if}
   </section>

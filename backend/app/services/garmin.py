@@ -1339,12 +1339,20 @@ async def store_heart_rate_series_and_detect(
     except Exception as exc:
         logger.warning("garmin heart rate series save failed athlete=%s date=%s: %s", athlete_id, day, exc)
         return 0
+    changed = 0
     try:
         res = await detect_and_save_for_day(db, athlete_id, day)
-        return res["saved"] + res["removed"]
+        changed = res["saved"] + res["removed"]
     except Exception as exc:
         logger.warning("hr activity detection failed athlete=%s date=%s: %s", athlete_id, day, exc)
-        return 0
+    try:
+        # Day strain counts all-day heart rate, and today's series grows each pass.
+        from app.services.processing import _refresh_daily_strain_for_day_sync
+
+        await asyncio.to_thread(_refresh_daily_strain_for_day_sync, db, athlete_id, day)
+    except Exception as exc:
+        logger.warning("day strain refresh failed athlete=%s date=%s: %s", athlete_id, day, exc)
+    return changed
 
 
 async def fetch_and_store_biometrics_for_day(

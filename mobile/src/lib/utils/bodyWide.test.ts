@@ -48,21 +48,43 @@ describe('baselines', () => {
 });
 
 describe('dayStrain', () => {
-  it('uses workouts when they exceed the wearable score', () => {
+  // score = 100 * (1 - e^(-load / 150)); loads add, scores don't.
+  const score = (load: number) => Math.round(100 * (1 - Math.exp(-load / 150)));
+  const load = (s: number) => -150 * Math.log(1 - s / 100);
+
+  it('combines workouts on the saturating scale when they exceed the stored score', () => {
+    // stored day strain not refreshed yet (20): workouts 40 and 75 TSS (= 50) combine to 70, not 90
     const r = dayStrain({ strain_score: 20 }, [{ strain_score: 40 }, { tss: 75 }]);
-    expect(r.score).toBe(90);
-    expect(r.workouts.map((p) => p.value)).toEqual([40, 50]);
+    expect(r.score).toBe(score(load(40) + load(50)));
+    expect(r.score).toBe(70);
     expect(r.activity).toBe(0);
+    expect(r.workouts.reduce((a, p) => a + p.value, 0)).toBe(r.score);
   });
 
-  it('attributes wearable strain beyond workouts to daily activity', () => {
+  it('shows all-day activity even when the workouts alone would over-add', () => {
+    // the bug: 16 + 33 = 49 hid the all-day part of a stored 51
+    const r = dayStrain({ strain_score: 51 }, [{ strain_score: 16 }, { strain_score: 33 }]);
+    expect(r.score).toBe(51);
+    expect(r.activity).toBeGreaterThan(0);
+    expect(r.workouts.reduce((a, p) => a + p.value, 0) + r.activity).toBe(51);
+  });
+
+  it('attributes stored strain beyond workouts to daily activity', () => {
     const r = dayStrain({ strain_score: 64 }, [{ strain_score: 58 }]);
     expect(r.score).toBe(64);
-    expect(r.activity).toBe(6);
+    expect(r.activity).toBeGreaterThan(0);
+    expect(r.workouts[0].value + r.activity).toBe(64);
   });
 
-  it('uses the wearable score alone on a rest day', () => {
-    expect(dayStrain({ strain_score: 12.4 }, []).score).toBe(12);
+  it('treats rounding noise as no activity', () => {
+    // 16 and 33 combine to 44: a stored 44 is workouts only (a stored 47 has ~4 of activity)
+    const r = dayStrain({ strain_score: 44 }, [{ strain_score: 16 }, { strain_score: 33 }]);
+    expect(r.activity).toBe(0);
+    expect(r.workouts.reduce((a, p) => a + p.value, 0)).toBe(r.score);
+  });
+
+  it('a rest day is all activity, and nothing at all is 0', () => {
+    expect(dayStrain({ strain_score: 12.4 }, [])).toEqual({ score: 12, workouts: [], activity: 12 });
     expect(dayStrain(null, []).score).toBe(0);
   });
 });

@@ -95,6 +95,28 @@ score = 100 * (1 - exp(-raw / 150))
 
 The final score is rounded to an integer and clipped to 0-100.
 
+### Day strain
+
+A day's strain (`biometrics.strain_score`, source `astraphe`) runs the same formula over
+the day's combined zone minutes (`backend/app/services/day_strain.py`):
+
+```text
+zone_minutes = workouts' zone minutes (from each workout's hr_zone_N_pct; strength x 1.7)
+             + all-day heart rate minutes (heart_rate_series) outside every workout window,
+               at or above 50% of max HR, classified by the athlete's zones
+```
+
+The 50%-of-max-HR floor keeps ordinary resting and everyday heart rate out: every zone
+model starts Z1 at 0 bpm, so without it ~1,400 resting Z1 minutes would score as a
+hard day. It's the same "counts as rest" line as the Heart rate screen's time in zone.
+Days without an all-day series (no Garmin heart rate) get the workout-only value, as
+before. Calibrated on 40 real days: +3 to +10 on typical training days, 0-3 on rest
+days, +24 on a day with 200 active minutes outside workouts.
+
+Recomputed when a workout is saved or changed, when a day's biometrics are processed,
+and on each Garmin sync pass (today's series grows through the day).
+`POST /v1/sync/refresh-strain` recomputes every day with a workout or a series.
+
 ## Readiness Score
 
 Readiness blends training form with recovery:

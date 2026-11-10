@@ -84,25 +84,42 @@ export function workoutStrainContribution(w: Record<string, any>): number {
 
 export type DayStrain = {
   score: number;
+  /** Each workout's share of the day's score (they and `activity` add up to `score`). */
   workouts: { workout: Record<string, any>; value: number }[];
-  /** Wearable all-day strain beyond the workouts (0 when the score is workout-only). */
+  /** The share from all-day activity outside workouts (0 when the score is workout-only). */
   activity: number;
 };
 
+/** Saturation constant of the strain scale (backend STRAIN_SATURATION_CONSTANT). */
+const STRAIN_K = 150;
+/** Strain score <-> the raw load behind it: score = 100 * (1 - e^(-load / K)). */
+const loadOf = (score: number) => -STRAIN_K * Math.log(1 - Math.min(score, 99.5) / 100);
+const scoreOf = (load: number) => 100 * (1 - Math.exp(-load / STRAIN_K));
+/** All-day load below this (~0.5 strain) is rounding noise in the stored scores. */
+const ACTIVITY_NOISE_LOAD = 1;
+
 /**
- * Day strain as the Strain page computes it: the wearable's strain score, or the workouts'
- * summed contribution when that is higher (or the wearable has none), capped at 100.
+ * The day's strain and what built it. Strain saturates, so the workouts' own scores can't
+ * be added (two sessions of 16 and 33 make 47, not 49), and doing so hid the all-day part
+ * whenever they over-added. Instead each part's raw load is recovered from its score, the
+ * day is the stored day strain (workouts + all-day heart rate, backend day_strain) or the
+ * workouts' combined load if that's higher (not refreshed yet), and the day's score is
+ * split in proportion to load: workouts, then all-day activity, adding up to the score.
  */
 export function dayStrain(bio: Row, workouts: Record<string, any>[]): DayStrain {
   const bioStrain = positive(bio?.strain_score);
-  const parts = workouts.map((workout) => ({ workout, value: Math.round(workoutStrainContribution(workout)) }));
-  const workoutScore = Math.min(100, Math.round(parts.reduce((a, p) => a + workoutStrainContribution(p.workout), 0)));
-  const score =
-    workouts.length > 0 || bioStrain === null
-      ? Math.max(bioStrain !== null ? Math.round(bioStrain) : 0, workoutScore)
-      : Math.round(bioStrain);
+  const loads = workouts.map((w) => loadOf(workoutStrainContribution(w)));
+  const workoutLoad = loads.reduce((a, l) => a + l, 0);
+  const dayLoad = Math.max(bioStrain !== null ? loadOf(bioStrain) : 0, workoutLoad);
+  const score = Math.round(scoreOf(dayLoad));
+  const activityLoad = dayLoad - workoutLoad > ACTIVITY_NOISE_LOAD ? dayLoad - workoutLoad : 0;
+  const total = workoutLoad + activityLoad;
+  const share = (load: number) => (total > 0 ? Math.round((score * load) / total) : 0);
+  const parts = workouts.map((workout, i) => ({ workout, value: share(loads[i]) }));
   const listed = parts.reduce((a, p) => a + p.value, 0);
-  return { score, workouts: parts, activity: Math.max(0, score - listed) };
+  // The remainder after rounding, so the parts always add up to the score.
+  const activity = activityLoad > 0 ? Math.max(0, score - listed) : 0;
+  return { score, workouts: parts, activity };
 }
 
 /** Workouts that started on `day` (device-local day). */
