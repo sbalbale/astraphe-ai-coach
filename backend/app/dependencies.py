@@ -11,7 +11,9 @@ from fastapi import Depends, HTTPException, Security
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from httpcore import RemoteProtocolError
 from httpx import ConnectError, ReadTimeout, RemoteProtocolError as HttpxRemoteProtocolError
+import httpx
 from supabase import create_client, Client
+from supabase.lib.client_options import SyncClientOptions
 from app.config import settings
 from app.core.rate_limiter import RateLimiter
 
@@ -62,9 +64,35 @@ _rate_limiter = RateLimiter()
 # DB helpers
 # ---------------------------------------------------------------------------
 
+_shared_http: httpx.Client | None = None
+_shared_http_lock = threading.Lock()
+
+
+def _shared_httpx_client() -> httpx.Client:
+    """
+    One connection pool for every per-user client. Building a client otherwise made a
+    new httpx.Client per sub-client, each loading the CA bundle (~150 ms apiece), so a
+    cold request paid ~300 ms before doing anything. Safe to share: postgrest, auth,
+    storage and functions send their headers (the user's JWT) per request and request
+    absolute URLs; nothing may set headers or a base_url on this client itself.
+    Settings match postgrest's own default client.
+    """
+    global _shared_http
+    if _shared_http is None:
+        with _shared_http_lock:
+            if _shared_http is None:
+                _shared_http = httpx.Client(timeout=120, follow_redirects=True, http2=True)
+    return _shared_http
+
+
 def get_db() -> Client:
-    # Per-request client: JWT is applied via postgrest.auth(token) and must not be shared.
-    return create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
+    # A fresh client per user token (its JWT is set on its own postgrest headers, see
+    # _with_auth_token); the HTTP connection pool underneath is shared.
+    return create_client(
+        settings.SUPABASE_URL,
+        settings.SUPABASE_KEY,
+        options=SyncClientOptions(httpx_client=_shared_httpx_client()),
+    )
 
 
 def get_admin_db() -> Client:
@@ -125,13 +153,9 @@ async def run_supabase_call(
     raise last_exc  # type: ignore[misc]
 
 def _with_auth_token(db: Client, token: str) -> Client:
-    try:
-        db.postgrest.auth(token)
-    except Exception:
-        try:
-            db.postgrest.session.headers.update({"Authorization": f"Bearer {token}"})
-        except Exception:
-            pass
+    # Sets the token on this client's own postgrest headers. Never on
+    # postgrest.session: that's the HTTP client shared by every user's requests.
+    db.postgrest.auth(token)
     return db
 
 # Building a supabase client costs ~300 ms (fresh httpx clients, each loading the CA
