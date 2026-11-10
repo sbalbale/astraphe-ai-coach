@@ -119,7 +119,7 @@ def day_strain(
 
 def compute_day_strain(db: Any, athlete_id: str, day: date, workout_rows: list[dict[str, Any]]) -> int:
     """The athlete's strain for their local ``day`` (workout rows already fetched)."""
-    from app.services.heart_rate_series import load_series
+    from app.services.heart_rate_series import drop_flatlines, load_series
     from app.services.hr_anchors import estimated_max_hr
     from app.services.hr_zones import get_athlete_zones
 
@@ -129,4 +129,6 @@ def compute_day_strain(db: Any, athlete_id: str, day: date, workout_rows: list[d
     res = db.table("athletes").select("*").eq("id", athlete_id).maybe_single().execute()
     athlete = (res.data if res else None) or {}
     max_hr = athlete.get("max_hr") or estimated_max_hr(athlete.get("date_of_birth"), None, day)
-    return day_strain(workout_rows, series.samples, get_athlete_zones(athlete), max_hr)["strain"]
+    # Garmin's carried-forward values (no sensor signal) aren't activity.
+    samples = drop_flatlines(series.samples)
+    return day_strain(workout_rows, samples, get_athlete_zones(athlete), max_hr)["strain"]

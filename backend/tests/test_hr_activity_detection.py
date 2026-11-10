@@ -23,13 +23,15 @@ STEP = 120
 REST, MAX = 55, 185  # reserve 130: enter >= 107 bpm, stay >= 94 bpm
 
 
-def _day(blocks: list[tuple[int, int]], start: datetime = T0) -> list[tuple[datetime, int]]:
-    """[(minutes, bpm), ...] -> a 2-minute grid series."""
-    out, t = [], start
+def _day(blocks: list[tuple[int, int]], start: datetime = T0, wobble: bool = False) -> list[tuple[datetime, int]]:
+    """[(minutes, bpm), ...] -> a 2-minute grid series. With wobble, readings alternate -2 / +2 bpm (same
+    mean) like real readings; perfectly constant runs are dropped as Garmin carry-forward."""
+    out, t, i = [], start, 0
     for minutes, bpm in blocks:
         for _ in range(minutes // 2):
-            out.append((t, bpm))
+            out.append((t, bpm + ((2 if i % 2 else -2) if wobble else 0)))
             t += timedelta(seconds=STEP)
+            i += 1
     return out
 
 
@@ -153,7 +155,7 @@ def _run(db, samples):
 
 
 ATHLETE = {"id": "a1", "max_hr": MAX, "resting_hr": REST}
-SESSION = _day([(60, 60), (40, 140), (60, 60)])
+SESSION = _day([(60, 60), (40, 140), (60, 60)], wobble=True)
 SESSION_START = T0 + timedelta(minutes=60)
 
 
@@ -342,8 +344,8 @@ def test_build_heart_rate_day_payload():
     ):
         p = hrs.build_heart_rate_day(db, "a1", date(2026, 11, 8))
     assert p["day_start"] == "2026-11-08T05:00:00Z" and p["interval_sec"] == 120
-    assert p["min_hr"] == 60 and p["max_hr"] == 140 and len(p["samples"]) == len(SESSION)
-    assert p["samples"][0] == {"t": "2026-11-08T05:00:00Z", "bpm": 60}
+    assert p["min_hr"] == 58 and p["max_hr"] == 142 and len(p["samples"]) == len(SESSION)
+    assert p["samples"][0] == {"t": "2026-11-08T05:00:00Z", "bpm": 58}
     assert p["workouts"][0]["detected"] is True and p["workouts"][0]["started_at"] == "2026-11-08T06:00:00Z"
     assert p["resting_hr_history"] == [{"date": "2026-11-07", "resting_hr": 52}]
 
@@ -385,3 +387,49 @@ def test_failed_dismissal_still_deletes_cleanly():
         app.dependency_overrides = {}
     assert res.status_code == 200
     recalc.assert_called_once()
+
+
+# ---- Garmin carried-forward (flat-lined) values --------------------------------------
+
+
+def test_drop_flatlines_removes_long_flat_runs_only():
+    from app.services.heart_rate_series import drop_flatlines
+
+    real = _day([(10, 70), (2, 72), (2, 71)])  # 5 x 70 then 72, 71: short, kept
+    flat = _day([(92, 123)])                     # 46 identical samples: dropped
+    after = _day([(2, 90), (2, 72)])
+    shift = lambda pts, m: [(t + timedelta(minutes=m), b) for t, b in pts]
+    samples = real + shift(flat, 14) + shift(after, 106)
+    kept = drop_flatlines(samples)
+    assert [b for _, b in kept] == [70, 70, 70, 70, 70, 72, 71, 90, 72]
+    # within +-1 counts as flat too; 9 samples (18 min) is not long enough
+    wobble = [(T0 + timedelta(minutes=2 * i), 108 + (i % 2)) for i in range(12)]
+    assert drop_flatlines(wobble) == []
+    assert len(drop_flatlines(wobble[:9])) == 9
+
+
+def test_carried_forward_stretch_after_a_workout_is_not_detected():
+    # Oct 14 shape: recorded row, a few real readings, then 92 min of exactly 123 bpm
+    s = _day([(60, 60), (50, 150), (8, 115), (92, 123), (60, 75)])
+    recorded = {
+        "id": "r1", "source": "garmin",
+        "started_at": (T0 + timedelta(minutes=60)).isoformat(),
+        "ended_at": (T0 + timedelta(minutes=110)).isoformat(),
+    }
+    result, saved, _ = _run(_Db(athletes=[ATHLETE], workouts=[recorded]), s)
+    assert result["saved"] == 0
+    saved.assert_not_called()
+
+
+def test_carried_forward_values_dont_add_day_strain():
+    from unittest.mock import patch
+
+    from app.services import day_strain as ds
+    from app.services import heart_rate_series as hrs
+
+    series = HeartRateSeries("a1", T0.date(), "garmin", _day([(600, 70), (92, 123), (748, 70)]), resting_hr=REST)
+    athlete = SimpleNamespace(data={"max_hr": MAX, "resting_hr": REST})
+    db = MagicMock()
+    db.table.return_value.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = athlete
+    with patch.object(hrs, "load_series", return_value=series):
+        assert ds.compute_day_strain(db, "a1", T0.date(), []) == 0

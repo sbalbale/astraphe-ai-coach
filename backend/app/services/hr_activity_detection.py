@@ -9,7 +9,7 @@ just before it is included.
 
 Detections are saved as workouts with source ``hr_detected``, last in
 ``SOURCE_PRIORITY``: any recorded workout wins. Concretely:
-  - a window overlapping an existing recorded workout is never saved;
+  - a window overlapping an existing recorded workout (±RECORDED_PAD_SEC) is never saved;
   - a recorded workout that arrives later replaces overlapping detections
     (``processing._find_or_create_canonical_workout_sync`` deletes them);
   - a detection the athlete deletes is remembered in ``hr_detection_dismissals`` and
@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
-from app.services.heart_rate_series import HeartRateSeries, load_series
+from app.services.heart_rate_series import HeartRateSeries, drop_flatlines, load_series
 
 logger = logging.getLogger(__name__)
 
@@ -218,7 +218,8 @@ async def detect_and_save_for_day(db: Any, athlete_id: str, day: date) -> dict[s
 
     athlete, workout_rows, dismissal_rows = await asyncio.to_thread(_fetch_context)
     resting, max_hr = _anchors(series, athlete, day)
-    windows = detect_windows(series.samples, resting, max_hr)
+    # Garmin's carried-forward values (no sensor signal) aren't effort.
+    windows = detect_windows(drop_flatlines(series.samples), resting, max_hr)
 
     def _span(row: dict[str, Any]) -> tuple[datetime, datetime] | None:
         s = _parse_ts(row.get("started_at"))
@@ -231,6 +232,11 @@ async def detect_and_save_for_day(db: Any, athlete_id: str, day: date) -> dict[s
     dismissed = [sp for r in dismissal_rows if (sp := _span(r))]
     detected_rows = [r for r in workout_rows if r.get("source") == SOURCE]
 
+    # A window touching a recorded workout isn't saved: on real data, what's left after
+    # trimming one off is a cool-down / recovery tail or the end of the same session after
+    # the watch was stopped, not a separate activity. Its minutes still count toward day
+    # strain. (Long flat stretches next to workouts were Garmin carry-forward: see
+    # drop_flatlines.)
     keep: list[DetectedWindow] = [
         w
         for w in windows
