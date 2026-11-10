@@ -207,7 +207,7 @@
 
   // ---- pointer ----
   // Mouse: hover to read, drag to zoom. Touch / pen: tap to read (the reading stays after
-  // lifting), drag sideways to scrub; zoom is the chips below. A finger drag used to zoom,
+  // lifting), drag sideways to scrub, pinch to zoom (or the chips below). A finger drag used to zoom,
   // and a touch "leave" (fired on every lift) cleared the reading straight away.
   function mAt(e: PointerEvent): number {
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -215,12 +215,60 @@
     return Math.min(len - 1, Math.round(a + f * span));
   }
   const isMouse = (e: PointerEvent) => e.pointerType === 'mouse';
+
+  // Two-finger pinch zooms around the point between the fingers (and moving both pans).
+  // Anchored to the minute under the fingers' midpoint when the pinch began.
+  const MIN_ZOOM_MIN = 30;
+  const fingers = new Map<number, number>(); // pointerId -> clientX
+  let pinch: { d0: number; span0: number; mid0: number } | null = null;
+  let pinched = false; // until every finger lifts: no tap reading after a pinch
+  const pair = () => [...fingers.values()].slice(0, 2);
+  function startPinch(el: HTMLElement) {
+    const [x1, x2] = pair();
+    const r = el.getBoundingClientRect();
+    const f = ((x1 + x2) / 2 - r.left) / r.width;
+    pinch = { d0: Math.max(8, Math.abs(x1 - x2)), span0: span, mid0: a + f * span };
+    pinched = true;
+    hover = null;
+  }
+  function movePinch(el: HTMLElement) {
+    if (!pinch) return;
+    const [x1, x2] = pair();
+    const r = el.getBoundingClientRect();
+    const f = Math.max(0, Math.min(1, ((x1 + x2) / 2 - r.left) / r.width));
+    const newSpan = Math.max(MIN_ZOOM_MIN, Math.min(len, (pinch.span0 * pinch.d0) / Math.max(8, Math.abs(x1 - x2))));
+    if (newSpan >= len - 1) {
+      zoom = null;
+      return;
+    }
+    const start = Math.max(0, Math.min(len - newSpan, pinch.mid0 - f * newSpan));
+    zoom = [Math.round(start), Math.round(start + newSpan)];
+  }
+  function releaseFinger(e: PointerEvent) {
+    fingers.delete(e.pointerId);
+    if (fingers.size < 2) pinch = null;
+  }
+
   function pDown(e: PointerEvent) {
+    const el = e.currentTarget as HTMLElement;
+    if (!isMouse(e)) {
+      fingers.set(e.pointerId, e.clientX);
+      if (fingers.size >= 2) {
+        try {
+          for (const id of fingers.keys()) el.setPointerCapture(id);
+        } catch {
+          /* not capturable (synthetic event) */
+        }
+        startPinch(el);
+        return;
+      }
+      if (!pinched) hover = mAt(e);
+      return;
+    }
     const m = mAt(e);
     hover = m;
-    if (!isMouse(e)) return;
     try {
-      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+      el.setPointerCapture(e.pointerId);
     } catch {
       /* not capturable (synthetic event) */
     }
@@ -228,17 +276,31 @@
     dragB = m;
   }
   function pMove(e: PointerEvent) {
+    if (!isMouse(e) && fingers.has(e.pointerId)) {
+      fingers.set(e.pointerId, e.clientX);
+      if (pinch) return movePinch(e.currentTarget as HTMLElement);
+      if (pinched) return;
+    }
     // A touch only moves while pressed; a mouse also moves while hovering.
     const m = mAt(e);
     if (dragA !== null) dragB = m;
     hover = m;
   }
   function pUp(e: PointerEvent) {
+    if (!isMouse(e)) {
+      releaseFinger(e);
+      if (pinched) {
+        if (fingers.size === 0) pinched = false;
+        return;
+      }
+      hover = mAt(e);
+      return;
+    }
     const m = mAt(e);
     const s0 = dragA;
     dragA = null;
     dragB = null;
-    if (isMouse(e) && s0 !== null && Math.abs(m - s0) >= 10) {
+    if (s0 !== null && Math.abs(m - s0) >= 10) {
       zoom = [Math.min(s0, m), Math.max(s0, m)];
       hover = null;
     } else hover = m;
@@ -246,8 +308,10 @@
   function pLeave(e: PointerEvent) {
     if (isMouse(e) && dragA === null) hover = null;
   }
-  function pCancel() {
+  function pCancel(e: PointerEvent) {
     // The browser took the gesture over (a vertical scroll): keep the last reading.
+    releaseFinger(e);
+    if (fingers.size === 0) pinched = false;
     dragA = null;
     dragB = null;
   }
@@ -431,7 +495,7 @@
           <span class="flex items-center gap-[5px]"><span class="w-2.5 h-2.5 rounded-sm" style="background: rgba(76,124,240,0.35)"></span>Sleep</span>
           <span class="flex items-center gap-[5px]"><span class="w-2.5 h-2.5 rounded-sm" style="background: rgba(127,180,255,0.35)"></span>Workout</span>
           <span class="flex items-center gap-[5px]"><span class="w-2.5 h-2.5 rounded-sm" style="background: rgba(255,203,136,0.3)"></span>Detected</span>
-          <span class="ml-auto text-text3">{wide ? 'Hover to read · drag to zoom' : 'Tap or drag to read · zoom with the buttons below'}</span>
+          <span class="ml-auto text-text3">{wide ? 'Hover to read · drag to zoom' : 'Tap or drag to read · pinch to zoom'}</span>
         </div>
       </section>
 
