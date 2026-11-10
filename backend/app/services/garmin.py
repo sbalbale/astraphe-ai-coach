@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 import logging
 import secrets
 import time
@@ -91,27 +92,18 @@ class GarminRateLimitedError(Exception):
 # MFA session holding
 # --------------------------------------------------------------------------
 #
-# garminconnect's MFA continuation (``Garmin.resume_login``) ignores its
-# ``client_state`` argument entirely -- the pending login state lives only on
-# the in-memory ``Garmin``/``client.Client`` instance, so it is held here,
-# in-process, keyed by a short-lived opaque state token.
-#
-# An earlier version of this stashed the client in Redis (pickled) so the
-# connect + MFA requests could land on different replicas. That does not
-# work: once a login reaches the MFA prompt, `client.client.cs` is almost
-# always a `curl_cffi.requests.Session` (the primary "mobile+cffi" login
-# strategy uses it), and `curl_cffi` sessions hold `_thread.local`/libcurl
-# handles that are not picklable —
-#   TypeError: cannot pickle '_thread._local' object
-# — verified empirically against this dependency version. The failure was
-# silently swallowed by a broad `except Exception`, so cross-replica MFA
-# resume was silently a no-op, not a working fallback.
-#
-# astraphe-api runs multiple replicas (see the sync-lock note below), so the
-# two requests of one MFA login (`POST /garmin/connect` then
-# `POST /garmin/connect/mfa`) MUST land on the same backend process. Enable
-# session affinity (sticky routing) for those two routes at the ingress/LB
-# if this ever becomes a problem in practice.
+# astraphe-api runs two replicas, and the two requests of one MFA login
+# (`POST /garmin/connect`, then `POST /garmin/connect/mfa` with the code) can
+# land on different ones. garminconnect (0.3.x) returns the pending login as
+# JSON-serializable ``client_state`` from ``login()`` (SSO session cookies +
+# login params) and ``resume_login(client_state, code)`` rebuilds it on any
+# ``Garmin`` instance. So the pending login is kept:
+#   - in this process (the client object; same-replica fast path, local dev), and
+#   - in Redis as ``garmin_mfa:{state_token}``, Fernet-encrypted like the stored
+#     OAuth tokens (it holds session cookies), for the 5-minute TTL, taken with
+#     GETDEL so it's used once whichever replica gets the code.
+# (An older library kept the state only on the live client, whose curl_cffi
+# session can't be pickled, so the earlier pickle-to-Redis attempt failed.)
 _MFA_TTL_SECONDS = 5 * 60
 _pending_mfa: dict[str, tuple[Garmin, float]] = {}
 
@@ -122,15 +114,60 @@ def _prune_expired_mfa() -> None:
         _pending_mfa.pop(token, None)
 
 
-def _store_pending_mfa(state_token: str, client: Garmin) -> None:
+def _mfa_redis_key(state_token: str) -> str:
+    return f"garmin_mfa:{state_token}"
+
+
+def _store_pending_mfa(state_token: str, client: Garmin, client_state: Any = None) -> None:
+    """
+    Keep the pending login in this process and, so the other replica can finish it,
+    its ``client_state`` (session cookies + login params; the library rebuilds a
+    login from it) in Redis, encrypted like the stored OAuth tokens, for the TTL.
+    """
     _prune_expired_mfa()
     _pending_mfa[state_token] = (client, time.monotonic() + _MFA_TTL_SECONDS)
+    if not client_state:
+        return
+    from app.core.redis import get_sync_redis
+    from app.services.token_crypto import encrypt_token
+
+    r = get_sync_redis()
+    if r is None:
+        return
+    try:
+        r.setex(_mfa_redis_key(state_token), _MFA_TTL_SECONDS, encrypt_token(json.dumps(client_state)))
+    except Exception as exc:
+        logger.warning("garmin MFA state not shared via Redis (same-replica resume only): %s", exc)
 
 
-def _pop_pending_mfa(state_token: str) -> Garmin | None:
+def _pop_pending_mfa(state_token: str) -> tuple[Garmin, dict[str, Any]] | None:
+    """
+    The pending login as (client, client_state): this process's client (state {}:
+    it resumes from its own session), else a fresh client plus the state from Redis.
+    """
     _prune_expired_mfa()
     pending = _pending_mfa.pop(state_token, None)
-    return pending[0] if pending is not None else None
+    from app.core.redis import get_sync_redis
+
+    r = get_sync_redis()
+    raw = None
+    if r is not None:
+        try:
+            raw = r.getdel(_mfa_redis_key(state_token))  # one use, whichever replica
+        except Exception as exc:
+            logger.warning("garmin MFA state lookup failed: %s", exc)
+    if pending is not None:
+        return pending[0], {}
+    if not raw:
+        return None
+    from app.services.token_crypto import decrypt_token
+
+    try:
+        state = json.loads(decrypt_token(raw))
+    except Exception as exc:
+        logger.warning("garmin MFA state unreadable: %s", exc)
+        return None
+    return Garmin(return_on_mfa=True), state
 
 
 # --------------------------------------------------------------------------
@@ -147,7 +184,7 @@ def login(username: str, password: str) -> Garmin:
     """
     client = Garmin(username, password, return_on_mfa=True)
     try:
-        mfa_status, _ = client.login()
+        mfa_status, client_state = client.login()
     except GarminConnectTooManyRequestsError as exc:
         raise GarminRateLimitedError(str(exc)) from exc
     except GarminConnectAuthenticationError as exc:
@@ -155,7 +192,7 @@ def login(username: str, password: str) -> Garmin:
 
     if mfa_status == "needs_mfa":
         state_token = secrets.token_urlsafe(24)
-        _store_pending_mfa(state_token, client)
+        _store_pending_mfa(state_token, client, client_state)
         raise GarminMfaRequired(state_token)
 
     return client
@@ -163,15 +200,16 @@ def login(username: str, password: str) -> Garmin:
 
 def resume_mfa(state_token: str, mfa_code: str) -> Garmin:
     """Complete a login that previously raised ``GarminMfaRequired``."""
-    client = _pop_pending_mfa(state_token)
-    if client is None:
+    pending = _pop_pending_mfa(state_token)
+    if pending is None:
         raise GarminAuthError(
             "MFA session expired or unknown; reconnect Garmin from scratch"
         )
+    client, client_state = pending
     try:
-        # `client_state` is ignored by this library version (state lives on
-        # `client` itself) but the parameter is kept for forward compat.
-        client.resume_login({}, mfa_code)
+        # The client that started the login resumes from its own pending session
+        # (state {}); one rebuilt on the other replica carries the stored state.
+        client.resume_login(client_state, mfa_code)
     except GarminConnectTooManyRequestsError as exc:
         raise GarminRateLimitedError(str(exc)) from exc
     except GarminConnectAuthenticationError as exc:

@@ -38,7 +38,7 @@ def test_login_needs_mfa_stores_pending_and_raises():
         with pytest.raises(garmin_service.GarminMfaRequired) as exc_info:
             garmin_service.login("user", "pass")
     state_token = exc_info.value.state_token
-    assert garmin_service._pop_pending_mfa(state_token) is fake_client
+    assert garmin_service._pop_pending_mfa(state_token) == (fake_client, {})
 
 
 def test_login_rate_limited():

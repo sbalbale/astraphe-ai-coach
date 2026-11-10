@@ -47,10 +47,8 @@ tick immediately on startup (self-heal), so a separate startup-backfill flag is
 not needed.
 
 **Multi-replica note:** `POST /garmin/connect` and `POST /garmin/connect/mfa`
-must land on the same backend process for MFA-enabled accounts — the pending
-login state lives only in that process's memory (see Auth Flow below). If this
-service scales past one replica, enable session affinity (sticky routing) for
-those two routes at the ingress/load balancer.
+may land on different replicas: the pending login is shared through Redis,
+encrypted (see Auth Flow below). No session affinity needed.
 
 ## API Routes
 
@@ -136,15 +134,14 @@ Mobile profile/connections → Connect Garmin
 own small JSON token store (`client.client.dumps()` / `.loads()`) that this
 integration encrypts before writing to `oauth_tokens.access_token`.
 
-MFA pending state (the live login client object) is held in an in-process dict
-keyed by `state_token` (5 min TTL) — it cannot be handed off through Redis or any
-other external store, because `garminconnect`'s MFA continuation only works
-against the *same* in-memory client object, and that object holds a `curl_cffi`
-HTTP session that is not picklable (verified empirically: attempting to pickle
-it raises `TypeError: cannot pickle '_thread._local' object` once login has
-progressed past the first strategy). This means the connect and MFA requests
-for one login **must** land on the same backend process; see the multi-replica
-note under Configuration.
+MFA pending state is held in an in-process dict keyed by `state_token` (5 min
+TTL), and its serializable `client_state` (returned by `login()`, rebuilt by
+`resume_login(client_state, code)` on any `Garmin` instance, garminconnect >= 0.3.20)
+is shared through Redis as `garmin_mfa:{state_token}`, Fernet-encrypted with
+`OAUTH_TOKEN_ENCRYPTION_KEY` (it holds session cookies) and taken once (GETDEL). So
+the connect and MFA requests may land on different replicas. (Older library
+versions kept the state only on the live client, whose `curl_cffi` session can't be
+pickled; without Redis, only the replica that started the login can finish it.)
 
 Invalidate a compromised session by changing the Garmin password or signing out
 of all devices in Garmin Connect account settings, then Unlink + reconnect in-app.

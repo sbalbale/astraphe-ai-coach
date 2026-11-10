@@ -601,7 +601,7 @@ def test_mfa_store_roundtrip_in_process():
     client = MagicMock(spec=[])
     token = "test-mfa-token"
     garmin_service._store_pending_mfa(token, client)
-    assert garmin_service._pop_pending_mfa(token) is client
+    assert garmin_service._pop_pending_mfa(token) == (client, {})
     assert garmin_service._pop_pending_mfa(token) is None
 
 
@@ -826,3 +826,79 @@ def test_daily_biometrics_from_garmin_reads_averagespo2value_from_live_payload()
 
     assert bio is not None
     assert bio.spo2_pct == 95.0
+
+
+# ---- MFA across replicas ----------------------------------------------------------
+
+
+class _SyncRedis:
+    def __init__(self):
+        self.data, self.ttls = {}, {}
+
+    def setex(self, k, ttl, v):
+        self.data[k], self.ttls[k] = v, ttl
+
+    def getdel(self, k):
+        return self.data.pop(k, None)
+
+
+def test_mfa_started_on_one_replica_finishes_on_the_other(monkeypatch):
+    from app.core import redis as redis_mod
+
+    r = _SyncRedis()
+    monkeypatch.setattr(redis_mod, "get_sync_redis", lambda: r)
+    state = {"domain": "garmin.com", "flow": "ios", "cookies": [{"name": "SESSION", "value": "secret"}]}
+    garmin_service._store_pending_mfa("tok-x", MagicMock(), state)
+    key = "garmin_mfa:tok-x"
+    assert r.ttls[key] == garmin_service._MFA_TTL_SECONDS
+
+    # The other replica has no in-process entry: it rebuilds from Redis.
+    garmin_service._pending_mfa.clear()
+    with patch.object(garmin_service, "Garmin") as G:
+        client, restored = garmin_service._pop_pending_mfa("tok-x")
+    assert restored == state and client is G.return_value
+    G.assert_called_once_with(return_on_mfa=True)
+    assert key not in r.data  # single use
+    assert garmin_service._pop_pending_mfa("tok-x") is None
+
+
+def test_mfa_resume_passes_the_restored_state(monkeypatch):
+    fresh = MagicMock()
+    monkeypatch.setattr(garmin_service, "_pop_pending_mfa", lambda t: (fresh, {"flow": "ios"}))
+    assert garmin_service.resume_mfa("tok", "123456") is fresh
+    fresh.resume_login.assert_called_once_with({"flow": "ios"}, "123456")
+
+
+def test_mfa_state_is_encrypted_in_redis(monkeypatch):
+    from cryptography.fernet import Fernet
+
+    from app.core import redis as redis_mod
+    from app.services import token_crypto
+
+    r = _SyncRedis()
+    monkeypatch.setattr(redis_mod, "get_sync_redis", lambda: r)
+    monkeypatch.setattr(token_crypto.settings, "OAUTH_TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode())
+    token_crypto._fernet.cache_clear()
+    garmin_service._store_pending_mfa("tok-e", MagicMock(), {"cookies": [{"value": "cookie-secret"}]})
+    stored = r.data["garmin_mfa:tok-e"]
+    assert "cookie-secret" not in stored
+    garmin_service._pending_mfa.clear()
+    with patch.object(garmin_service, "Garmin"):
+        _, state = garmin_service._pop_pending_mfa("tok-e")
+    assert state == {"cookies": [{"value": "cookie-secret"}]}
+    token_crypto._fernet.cache_clear()
+
+
+def test_mfa_without_redis_still_resumes_on_the_same_replica(monkeypatch):
+    from app.core import redis as redis_mod
+
+    class _Broken:
+        def setex(self, *a):
+            raise ConnectionError("down")
+
+        getdel = setex
+
+    monkeypatch.setattr(redis_mod, "get_sync_redis", lambda: _Broken())
+    c = MagicMock()
+    garmin_service._store_pending_mfa("tok-b", c, {"flow": "ios"})
+    assert garmin_service._pop_pending_mfa("tok-b") == (c, {})

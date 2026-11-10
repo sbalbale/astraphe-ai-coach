@@ -51,6 +51,36 @@ def get_redis():
     return _client
 
 
+_sync_client = None
+
+
+def get_sync_redis():
+    """
+    Blocking redis.Redis client for code that runs in worker threads (sync services:
+    Garmin login, Gemini quota, coach context). None without REDIS_URL. Same short
+    timeouts as the async client, so a slow Redis can't stall a request for long;
+    callers treat any error as "Redis unavailable" and fall back to process memory.
+    """
+    global _sync_client
+    if _sync_client is None:
+        from app.config import settings
+
+        if not settings.REDIS_URL:
+            return None
+        try:
+            from redis import Redis
+
+            _sync_client = Redis.from_url(
+                settings.REDIS_URL,
+                decode_responses=True,
+                socket_connect_timeout=2,
+                socket_timeout=2,
+            )
+        except Exception as exc:
+            logger.warning("Sync Redis client init failed: %s", exc)
+    return _sync_client
+
+
 async def close_redis() -> None:
     global _client
     if _client is not None:
