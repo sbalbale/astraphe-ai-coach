@@ -205,14 +205,20 @@
     { k: 'Min', v: stats.min, c: '#8DB3E8' }
   ]);
 
-  // ---- pointer: hover to read, drag to zoom ----
+  // ---- pointer ----
+  // Mouse: hover to read, drag to zoom. Touch / pen: tap to read (the reading stays after
+  // lifting), drag sideways to scrub; zoom is the chips below. A finger drag used to zoom,
+  // and a touch "leave" (fired on every lift) cleared the reading straight away.
   function mAt(e: PointerEvent): number {
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const f = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
     return Math.min(len - 1, Math.round(a + f * span));
   }
+  const isMouse = (e: PointerEvent) => e.pointerType === 'mouse';
   function pDown(e: PointerEvent) {
     const m = mAt(e);
+    hover = m;
+    if (!isMouse(e)) return;
     try {
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     } catch {
@@ -220,9 +226,9 @@
     }
     dragA = m;
     dragB = m;
-    hover = m;
   }
   function pMove(e: PointerEvent) {
+    // A touch only moves while pressed; a mouse also moves while hovering.
     const m = mAt(e);
     if (dragA !== null) dragB = m;
     hover = m;
@@ -232,13 +238,18 @@
     const s0 = dragA;
     dragA = null;
     dragB = null;
-    if (s0 !== null && Math.abs(m - s0) >= 10) {
+    if (isMouse(e) && s0 !== null && Math.abs(m - s0) >= 10) {
       zoom = [Math.min(s0, m), Math.max(s0, m)];
       hover = null;
     } else hover = m;
   }
-  function pLeave() {
-    if (dragA === null) hover = null;
+  function pLeave(e: PointerEvent) {
+    if (isMouse(e) && dragA === null) hover = null;
+  }
+  function pCancel() {
+    // The browser took the gesture over (a vertical scroll): keep the last reading.
+    dragA = null;
+    dragB = null;
   }
   const dragging = $derived(dragA !== null && dragB !== null && Math.abs(dragB - dragA) > 2);
   const chartH = $derived(wide ? 300 : 190);
@@ -405,7 +416,10 @@
             onpointermove={pMove}
             onpointerup={pUp}
             onpointerleave={pLeave}
-            class="absolute inset-0 cursor-crosshair touch-none"
+            onpointercancel={pCancel}
+            oncontextmenu={(e) => e.preventDefault()}
+            class="absolute inset-0 cursor-crosshair touch-pan-y select-none"
+            style="-webkit-touch-callout: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent"
           ></div>
         </div>
         <div aria-hidden="true" class="relative h-3.5 font-mono text-[10px] text-text3">
@@ -417,7 +431,7 @@
           <span class="flex items-center gap-[5px]"><span class="w-2.5 h-2.5 rounded-sm" style="background: rgba(76,124,240,0.35)"></span>Sleep</span>
           <span class="flex items-center gap-[5px]"><span class="w-2.5 h-2.5 rounded-sm" style="background: rgba(127,180,255,0.35)"></span>Workout</span>
           <span class="flex items-center gap-[5px]"><span class="w-2.5 h-2.5 rounded-sm" style="background: rgba(255,203,136,0.3)"></span>Detected</span>
-          <span class="ml-auto text-text3">{wide ? 'Hover to read · drag to zoom' : 'Touch to read · drag to zoom'}</span>
+          <span class="ml-auto text-text3">{wide ? 'Hover to read · drag to zoom' : 'Tap or drag to read · zoom with the buttons below'}</span>
         </div>
       </section>
 
