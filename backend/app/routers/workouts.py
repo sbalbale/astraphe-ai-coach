@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Query
+from app.core.body_cache import LIST_TTL, bump_body_cache_sync, get_cached_sync, set_cached_sync
 from app.core.cache_invalidation import invalidate_athlete_caches
 from app.models.workout import WorkoutPayload, WorkoutUpdatePayload
 from app.services.algorithms import compute_tss_power
@@ -152,6 +153,12 @@ def get_workouts(
 ):
     """Past workouts, newest first. ``before`` pages back through history (the app used to stop
     at the newest 200, so older weeks and months showed nothing)."""
+    # The newest page is fetched on every app start; cached in Redis (body_version).
+    cache_name = f"workouts:{limit}" if before is None else None
+    if cache_name:
+        cached = get_cached_sync(athlete_id, cache_name)
+        if cached is not None:
+            return cached
     q = (
         db.table("workouts")
         .select(_WORKOUT_LIST_COLUMNS)
@@ -168,6 +175,8 @@ def get_workouts(
         d = _duration_secs(r)
         if d is not None:
             r["duration_secs"] = d
+    if cache_name:
+        set_cached_sync(athlete_id, cache_name, rows, LIST_TTL)
     return rows
 
 @router.post("")
@@ -247,6 +256,7 @@ def update_workout(
             background_tasks.add_task(_refresh_daily_strain_for_instant_sync, db, athlete_id, day)
         # After the recomputes (background tasks run in order): drop the cached state
         # card, coach context and this athlete's workout detail/zones.
+        bump_body_cache_sync(athlete_id)  # before responding: the app refetches the list right away
         background_tasks.add_task(invalidate_athlete_caches, athlete_id, workouts=True)
 
         return {"status": "success", "workout": updated}
@@ -293,6 +303,7 @@ def delete_workout(
         background_tasks.add_task(recalculate_tss_history, athlete_id, db)
         for day in _patch_refresh_days(existing.data, existing.data):
             background_tasks.add_task(_refresh_daily_strain_for_instant_sync, db, athlete_id, day)
+        bump_body_cache_sync(athlete_id)  # before responding: the app refetches the list right away
         background_tasks.add_task(invalidate_athlete_caches, athlete_id, workouts=True)
         return {"status": "success", "deleted_id": workout_id}
     except HTTPException:

@@ -919,6 +919,11 @@ def recalculate_tss_history(athlete_id: str, db):
     workout are filled with 0 TSS so CTL/ATL keep decaying and rows exist for today's
     date (avoiding bogus CTL = 0 and collapsed readiness scores on rest days).
     """
+    # Callers run this after changing workouts (re-scoring, provider updates, edits),
+    # so it's where the cached start-up lists / Body payloads are retired.
+    from app.core.body_cache import bump_body_cache_sync
+
+    bump_body_cache_sync(athlete_id)
     # 1. Fetch all workouts with TSS
     workout_rows = _fetch_all_rows(
         lambda: db.table("workouts").select("started_at, tss").eq("athlete_id", athlete_id).order("started_at")
@@ -1200,6 +1205,23 @@ async def process_and_save_workout(
 
 
 def process_and_save_biometrics(
+    payload: DailyBiometrics,
+    athlete_id: str,
+    db,
+    *,
+    skip_pmc_recalc: bool = False,
+):
+    """Save a day's biometrics, then retire the cached start-up lists / Body payloads."""
+    try:
+        return _process_and_save_biometrics(payload, athlete_id, db, skip_pmc_recalc=skip_pmc_recalc)
+    finally:
+        # After the writes (a bump first could let a read re-cache the old day).
+        from app.core.body_cache import bump_body_cache_sync
+
+        bump_body_cache_sync(athlete_id)
+
+
+def _process_and_save_biometrics(
     payload: DailyBiometrics,
     athlete_id: str,
     db,
