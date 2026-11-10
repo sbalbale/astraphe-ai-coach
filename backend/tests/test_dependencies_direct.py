@@ -29,7 +29,10 @@ def test_get_db_creates_client_with_anon_key():
     with patch.object(deps, "create_client", return_value=fake_client) as mock_create:
         result = deps.get_db()
 
-    mock_create.assert_called_once_with(settings.SUPABASE_URL, settings.SUPABASE_KEY)
+    args, kwargs = mock_create.call_args
+    assert args == (settings.SUPABASE_URL, settings.SUPABASE_KEY)
+    # every per-user client shares one HTTP connection pool
+    assert kwargs["options"].httpx_client is deps._shared_httpx_client()
     assert result is fake_client
 
 
@@ -55,24 +58,23 @@ def test_with_auth_token_prefers_postgrest_auth():
     assert result is fake_db
 
 
-def test_with_auth_token_falls_back_to_headers_on_failure():
+def test_with_auth_token_never_puts_the_token_on_the_shared_session():
+    # The session is the HTTP client every user's requests share: a token on it would
+    # authenticate other users' requests as this user. A failure must surface instead.
     fake_db = MagicMock()
-    fake_db.postgrest.auth.side_effect = RuntimeError("no auth method")
-
-    deps._with_auth_token(fake_db, "jwt-token")
-
-    fake_db.postgrest.session.headers.update.assert_called_once_with(
-        {"Authorization": "Bearer jwt-token"}
-    )
+    fake_db.postgrest.auth.side_effect = ValueError("no token")
+    with pytest.raises(ValueError):
+        deps._with_auth_token(fake_db, "")
+    fake_db.postgrest.session.headers.update.assert_not_called()
 
 
-def test_with_auth_token_swallows_total_failure():
-    fake_db = MagicMock()
-    fake_db.postgrest.auth.side_effect = RuntimeError("no auth")
-    fake_db.postgrest.session.headers.update.side_effect = RuntimeError("no headers either")
-
-    result = deps._with_auth_token(fake_db, "jwt-token")  # should not raise
-    assert result is fake_db
+def test_real_clients_share_the_pool_but_not_tokens():
+    a = deps._with_auth_token(deps.get_db(), "token-a")
+    b = deps._with_auth_token(deps.get_db(), "token-b")
+    assert a.postgrest.session is b.postgrest.session
+    assert "authorization" not in {k.lower() for k in a.postgrest.session.headers}
+    assert a.postgrest.headers["Authorization"] == "Bearer token-a"
+    assert b.postgrest.headers["Authorization"] == "Bearer token-b"
 
 
 def test_get_user_db_applies_bearer_token():
@@ -378,3 +380,30 @@ def test_backward_compat_helpers_read_from_config():
     assert _run_async(deps.get_current_user_tier(config=config)) == "trial"
     assert _run_async(deps.get_current_gemini_model(config=config)) == "model-a"
     assert _run_async(deps.get_current_gemini_analysis_model(config=config)) == "model-b"
+
+
+def test_user_db_is_reused_per_token_and_never_shared_between_tokens(monkeypatch):
+    from unittest.mock import MagicMock
+
+    from app import dependencies as deps
+
+    made = []
+
+    def fake_get_db():
+        c = MagicMock()
+        made.append(c)
+        return c
+
+    monkeypatch.setattr(deps, "get_db", fake_get_db)
+    monkeypatch.setattr(deps, "_user_db_cache", deps.OrderedDict())
+    monkeypatch.setattr(deps, "_USER_DB_CACHE_MAX", 2)
+
+    a1 = deps._user_db_for_token("tok-a")
+    assert deps._user_db_for_token("tok-a") is a1          # reused: no new client
+    b = deps._user_db_for_token("tok-b")
+    assert b is not a1                                        # another user's token never shares
+    a1.postgrest.auth.assert_called_once_with("tok-a")
+    b.postgrest.auth.assert_called_once_with("tok-b")
+    deps._user_db_for_token("tok-c")                          # over the cap: least recent (a) dropped
+    assert "tok-a" not in deps._user_db_cache and len(deps._user_db_cache) == 2
+    assert len(made) == 3

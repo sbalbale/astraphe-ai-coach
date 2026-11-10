@@ -83,20 +83,52 @@ def _next_pacific_midnight(now: datetime) -> datetime:
     return nxt.astimezone(timezone.utc)
 
 
+# The daily quota flags and per-athlete counts live in Redis so both API replicas
+# share them (per process, each replica re-hit an exhausted model and an athlete got
+# twice the daily imports). The dicts above are the fallback when Redis is down.
+
+
+def _redis():
+    from app.core.redis import get_sync_redis
+
+    return get_sync_redis()
+
+
 def _is_exhausted(model: str, now: datetime) -> bool:
+    r = _redis()
+    if r is not None:
+        try:
+            return bool(r.exists(f"plan_import_exhausted:{model}"))
+        except Exception as exc:
+            logger.warning("plan import quota flag read failed, using process memory: %s", exc)
     with _state_lock:
         until = _exhausted_until.get(model)
         return bool(until and now < until)
 
 
 def _mark_exhausted(model: str, now: datetime) -> None:
+    until = _next_pacific_midnight(now)
     with _state_lock:
-        _exhausted_until[model] = _next_pacific_midnight(now)
+        _exhausted_until[model] = until
+    r = _redis()
+    if r is not None:
+        try:
+            # Expires at Google's reset, so the flag clears itself.
+            r.set(f"plan_import_exhausted:{model}", "1", exat=int(until.timestamp()))
+        except Exception as exc:
+            logger.warning("plan import quota flag not shared: %s", exc)
 
 
 def _athlete_quota_left(athlete_id: str, today: str) -> int:
+    limit = int(settings.PLAN_IMPORTS_PER_DAY)
+    r = _redis()
+    if r is not None:
+        try:
+            return limit - int(r.get(f"plan_imports:{athlete_id}:{today}") or 0)
+        except Exception as exc:
+            logger.warning("plan import count read failed, using process memory: %s", exc)
     with _state_lock:
-        return int(settings.PLAN_IMPORTS_PER_DAY) - _athlete_imports.get((athlete_id, today), 0)
+        return limit - _athlete_imports.get((athlete_id, today), 0)
 
 
 def _count_athlete_import(athlete_id: str, today: str) -> None:
@@ -104,6 +136,16 @@ def _count_athlete_import(athlete_id: str, today: str) -> None:
         for k in [k for k in _athlete_imports if k[1] != today]:
             del _athlete_imports[k]
         _athlete_imports[(athlete_id, today)] = _athlete_imports.get((athlete_id, today), 0) + 1
+    r = _redis()
+    if r is not None:
+        try:
+            key = f"plan_imports:{athlete_id}:{today}"
+            pipe = r.pipeline()
+            pipe.incr(key)
+            pipe.expire(key, 2 * 86400)  # past the day in any time zone
+            pipe.execute()
+        except Exception as exc:
+            logger.warning("plan import count not shared: %s", exc)
 
 
 # --- response schema ---------------------------------------------------------------------

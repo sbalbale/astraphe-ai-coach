@@ -10,6 +10,16 @@ Redis is optional in local development and **required in production** (self-host
 | AI rate limits | Per-athlete minute/hour sliding windows for coach and analysis-heavy routes. |
 | Activity stream cache | Cached Strava/activity stream payloads for workout detail views. |
 | Workout zone cache | Cached zone distribution responses for repeated reads. |
+| Body / start-up cache | `body:{athlete}:v{N}:{name}` for the Heart rate day, Weight, and the first page of workouts / biometrics; bumping `body_version:{athlete}` retires them all (who bumps: `app/core/body_cache.py`). TTLs 60 s to 30 min. |
+| Coach context | Per-process cache stamped with `body_version`, so a write on either replica retires it. |
+| Garmin MFA | `garmin_mfa:{state_token}`: encrypted pending login, 5 min, single use; the code can land on either replica. |
+| Gemini RPM | `gemini_rpm:{model}`: one sliding window per model for all replicas (atomic Lua on Redis's clock). |
+| Plan import quotas | `plan_import_exhausted:{model}` (expires at Google's daily reset) and `plan_imports:{athlete}:{day}`. |
+| AI regeneration lock | `regen:{athlete}:{scope}`: SET NX, 120 s, released only by its holder; one replica regenerates an analysis. |
+
+All of these fall back to process memory when Redis is unavailable (correct for one process, not shared across replicas).
+
+Production Redis runs with `--maxmemory 256mb --maxmemory-policy volatile-lru`: under memory pressure only keys with a TTL are evicted (cache entries, rate-limit windows), never the TTL-less version counters (`zones_version:`, `body_version:`). Every cache key therefore needs a TTL.
 
 Rate limiting falls back to an in-process dictionary if Redis is absent. That is fine for single-process local dev, but it is not shared across instances and resets on restart.
 

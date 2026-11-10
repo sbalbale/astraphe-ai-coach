@@ -10,7 +10,7 @@ export type NavTab = { id: string; label: string; title: string; routes: string[
 export const NAV_TABS: NavTab[] = [
   { id: '/dashboard', label: 'Today', title: 'Today', routes: ['/', '/dashboard', '/readiness'] },
   { id: '/training', label: 'Training', title: 'Training', routes: ['/training', '/trends', '/zones'] },
-  { id: '/recovery', label: 'Body', title: 'Body', routes: ['/recovery', '/sleep', '/strain'] },
+  { id: '/recovery', label: 'Body', title: 'Body', routes: ['/recovery', '/sleep', '/strain', '/heart-rate', '/weight'] },
   { id: '/plan', label: 'Plan', title: 'Plan', routes: ['/plan'] },
   { id: '/chat', label: 'Coach', title: 'Coach', routes: ['/chat'] }
 ];
@@ -25,7 +25,9 @@ export const SUBTABS: Record<string, { id: string; label: string }[]> = {
   '/recovery': [
     { id: '/recovery', label: 'Recovery' },
     { id: '/sleep', label: 'Sleep' },
-    { id: '/strain', label: 'Strain' }
+    { id: '/strain', label: 'Strain' },
+    { id: '/heart-rate', label: 'Heart rate' },
+    { id: '/weight', label: 'Weight' }
   ]
 };
 

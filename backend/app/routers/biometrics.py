@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, BackgroundTasks
+from fastapi import APIRouter, Depends, BackgroundTasks, Query
 from typing import Optional
 import asyncio
 from datetime import date, datetime, timedelta, timezone
@@ -80,6 +80,18 @@ async def get_biometrics(
     or set `all=true` to return the full series (not recommended for very large histories).
     """
     safe_limit = max(1, min(int(limit or 60), 3650))
+    # The default first page is fetched on every app start; cached in Redis (body_version).
+    from app.core.body_cache import LIST_TTL, get_cached, set_cached
+
+    cache_name = (
+        f"biometrics:{safe_limit}"
+        if not (start_date or end_date or before or all)
+        else None
+    )
+    if cache_name:
+        cached = await get_cached(athlete_id, cache_name)
+        if cached is not None:
+            return cached
     if not all and not end_date:
         # The athlete's local today, so east-of-UTC athletes see this morning's sleep.
         from app.services.time_utils import athlete_local_date
@@ -188,7 +200,7 @@ async def get_biometrics(
         row["stage_segments"] = segments_by_date.get(row["date"], [])
         series.append(row)
 
-    return {
+    result = {
         "hrvData": hrv_data,
         "sleepData": sleep_data,
         "sleepScores": sleep_scores,
@@ -201,6 +213,10 @@ async def get_biometrics(
             "next_before": next_before,
         },
     }
+    if cache_name:
+        # The window ends at the local today; the short TTL covers midnight.
+        await set_cached(athlete_id, cache_name, result, LIST_TTL)
+    return result
 
 @router.post("/daily")
 async def ingest_daily_biometrics(
@@ -213,3 +229,29 @@ async def ingest_daily_biometrics(
     background_tasks.add_task(process_and_save_biometrics, payload, athlete_id, db)
     background_tasks.add_task(invalidate_athlete_caches, athlete_id)
     return {"status": "success", "message": "Biometrics recorded and recovery analysis queued", "date": payload.date}
+
+@router.get("/heart-rate")
+async def get_heart_rate_day(
+    day: Optional[date] = Query(None, alias="date"),
+    athlete_id: str = Depends(get_current_athlete),
+    db = Depends(get_user_db),
+):
+    """
+    One local day of all-day heart rate (Garmin: 2-minute averages) with the day's
+    workouts (recorded, or detected from this series: ``detected``), sleep, and the
+    last 30 days of resting HR. ``date`` defaults to the athlete's local today.
+    ``samples`` is empty when the day has no series.
+    """
+    from app.core.body_cache import HR_PAST_DAY_TTL, HR_TODAY_TTL, get_cached, set_cached
+    from app.services.heart_rate_series import build_heart_rate_day
+    from app.services.time_utils import athlete_local_date
+
+    today = await asyncio.to_thread(athlete_local_date, db, athlete_id)
+    day = day or today
+    name = f"hrday:{day.isoformat()}"
+    cached = await get_cached(athlete_id, name)
+    if cached is not None:
+        return cached
+    payload = await asyncio.to_thread(build_heart_rate_day, db, athlete_id, day)
+    await set_cached(athlete_id, name, payload, HR_TODAY_TTL if day >= today else HR_PAST_DAY_TTL)
+    return payload

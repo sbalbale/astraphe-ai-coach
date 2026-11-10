@@ -1,5 +1,6 @@
 """
-In-process request-per-minute guardrail for Gemini's free-tier quotas.
+Request-per-minute guardrail for Gemini's free-tier quotas, shared by every API
+replica through Redis (in-process when Redis is unavailable).
 
 Google AI Studio's free tier caps requests-per-minute *per model*, and for
 the models this app runs on it's tight — 30 RPM for the Gemma models used
@@ -26,18 +27,21 @@ remotely close to being the binding constraint at this app's scale.
 """
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from collections import deque
 
 from app.config import settings
 
+logger = logging.getLogger(__name__)
+
 _WINDOW_SEC = 60.0
 
 # Conservative defaults — ~90% of Google's stated free-tier RPM (checked
 # 2026-08-06 in AI Studio's quota panel) so a couple of concurrent requests
-# don't tip the *real* account limit over, since this tracker only sees
-# requests this process makes, not other traffic against the same key.
+# don't tip the *real* account limit over: the count covers every replica of this
+# API (via Redis), not other traffic against the same key.
 # These are a starting point, not synced live from Google — revisit if the
 # free tier's numbers change.
 _DEFAULT_RPM = 10
@@ -113,15 +117,58 @@ def wait_for_slot(model: str, max_wait_sec: float = 20.0) -> None:
     limit = _rpm_limit(model)
     deadline = time.monotonic() + max_wait_sec
     while True:
-        with _lock:
-            now = time.monotonic()
-            dq = _call_times.setdefault(model, deque())
-            while dq and now - dq[0] >= _WINDOW_SEC:
-                dq.popleft()
-            if len(dq) < limit:
-                dq.append(now)
-                return
-            wait_needed = _WINDOW_SEC - (now - dq[0])
+        wait_needed = _take_slot(model, limit)
+        if wait_needed is None:
+            return
+        now = time.monotonic()
         if now + wait_needed > deadline:
             raise GeminiQuotaExceededError(model, wait_needed)
         time.sleep(max(0.05, min(wait_needed, 1.0)))
+
+
+# Sliding window shared by every API replica: the quota is per Google API key, and
+# per-process counting let two replicas spend twice the RPM between them (then 429s).
+# Redis's own clock (TIME) keeps replicas' clocks out of it. Returns {1, 0} when the
+# slot is taken, else {0, ms until the oldest call leaves the window}.
+_SLOT_LUA = """
+local key    = KEYS[1]
+local window = tonumber(ARGV[1])
+local limit  = tonumber(ARGV[2])
+local member = ARGV[3]
+local t = redis.call('TIME')
+local now = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
+redis.call('ZREMRANGEBYSCORE', key, '-inf', now - window)
+if redis.call('ZCARD', key) < limit then
+    redis.call('ZADD', key, now, member)
+    redis.call('PEXPIRE', key, window + 1000)
+    return {1, 0}
+end
+local oldest = redis.call('ZRANGE', key, 0, 0, 'WITHSCORES')
+return {0, window - (now - tonumber(oldest[2]))}
+"""
+
+
+def _take_slot(model: str, limit: int) -> float | None:
+    """Record a call if the window has room (None), else the seconds to wait."""
+    from app.core.redis import get_sync_redis
+
+    r = get_sync_redis()
+    if r is not None:
+        try:
+            import os
+
+            ok, wait_ms = r.eval(
+                _SLOT_LUA, 1, f"gemini_rpm:{model}", int(_WINDOW_SEC * 1000), limit, os.urandom(6).hex()
+            )
+            return None if int(ok) == 1 else max(0.0, float(wait_ms) / 1000.0)
+        except Exception as exc:  # Redis down: this process's own count (the old behaviour)
+            logger.warning("Gemini quota via Redis failed, counting in-process: %s", exc)
+    with _lock:
+        now = time.monotonic()
+        dq = _call_times.setdefault(model, deque())
+        while dq and now - dq[0] >= _WINDOW_SEC:
+            dq.popleft()
+        if len(dq) < limit:
+            dq.append(now)
+            return None
+        return _WINDOW_SEC - (now - dq[0])

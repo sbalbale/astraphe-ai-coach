@@ -22,7 +22,7 @@ describe('filterPalette', () => {
   });
 
   it('matches label or hint, case-insensitively', () => {
-    expect(filterPalette(PALETTE_PAGES, 'SLEEP').map((r) => r.href)).toEqual(['/recovery']);
+    expect(filterPalette(PALETTE_PAGES, 'SLEEP').map((r) => r.href)).toEqual(['/recovery', '/heart-rate']);
     expect(filterPalette(PALETTE_PAGES, 'ftp').map((r) => r.href)).toContain('/profile/training-settings');
   });
 });

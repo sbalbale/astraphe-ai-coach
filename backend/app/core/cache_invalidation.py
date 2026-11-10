@@ -17,7 +17,9 @@ async def invalidate_athlete_caches(
     - always: ``state:`` (CTL/ATL/readiness card) and this process's coach context;
     - ``profile=True``: ``profile:``;
     - ``workouts=True``: bump ``zones_version:``, which retires every cached
-      ``detail:`` / ``zones:workout:`` entry for the athlete.
+      ``detail:`` / ``zones:workout:`` entry for the athlete;
+    - always: bump ``body_version:`` (cached Heart rate / Weight payloads, see
+      app.core.body_cache).
 
     Never raises: a cache that can't be cleared just expires on its TTL.
     """
@@ -37,5 +39,7 @@ async def invalidate_athlete_caches(
         await r.delete(*keys)
         if workouts:
             await r.incr(f"zones_version:{athlete_id}")
+        # Any change can show on the Body screens (workouts, weight, profile anchors).
+        await r.incr(f"body_version:{athlete_id}")
     except Exception as e:  # noqa: BLE001
         logger.warning("cache invalidation failed for athlete_id=%s: %s", athlete_id, e)

@@ -1,8 +1,11 @@
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Query
+from app.core.body_cache import LIST_TTL, bump_body_cache_sync, get_cached_sync, set_cached_sync
 from app.core.cache_invalidation import invalidate_athlete_caches
 from app.models.workout import WorkoutPayload, WorkoutUpdatePayload
 from app.services.algorithms import compute_tss_power
+from app.services.hr_activity_detection import dismiss_detection
 from app.services.processing import (
+    HR_DETECTED_SOURCE,
     _refresh_daily_strain_for_instant_sync,
     normalize_sport,
     process_and_save_workout,
@@ -150,6 +153,12 @@ def get_workouts(
 ):
     """Past workouts, newest first. ``before`` pages back through history (the app used to stop
     at the newest 200, so older weeks and months showed nothing)."""
+    # The newest page is fetched on every app start; cached in Redis (body_version).
+    cache_name = f"workouts:{limit}" if before is None else None
+    if cache_name:
+        cached = get_cached_sync(athlete_id, cache_name)
+        if cached is not None:
+            return cached
     q = (
         db.table("workouts")
         .select(_WORKOUT_LIST_COLUMNS)
@@ -166,6 +175,8 @@ def get_workouts(
         d = _duration_secs(r)
         if d is not None:
             r["duration_secs"] = d
+    if cache_name:
+        set_cached_sync(athlete_id, cache_name, rows, LIST_TTL)
     return rows
 
 @router.post("")
@@ -209,6 +220,11 @@ def update_workout(
         update_data = _workout_update_data(payload, existing)
         if not update_data:
             raise HTTPException(status_code=400, detail="No editable workout fields provided")
+        if existing.get("source") == HR_DETECTED_SOURCE:
+            # Editing a heart-rate detection confirms it: it becomes the athlete's own
+            # workout, which re-detection never overwrites or removes.
+            update_data["source"] = "manual"
+            update_data["primary_source"] = "manual"
 
         updated_res = (
             db.table("workouts")
@@ -240,6 +256,7 @@ def update_workout(
             background_tasks.add_task(_refresh_daily_strain_for_instant_sync, db, athlete_id, day)
         # After the recomputes (background tasks run in order): drop the cached state
         # card, coach context and this athlete's workout detail/zones.
+        bump_body_cache_sync(athlete_id)  # before responding: the app refetches the list right away
         background_tasks.add_task(invalidate_athlete_caches, athlete_id, workouts=True)
 
         return {"status": "success", "workout": updated}
@@ -263,7 +280,7 @@ def delete_workout(
     try:
         existing = (
             db.table("workouts")
-            .select("id, started_at")
+            .select("id, started_at, ended_at, duration_seconds, source")
             .eq("id", workout_id)
             .eq("athlete_id", athlete_id)
             .maybe_single()
@@ -273,11 +290,20 @@ def delete_workout(
             raise HTTPException(status_code=404, detail="Workout not found")
 
         db.table("workouts").delete().eq("id", workout_id).eq("athlete_id", athlete_id).execute()
+        if existing.data.get("source") == HR_DETECTED_SOURCE:
+            # Not a workout after all: don't detect this window again on the next sync.
+            # Best effort: the delete has happened, so its TSS / strain refresh below
+            # must still run and the client must not see a failure.
+            try:
+                dismiss_detection(db, athlete_id, existing.data)
+            except Exception as e:
+                print(f"[workouts] Failed to record dismissed detection: {e!r}")
         # Like PATCH: the deleted TSS must leave CTL/ATL/TSB and that day's strain
         # (a deleted duplicate otherwise kept counting until some later sync).
         background_tasks.add_task(recalculate_tss_history, athlete_id, db)
         for day in _patch_refresh_days(existing.data, existing.data):
             background_tasks.add_task(_refresh_daily_strain_for_instant_sync, db, athlete_id, day)
+        bump_body_cache_sync(athlete_id)  # before responding: the app refetches the list right away
         background_tasks.add_task(invalidate_athlete_caches, athlete_id, workouts=True)
         return {"status": "success", "deleted_id": workout_id}
     except HTTPException:

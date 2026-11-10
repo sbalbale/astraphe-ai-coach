@@ -260,23 +260,41 @@ def _load_conversation_history(db: Client, athlete_id: str, conversation_id: str
         return [{"role": "system", "content": f"history_load_failed: {str(e)}", "image_urls": []}]
 
 # Per-athlete context cache — avoids 3 repeated DB queries across chat messages.
-# Keys: athlete_id → (bio, profile, tss_base_dict, expires_at)
-_context_parts_cache: dict[str, tuple[dict, dict, dict, float]] = {}
-# Per process: other instances can't be told to drop it, so keep the TTL short.
-_CONTEXT_CACHE_TTL = 60.0
+# Keys: athlete_id → (bio, profile, tss_base_dict, expires_at, data_version)
+# Held per process, but stamped with the athlete's ``body_version`` from Redis, which
+# every data change bumps (app.core.body_cache): a write on the other replica retires
+# this copy on the next read. Without Redis, the short TTL is the only bound.
+_context_parts_cache: dict[str, tuple[dict, dict, dict, float, str | None]] = {}
+_CONTEXT_CACHE_TTL = 600.0
+_CONTEXT_CACHE_TTL_NO_REDIS = 60.0
+
+
+def _data_version(athlete_id: str) -> str | None:
+    """The athlete's current body_version, or None when Redis can't say."""
+    from app.core.redis import get_sync_redis
+
+    r = get_sync_redis()
+    if r is None:
+        return None
+    try:
+        return str(r.get(f"body_version:{athlete_id}") or 0)
+    except Exception:
+        return None
 _TIME_OF_DAY_GREETING_RE = re.compile(r"^\s*good\s+(morning|afternoon|evening)\b[\s,!.:-]*", re.IGNORECASE)
 
 
 def _get_context_parts_cached(db: Client, athlete_id: str) -> tuple[dict, dict, dict]:
     """Return (biometrics, profile, training_load_base) from cache or fetch fresh."""
     now = time.time()
+    version = _data_version(athlete_id)
     cached = _context_parts_cache.get(athlete_id)
-    if cached and now < cached[3]:
+    if cached and now < cached[3] and (version is None or cached[4] == version):
         return cached[0], cached[1], cached[2]
     bio = _summarize_biometrics(db, athlete_id)
     profile = _summarize_athlete_profile(db, athlete_id)
     tss_base = _summarize_training_load(db, athlete_id, current_tss=0.0)
-    _context_parts_cache[athlete_id] = (bio, profile, tss_base, now + _CONTEXT_CACHE_TTL)
+    ttl = _CONTEXT_CACHE_TTL if version is not None else _CONTEXT_CACHE_TTL_NO_REDIS
+    _context_parts_cache[athlete_id] = (bio, profile, tss_base, now + ttl, version)
     return bio, profile, tss_base
 
 

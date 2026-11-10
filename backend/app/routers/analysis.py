@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import date, datetime, timedelta, timezone
 import re
 from typing import Any, Dict, Optional
@@ -32,8 +33,51 @@ from app.services.analysis_cache import (
 
 
 router = APIRouter(prefix="/v1/analysis", tags=["Analysis"])
+logger = logging.getLogger(__name__)
 
 _regen_in_flight: set[str] = set()
+# Held in Redis too, so the two API replicas don't both run the same LLM generation
+# (the set alone only covered one process). The TTL frees a lock whose holder died.
+_REGEN_LOCK_TTL_SEC = 120
+_regen_tokens: dict[str, str] = {}
+_RELEASE_LUA = "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end return 0"
+
+
+async def _claim_regen(flight_key: str) -> bool:
+    """True when this request may run the regeneration (no one else is)."""
+    if flight_key in _regen_in_flight:
+        return False
+    from app.core.redis import get_redis
+
+    r = get_redis()
+    if r is not None:
+        import secrets
+
+        token = secrets.token_hex(8)
+        try:
+            if not await r.set(f"regen:{flight_key}", token, nx=True, ex=_REGEN_LOCK_TTL_SEC):
+                return False  # the other replica is generating it
+            _regen_tokens[flight_key] = token
+        except Exception as exc:  # Redis down: this process's guard only
+            logger.warning("regen lock via Redis failed, process-local only: %s", exc)
+    _regen_in_flight.add(flight_key)
+    return True
+
+
+async def _release_regen(flight_key: str) -> None:
+    _regen_in_flight.discard(flight_key)
+    token = _regen_tokens.pop(flight_key, None)
+    if token is None:
+        return
+    from app.core.redis import get_redis
+
+    r = get_redis()
+    if r is None:
+        return
+    try:
+        await r.eval(_RELEASE_LUA, 1, f"regen:{flight_key}", token)  # only our own lock
+    except Exception as exc:
+        logger.warning("regen lock release failed (expires on its TTL): %s", exc)
 _ANALYSIS_PROMPT_POLICY_VERSION: dict[str, str] = {
     "strain": "2026-05-25-strain-scale-v2",
     "dashboard_summary": "2026-05-26-no-salutation-v1",
@@ -1219,13 +1263,12 @@ async def dashboard_summary_analysis(
     flight_key = f"{athlete_id}:{scope_key}"
     if cached and cached.get("content"):
         stale = cached.get("fingerprint") != fp or is_retryable_failed_analysis(cached.get("model"))
-        if stale and has_premium_access(tier) and flight_key not in _regen_in_flight:
-            _regen_in_flight.add(flight_key)
+        if stale and has_premium_access(tier) and await _claim_regen(flight_key):
             async def _run_stale():
                 try:
                     await asyncio.to_thread(_compute_and_store, db, athlete_id, tier, "dashboard_summary", scope_key, ctx, model_name, budget)
                 finally:
-                    _regen_in_flight.discard(flight_key)
+                    await _release_regen(flight_key)
             spawn_background(_run_stale())
         return {
             "status": "success",
@@ -1240,13 +1283,12 @@ async def dashboard_summary_analysis(
     # No cached content yet. Return a fast fallback now and let the LLM warm the
     # cache for the next page load — never block the dashboard for ~2-5s on a
     # first-time Gemini call.
-    if has_premium_access(tier) and flight_key not in _regen_in_flight:
-        _regen_in_flight.add(flight_key)
+    if has_premium_access(tier) and await _claim_regen(flight_key):
         async def _run_cold():
             try:
                 await asyncio.to_thread(_compute_and_store, db, athlete_id, tier, "dashboard_summary", scope_key, ctx, model_name, budget)
             finally:
-                _regen_in_flight.discard(flight_key)
+                await _release_regen(flight_key)
         spawn_background(_run_cold())
 
     fb = _fallback_content("dashboard_summary", ctx)
