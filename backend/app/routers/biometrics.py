@@ -226,9 +226,16 @@ async def get_heart_rate_day(
     last 30 days of resting HR. ``date`` defaults to the athlete's local today.
     ``samples`` is empty when the day has no series.
     """
+    from app.core.body_cache import HR_PAST_DAY_TTL, HR_TODAY_TTL, get_cached, set_cached
     from app.services.heart_rate_series import build_heart_rate_day
     from app.services.time_utils import athlete_local_date
 
-    if day is None:
-        day = await asyncio.to_thread(athlete_local_date, db, athlete_id)
-    return await asyncio.to_thread(build_heart_rate_day, db, athlete_id, day)
+    today = await asyncio.to_thread(athlete_local_date, db, athlete_id)
+    day = day or today
+    name = f"hrday:{day.isoformat()}"
+    cached = await get_cached(athlete_id, name)
+    if cached is not None:
+        return cached
+    payload = await asyncio.to_thread(build_heart_rate_day, db, athlete_id, day)
+    await set_cached(athlete_id, name, payload, HR_TODAY_TTL if day >= today else HR_PAST_DAY_TTL)
+    return payload

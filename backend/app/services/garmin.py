@@ -1409,6 +1409,10 @@ async def sync_biometrics_for_athlete(
         await asyncio.sleep(GARMIN_REQUEST_GAP_S)
     if not rate_limited:
         await sync_weigh_ins(athlete_id, db, client, start_date, end_date)
+    # New series / detections / weigh-ins: retire the cached Body screens.
+    from app.core.body_cache import bump_body_cache
+
+    await bump_body_cache(athlete_id)
     await asyncio.to_thread(persist_session, db, athlete_id, client)
     if detections.get("changed"):
         # Detected workouts carry TSS; fold them into CTL/ATL once for the whole pass.

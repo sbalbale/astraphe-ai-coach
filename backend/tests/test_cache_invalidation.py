@@ -13,7 +13,7 @@ def test_invalidate_clears_state_profile_and_bumps_zones_version():
     with patch.object(cache_invalidation, "get_redis", return_value=r):
         asyncio.run(cache_invalidation.invalidate_athlete_caches("a1", workouts=True, profile=True))
     r.delete.assert_awaited_once_with("state:a1", "profile:a1")
-    r.incr.assert_awaited_once_with("zones_version:a1")
+    assert [c.args for c in r.incr.await_args_list] == [("zones_version:a1",), ("body_version:a1",)]
     assert "a1" not in ai_coach._context_parts_cache
 
 

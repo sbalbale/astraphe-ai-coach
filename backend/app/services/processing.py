@@ -1192,6 +1192,10 @@ async def process_and_save_workout(
         spawn_background(
             asyncio.to_thread(_refresh_daily_strain_for_instant_sync, db, athlete_id, start_utc)
         )
+    # Every provider's workouts land here: the cached Heart rate day shows them.
+    from app.core.body_cache import bump_body_cache
+
+    spawn_background(bump_body_cache(athlete_id))
     return str(workout_id)
 
 

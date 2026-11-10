@@ -7,6 +7,7 @@ from typing import Optional
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from app.core.body_cache import WEIGHT_TTL, get_cached, set_cached
 from app.core.cache_invalidation import invalidate_athlete_caches
 from app.dependencies import get_current_athlete, get_user_db
 from app.services import weight as weight_service
@@ -29,7 +30,13 @@ class GoalUpdate(BaseModel):
 async def get_weight(athlete_id: str = Depends(get_current_athlete), db=Depends(get_user_db)):
     """The last year of weigh-ins (oldest first), goal weight, FTP and preferred units."""
     today = await asyncio.to_thread(athlete_local_date, db, athlete_id)
-    return await asyncio.to_thread(weight_service.weight_payload, db, athlete_id, today)
+    name = f"weight:{today.isoformat()}"
+    cached = await get_cached(athlete_id, name)
+    if cached is not None:
+        return cached
+    payload = await asyncio.to_thread(weight_service.weight_payload, db, athlete_id, today)
+    await set_cached(athlete_id, name, payload, WEIGHT_TTL)
+    return payload
 
 
 @router.post("")
@@ -45,7 +52,8 @@ async def log_weigh_in(
     row = await asyncio.to_thread(
         weight_service.log_weigh_in, db, athlete_id, round(body.weight_kg, 2), body.date, body.body_fat_pct
     )
-    background_tasks.add_task(invalidate_athlete_caches, athlete_id, profile=True)
+    # Before responding: the app reloads the screen as soon as this returns.
+    await invalidate_athlete_caches(athlete_id, profile=True)
     return {"status": "success", "weigh_in": row}
 
 
@@ -53,7 +61,8 @@ async def _set_deleted(weigh_in_id: str, deleted: bool, athlete_id: str, db, bac
     row = await asyncio.to_thread(weight_service.set_deleted, db, athlete_id, weigh_in_id, deleted)
     if row is None:
         raise HTTPException(status_code=404, detail="Weigh-in not found")
-    background_tasks.add_task(invalidate_athlete_caches, athlete_id, profile=True)
+    # Before responding: the app reloads the screen as soon as this returns.
+    await invalidate_athlete_caches(athlete_id, profile=True)
     return {"status": "success", "id": weigh_in_id, "deleted": deleted}
 
 
@@ -87,5 +96,6 @@ async def set_goal(
 ):
     goal = round(body.goal_weight_kg, 2) if body.goal_weight_kg is not None else None
     await asyncio.to_thread(weight_service.set_goal, db, athlete_id, goal)
-    background_tasks.add_task(invalidate_athlete_caches, athlete_id, profile=True)
+    # Before responding: the app reloads the screen as soon as this returns.
+    await invalidate_athlete_caches(athlete_id, profile=True)
     return {"status": "success", "goal_weight_kg": goal}
