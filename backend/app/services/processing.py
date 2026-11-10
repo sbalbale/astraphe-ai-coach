@@ -87,7 +87,10 @@ SPORT_CANONICAL = {
 
 _SPORT_CANONICAL_LOOKUP: dict[str, str] = {k.lower(): v for k, v in SPORT_CANONICAL.items()}
 
-SOURCE_PRIORITY = ["garmin", "whoop", "intervals_icu", "strava", "healthkit", "manual"]
+# hr_detected (sessions found in all-day heart rate, see hr_activity_detection) is last:
+# built from 2-minute averages, it yields to anything actually recorded, even manual.
+SOURCE_PRIORITY = ["garmin", "whoop", "intervals_icu", "strava", "healthkit", "manual", "hr_detected"]
+HR_DETECTED_SOURCE = "hr_detected"
 
 _DB_SPORTS = frozenset({"run", "bike", "swim", "strength", "row", "mobility", "other"})
 
@@ -578,6 +581,13 @@ def _find_or_create_canonical_workout_sync(
     db_sport = _sport_for_db(sport_type)
     dur_i = max(0, int(elapsed_time_seconds or 0))
     ended_at = started_at + timedelta(seconds=dur_i)
+
+    if source != HR_DETECTED_SOURCE and dur_i > 0:
+        # A recorded workout replaces any heart-rate detection it overlaps, so the
+        # effort isn't counted twice (the detection's start/sport rarely fuzzy-match).
+        db.table("workouts").delete().eq("athlete_id", athlete_id).eq(
+            "source", HR_DETECTED_SOURCE
+        ).lt("started_at", ended_at.isoformat()).gt("ended_at", started_at.isoformat()).execute()
 
     def _merge_exact_hit(row: dict[str, Any]) -> tuple[dict, bool]:
         existing_source_ids = dict(row.get("source_ids") or {})
@@ -1438,9 +1448,26 @@ def process_and_save_biometrics(
     profile_updates = {
         "rhr_baseline": int(round(baseline_rhr)),
         "hrv_baseline": round(baseline_hrv, 1),
-        "resting_hr": int(round(baseline_rhr)), # Sync current resting_hr with baseline
         "weekly_tss_target": calculate_weekly_tss_target(current_ctl)
     }
+    # The profile's resting HR (a heart-rate zone / TSS anchor) follows the measured
+    # 42-day baseline unless the athlete set it ('manual'). Only from real readings
+    # (baseline_rhr defaults to 50 without any, which used to overwrite the profile)
+    # and only for the newest day (re-processing an old day set the old baseline).
+    from app.services.hr_anchors import MIN_RHR_READINGS
+
+    rhr_rows = [r for r in ((history_res.data if history_res else None) or []) if r.get("resting_hr")]
+    newest_rhr_day = max((str(r.get("date"))[:10] for r in rhr_rows), default="")
+    rhr_readings = sum(1 for r in rhr_rows if str(r.get("date"))[:10] < payload.date.isoformat()) + (
+        1 if payload.resting_hr else 0
+    )
+    if (
+        (athlete_res.data if athlete_res else {}).get("resting_hr_source") != "manual"
+        and rhr_readings >= MIN_RHR_READINGS
+        and payload.date.isoformat() >= newest_rhr_day
+    ):
+        profile_updates["resting_hr"] = int(round(baseline_rhr))
+        profile_updates["resting_hr_source"] = "measured"
     
     # Estimate Threshold HR if missing (using HRR method: 83% intensity)
     if athlete_data.get("max_hr") and not athlete_data.get("threshold_hr"):

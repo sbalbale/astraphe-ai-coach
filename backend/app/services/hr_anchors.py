@@ -23,6 +23,32 @@ logger = logging.getLogger(__name__)
 
 PLAUSIBLE_PEAK = (120, 230)
 
+# Measured resting HR: the mean of the daily readings over this many days, once there
+# are at least MIN_RHR_READINGS of them (processing.process_and_save_biometrics uses
+# the same rule each time a day syncs).
+RHR_WINDOW_DAYS = 42
+MIN_RHR_READINGS = 3
+
+
+def refresh_measured_resting_hr(db: Any, athlete_id: str, today: date | None = None) -> int | None:
+    """
+    Set the profile's resting HR to the measured baseline now (after the athlete
+    switches back from a value they entered). Returns it, or None without enough readings
+    (the profile keeps its value; the next synced day fills it in).
+    """
+    today = today or datetime.now(timezone.utc).date()
+    res = (
+        db.table("biometrics").select("resting_hr").eq("athlete_id", athlete_id)
+        .gte("date", (today - timedelta(days=RHR_WINDOW_DAYS)).isoformat())
+        .lte("date", today.isoformat()).execute()
+    )
+    vals = [int(r["resting_hr"]) for r in ((res.data if res else None) or []) if r.get("resting_hr")]
+    if len(vals) < MIN_RHR_READINGS:
+        return None
+    rhr = int(round(sum(vals) / len(vals)))
+    db.table("athletes").update({"resting_hr": rhr, "resting_hr_source": "measured"}).eq("id", athlete_id).execute()
+    return rhr
+
 
 def age_on(dob: Any, today: date) -> int | None:
     try:

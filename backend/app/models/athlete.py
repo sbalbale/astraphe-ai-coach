@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field, field_validator
 from datetime import date
-from typing import Any, Optional, List
+from typing import Any, Literal, Optional, List
 
 class AthleteState(BaseModel):
     athlete_id: str
@@ -38,6 +38,8 @@ class AthleteProfileUpdate(BaseModel):
     ftp_watts: Optional[int] = Field(None, ge=20, le=800)
     max_hr: Optional[int] = Field(None, ge=80, le=250)
     resting_hr: Optional[int] = Field(None, ge=20, le=140)
+    # "measured" switches back to the wearable's 42-day average (resting_hr is then ignored).
+    resting_hr_source: Optional[Literal["measured"]] = None
     hr_zone_method: Optional[str] = Field(None, max_length=20)
     threshold_hr: Optional[int] = Field(None, ge=60, le=240)
     threshold_pace: Optional[str] = Field(None, max_length=12)  # e.g. "5:00"

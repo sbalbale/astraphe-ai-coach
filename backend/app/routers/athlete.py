@@ -358,6 +358,8 @@ def _build_athlete_zones_update(payload: dict) -> dict:
     for k in ("max_hr", "resting_hr"):
         if k in payload and payload[k] is not None:
             out[k] = payload[k]
+            if k == "resting_hr":
+                out["resting_hr_source"] = "manual"
     thr_raw = None
     if "lthr" in payload and payload.get("lthr") is not None:
         thr_raw = payload["lthr"]
@@ -497,6 +499,18 @@ async def update_athlete_profile(
 
     if not getattr(fresh, "data", None):
         raise HTTPException(status_code=500, detail="Updated profile but could not load updated record")
+
+    if update_data.get("resting_hr_source") == "measured":
+        from app.services.hr_anchors import refresh_measured_resting_hr
+
+        try:
+            today = await asyncio.to_thread(athlete_local_date, db, athlete_id)
+            rhr = await asyncio.to_thread(refresh_measured_resting_hr, db, athlete_id, today)
+            if rhr is not None:
+                fresh.data["resting_hr"] = rhr
+        except Exception as e:
+            # Saved as 'measured'; the next synced day sets the value.
+            print(f"[athlete.profile.patch] measured resting HR refresh failed: {repr(e)}")
 
     new_weight = update_data.get("weight_kg")
     if isinstance(new_weight, (int, float)) and new_weight > 0:

@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
-from app.routers import workouts, activity_detail, coach, athlete, biometrics, sync, garmin_sync, plan, debug, analysis, training_plans, admin, notifications, messaging
+from app.routers import workouts, activity_detail, coach, athlete, biometrics, sync, garmin_sync, plan, debug, analysis, training_plans, admin, notifications, messaging, weight
 from app.config import settings
 from app.core.rate_limiter import RateLimiter
 from app.core.redis import close_redis, describe_redis_url, ping_redis
@@ -272,6 +272,7 @@ app.include_router(athlete.router)
 app.include_router(workouts.router)
 app.include_router(activity_detail.router)
 app.include_router(biometrics.router)
+app.include_router(weight.router)
 app.include_router(coach.router)
 app.include_router(sync.router)
 app.include_router(garmin_sync.router)

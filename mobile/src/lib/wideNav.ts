@@ -37,7 +37,11 @@ export const WIDE_NAV: WideNavItem[] = [
     href: '/recovery',
     key: '3',
     icon: 'M20.8 8.6a5 5 0 0 0-8.8-3.2 5 5 0 0 0-8.8 3.2c0 5.4 8.8 11 8.8 11s8.8-5.6 8.8-11z',
-    subs: []
+    subs: [
+      { label: 'Overview', href: '/recovery', routes: ['/recovery', '/sleep', '/strain'] },
+      { label: 'Heart rate', href: '/heart-rate', routes: ['/heart-rate'] },
+      { label: 'Weight', href: '/weight', routes: ['/weight'] }
+    ]
   },
   {
     id: '/plan',
@@ -65,6 +69,8 @@ export const PALETTE_PAGES: PaletteRow[] = [
   { group: 'GO TO', tag: 'LOG', label: 'Training log', hint: 'Activities, map, charts, laps', href: '/training', key: '2' },
   { group: 'GO TO', tag: 'TRD', label: 'Trends & zones', hint: 'Fitness, fatigue, weekly TSS, zones', href: '/trends' },
   { group: 'GO TO', tag: 'BDY', label: 'Body', hint: 'Recovery, sleep, strain', href: '/recovery', key: '3' },
+  { group: 'GO TO', tag: 'HR', label: 'Heart rate', hint: 'Full day, sleep and workouts', href: '/heart-rate' },
+  { group: 'GO TO', tag: 'KG', label: 'Weight', hint: 'Trend, goal, weigh-ins', href: '/weight' },
   { group: 'GO TO', tag: 'PLN', label: 'Plan', hint: 'Month and week calendar', href: '/plan', key: '4' },
   { group: 'GO TO', tag: 'CHT', label: 'Coach', hint: 'Conversations', href: '/chat', key: '5' },
   { group: 'GO TO', tag: 'RDY', label: 'Readiness', hint: 'What goes into today’s score', href: '/readiness' },

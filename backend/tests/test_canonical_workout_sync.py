@@ -20,8 +20,21 @@ class _CanonicalQuery:
         self._single = False
         self._update_payload: dict | None = None
         self._insert_payload: dict | None = None
+        self._delete = False
 
     def select(self, *_a, **_k):
+        return self
+
+    def delete(self):
+        self._delete = True
+        return self
+
+    def lt(self, field, value):
+        self._range[(field, "lt")] = value
+        return self
+
+    def gt(self, field, value):
+        self._range[(field, "gt")] = value
         return self
 
     def eq(self, field, value):
@@ -74,10 +87,17 @@ class _CanonicalQuery:
                 continue  # rows in these tests often omit started_at
             if (op == "gte" and str(rv) < v) or (op == "lte" and str(rv) > v):
                 return False
+            if (op == "gt" and str(rv) <= v) or (op == "lt" and str(rv) >= v):
+                return False
         return True
 
     def execute(self):
         from types import SimpleNamespace
+
+        if self._delete:
+            gone = [r for r in self.db.rows if self._matches(r)]
+            self.db.rows[:] = [r for r in self.db.rows if not self._matches(r)]
+            return SimpleNamespace(data=gone)
 
         if self._insert_payload is not None:
             row = {**self._insert_payload, "id": "new-workout-1"}
@@ -385,3 +405,30 @@ def test_cross_sport_match_picks_the_closest_row():
     )
     assert created is False
     assert row["id"] == "w-near"
+
+
+def test_recorded_workout_replaces_overlapping_hr_detection():
+    detected = {
+        "id": "det-1", "athlete_id": "a1", "source": "hr_detected", "primary_source": "hr_detected",
+        "sport": "other", "external_id": "a1:1", "duration_seconds": 2400,
+        "started_at": "2026-05-20T10:02:00+00:00", "ended_at": "2026-05-20T10:42:00+00:00",
+    }
+    earlier = {**detected, "id": "det-0", "started_at": "2026-05-20T07:00:00+00:00", "ended_at": "2026-05-20T07:30:00+00:00"}
+    db = _CanonicalDb(rows=[dict(detected), dict(earlier)])
+
+    row, created = processing._find_or_create_canonical_workout_sync(
+        db, "a1", "garmin", "run", _now(), 2700, external_id="g-1"
+    )
+
+    assert created is True and row["source"] == "garmin"
+    assert [r["id"] for r in db.rows] == ["det-0", "new-workout-1"]  # only the overlapping one went
+
+
+def test_hr_detection_does_not_remove_other_detections():
+    detected = {
+        "id": "det-1", "athlete_id": "a1", "source": "hr_detected", "sport": "other", "external_id": "a1:9",
+        "duration_seconds": 2400, "started_at": "2026-05-20T10:30:00+00:00", "ended_at": "2026-05-20T11:10:00+00:00",
+    }
+    db = _CanonicalDb(rows=[dict(detected)])
+    processing._find_or_create_canonical_workout_sync(db, "a1", "hr_detected", "other", _now(), 2400, external_id="a1:1")
+    assert any(r["id"] == "det-1" for r in db.rows)

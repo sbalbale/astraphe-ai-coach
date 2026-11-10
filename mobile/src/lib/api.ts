@@ -2,6 +2,8 @@ import { getAuthHeaders } from './apiAuth';
 import { supabase } from '$lib/supabase';
 import type { Workout } from './types/training';
 import type { LinkResult, PlanCandidates, PlanSummary, WorkoutPlanLink } from './types/linking';
+import type { HeartRateDay } from './types/heartRate';
+import type { WeightPayload } from './types/weight';
 import { getTimeOfDayPeriod, type TimeOfDayPeriod } from './utils/greeting';
 
 const VITE_API_URL = import.meta.env.VITE_API_URL;
@@ -144,6 +146,51 @@ export const api = {
       console.warn("Failed to fetch biometrics from backend.", e);
     }
     return null;
+  },
+
+  /** One local day of all-day heart rate with its workouts, sleep and resting-HR history. */
+  async getHeartRateDay(day?: string): Promise<HeartRateDay | null> {
+    try {
+      const headers = await getAuthHeaders();
+      const qs = day && ISO_DATE_ONLY.test(day) ? `?date=${day}` : '';
+      const res = await fetch(`${API_URL}/v1/biometrics/heart-rate${qs}`, { headers });
+      if (res.ok) return (await res.json()) as HeartRateDay;
+    } catch (e) {
+      console.warn('Failed to fetch heart rate day from backend.', e);
+    }
+    return null;
+  },
+
+  /** Weight screen: a year of weigh-ins, goal, FTP. */
+  async getWeight(): Promise<WeightPayload | null> {
+    try {
+      const headers = await getAuthHeaders();
+      const res = await fetch(`${API_URL}/v1/weight`, { headers });
+      if (res.ok) return (await res.json()) as WeightPayload;
+    } catch (e) {
+      console.warn('Failed to fetch weight from backend.', e);
+    }
+    return null;
+  },
+
+  /** Log, delete (soft), restore a weigh-in, or set the goal. The response body, or null on failure. */
+  async weightRequest(
+    method: 'POST' | 'DELETE' | 'PUT',
+    path: '' | `/${string}`,
+    body?: Record<string, unknown>
+  ): Promise<Record<string, unknown> | null> {
+    try {
+      const headers = await getAuthHeaders({ 'Content-Type': 'application/json' });
+      const res = await fetch(`${API_URL}/v1/weight${path}`, {
+        method,
+        headers,
+        body: body ? JSON.stringify(body) : undefined
+      });
+      return res.ok ? ((await res.json()) as Record<string, unknown>) : null;
+    } catch (e) {
+      console.warn(`Failed to ${method} /v1/weight${path}.`, e);
+      return null;
+    }
   },
 
   async getPlan() {

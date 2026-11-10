@@ -63,8 +63,7 @@
 
     if (initialized) return;
     maxHR = Number(athleteStore.profile?.max_hr) > 0 ? Number(athleteStore.profile?.max_hr) : null;
-    restingHR =
-      typeof athleteStore.profile?.resting_hr === 'number' ? athleteStore.profile.resting_hr : null;
+    syncRestingFromProfile();
     const hm = (athleteStore.profile as { hr_zone_method?: string })?.hr_zone_method;
     if (hm === 'hrr' || hm === 'max_hr' || hm === 'lthr') {
       hrZoneMethod = hm;
@@ -78,6 +77,26 @@
     initialized = true;
   });
 
+
+  /** Resting HR as stored, and whether it follows the wearable ('measured') or was entered. */
+  let savedRestingHR = $state<number | null>(null);
+  let restingMeasured = $state(false);
+  let usingMeasured = $state(false);
+
+  function syncRestingFromProfile() {
+    const p = athleteStore.profile as { resting_hr?: unknown; resting_hr_source?: string } | null;
+    savedRestingHR = typeof p?.resting_hr === 'number' ? p.resting_hr : null;
+    restingHR = savedRestingHR;
+    restingMeasured = p?.resting_hr_source === 'measured';
+  }
+
+  async function useMeasuredResting() {
+    usingMeasured = true;
+    const ok = await athleteStore.updateProfile({ resting_hr_source: 'measured' });
+    if (ok) await athleteStore.refreshProfile();
+    usingMeasured = false;
+    if (ok) syncRestingFromProfile();
+  }
 
   function setUnits(next: Units) {
     if (next === units) return;
@@ -109,7 +128,9 @@
       updates.threshold_pace = pace.trim();
     }
 
-    if (restingHR != null && restingHR > 0) {
+    // Only when changed: sending it marks it as entered by the athlete, which stops it
+    // following the wearable's measured value.
+    if (restingHR != null && restingHR > 0 && restingHR !== savedRestingHR) {
       updates.resting_hr = restingHR;
     }
 
@@ -120,6 +141,7 @@
     const success = await athleteStore.updateProfile(updates);
     saving = false;
     if (success) {
+      syncRestingFromProfile();
       saved = true;
       window.setTimeout(() => {
         saved = false;
@@ -185,6 +207,23 @@
       </div>
     {/each}
   </section>
+  <p class="m-0 -mt-1 px-1 text-xs leading-[1.45] text-text2">
+    {#if restingMeasured && restingHR === savedRestingHR}
+      Resting HR is automatic: the 42-day average from your wearable, updated as days sync. Type a value to use your own.
+    {:else if restingMeasured}
+      Saving makes this resting HR yours; it will stop following your wearable.
+    {:else if savedRestingHR != null}
+      Resting HR is set by you, so syncs leave it alone.
+      <button
+        type="button"
+        onclick={useMeasuredResting}
+        disabled={usingMeasured}
+        class="p-0 border-0 bg-transparent text-blue text-xs font-medium cursor-pointer disabled:opacity-60"
+      >{usingMeasured ? 'Switching…' : 'Use measured instead'}</button>
+    {:else}
+      Resting HR fills in from your wearable once a few days have synced.
+    {/if}
+  </p>
 
   <div class="flex flex-col gap-2">
     <label for="hrzone-method" class="font-mono text-[11px] tracking-[0.14em] text-text2">HEART-RATE ZONES</label>

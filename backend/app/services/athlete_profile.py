@@ -35,6 +35,17 @@ def normalize_profile_update(update_data: dict[str, Any]) -> dict[str, Any]:
         # Entered by the athlete: never replaced by the app's estimate (cleared -> estimated again).
         data["max_hr_source"] = "manual" if data.get("max_hr") else None
 
+    # Resting HR follows the wearable ('measured') until the athlete enters one; asking
+    # for 'measured' again drops any value sent with it (the caller then recomputes it,
+    # see hr_anchors.refresh_measured_resting_hr).
+    if data.get("resting_hr_source") == "measured":
+        data.pop("resting_hr", None)
+    elif "resting_hr" in data:
+        data.pop("resting_hr_source", None)
+        if data.get("resting_hr"):
+            data["resting_hr_source"] = "manual"
+        else:
+            data.pop("resting_hr")  # clearing it: keep the measured value
     if "threshold_hr" in data and data.get("threshold_hr") is not None:
         try:
             if int(data["threshold_hr"]) > 0:
@@ -301,7 +312,7 @@ def update_profile_from_coach(db: Any, athlete_id: str, args: dict[str, Any]) ->
     changed = {
         k: {"from": current.get(k), "to": fresh.get(k)}
         for k in update
-        if k not in ("max_hr_source", "threshold_hr_source") and current.get(k) != fresh.get(k)
+        if k not in ("max_hr_source", "threshold_hr_source", "resting_hr_source") and current.get(k) != fresh.get(k)
     }
     out: dict[str, Any] = {"status": "updated" if changed else "unchanged", "changed": changed}
     if rescoring:

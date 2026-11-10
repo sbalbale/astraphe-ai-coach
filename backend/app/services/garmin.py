@@ -1271,8 +1271,47 @@ def save_sleep_stage_segments(
     return len(rows)
 
 
+async def sync_weigh_ins(athlete_id: str, db: Any, client: Garmin, start_date: date, end_date: date) -> int:
+    """Garmin weigh-ins (Index scale or entered in Garmin Connect) for the window: one call."""
+    from app.services.weight import parse_garmin_weigh_ins, save_garmin_weigh_ins
+
+    try:
+        payload = await asyncio.to_thread(client.get_weigh_ins, start_date.isoformat(), end_date.isoformat())
+        return await asyncio.to_thread(save_garmin_weigh_ins, db, athlete_id, parse_garmin_weigh_ins(payload))
+    except Exception as exc:  # a 429 here waits for the next pass like any other
+        logger.info("garmin weigh-ins sync failed athlete=%s: %s", athlete_id, exc)
+        return 0
+
+
+async def store_heart_rate_series_and_detect(
+    athlete_id: str, db: Any, day: date, heart_rates: dict[str, Any] | None
+) -> int:
+    """Save the day's all-day heart rate and re-detect workouts; returns detections changed."""
+    from app.services.heart_rate_series import parse_garmin_heart_rate_values, save_series
+    from app.services.hr_activity_detection import detect_and_save_for_day
+
+    samples = parse_garmin_heart_rate_values(heart_rates)
+    if not samples:
+        return 0
+    try:
+        await asyncio.to_thread(
+            save_series, db, athlete_id, day, PROVIDER, samples,
+            _round_int((heart_rates or {}).get("restingHeartRate")),
+        )
+    except Exception as exc:
+        logger.warning("garmin heart rate series save failed athlete=%s date=%s: %s", athlete_id, day, exc)
+        return 0
+    try:
+        res = await detect_and_save_for_day(db, athlete_id, day)
+        return res["saved"] + res["removed"]
+    except Exception as exc:
+        logger.warning("hr activity detection failed athlete=%s date=%s: %s", athlete_id, day, exc)
+        return 0
+
+
 async def fetch_and_store_biometrics_for_day(
-    athlete_id: str, db: Any, client: Garmin, day: date
+    athlete_id: str, db: Any, client: Garmin, day: date,
+    detection_counter: dict[str, int] | None = None,
 ) -> bool:
     """
     Fetch sleep/HRV/resting-HR for one day and store via the canonical
@@ -1330,6 +1369,13 @@ async def fetch_and_store_biometrics_for_day(
         except Exception as exc:
             logger.warning("garmin naps save failed athlete=%s date=%s: %s", athlete_id, cdate, exc)
 
+    # All-day heart rate (2-minute averages) rides on the get_heart_rates response we
+    # already fetched; workouts are then detected from it. Activities sync before
+    # biometrics, so the day's recorded workouts are already there to defer to.
+    detected = await store_heart_rate_series_and_detect(athlete_id, db, day, heart_rates)
+    if detection_counter is not None:
+        detection_counter["changed"] = detection_counter.get("changed", 0) + detected
+
     payload = _daily_biometrics_from_garmin(day, sleep, hrv, heart_rates)
     if payload is None:
         return False
@@ -1346,10 +1392,11 @@ async def sync_biometrics_for_athlete(
         return 0
     count = 0
     rate_limited = False
+    detections: dict[str, int] = {}
     day = start_date
     while day <= end_date:
         try:
-            if await fetch_and_store_biometrics_for_day(athlete_id, db, client, day):
+            if await fetch_and_store_biometrics_for_day(athlete_id, db, client, day, detections):
                 count += 1
         except GarminRateLimitedError:
             logger.warning(
@@ -1360,7 +1407,12 @@ async def sync_biometrics_for_athlete(
             break
         day += timedelta(days=1)
         await asyncio.sleep(GARMIN_REQUEST_GAP_S)
+    if not rate_limited:
+        await sync_weigh_ins(athlete_id, db, client, start_date, end_date)
     await asyncio.to_thread(persist_session, db, athlete_id, client)
+    if detections.get("changed"):
+        # Detected workouts carry TSS; fold them into CTL/ATL once for the whole pass.
+        await asyncio.to_thread(recalculate_tss_history, athlete_id, db)
     if rate_limited:
         raise GarminRateLimitedError(f"rate-limited after {count} day(s) of biometrics")
     return count

@@ -528,3 +528,41 @@ def test_carried_debt_can_reach_two_hours():
     from app.services.algorithms import MAX_DEBT_LEFT_MIN, SLEEP_DEBT_DECAY_RATE, compute_sleep_need
 
     assert compute_sleep_need(480, 0, MAX_DEBT_LEFT_MIN * SLEEP_DEBT_DECAY_RATE) == 480 + 120
+
+
+# ---- profile resting HR follows the measured baseline -------------------------------
+
+
+def _rhr_history(*days_and_values):
+    return [{"date": d, "resting_hr": v, "hrv_rmssd": None, "skin_temp": None} for d, v in days_and_values]
+
+
+def _run_rhr(history, athlete, payload_date=date(2026, 5, 20), rhr=48):
+    db = _BioDb(_default_responses(
+        biometrics=[SimpleNamespace(data=None), SimpleNamespace(data=history), SimpleNamespace(data=None)],
+        athletes=[SimpleNamespace(data=athlete)],
+    ))
+    processing.process_and_save_biometrics(_payload(date=payload_date, resting_hr=rhr), "athlete-1", db, skip_pmc_recalc=True)
+    return db.updates["athletes"][0]
+
+
+def test_measured_resting_hr_follows_the_baseline():
+    upd = _run_rhr(_rhr_history(("2026-05-18", 50), ("2026-05-19", 52)), {"max_hr": 190, "threshold_hr": 165, "resting_hr_source": "measured"})
+    assert upd["resting_hr"] == 50 and upd["resting_hr_source"] == "measured"
+
+
+def test_manual_resting_hr_is_never_replaced():
+    upd = _run_rhr(_rhr_history(("2026-05-18", 50), ("2026-05-19", 52)), {"max_hr": 190, "threshold_hr": 165, "resting_hr_source": "manual"})
+    assert "resting_hr" not in upd
+
+
+def test_no_readings_no_resting_hr_write():
+    # baseline_rhr defaults to 50 without readings; that used to land on the profile
+    upd = _run_rhr([], {"max_hr": 190, "threshold_hr": 165}, rhr=None)
+    assert "resting_hr" not in upd
+
+
+def test_reprocessing_an_old_day_leaves_resting_hr_alone():
+    hist = _rhr_history(("2026-05-18", 50), ("2026-05-19", 52), ("2026-05-25", 60))
+    upd = _run_rhr(hist, {"max_hr": 190, "threshold_hr": 165, "resting_hr_source": "measured"})
+    assert "resting_hr" not in upd

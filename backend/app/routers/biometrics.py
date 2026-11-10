@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, BackgroundTasks
+from fastapi import APIRouter, Depends, BackgroundTasks, Query
 from typing import Optional
 import asyncio
 from datetime import date, datetime, timedelta, timezone
@@ -213,3 +213,22 @@ async def ingest_daily_biometrics(
     background_tasks.add_task(process_and_save_biometrics, payload, athlete_id, db)
     background_tasks.add_task(invalidate_athlete_caches, athlete_id)
     return {"status": "success", "message": "Biometrics recorded and recovery analysis queued", "date": payload.date}
+
+@router.get("/heart-rate")
+async def get_heart_rate_day(
+    day: Optional[date] = Query(None, alias="date"),
+    athlete_id: str = Depends(get_current_athlete),
+    db = Depends(get_user_db),
+):
+    """
+    One local day of all-day heart rate (Garmin: 2-minute averages) with the day's
+    workouts (recorded, or detected from this series: ``detected``), sleep, and the
+    last 30 days of resting HR. ``date`` defaults to the athlete's local today.
+    ``samples`` is empty when the day has no series.
+    """
+    from app.services.heart_rate_series import build_heart_rate_day
+    from app.services.time_utils import athlete_local_date
+
+    if day is None:
+        day = await asyncio.to_thread(athlete_local_date, db, athlete_id)
+    return await asyncio.to_thread(build_heart_rate_day, db, athlete_id, day)

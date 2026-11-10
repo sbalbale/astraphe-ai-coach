@@ -2,7 +2,9 @@ from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Query
 from app.core.cache_invalidation import invalidate_athlete_caches
 from app.models.workout import WorkoutPayload, WorkoutUpdatePayload
 from app.services.algorithms import compute_tss_power
+from app.services.hr_activity_detection import dismiss_detection
 from app.services.processing import (
+    HR_DETECTED_SOURCE,
     _refresh_daily_strain_for_instant_sync,
     normalize_sport,
     process_and_save_workout,
@@ -209,6 +211,11 @@ def update_workout(
         update_data = _workout_update_data(payload, existing)
         if not update_data:
             raise HTTPException(status_code=400, detail="No editable workout fields provided")
+        if existing.get("source") == HR_DETECTED_SOURCE:
+            # Editing a heart-rate detection confirms it: it becomes the athlete's own
+            # workout, which re-detection never overwrites or removes.
+            update_data["source"] = "manual"
+            update_data["primary_source"] = "manual"
 
         updated_res = (
             db.table("workouts")
@@ -263,7 +270,7 @@ def delete_workout(
     try:
         existing = (
             db.table("workouts")
-            .select("id, started_at")
+            .select("id, started_at, ended_at, duration_seconds, source")
             .eq("id", workout_id)
             .eq("athlete_id", athlete_id)
             .maybe_single()
@@ -273,6 +280,9 @@ def delete_workout(
             raise HTTPException(status_code=404, detail="Workout not found")
 
         db.table("workouts").delete().eq("id", workout_id).eq("athlete_id", athlete_id).execute()
+        if existing.data.get("source") == HR_DETECTED_SOURCE:
+            # Not a workout after all: don't detect this window again on the next sync.
+            dismiss_detection(db, athlete_id, existing.data)
         # Like PATCH: the deleted TSS must leave CTL/ATL/TSB and that day's strain
         # (a deleted duplicate otherwise kept counting until some later sync).
         background_tasks.add_task(recalculate_tss_history, athlete_id, db)
