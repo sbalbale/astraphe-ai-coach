@@ -10,6 +10,7 @@
   import type { HeartRateDay } from '$lib/types/heartRate';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { bodyDate, rememberBodyDate } from '$lib/stores/bodyDate.svelte';
+  import { cachedHeartRateDay, heartRateDayIsFresh, loadHeartRateDay } from '$lib/stores/bodyCache';
   import { hrZoneAnchorLabel } from '$lib/hrZoneDisplay';
   import {
     buildDayModel,
@@ -51,13 +52,27 @@
     const d = day;
     rememberBodyDate(d, todayStr);
     const id = ++reqId;
-    loading = true;
-    void api.getHeartRateDay(d).then((res) => {
-      if (id !== reqId) return;
-      data = res;
-      loading = false;
+    // Show the cached day at once (no skeleton) and refresh it when stale. Without a
+    // cached copy, clear the old day so its chart isn't shown under the new date.
+    const cached = cachedHeartRateDay(d);
+    data = cached;
+    loading = !cached;
+    const done = () => {
+      if (id === reqId) loading = false;
+      prefetch(format(subDays(parseISO(d), 1), 'yyyy-MM-dd'));
+    };
+    if (cached && heartRateDayIsFresh(d, todayStr)) return done();
+    void loadHeartRateDay(d, api.getHeartRateDay).then((res) => {
+      if (id === reqId && res) data = res;
+      done();
     });
   });
+
+  /** Fetch a day into the cache ahead of time (the previous day: the usual next step). */
+  function prefetch(d: string) {
+    if (d < format(subDays(new Date(), MAX_BACK_DAYS), 'yyyy-MM-dd') || heartRateDayIsFresh(d, todayStr)) return;
+    void loadHeartRateDay(d, api.getHeartRateDay);
+  }
 
   function setDay(d: string) {
     day = d;
@@ -87,7 +102,7 @@
   const X = (m: number) => ((m - a) / span) * 1000;
   const range = $derived(chartRange(model?.hr ?? []));
   const Y = (v: number) => 200 - ((Math.max(range.lo, Math.min(range.hi, v)) - range.lo) / (range.hi - range.lo)) * 200;
-  const clock = (m: number) => (model ? clockAt(model.dayStartMs, m) : '');
+  const clock = (m: number) => clockAt(m);
 
   const path = $derived(model ? chartPath(model.hr, a, b, Y) : '');
   const stats = $derived(model ? rangeStats(model.hr, a, b) : { avg: null, max: null, min: null, n: 0 });

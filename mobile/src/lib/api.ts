@@ -4,6 +4,7 @@ import type { Workout } from './types/training';
 import type { LinkResult, PlanCandidates, PlanSummary, WorkoutPlanLink } from './types/linking';
 import type { HeartRateDay } from './types/heartRate';
 import type { WeightPayload } from './types/weight';
+import { clearBodyCache } from './stores/bodyCache';
 import { getTimeOfDayPeriod, type TimeOfDayPeriod } from './utils/greeting';
 
 const VITE_API_URL = import.meta.env.VITE_API_URL;
@@ -26,6 +27,7 @@ export const api = {
   /** Drop per-user in-memory caches (sign-out / user switch). */
   clearUserCaches() {
     _initCache = null;
+    clearBodyCache();
   },
 
   async deleteJson(path: string, payload: any): Promise<boolean> {

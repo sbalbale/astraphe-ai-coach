@@ -65,7 +65,7 @@
   import { firstName, isProfileComplete } from '$lib/utils/profile';
   import { addDays } from 'date-fns';
   import CalibrationBadge from '$lib/components/CalibrationBadge.svelte';
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { analysisNavEpoch } from '$lib/analysisNavEpoch.svelte';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
   import { authStore } from '$lib/stores/authStore.svelte';
@@ -300,7 +300,9 @@
 
     const endDay = todayStr;
 
-    const cached = dashboardAiSummaryMemo.get(endDay);
+    // Read without subscribing: the request below writes this memo, and a subscribed read
+    // re-ran the effect and sent the summary request a second time.
+    const cached = untrack(() => dashboardAiSummaryMemo.get(endDay));
     if (cached !== undefined && cached !== null) {
       const summary = _sanitizeAiSummary(cached);
       if (summary) {
@@ -315,6 +317,11 @@
     } else if (cached === null) {
       dashboardAiSummaryMemo.delete(endDay);
     }
+
+    // Fetch once the store has settled: this effect re-runs as `loading` flips, and
+    // fetching on both edges sent the (slowest) summary request twice on every app start.
+    // A forced reload (new workout / sleep) still re-runs it when loading ends.
+    if (athleteStore.loading || !athleteStore.initialLoadDone) return;
 
     const requestKey = `dashboard-ai-summary:${endDay}`;
     activeAnalysisKey = requestKey;

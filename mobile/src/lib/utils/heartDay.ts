@@ -126,9 +126,14 @@ export function tickMinutes(a: number, b: number, compact = false): number[] {
   return out;
 }
 
-export function clockAt(dayStartMs: number, m: number): string {
-  const d = new Date(dayStartMs + Math.round(m) * MIN_MS);
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+/**
+ * Wall-clock time of minute `m` of the athlete's day, counted from their local midnight
+ * (day_start). Formatting in the device's time zone shifted every label and readout
+ * when it differed (travelling, or viewing from elsewhere).
+ */
+export function clockAt(m: number): string {
+  const r = Math.round(m);
+  return `${String(Math.floor(r / 60) % 24).padStart(2, '0')}:${String(r % 60).padStart(2, '0')}`;
 }
 
 export function formatMins(n: number): string {
@@ -172,7 +177,7 @@ export function zoomPresets(model: DayModel): { label: string; r: [number, numbe
   for (const s of spans) {
     if (s.kind === 'sleep') continue;
     // Detections share one title; their start time tells them apart.
-    const label = s.kind === 'detected' ? `Detected · ${clockAt(model.dayStartMs, s.a)}` : s.title;
+    const label = s.kind === 'detected' ? `Detected · ${clockAt(s.a)}` : s.title;
     out.push({ label, r: pad(s) });
   }
   return out;

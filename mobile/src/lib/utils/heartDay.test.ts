@@ -3,6 +3,7 @@ import type { HeartRateDay } from '$lib/types/heartRate';
 import {
   buildDayModel,
   chartPath,
+  clockAt,
   chartY,
   formatMins,
   rangeStats,
@@ -168,5 +169,13 @@ describe('labels', () => {
     );
     const label = zoomPresets(m).find((z) => z.label.startsWith('Detected'))?.label;
     expect(label).toMatch(/^Detected · \d\d:\d\d$/);
+  });
+});
+
+describe('clockAt', () => {
+  it('counts from the athlete’s midnight, whatever the device time zone', () => {
+    expect(clockAt(0)).toBe('00:00');
+    expect(clockAt(754)).toBe('12:34');
+    expect(clockAt(1440)).toBe('00:00');
   });
 });

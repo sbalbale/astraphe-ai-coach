@@ -61,6 +61,20 @@ function clearCache(): void {
   }
 }
 
+type Settled<F extends (...a: any[]) => Promise<unknown>> = PromiseSettledResult<Awaited<ReturnType<F>>>;
+/** Tier 2 requests in flight, and the profile-write count when they started. */
+type Tier2Request = {
+  profileWrites: number;
+  results: Promise<
+    [
+      Settled<typeof api.getAthleteMetrics>,
+      Settled<typeof api.getBiometricsPage>,
+      Settled<typeof api.getPlan>,
+      Settled<typeof api.getCompletedWorkouts>
+    ]
+  >;
+};
+
 export class AthleteState {
   ctl = $state(0);
   atl = $state(0);
@@ -234,6 +248,9 @@ export class AthleteState {
 
     try {
       const profileWritesAtStart = this._profileWrites;
+      // Tier 2 is requested now, alongside tier 1, and applied once tier 1 is in (it
+      // only uses tier 1's state as a fallback): it used to wait a full round trip.
+      const tier2 = this.requestTier2();
       const [stateResult, profileResult, syncResult] = await Promise.allSettled([
         api.getAthleteState(),
         api.getAthleteProfile(),
@@ -274,7 +291,7 @@ export class AthleteState {
       }
 
       // Tier 2 background enrichment + persist cache on completion.
-      this.loadTier2(athleteId, state, gen);
+      this.loadTier2(athleteId, state, gen, tier2);
 
       if (this._forceQueued) {
         this._forceQueued = false;
@@ -295,6 +312,9 @@ export class AthleteState {
     const gen = this._gen;
     try {
       const profileWritesAtStart = this._profileWrites;
+      // Tier 2 is requested now, alongside tier 1, and applied once tier 1 is in (it
+      // only uses tier 1's state as a fallback): it used to wait a full round trip.
+      const tier2 = this.requestTier2();
       const [stateResult, profileResult, syncResult] = await Promise.allSettled([
         api.getAthleteState(),
         api.getAthleteProfile(),
@@ -319,7 +339,7 @@ export class AthleteState {
       if (profileData && profileWritesAtStart === this._profileWrites) this.profile = profileData;
       if (syncData) this.syncStatus = syncData;
 
-      this.loadTier2(athleteId, state, gen);
+      this.loadTier2(athleteId, state, gen, tier2);
     } catch (e) {
       console.error('[AthleteStore] Background refresh error:', e);
     } finally {
@@ -330,14 +350,27 @@ export class AthleteState {
     }
   }
 
-  private loadTier2(athleteId: string | null, state: any, gen: number = this._gen) {
-    const profileWritesAtStart = this._profileWrites;
-    Promise.allSettled([
-      api.getAthleteMetrics(),
-      api.getBiometricsPage({ limit: 60 }),
-      api.getPlan(),
-      api.getCompletedWorkouts(200)
-    ]).then(([metricsResult, bioResult, planResult, workoutsResult]) => {
+  /** Start the tier 2 requests (and note the profile-write count they started at). */
+  private requestTier2(): Tier2Request {
+    return {
+      profileWrites: this._profileWrites,
+      results: Promise.allSettled([
+        api.getAthleteMetrics(),
+        api.getBiometricsPage({ limit: 60 }),
+        api.getPlan(),
+        api.getCompletedWorkouts(200)
+      ])
+    };
+  }
+
+  private loadTier2(
+    athleteId: string | null,
+    state: any,
+    gen: number = this._gen,
+    tier2: Tier2Request = this.requestTier2()
+  ) {
+    const profileWritesAtStart = tier2.profileWrites;
+    tier2.results.then(([metricsResult, bioResult, planResult, workoutsResult]) => {
       if (!this.current(gen)) return;
       const metricsData = metricsResult.status === 'fulfilled' ? metricsResult.value : null;
       const biometricsData = bioResult.status === 'fulfilled' ? bioResult.value : null;

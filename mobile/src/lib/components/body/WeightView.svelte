@@ -8,6 +8,7 @@
   import { api } from '$lib/api';
   import type { WeightPayload } from '$lib/types/weight';
   import { athleteStore } from '$lib/stores/athleteStore.svelte';
+  import { cachedWeight, storeWeight } from '$lib/stores/bodyCache';
   import { normalizeUnits } from '$lib/utils/units';
   import {
     RANGES,
@@ -29,8 +30,9 @@
 
   let { wide = false }: { wide?: boolean } = $props();
 
-  let data = $state<WeightPayload | null>(null);
-  let loading = $state(true);
+  // Render the last response at once (no skeleton), then refresh it.
+  let data = $state<WeightPayload | null>(cachedWeight());
+  let loading = $state(cachedWeight() === null);
   let unit = $state<WeightUnit | null>(null);
   let range = $state(90);
   let metric = $state<Metric>('weight');
@@ -46,7 +48,10 @@
 
   async function load() {
     const res = await api.getWeight();
-    if (res) data = res;
+    if (res) {
+      data = res;
+      storeWeight(res);
+    }
     loading = false;
   }
   $effect(() => {
