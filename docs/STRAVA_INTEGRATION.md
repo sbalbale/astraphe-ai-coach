@@ -2,15 +2,15 @@
 
 ## Current Status
 
-Strava is implemented as a first-class integration in the backend. It is no longer just a plan.
+Strava is implemented as a first-class integration in the backend (`backend/app/services/strava.py`, `backend/app/routers/sync.py`, `backend/app/routers/activity_detail.py`).
 
 Implemented pieces:
 
-- OAuth 2.0 authorize/callback flow.
+- OAuth 2.0 authorize/callback flow with a signed `state`.
 - Webhook verification and event ingestion.
 - Owner verification using the authenticated Strava athlete ID.
 - Token refresh and storage in `oauth_tokens`.
-- Recent activity backfill.
+- Manual backfill, plus a startup backfill of the last 24 hours to recover webhooks missed during a deploy or restart.
 - Activity detail ingestion into `workouts`.
 - Stream and lap storage in `activity_streams` and `activity_laps`.
 - Activity detail routes for streams, laps, intervals, refetch/hydration, and zones.
@@ -25,9 +25,13 @@ STRAVA_CLIENT_ID=
 STRAVA_CLIENT_SECRET=
 STRAVA_WEBHOOK_VERIFY_TOKEN=
 STRAVA_WEBHOOK_SUBSCRIPTION_ID=
+STRAVA_STARTUP_BACKFILL_ENABLED=true
+STRAVA_STARTUP_BACKFILL_HOURS=24
 APP_BASE_URL=http://localhost:8000
 MOBILE_DEEP_LINK_SCHEME=astraphe
 ```
+
+When `STRAVA_WEBHOOK_SUBSCRIPTION_ID` is set, webhook events from any other subscription are dropped. `backend/app/services/strava_webhook_sub.py` lists and registers push subscriptions against `{APP_BASE_URL}/v1/sync/strava/webhook`.
 
 Set the Strava app callback domain to the production API host. Locally, expose the backend with ngrok or Cloudflare Tunnel and update `APP_BASE_URL` to the public URL when testing OAuth/webhooks.
 
@@ -45,7 +49,7 @@ Webhooks:
 
 Backfill and status:
 
-- `POST /v1/sync/strava/backfill?days=90`
+- `POST /v1/sync/strava/backfill?days=90` (3 per hour)
 - `GET /v1/sync/status`
 - `DELETE /v1/sync/strava`
 
@@ -55,8 +59,8 @@ Activity detail:
 - `GET /v1/activities/{workout_id}/streams`
 - `GET /v1/activities/{workout_id}/laps`
 - `GET /v1/activities/{workout_id}/intervals`
-- `POST /v1/activities/{workout_id}/hydrate-streams`
-- `POST /v1/activities/{workout_id}/refetch-strava`
+- `POST /v1/activities/{workout_id}/hydrate-streams` (30 per hour)
+- `POST /v1/activities/{workout_id}/refetch-strava` (20 per hour)
 - `GET /v1/activities/{workout_id}/zones`
 
 ## Data Model
@@ -86,21 +90,21 @@ Mobile profile/connections screen
   -> optional recent activity import/backfill
 ```
 
-Requested scopes should include activity read access. Use the narrowest scopes that support the product flow being tested.
+The authorize URL requests `activity:read_all,profile:read_all` with `approval_prompt=force`, so Strava always shows the consent screen.
 
 ## Webhook Flow
 
 ```text
 Strava activity event
-  -> GET challenge during subscription setup
+  -> GET challenge during subscription setup (checks STRAVA_WEBHOOK_VERIFY_TOKEN)
   -> POST create/update/delete events
-  -> verify token/subscription config
-  -> map owner_id to stored Strava token
-  -> fetch activity detail
-  -> upsert workout and related stream/lap data
+  -> drop events for another subscription_id (when configured) or an unknown owner
+  -> map owner_id to the stored Strava token's athlete
+  -> create/update: fetch activity detail in the background, upsert workout + streams/laps
+  -> delete: clear strava_activity_id on that athlete's workout (the workout row stays)
 ```
 
-Strava webhooks are intentionally event-driven. Do not poll Strava for new activities on a schedule.
+Strava webhooks are intentionally event-driven. Apart from the startup backfill, Strava is not polled on a schedule.
 
 ## Streams And Laps
 
@@ -118,7 +122,7 @@ Streams are used for intra-workout detail such as:
 
 Laps are stored separately so workout detail screens can show interval/split summaries without loading the full stream payload.
 
-Redis may cache high-read stream/zone responses when configured.
+Detail, stream and zone responses are cached in Redis when it is configured.
 
 ## Deduplication
 
@@ -141,25 +145,26 @@ General source priority, both for workout fields and biometrics
 (`SOURCE_PRIORITY` in `processing.py`), highest to lowest:
 
 ```
-garmin > whoop > intervals_icu > strava > healthkit > manual
+garmin > whoop > intervals_icu > strava > healthkit > manual > hr_detected
 ```
 
-(Manual entry is trusted over everything for `weight_kg`/`height_cm`
-specifically — a user-entered value is more reliable than any device estimate.)
+(Manual entry is trusted over every device for `weight_kg`/`height_cm`
+specifically — a user-entered value is more reliable than any device estimate.
+`hr_detected` workouts, found in all-day heart rate, yield to any recorded one.)
 
 ## Sport Mapping
 
-Strava sport types are normalized to ASTRAPHE's canonical sport tokens:
+Strava sport types are normalized to ASTRAPHE's canonical sport tokens (`SPORT_CANONICAL` in `processing.py`, case-insensitive):
 
 | ASTRAPHE sport | Examples |
 |---|---|
 | `run` | Run, TrailRun, VirtualRun |
 | `bike` | Ride, VirtualRide, EBikeRide |
-| `row` | Rowing, VirtualRow |
-| `swim` | Swim |
-| `strength` | WeightTraining, Workout |
-| `mobility` | yoga/stretching-style sessions when mapped by backend logic |
-| `other` | Unknown or unsupported types |
+| `row` | Rowing, VirtualRow, IndoorRow |
+| `swim` | Swim, OpenWaterSwim, VirtualSwim |
+| `strength` | WeightTraining, Workout, Crossfit |
+| `mobility` | Yoga, Stretching, Pilates |
+| `other` | Walk, Hike, unknown types |
 
 ## Remaining Work
 

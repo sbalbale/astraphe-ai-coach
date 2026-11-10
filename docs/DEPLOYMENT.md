@@ -1,148 +1,95 @@
 # Deployment
 
-This doc has two parts: **how the maintainer's reference instance is deployed** (private infra you can't replicate, described here for transparency/context only), and **how to self-host** (what you'd actually do to run your own instance).
-
-## How the reference instance is deployed
-
-This section describes `sbalbale/astraphe-ai-coach`'s own production deployment — not something a contributor needs to set up, and not required to run this project yourself. Skip to [Self-Hosting](#self-hosting) below if that's what you're after.
-
-- Backend API: GitHub Actions -> GHCR container image -> `kubectl set image` against a private k3s cluster, reached over a Cloudflare Access SSH tunnel.
-- MCP server: same GHCR/k3s pattern, separate image (`ghcr.io/sbalbale/astraphe-mcp`) and separate `astraphe-mcp` Deployment/Service — see [MCP_SERVER.md](./MCP_SERVER.md).
-- Frontend: GitHub Actions -> Firebase Hosting, via a custom REST-API deploy script (`mobile/scripts/deploy-firebase-hosting-rest.mjs`).
-- Database migrations: GitHub Actions SSHes in and runs `supabase db push` against the cluster's Postgres pod via `kubectl port-forward`.
-
-This is entirely specific to the maintainer's private infrastructure (hostnames, k8s namespaces, service accounts) and isn't usable by anyone else — see `.github/workflows/deploy.yml` if you're curious about the mechanics, but there's nothing to reuse there for your own deployment.
-
-## Self-Hosting
-
-To run your own instance, you need: a Postgres 17 database (self-hosted Supabase via `supabase start`/`supabase db push`, or hosted Supabase), the backend container (`backend/Dockerfile`) running anywhere that can reach it (Docker Compose, a VM, any container platform, Cloud Run, Fly.io, etc.), and the mobile app built and served as a static SvelteKit site (`pnpm build` in `mobile/`) — Firebase Hosting, Vercel, Netlify, Cloudflare Pages, or any static host all work.
-
-The backend is a stateless FastAPI service reading config entirely from environment variables (`backend/.env.example`) — no code changes needed to point it at your own Supabase project, Gemini API key, and OAuth app credentials for Strava/WHOOP/Garmin. See [SETUP.md](./SETUP.md) for the full local dev walkthrough as a starting point; adapt the same env vars to whatever hosting platform you use in production.
+This doc has three parts: **CI** (what runs on pull requests), **how the maintainer's reference instance is deployed** (private infrastructure, described for context only), and **how to self-host**.
 
 ## Contributor CI
 
-`.github/workflows/deploy.yml` also runs on every pull request (`backend` and `mobile` jobs run pytest / vitest+svelte-check, and `build` compiles the Docker image without pushing it) — so PRs get build+test coverage automatically, without needing any of the deploy secrets below. Only the `deploy` and `migrate` jobs (gated to `push` events on `main`) touch the maintainer's private infrastructure.
+`.github/workflows/deploy.yml` runs on every pull request into `main` (no `paths` filter, because its jobs are required status checks) and on pushes to `main` that touch `backend/`, `mobile/`, `supabase/`, `mcp-server/`, `photon-bridge/`, or the workflow itself.
 
-## Reference: the maintainer's production deploy in detail
+On a pull request these jobs run, and none of them needs deploy secrets:
 
-## Backend Workflow
-
-Source:
-
-```text
-.github/workflows/deploy.yml
-```
-
-Trigger:
-
-- `backend`/`mobile`/`build` jobs: every push and every pull request to `main`.
-- `deploy`/`migrate` jobs: only on push to `main` (never on pull requests, and never for fork PRs).
-
-Jobs:
-
-1. `backend` — runs `pytest` with an 80% coverage gate. No secrets needed (`config.py` defaults to test placeholders, external calls are mocked).
-2. `mobile` — runs `pnpm test:coverage` (vitest, 80%/75% branch gate).
-3. `build` — builds the backend Docker image; only pushes to GHCR (`ghcr.io/sbalbale/astraphe-api`) on an actual push to `main`, never on a PR.
-4. `deploy` (push-to-main only) — SSHes into the k3s cluster via a Cloudflare Access tunnel and runs `kubectl set image deployment/astraphe-api` against a narrowly-scoped `ci-deployer` ServiceAccount, then waits for rollout.
-5. `migrate` (push-to-main only) — port-forwards to the cluster's `supabase-db-0` Postgres pod and runs `supabase db push`.
-
-## Backend Required Secrets
-
-GitHub Actions deployment secrets:
-
-| Secret | Purpose |
+| Job | What it does |
 |---|---|
-| `GITHUB_TOKEN` | GHCR push via GitHub Actions. |
-| `CF_ACCESS_CLIENT_ID` | Cloudflare Access service token ID. |
-| `CF_ACCESS_CLIENT_SECRET` | Cloudflare Access service token secret. |
-| `PROXMOX_SSH_KEY` | SSH private key authorized as root on the k3s cluster nodes (name is historical — the target moved from a Proxmox Docker host to k3s). |
-| `SUPABASE_DB_PASSWORD` | Postgres password for `supabase db push` (migrate job), matching the cluster's Postgres pod. |
+| `backend` | `python -m pytest --cov=app` from the repo root with the 80% coverage gate in `.coveragerc`. `config.py` defaults to test placeholders and external calls are mocked. |
+| `mcp-server` | pytest for `mcp-server/` with an 80% coverage gate. |
+| `mobile` | `pnpm test:coverage` in `mobile/` (Vitest, 80% lines / 75% branches). It does not run `svelte-check`; run `pnpm run check` yourself. |
+| `photon-bridge` | `npm ci && npm test` in `photon-bridge/`. |
+| `build`, `build-mcp`, `build-photon-bridge` | Build the Docker images without pushing them. |
 
-Runtime secrets are provided by the deployed environment, not directly by the workflow file. Keep these aligned with `backend/.env.example`:
+`.github/workflows/firebase-hosting-pull-request.yml` also builds the frontend and deploys a Firebase Hosting preview channel (`pr-<number>`, 7-day expiry) for PRs from branches in this repo (not forks), then comments the preview URL on the PR.
 
-- `SUPABASE_URL`
-- `SUPABASE_KEY`
-- `SUPABASE_SERVICE_ROLE_KEY`
-- `GEMINI_API_KEY`
-- `GEMINI_MODEL`
-- `GEMINI_ANALYSIS_MODEL`
-- `GEMINI_EMBEDDING_MODEL`
-- `REDIS_URL`
-- WHOOP/Garmin/Strava credentials
-- Resend credentials
-- Push credentials
+## How the reference instance is deployed
 
-## Frontend Workflow
+This section describes `sbalbale/astraphe-ai-coach`'s own production deployment. It is specific to the maintainer's infrastructure (hostnames, namespaces, service accounts) and is not needed to run the project yourself; skip to [Self-Hosting](#self-hosting) for that.
 
-Live deploy:
+- **API:** `astraphe-api` runs in a k3s cluster (namespace `astraphe`) as **two replicas** sharing a **Redis** instance. Redis carries state the replicas must share: rate limits, caches, Gemini quota counters, plan-import quotas, and in-progress Garmin MFA logins.
+- **MCP server:** a separate `astraphe-mcp` Deployment in the same namespace, from its own image (`ghcr.io/sbalbale/astraphe-mcp`). See [MCP_SERVER.md](./MCP_SERVER.md).
+- **Photon bridge:** a single-replica `photon-bridge` Deployment (bootstrapped once from `photon-bridge/k8s.yaml`). See [PHOTON_MESSAGING.md](./PHOTON_MESSAGING.md).
+- **Database:** self-hosted Supabase in the same cluster (namespace `supabase`, Postgres pod `supabase-db-0`).
+- **Frontend:** the static SvelteKit build on Firebase Hosting (project and site `astrapheai`).
 
-```text
-.github/workflows/firebase-hosting-merge.yml
-```
+### Deploy jobs (push to `main` only)
 
-Preview deploy:
+The jobs below run only on a push to `main` (after a merge), never on pull requests. Each reaches the cluster by SSH through a Cloudflare Access tunnel (`ssh.astrapheai.com`, pinned host keys in `.github/ssh_known_hosts`) and runs `kubectl` with a narrowly scoped `ci-deployer` kubeconfig that can only patch images and read rollout status.
 
-```text
-.github/workflows/firebase-hosting-pull-request.yml
-```
+| Job | Needs | What it does |
+|---|---|---|
+| `build` / `build-mcp` / `build-photon-bridge` | — | Push `:latest` and `:<commit sha>` tags to GHCR (`ghcr.io/sbalbale/astraphe-api`, `astraphe-mcp`, `astraphe-photon-bridge`). |
+| `migrate` | `build`, `backend`, `mobile` | Copies `supabase/migrations`, `supabase/templates` and `supabase/config.toml` to a cluster node, port-forwards to `supabase-db-0`, and runs `supabase db push` (pinned Supabase CLI). |
+| `deploy` | `build`, `backend`, `mobile`, `migrate` | `kubectl set image deployment/astraphe-api` to the commit-SHA image, then waits for the rollout. |
+| `deploy-mcp` | `build-mcp`, `mcp-server` | Same for `deployment/astraphe-mcp`. |
+| `deploy-photon-bridge` | `build-photon-bridge`, `photon-bridge` | Same for `deployment/photon-bridge`. |
 
-Both workflows:
+Because `migrate` runs before `deploy` and a failed migration skips the deploy, new code never goes live against a schema that lacks its columns. The flip side: migrations must stay backward-compatible with the previous release (additive changes such as `ADD COLUMN IF NOT EXISTS`, not a `DROP`/`RENAME` in the same change as the code that stops using it).
 
-- Use pnpm.
-- Run `pnpm install && pnpm build` in `mobile/`.
-- Pass Vite env vars from GitHub secrets.
-- Deploy with `FirebaseExtended/action-hosting-deploy@v0`.
+`.github/workflows/firebase-hosting-merge.yml` builds `mobile/` and deploys it to the live Firebase Hosting site on every push to `main`.
 
-Frontend secrets:
+`.github/workflows/release.yml` creates a GitHub release when a `v*` tag is pushed (or from a manual run with a tag name). It uses `docs/releases/<tag>.md` as the notes when that file exists, otherwise GitHub's generated notes, and marks tag-push releases as pre-releases.
 
-| Secret | Purpose |
-|---|---|
-| `FIREBASE_SERVICE_ACCOUNT_ASTRAPHE_AI_COACH` | Firebase hosting deploy auth. |
-| `VITE_API_URL` | Public API base URL. |
-| `VITE_SUPABASE_URL` | Supabase project URL. |
-| `VITE_SUPABASE_KEY` | Supabase anon key. |
-| `VITE_VAPID_PUBLIC_KEY` | Web push public key. |
+### GitHub Actions secrets
 
-Hosting config:
+| Secret | Used by | Purpose |
+|---|---|---|
+| `GITHUB_TOKEN` | build jobs, release | GHCR push; creating releases. |
+| `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET` | deploy jobs, migrate | Cloudflare Access service token for the SSH tunnel. |
+| `PROXMOX_SSH_KEY` | deploy jobs, migrate | SSH key for the k3s nodes (the name is historical: the target used to be a Proxmox Docker host). |
+| `SUPABASE_DB_PASSWORD` | migrate | Postgres password for `supabase db push`. |
+| `FIREBASE_SERVICE_ACCOUNT_ASTRAPHEAI` | Firebase workflows | Firebase Hosting deploy auth. |
+| `VITE_API_URL`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_KEY`, `VITE_VAPID_PUBLIC_KEY` | Firebase workflows | Build-time frontend config. |
 
-```text
-mobile/firebase.json
-```
+Runtime settings for the API (Supabase URL and keys, `GEMINI_API_KEY`, `REDIS_URL`, `OAUTH_TOKEN_ENCRYPTION_KEY`, provider credentials, push and email keys) are set on the cluster Deployments, not in the workflows. See `backend/app/config.py` for the full list.
 
-It serves `mobile/build`, sets no-cache headers for service-worker/workbox assets, caches immutable SvelteKit build assets, and rewrites all paths to `/index.html`.
+### Frontend hosting
 
-## Database Deployment
+Both Firebase workflows run `pnpm install && pnpm build` in `mobile/` with the Vite variables above, then deploy with `mobile/scripts/deploy-firebase-hosting-rest.mjs`, a small script that calls the Firebase Hosting REST API (no Firebase CLI or third-party action).
 
-Migrations live in:
+`mobile/firebase.json` serves `mobile/build`, sets no-cache headers for the service worker and Workbox files, caches immutable SvelteKit build assets, and rewrites all paths to `/index.html`.
 
-```text
-supabase/migrations/
-```
+### Auth email templates (manual step, not automated)
 
-The current backend deploy workflow port-forwards to the cluster's Postgres pod and runs `supabase db push`. Migration files should be idempotent/safe to re-run, since `db push` applies whatever hasn't been applied yet.
+`supabase/templates/*.html` (confirmation, recovery, invite) are **not** wired into the production `auth` (GoTrue) Deployment. CI copies the templates to the node alongside the migrations, but `supabase db push` only applies migrations; it never changes the auth pod's mailer settings (see the note in `.github/workflows/deploy.yml`).
 
-For local development:
+Production therefore sends GoTrue's default emails until someone updates the live `auth` Deployment (no manifests for it are in this repo) to either:
 
-```bash
-npx supabase db push
-```
+- set `GOTRUE_MAILER_TEMPLATES_CONFIRMATION` / `GOTRUE_MAILER_TEMPLATES_RECOVERY` / `GOTRUE_MAILER_TEMPLATES_INVITE` to public URLs serving these files, or
+- mount them from a ConfigMap and point the mailer config at them.
 
-For production, use the workflow or the operational process for the deployed Supabase/Postgres instance.
+Until then the styled templates (including the 6-digit code in `confirm.html`) only render locally under `npx supabase start`, which reads the `[auth.email.template.*]` blocks in `supabase/config.toml`.
 
-## Auth Email Templates (Manual k3s Step — Not Automated)
+## Self-Hosting
 
-`supabase/templates/*.html` (confirmation, recovery, invite) are **not** wired into the production k3s `auth` (GoTrue) Deployment. CI only patches the `astraphe-api`/`astraphe-mcp` image tags and runs `supabase db push` for migrations — it never touches the auth pod's mailer config (see the note in `.github/workflows/deploy.yml` near the deploy steps). `supabase db push` / `supabase link` only push config for a Supabase Cloud-linked project; they have no effect on a self-hosted GoTrue pod's env vars.
+To run your own instance you need:
 
-As a result, production currently sends GoTrue's generic default emails regardless of what's in `supabase/templates/`, until someone manually updates the live `auth` Deployment/Secret (outside this repo, since no `k8s/`/`infra/`/`deploy/` manifests are checked in here) to either:
+- **Postgres with Supabase** (Auth, Storage, PostgREST): self-hosted Supabase or a hosted Supabase project. Apply `supabase/migrations/` with `supabase db push`. Local dev uses Postgres 17 (`supabase/config.toml`).
+- **The API** from `backend/Dockerfile`, on any container platform that can reach Supabase. It reads all config from environment variables (`backend/app/config.py`, `backend/.env.example`). Set `APP_ENV=production` and a Fernet `OAUTH_TOKEN_ENCRYPTION_KEY`, or the API will not start in production mode.
+- **Redis** if you run more than one API replica. Without `REDIS_URL` the API falls back to in-process rate limits and caches, which is fine for a single instance only.
+- **The frontend** built with `pnpm build` in `mobile/` and served from any static host (Firebase Hosting, Vercel, Netlify, Cloudflare Pages, and so on). Set the `VITE_*` variables at build time.
 
-- Set `GOTRUE_MAILER_TEMPLATES_CONFIRMATION` / `GOTRUE_MAILER_TEMPLATES_RECOVERY` / `GOTRUE_MAILER_TEMPLATES_INVITE` to publicly reachable URLs serving these template files, or
-- Mount them into the pod via a ConfigMap + volume mount and point the equivalent `*_content_path`-style config at them.
+`backend/app/main.py` hard-codes the production CORS allowlist (`ALLOWED_ORIGINS`) and `backend/app/routers/sync.py` hard-codes the allowed OAuth return hosts. Add your own domains there.
 
-Until that manual change is made, the styled templates (including the emailed 6-digit verification code in `confirm.html`) only render when testing locally via `npx supabase start` (which does read `supabase/config.toml`'s `[auth.email.template.*]` blocks) — not in production.
+See [SETUP.md](./SETUP.md) for the local setup; the same environment variables apply in production.
 
-## Health And Verification
-
-After backend deployment:
+## Health and Verification
 
 ```bash
 curl https://api.astrapheai.com/health
@@ -160,21 +107,16 @@ Expected shape:
 }
 ```
 
-Verify:
-
-- The backend pod/container is running and healthy.
-- `/health` is reachable through the public API host.
-- Supabase reports expected migration state.
-- Redis is connected when `REDIS_URL` is configured.
-- Firebase Hosting (or whatever you use) serves the latest build.
-- Frontend `VITE_API_URL` points at the current public API host.
+`status` is `degraded` when Supabase is unreachable, and `redis` is `unavailable` when Redis is not configured or down. `/health` is exempt from IP rate limiting.
 
 ## Production Backend Behavior
 
-When `APP_ENV=production`:
+When `APP_ENV=production` (also the default when `APP_ENV` is unset):
 
-- FastAPI docs and Redoc are disabled.
-- Debug router is not registered.
-- Startup rejects `TEST_ATHLETE_ID`.
-- Security headers are added to responses.
-- CORS uses the configured allowlist in `backend/app/main.py`.
+- `/docs` and `/redoc` are disabled.
+- The debug router is not registered.
+- Startup fails if `TEST_ATHLETE_ID` is set.
+- Startup fails without a valid `OAUTH_TOKEN_ENCRYPTION_KEY`.
+- CORS allows only the fixed origins in `backend/app/main.py` (no localhost or LAN origins).
+
+Security headers are added to every response in all environments.

@@ -2,33 +2,38 @@
 
 ## Overview
 
-The `mobile/` app is a Svelte 5 + SvelteKit 2 single-page app. It is built statically with `adapter-static`, disables SSR, registers a Vite PWA service worker, and includes a Capacitor iOS scaffold.
+The `mobile/` app is a Svelte 5 + SvelteKit 2 single-page app. It is built statically with `adapter-static`, disables SSR, ships a PWA manifest and a push-only service worker (via `@vite-pwa/sveltekit`), and includes a Capacitor iOS project.
 
-Android is not currently scaffolded in this repository.
+Android is not scaffolded in this repository.
 
 ## Runtime
 
-Current package versions are pinned in `mobile/package.json`:
+Versions pinned in `mobile/package.json` (main ones):
 
 - `svelte@5.55.5`
 - `@sveltejs/kit@2.58.0`
 - `vite@8.0.10`
 - `typescript@6.0.3`
 - `tailwindcss@3.4.19`
-- `@capacitor/core@8.3.1`
-- `@capacitor/ios@8.3.1`
+- `@capacitor/core@8.3.1`, `@capacitor/ios@8.3.1`
+- `@capacitor/push-notifications@8.1.0`
 - `@supabase/supabase-js@2.105.0`
 - `layerchart@1.0.13`
 - `d3@7.9.0`
 - `maplibre-gl@5.24.0`
+- `vitest@3.2.4`
 
-The package requires pnpm:
+The package requires pnpm (a `preinstall` check rejects npm):
 
 ```bash
 cd mobile
 pnpm install
-pnpm run dev
+pnpm run dev       # Vite on port 5173
+pnpm test          # vitest
+pnpm run check     # svelte-check
 ```
+
+`pnpm run build` runs `vite build` and then `scripts/prune-spa-html.mjs`.
 
 ## SvelteKit Mode
 
@@ -39,35 +44,50 @@ export const prerender = true;
 export const ssr = false;
 ```
 
-This means the app behaves as an SPA and relies on client-side Supabase auth/API calls.
+The app behaves as an SPA and relies on client-side Supabase auth and API calls.
+
+## Navigation
+
+Primary navigation is defined in `mobile/src/lib/navTabs.ts`: five tabs, each owning a group of routes. Profile ("Me") is reached from the header avatar, not a tab.
+
+| Tab | Routes | Sub-tabs |
+|---|---|---|
+| Today | `/`, `/dashboard`, `/readiness` | none |
+| Training | `/training`, `/trends`, `/zones` | Log / Trends / Zones |
+| Body | `/recovery`, `/sleep`, `/strain`, `/heart-rate`, `/weight` | Recovery / Sleep / Strain / Heart rate / Weight |
+| Plan | `/plan` | none |
+| Coach | `/chat` | none |
+
+On wide screens (`viewport.wide`, at least 768 px) the layout shows a sidebar instead of the bottom tab bar. Its model is `mobile/src/lib/wideNav.ts`: the same five sections with `1`-`5` keyboard shortcuts and sidebar sub-items:
+
+- Training: Log (`/training`), Trends & zones (`/trends`, `/zones`)
+- Body: Overview (`/recovery`, `/sleep`, `/strain`), Heart rate (`/heart-rate`), Weight (`/weight`)
+
+`wideNav.ts` also defines the static rows of the command palette (`CommandPalette.svelte`, opened with Cmd/Ctrl+K).
 
 ## Routes
 
-Current page routes include:
+Page routes:
 
-- `/`
-- `/dashboard`
-- `/training`
-- `/zones`
-- `/recovery`
-- `/sleep`
-- `/strain`
+- `/`, `/dashboard`, `/readiness`
+- `/training`, `/trends`, `/zones`
+- `/recovery`, `/sleep`, `/strain`, `/heart-rate`, `/weight`
 - `/plan`
 - `/chat`
 - `/onboarding`
-- `/profile`
-- `/profile/personal-info`
-- `/profile/training-settings`
-- `/profile/connections`
-- `/profile/notifications`
-- `/profile/privacy`
-- `/auth/signin`
-- `/auth/signup`
-- `/auth/forgot-password`
-- `/auth/reset-password`
-- `/auth/callback`
+- `/profile`, `/profile/personal-info`, `/profile/training-settings`, `/profile/connections`, `/profile/notifications`, `/profile/privacy`
+- `/auth/signin`, `/auth/signup`, `/auth/forgot-password`, `/auth/reset-password`, `/auth/callback`
+- `/oauth/consent`: consent screen for the Supabase OAuth server used by the MCP server (see [MCP_SERVER.md](./MCP_SERVER.md))
 
-The root layout owns auth redirects, onboarding redirects, desktop/mobile navigation, deep-link handling, and push initialization.
+The root layout owns auth redirects, onboarding redirects, narrow/wide navigation, deep-link handling, and push initialization.
+
+## Body Tab
+
+- Recovery, Sleep and Strain share the selected day through `lib/stores/bodyDate.svelte.ts` (`null` means today).
+- The Strain breakdown comes from `dayStrain()` in `lib/utils/bodyWide.ts`. Strain saturates, so workout scores are not added. Each part's raw load is recovered from its score, the day's score is the stored day strain or the workouts' combined load (whichever is higher), and the score is split in proportion to load into per-workout shares plus all-day activity.
+- `/heart-rate` renders `lib/components/body/HeartDay.svelte` (model and helpers in `lib/utils/heartDay.ts`). On the chart, a mouse hovers to read; on touch, tap reads a point, a sideways drag scrubs, and a two-finger pinch zooms around the fingers' midpoint. Zoom chips are also available.
+- `/weight` renders `lib/components/body/WeightView.svelte` (helpers in `lib/utils/weightView.ts`).
+- Heart rate days and the weight payload are kept in an in-memory stale-while-revalidate cache, `lib/stores/bodyCache.ts`: a page renders from the last response and refreshes in the background. Up to 30 heart-rate days are kept; past days count as fresh for 10 minutes and today for 1 minute. Concurrent fetches of the same day share one request. `api.clearUserCaches()` empties it on sign-out or user switch.
 
 ## API Client
 
@@ -82,28 +102,35 @@ Key files:
 Default backend URL:
 
 ```ts
-const API_URL = VITE_API_URL || 'http://localhost:8000';
+const API_URL = VITE_API_URL && VITE_API_URL !== 'undefined' ? VITE_API_URL : 'http://localhost:8000';
 ```
 
-Coach chat currently calls `POST /v1/coach/message` and expects a JSON response. The backend also supports `/v1/coach/stream` for SSE, but the current client chat flow is non-streaming.
+Coach chat submits with `POST /v1/coach/message/async`, which returns immediately. The chat page then polls the conversation's messages and `/v1/coach/conversations/{id}/progress` until the reply lands; a push notification is sent if the athlete has left the thread. `api.streamCoachMessage()` (SSE via `/v1/coach/stream`) still exists in `api.ts`, but the chat page uses the async flow.
 
 ## State Management
 
 State uses Svelte 5 runes and small store modules. There is no external state library.
 
-Current stores:
+Stores in `mobile/src/lib/stores/`:
 
-- `mobile/src/lib/stores/authStore.svelte.ts`
-- `mobile/src/lib/stores/athleteStore.svelte.ts`
-- `mobile/src/lib/stores/trainingStore.svelte.ts`
-- `mobile/src/lib/stores/workoutDetailCache.ts`
-- `mobile/src/lib/stores/analysisNavEpoch.svelte.ts`
+- `authStore.svelte.ts`
+- `athleteStore.svelte.ts` (profile, metrics, biometrics, workouts; persists the current user's snapshot to `localStorage`)
+- `trainingStore.svelte.ts`
+- `workoutDetailCache.ts`
+- `bodyCache.ts` (see Body Tab)
+- `bodyDate.svelte.ts`
+- `pageHeader.svelte.ts` (page title/eyebrow claimed by each route)
+- `viewport.svelte.ts` (`wide` at 768 px, `landscape` at 1200 px)
+- `commandPalette.svelte.ts`
+- `userSession.ts` (`clearUserScopedState()` clears stores and user caches when the signed-in user changes)
 
-Chat state lives in `mobile/src/routes/chat/+page.svelte`; there is no standalone conversation store module.
+`mobile/src/lib/analysisNavEpoch.svelte.ts` lives directly in `lib/`, not in `stores/`.
+
+Chat state lives in `mobile/src/routes/chat/+page.svelte`; there is no standalone conversation store.
 
 ## Capacitor
 
-`mobile/capacitor.config.ts` is intentionally minimal:
+`mobile/capacitor.config.ts` is minimal:
 
 ```ts
 const config: CapacitorConfig = {
@@ -124,15 +151,13 @@ npx cap open ios
 
 ## Health Integration
 
-Health integration is scaffolded in `mobile/src/lib/integrations/health.ts`.
-
-Current behavior:
+Health integration is a scaffold in `mobile/src/lib/integrations/health.ts`, called from Profile -> Connections.
 
 - Web returns simulated success for permission requests.
-- Native uses `@interval-health/capacitor-health` permission request scaffolding.
-- `syncRecentData()` currently posts an empty/mock payload to `/v1/biometrics/sync`.
+- Native requests read access (sleep, heart rate, workouts) through `@interval-health/capacitor-health`.
+- `syncRecentData()` posts a mock payload (empty `data` array) to `/v1/biometrics/sync`.
 
-The backend does not currently document `/v1/biometrics/sync` as a production ingestion route; full HealthKit ingestion still needs wiring.
+The backend has no `/v1/biometrics/sync` route, so that call fails. HealthKit ingestion is not implemented.
 
 ## Push Notifications
 
@@ -143,27 +168,25 @@ Relevant files:
 - `mobile/src/routes/+layout.svelte`
 - `mobile/src/routes/profile/notifications/+page.svelte`
 
-Web push uses the Vite PWA service worker at `mobile/src/service-worker.ts`. The layout initializes push after auth/profile loading. Web push is limited to installed standalone PWA mode.
-
-Native iOS push uses the Capacitor push notification plugin scaffold. Android setup should wait until an Android project is added.
+The layout initializes push once per session after the profile has loaded. See [PUSH_NOTIFICATIONS.md](./PUSH_NOTIFICATIONS.md) for the full flow, including the web-push rules (iPhone/iPad: installed Home Screen app only) and the state of native iOS push.
 
 ## PWA And Firebase Hosting
 
-The app uses Vite PWA/Workbox and Firebase Hosting.
+The app uses `@vite-pwa/sveltekit` in `injectManifest` mode with `src/service-worker.ts`. The service worker is push-only: it caches nothing, and on activate it deletes any precache an older worker left behind. The web app manifest (`start_url: /dashboard`, `display: standalone`) is generated from `vite.config.ts`.
 
-`mobile/firebase.json` serves `build/`, configures no-cache headers for service-worker/workbox assets, immutable caching for `_app/immutable/**`, and rewrites all routes to `/index.html`.
+`mobile/firebase.json` serves `build/`, sets security headers (`X-Frame-Options: DENY`, a `frame-ancestors 'none'` CSP, `nosniff`, referrer policy), no-cache headers for the service worker, workbox files and manifest, immutable caching for `_app/immutable/**`, and rewrites all routes to `/index.html`.
 
 GitHub Actions workflows:
 
 - `.github/workflows/firebase-hosting-merge.yml`: live deploy on `main`.
 - `.github/workflows/firebase-hosting-pull-request.yml`: preview deploy for same-repo PRs.
 
-Both workflows install with pnpm and pass Vite env vars from GitHub secrets.
+Both install with pnpm, build with `VITE_API_URL`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_KEY` and `VITE_VAPID_PUBLIC_KEY` from GitHub secrets, and deploy with `mobile/scripts/deploy-firebase-hosting-rest.mjs`.
 
 ## Offline Behavior
 
-The app has PWA precaching and a few in-memory/client-side caches, especially for workout detail and store state. Do not assume full offline queueing of HealthKit payloads or complete local persistence for every screen unless it is implemented in the relevant route/store.
+There is no offline precaching. Client-side caching is limited to in-memory caches (workout detail, Body payloads) and the athlete store's `localStorage` snapshot. Do not assume offline queueing or complete local persistence for any screen unless it is implemented in the relevant route or store.
 
 ## Design System
 
-The UI uses Tailwind tokens from `mobile/tailwind.config.js` and CSS variables from `mobile/src/app.css`. New Svelte code should use Svelte 5 runes, tokenized colors, and `font-mono` for numeric metrics.
+The UI uses Tailwind tokens from `mobile/tailwind.config.js` and CSS variables from `mobile/src/app.css`. See [DESIGN_SYSTEM.md](./DESIGN_SYSTEM.md).

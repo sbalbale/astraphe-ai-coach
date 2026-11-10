@@ -2,63 +2,59 @@
 
 ## Overview
 
-Privacy settings are managed at **Profile -> Privacy** in the mobile/web app and saved to `athletes.privacy_settings` through `PATCH /v1/athlete/profile`.
+Privacy settings are managed at **Profile -> Privacy** (`mobile/src/routes/profile/privacy/+page.svelte`) and saved to `athletes.privacy_settings` (JSONB) through `PATCH /v1/athlete/profile`.
 
 ## Settings
 
-### Anonymous AI Training
-
-Stored as:
-
 ```json
-{ "share_data": false }
+{ "share_data": false, "marketing": false }
 ```
 
-Default is opt-out. The flag is saved today and is intended to gate future anonymized training-data export/model-improvement pipelines.
+Both default to `false` (opt-in). The page's `defaultSettings` supplies the defaults when the profile has no `privacy_settings`.
 
-### Product Updates
+### Anonymous AI training (`share_data`)
 
-Stored as:
+Stored only. No backend code reads it today. It is meant to gate a future anonymized training-data export; such a pipeline should filter on `privacy_settings->>'share_data' = 'true'`.
 
-```json
-{ "marketing": false }
-```
+### Product updates (`marketing`)
 
-Default is opt-out. When enabled, the backend attempts to upsert the user into the configured Resend audience. When disabled, the backend marks the contact unsubscribed in that audience.
+When the saved payload contains `marketing`, the backend syncs the user's email to the configured Resend audience: subscribed when `true`, marked `unsubscribed` when `false` (the contact is kept).
 
 ## Save Behavior
 
-The frontend saves immediately on toggle through `athleteStore.updateProfile()` and `PATCH /v1/athlete/profile`; there is no separate Save button. The store updates optimistically with the full `privacy_settings` object.
+Each toggle saves immediately; there is no Save button. The page flips the toggle, disables the toggles while saving, sends the full `privacy_settings` object through `athleteStore.updateProfile()`, and reverts the toggle if the save fails. On success the store reloads the profile.
 
-If a profile save fails, current UI behavior is limited; do not assume a full rollback/error-display flow exists for every toggle failure.
+The backend validates `privacy_settings` as a small flat object: at most 30 keys, keys up to 40 characters, values that are booleans, numbers, short strings (200 characters max) or null.
+
+No schema change is needed to add a flag. Add it to `defaultSettings` and the row list on the page, and add any side effect in `update_athlete_profile` (`backend/app/routers/athlete.py`).
+
+The AI coach cannot change privacy or marketing settings (`backend/app/services/athlete_profile.py` keeps them out of what the coach may edit).
 
 ## Resend Integration
 
-Resend sync is the only current external side effect.
+Resend is the only external side effect.
 
-Flow:
+1. The user toggles any privacy setting. The page always sends the full object, so `marketing` is in every privacy save.
+2. `PATCH /v1/athlete/profile` saves the profile.
+3. If the request has the user's email (`get_current_user_email`, which looks up the Supabase auth user for the bearer token) and `marketing` is in the payload, `sync_marketing_contact(email, subscribed)` in `backend/app/services/resend_service.py` runs.
+4. It calls `POST https://api.resend.com/audiences/{RESEND_AUDIENCE_ID}/contacts` with `{email, unsubscribed: !subscribed}` and `Authorization: Bearer {RESEND_API_KEY}`, with a 5 s timeout. Resend upserts the contact, so it is safe to call on every save.
+5. Errors are printed with a `[resend]` prefix and never fail the profile save.
 
-1. User toggles **Product Updates**.
-2. Frontend calls `PATCH /v1/athlete/profile` with the updated `privacy_settings`.
-3. Backend saves Supabase profile data.
-4. Backend calls Resend if `RESEND_API_KEY` and `RESEND_AUDIENCE_ID` are configured.
-5. Resend errors are logged, but profile saving still succeeds.
-
-Required backend environment:
+Backend environment (`backend/app/config.py`):
 
 ```env
 RESEND_API_KEY=
 RESEND_AUDIENCE_ID=
 ```
 
-If either value is missing, Resend sync is skipped.
+If either is missing, the sync is skipped.
 
 ## Account Deletion
 
-The privacy screen also exposes account deletion. The frontend calls:
+The privacy screen also has a Delete account button. After a confirmation dialog the frontend calls:
 
 ```http
 DELETE /v1/athlete
 ```
 
-The backend owns the deletion flow and should remain the source of truth for what data is removed.
+On success it signs out and goes to `/auth/signin`. The backend owns the deletion flow and is the source of truth for what data is removed.

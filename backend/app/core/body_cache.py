@@ -4,8 +4,8 @@ Redis cache for the Body screens' payloads (GET /v1/biometrics/heart-rate, GET /
 Keys are ``body:{athlete_id}:v{N}:{name}`` where N is ``body_version:{athlete_id}``;
 bumping it (any change to the athlete's workouts, weigh-ins, heart rate series or
 profile) retires every cached payload at once, as ``zones_version:`` does for
-``detail:{athlete}:v{N}:{workout}``. Prod Redis runs with no maxmemory and
-``noeviction``, so every payload key has a TTL (the version counters are a few bytes
+``detail:{athlete}:v{N}:{workout}``. Prod Redis runs with maxmemory 256mb and
+``volatile-lru`` (only keys with a TTL can be evicted), so every payload key has a TTL (the version counters are a few bytes
 each, like zones_version). TTLs are also the backstop for a writer that doesn't bump:
 short for today (fills in through the day), longer for past days. Without Redis (local
 dev) every call is a miss, and failures never raise.

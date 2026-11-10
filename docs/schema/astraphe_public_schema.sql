@@ -1,6 +1,6 @@
 -- ASTRAPHE AI Coach — public schema (generated)
 -- Source: live PostgreSQL introspection via docs/tools/generate_schema.py
--- Generated: 2026-08-13 17:43:26 UTC
+-- Generated: 2026-11-10 04:10:24 UTC
 --
 -- Prerequisites:
 --   - Supabase local or hosted project with auth schema
@@ -37,7 +37,7 @@ CREATE TABLE public.athletes (
   time_format text DEFAULT '12h'::text NOT NULL,
   gender text DEFAULT 'male'::text NOT NULL,
   timezone_offset_min integer DEFAULT 0 NOT NULL,
-  tier text DEFAULT 'premium'::text NOT NULL,
+  tier text DEFAULT 'trial'::text NOT NULL,
   threshold_hr_source text,
   zone_method text GENERATED ALWAYS AS (
 CASE
@@ -49,14 +49,29 @@ END) STORED,
   lthr smallint GENERATED ALWAYS AS (threshold_hr) STORED,
   hr_zone_method text DEFAULT 'lthr'::text,
   strava_athlete_id bigint,
+  max_hr_source text,
+  goal_weight_kg numeric(5,2),
+  resting_hr_source text,
   CONSTRAINT athletes_pkey PRIMARY KEY (id),
   CONSTRAINT athletes_strava_athlete_id_key UNIQUE (strava_athlete_id),
   CONSTRAINT athletes_user_id_unique UNIQUE (user_id),
   CONSTRAINT athletes_gender_check CHECK (lower(gender) = ANY (ARRAY['male'::text, 'female'::text])),
+  CONSTRAINT athletes_goal_weight_kg_check CHECK (goal_weight_kg IS NULL OR goal_weight_kg >= 20::numeric AND goal_weight_kg <= 350::numeric),
+  CONSTRAINT athletes_max_hr_source_check CHECK (max_hr_source IS NULL OR (max_hr_source = ANY (ARRAY['manual'::text, 'estimated'::text]))),
+  CONSTRAINT athletes_resting_hr_source_check CHECK (resting_hr_source IS NULL OR (resting_hr_source = ANY (ARRAY['manual'::text, 'measured'::text]))),
   CONSTRAINT athletes_threshold_hr_source_check CHECK (threshold_hr_source IS NULL OR (threshold_hr_source = ANY (ARRAY['manual'::text, 'estimated'::text]))),
   CONSTRAINT athletes_tier_check CHECK (tier = ANY (ARRAY['free'::text, 'trial'::text, 'premium'::text])),
   CONSTRAINT hr_zone_method_valid CHECK (hr_zone_method IS NULL OR (hr_zone_method = ANY (ARRAY['lthr'::text, 'hrr'::text, 'max_hr'::text]))),
   CONSTRAINT athletes_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE
+);
+
+
+
+CREATE TABLE public.messaging_events (
+  provider text NOT NULL,
+  message_id text NOT NULL,
+  created_at timestamp with time zone DEFAULT now() NOT NULL,
+  CONSTRAINT messaging_events_pkey PRIMARY KEY (provider, message_id)
 );
 
 
@@ -79,6 +94,23 @@ CREATE TABLE public.athlete_analyses (
 
 
 
+CREATE TABLE public.athlete_anchor_history (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  athlete_id uuid NOT NULL,
+  effective_from date NOT NULL,
+  ftp_watts smallint,
+  threshold_pace text,
+  measurement_units text,
+  source text DEFAULT 'manual'::text NOT NULL,
+  created_at timestamp with time zone DEFAULT now() NOT NULL,
+  CONSTRAINT athlete_anchor_history_pkey PRIMARY KEY (id),
+  CONSTRAINT athlete_anchor_history_athlete_id_effective_from_key UNIQUE (athlete_id, effective_from),
+  CONSTRAINT athlete_anchor_history_source_check CHECK (source = ANY (ARRAY['initial'::text, 'manual'::text, 'garmin'::text, 'estimated'::text])),
+  CONSTRAINT athlete_anchor_history_athlete_id_fkey FOREIGN KEY (athlete_id) REFERENCES athletes(id) ON DELETE CASCADE
+);
+
+
+
 CREATE TABLE public.biometrics (
   id uuid DEFAULT gen_random_uuid() NOT NULL,
   athlete_id uuid NOT NULL,
@@ -96,7 +128,6 @@ CREATE TABLE public.biometrics (
   sleep_wakeup timestamp with time zone,
   skin_temp numeric(4,2),
   spo2_pct numeric(4,1),
-  skin_temp_deviation_c numeric(4,2),
   source_recovery_score smallint,
   sleep_score smallint,
   recovery_score smallint,
@@ -109,6 +140,7 @@ CREATE TABLE public.biometrics (
   weight_kg numeric(5,2),
   height_cm numeric(5,1),
   metric_sources jsonb DEFAULT '{}'::jsonb NOT NULL,
+  skin_temp_deviation_c numeric(4,2),
   CONSTRAINT biometrics_pkey PRIMARY KEY (id),
   CONSTRAINT biometrics_athlete_date_unique UNIQUE (athlete_id, date),
   CONSTRAINT biometrics_hrv_source_check CHECK (hrv_source IS NULL OR (hrv_source = ANY (ARRAY['whoop'::text, 'garmin'::text, 'healthkit'::text, 'intervals_icu'::text]))),
@@ -123,7 +155,12 @@ CREATE TABLE public.coach_conversations (
   title text,
   created_at timestamp with time zone DEFAULT now() NOT NULL,
   updated_at timestamp with time zone DEFAULT now() NOT NULL,
+  started_by text DEFAULT 'athlete'::text NOT NULL,
+  trigger text,
+  context jsonb,
+  unread boolean DEFAULT false NOT NULL,
   CONSTRAINT coach_conversations_pkey PRIMARY KEY (id),
+  CONSTRAINT coach_conversations_started_by_check CHECK (started_by = ANY (ARRAY['athlete'::text, 'coach'::text])),
   CONSTRAINT coach_conversations_athlete_id_fkey FOREIGN KEY (athlete_id) REFERENCES athletes(id) ON DELETE CASCADE
 );
 
@@ -142,6 +179,38 @@ CREATE TABLE public.coach_memories (
   CONSTRAINT coach_memories_pkey PRIMARY KEY (id),
   CONSTRAINT coach_memories_memory_type_check CHECK (memory_type IS NULL OR (memory_type = ANY (ARRAY['note'::text, 'race'::text]))),
   CONSTRAINT coach_memories_athlete_id_fkey FOREIGN KEY (athlete_id) REFERENCES athletes(id) ON DELETE CASCADE
+);
+
+
+
+CREATE TABLE public.heart_rate_series (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  athlete_id uuid NOT NULL,
+  date date NOT NULL,
+  source text NOT NULL,
+  start_at timestamp with time zone NOT NULL,
+  offsets_sec integer[] NOT NULL,
+  bpm smallint[] NOT NULL,
+  resting_hr smallint,
+  created_at timestamp with time zone DEFAULT now() NOT NULL,
+  updated_at timestamp with time zone DEFAULT now() NOT NULL,
+  CONSTRAINT heart_rate_series_pkey PRIMARY KEY (id),
+  CONSTRAINT heart_rate_series_unique UNIQUE (athlete_id, date, source),
+  CONSTRAINT heart_rate_series_lengths CHECK (cardinality(offsets_sec) = cardinality(bpm)),
+  CONSTRAINT heart_rate_series_athlete_id_fkey FOREIGN KEY (athlete_id) REFERENCES athletes(id) ON DELETE CASCADE
+);
+
+
+
+CREATE TABLE public.hr_detection_dismissals (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  athlete_id uuid NOT NULL,
+  started_at timestamp with time zone NOT NULL,
+  ended_at timestamp with time zone NOT NULL,
+  created_at timestamp with time zone DEFAULT now() NOT NULL,
+  CONSTRAINT hr_detection_dismissals_pkey PRIMARY KEY (id),
+  CONSTRAINT hr_detection_dismissals_order CHECK (ended_at > started_at),
+  CONSTRAINT hr_detection_dismissals_athlete_id_fkey FOREIGN KEY (athlete_id) REFERENCES athletes(id) ON DELETE CASCADE
 );
 
 
@@ -197,8 +266,26 @@ CREATE TABLE public.sleep_periods (
   created_at timestamp with time zone DEFAULT now() NOT NULL,
   in_bed_min smallint,
   CONSTRAINT sleep_periods_pkey PRIMARY KEY (id),
-  CONSTRAINT sleep_periods_external_id_unique UNIQUE (source, external_id),
+  CONSTRAINT sleep_periods_athlete_source_external_uniq UNIQUE (athlete_id, source, external_id),
   CONSTRAINT sleep_periods_athlete_id_fkey FOREIGN KEY (athlete_id) REFERENCES athletes(id) ON DELETE CASCADE
+);
+
+
+
+CREATE TABLE public.sleep_stage_segments (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  athlete_id uuid NOT NULL,
+  date date NOT NULL,
+  source text NOT NULL,
+  stage text NOT NULL,
+  start_at timestamp with time zone NOT NULL,
+  end_at timestamp with time zone NOT NULL,
+  created_at timestamp with time zone DEFAULT now() NOT NULL,
+  CONSTRAINT sleep_stage_segments_pkey PRIMARY KEY (id),
+  CONSTRAINT sleep_stage_segments_unique UNIQUE (athlete_id, source, start_at),
+  CONSTRAINT sleep_stage_segments_order CHECK (end_at > start_at),
+  CONSTRAINT sleep_stage_segments_stage_check CHECK (stage = ANY (ARRAY['deep'::text, 'light'::text, 'rem'::text, 'awake'::text])),
+  CONSTRAINT sleep_stage_segments_athlete_id_fkey FOREIGN KEY (athlete_id) REFERENCES athletes(id) ON DELETE CASCADE
 );
 
 
@@ -215,6 +302,27 @@ CREATE TABLE public.tss_history (
   CONSTRAINT tss_history_pkey PRIMARY KEY (id),
   CONSTRAINT tss_history_athlete_date_unique UNIQUE (athlete_id, date),
   CONSTRAINT tss_history_athlete_id_fkey FOREIGN KEY (athlete_id) REFERENCES athletes(id) ON DELETE CASCADE
+);
+
+
+
+CREATE TABLE public.weigh_ins (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  athlete_id uuid NOT NULL,
+  date date NOT NULL,
+  measured_at timestamp with time zone NOT NULL,
+  weight_kg numeric(5,2) NOT NULL,
+  body_fat_pct numeric(4,1),
+  source text NOT NULL,
+  external_id text NOT NULL,
+  time_known boolean DEFAULT true NOT NULL,
+  deleted_at timestamp with time zone,
+  created_at timestamp with time zone DEFAULT now() NOT NULL,
+  CONSTRAINT weigh_ins_pkey PRIMARY KEY (id),
+  CONSTRAINT weigh_ins_unique UNIQUE (athlete_id, source, external_id),
+  CONSTRAINT weigh_ins_body_fat_pct_check CHECK (body_fat_pct IS NULL OR body_fat_pct >= 2::numeric AND body_fat_pct <= 75::numeric),
+  CONSTRAINT weigh_ins_weight_kg_check CHECK (weight_kg >= 20::numeric AND weight_kg <= 350::numeric),
+  CONSTRAINT weigh_ins_athlete_id_fkey FOREIGN KEY (athlete_id) REFERENCES athletes(id) ON DELETE CASCADE
 );
 
 
@@ -258,11 +366,12 @@ CREATE TABLE public.workouts (
   splits_standard jsonb,
   garmin_activity_id bigint,
   calories numeric(8,1),
+  notified_at timestamp with time zone,
   CONSTRAINT workouts_pkey PRIMARY KEY (id),
-  CONSTRAINT workouts_external_id_unique UNIQUE (source, external_id),
-  CONSTRAINT workouts_garmin_activity_id_key UNIQUE (garmin_activity_id),
-  CONSTRAINT workouts_strava_activity_id_key UNIQUE (strava_activity_id),
-  CONSTRAINT workouts_source_check CHECK (source = ANY (ARRAY['garmin'::text, 'whoop'::text, 'healthkit'::text, 'manual'::text, 'strava'::text, 'intervals_icu'::text])),
+  CONSTRAINT workouts_athlete_garmin_activity_uniq UNIQUE (athlete_id, garmin_activity_id),
+  CONSTRAINT workouts_athlete_source_external_uniq UNIQUE (athlete_id, source, external_id),
+  CONSTRAINT workouts_athlete_strava_activity_uniq UNIQUE (athlete_id, strava_activity_id),
+  CONSTRAINT workouts_source_check CHECK (source = ANY (ARRAY['garmin'::text, 'whoop'::text, 'healthkit'::text, 'manual'::text, 'strava'::text, 'intervals_icu'::text, 'hr_detected'::text])),
   CONSTRAINT workouts_sport_check CHECK (sport = ANY (ARRAY['run'::text, 'bike'::text, 'swim'::text, 'strength'::text, 'row'::text, 'mobility'::text, 'other'::text])),
   CONSTRAINT workouts_athlete_id_fkey FOREIGN KEY (athlete_id) REFERENCES athletes(id) ON DELETE CASCADE
 );
@@ -277,10 +386,29 @@ CREATE TABLE public.coach_messages (
   content text,
   image_urls text[] DEFAULT '{}'::text[] NOT NULL,
   created_at timestamp with time zone DEFAULT now() NOT NULL,
+  attachments jsonb DEFAULT '[]'::jsonb NOT NULL,
+  quick_replies text[] DEFAULT '{}'::text[] NOT NULL,
   CONSTRAINT coach_messages_pkey PRIMARY KEY (id),
+  CONSTRAINT coach_messages_attachments_is_array CHECK (jsonb_typeof(attachments) = 'array'::text AND jsonb_array_length(attachments) <= 3),
   CONSTRAINT coach_messages_role_check CHECK (role = ANY (ARRAY['user'::text, 'ai'::text, 'system'::text])),
   CONSTRAINT coach_messages_athlete_id_fkey FOREIGN KEY (athlete_id) REFERENCES athletes(id) ON DELETE CASCADE,
   CONSTRAINT coach_messages_conversation_id_fkey FOREIGN KEY (conversation_id) REFERENCES coach_conversations(id) ON DELETE CASCADE
+);
+
+
+
+CREATE TABLE public.notification_log (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  athlete_id uuid NOT NULL,
+  kind text NOT NULL,
+  dedupe_key text NOT NULL,
+  conversation_id uuid,
+  pushed boolean DEFAULT false NOT NULL,
+  created_at timestamp with time zone DEFAULT now() NOT NULL,
+  CONSTRAINT notification_log_pkey PRIMARY KEY (id),
+  CONSTRAINT notification_log_athlete_id_kind_dedupe_key_key UNIQUE (athlete_id, kind, dedupe_key),
+  CONSTRAINT notification_log_athlete_id_fkey FOREIGN KEY (athlete_id) REFERENCES athletes(id) ON DELETE CASCADE,
+  CONSTRAINT notification_log_conversation_id_fkey FOREIGN KEY (conversation_id) REFERENCES coach_conversations(id) ON DELETE SET NULL
 );
 
 
@@ -343,10 +471,13 @@ CREATE TABLE public.training_plans (
   created_at timestamp with time zone DEFAULT now() NOT NULL,
   primary_zone text,
   structure jsonb,
+  link_source text,
+  dismissed_workout_ids uuid[] DEFAULT '{}'::uuid[] NOT NULL,
   CONSTRAINT training_plans_pkey PRIMARY KEY (id),
+  CONSTRAINT training_plans_link_source_check CHECK (link_source IS NULL OR (link_source = ANY (ARRAY['auto'::text, 'manual'::text]))),
   CONSTRAINT training_plans_status_check CHECK (status = ANY (ARRAY['planned'::text, 'done'::text, 'skipped'::text, 'modified'::text])),
   CONSTRAINT training_plans_athlete_id_fkey FOREIGN KEY (athlete_id) REFERENCES athletes(id) ON DELETE CASCADE,
-  CONSTRAINT training_plans_completed_workout_id_fkey FOREIGN KEY (completed_workout_id) REFERENCES workouts(id)
+  CONSTRAINT training_plans_completed_workout_id_fkey FOREIGN KEY (completed_workout_id) REFERENCES workouts(id) ON DELETE SET NULL
 );
 
 
@@ -357,6 +488,8 @@ CREATE INDEX athlete_analyses_athlete_type_scope ON public.athlete_analyses USIN
 
 CREATE INDEX athlete_analyses_athlete_updated ON public.athlete_analyses USING btree (athlete_id, updated_at DESC);
 
+CREATE INDEX athlete_anchor_history_athlete_idx ON public.athlete_anchor_history USING btree (athlete_id, effective_from DESC);
+
 CREATE INDEX biometrics_athlete_date ON public.biometrics USING btree (athlete_id, date DESC);
 
 CREATE INDEX coach_conversations_athlete_updated ON public.coach_conversations USING btree (athlete_id, updated_at DESC);
@@ -365,11 +498,19 @@ CREATE INDEX coach_memories_athlete_idx ON public.coach_memories USING btree (at
 
 CREATE INDEX coach_memories_entity_idx ON public.coach_memories USING btree (athlete_id, memory_type, entity_key, updated_at DESC);
 
+CREATE INDEX hr_detection_dismissals_athlete_started ON public.hr_detection_dismissals USING btree (athlete_id, started_at);
+
+CREATE UNIQUE INDEX oauth_tokens_provider_external_user_uniq ON public.oauth_tokens USING btree (provider, external_user_id) WHERE (external_user_id IS NOT NULL);
+
 CREATE INDEX push_tokens_athlete_idx ON public.push_tokens USING btree (athlete_id);
 
 CREATE INDEX sleep_periods_athlete_date ON public.sleep_periods USING btree (athlete_id, date DESC);
 
+CREATE INDEX sleep_stage_segments_athlete_date ON public.sleep_stage_segments USING btree (athlete_id, date);
+
 CREATE INDEX tss_history_athlete_date ON public.tss_history USING btree (athlete_id, date DESC);
+
+CREATE INDEX weigh_ins_athlete_measured ON public.weigh_ins USING btree (athlete_id, measured_at DESC);
 
 CREATE INDEX idx_workouts_garmin_id ON public.workouts USING btree (garmin_activity_id) WHERE (garmin_activity_id IS NOT NULL);
 
@@ -386,3 +527,7 @@ CREATE INDEX idx_activity_laps_workout ON public.activity_laps USING btree (work
 CREATE INDEX idx_activity_streams_workout ON public.activity_streams USING btree (workout_id);
 
 CREATE UNIQUE INDEX idx_activity_streams_workout_unique ON public.activity_streams USING btree (workout_id);
+
+CREATE INDEX training_plans_athlete_date_idx ON public.training_plans USING btree (athlete_id, planned_date);
+
+CREATE UNIQUE INDEX training_plans_completed_workout_unique ON public.training_plans USING btree (completed_workout_id) WHERE (completed_workout_id IS NOT NULL);
