@@ -63,14 +63,19 @@ def pick_daily(weigh_ins: list[dict[str, Any]]) -> dict[str, Any] | None:
 
 
 def refresh_daily_weight(db: Any, athlete_id: str, day: date) -> float | None:
-    """Set biometrics.weight_kg for `day` from its weigh-ins (cleared when none are left)."""
+    """
+    Set biometrics.weight_kg for `day` from its weigh-ins. With none left, it's cleared
+    only when it came from a weigh-in that was deleted: a device weight with no
+    weigh-in behind it (the trigger skips a device repeating its previous value) stays.
+    """
     from app.services.processing import _upsert_biometrics_sync
 
     res = (
         db.table(TABLE).select("weight_kg, source, measured_at, deleted_at")
         .eq("athlete_id", athlete_id).eq("date", day.isoformat()).execute()
     )
-    best = pick_daily((res.data if res else None) or [])
+    day_rows = (res.data if res else None) or []
+    best = pick_daily(day_rows)
     cur = (
         db.table("biometrics").select("weight_kg, metric_sources")
         .eq("athlete_id", athlete_id).eq("date", day.isoformat()).limit(1).execute()
@@ -78,7 +83,8 @@ def refresh_daily_weight(db: Any, athlete_id: str, day: date) -> float | None:
     row = ((cur.data if cur else None) or [None])[0]
     sources = dict((row or {}).get("metric_sources") or {})
     if best is None:
-        if row and row.get("weight_kg") is not None:
+        deleted_sources = {w.get("source") for w in day_rows if w.get("deleted_at")}
+        if row and row.get("weight_kg") is not None and sources.get("weight_kg", "manual") in deleted_sources:
             sources.pop("weight_kg", None)
             db.table("biometrics").update({"weight_kg": None, "metric_sources": sources}).eq(
                 "athlete_id", athlete_id
@@ -160,9 +166,10 @@ def weight_payload(db: Any, athlete_id: str, today: date) -> dict[str, Any]:
         db.table(TABLE)
         .select("id, date, measured_at, weight_kg, body_fat_pct, source, time_known")
         .eq("athlete_id", athlete_id).gte("date", since).is_("deleted_at", "null")
-        .order("measured_at").limit(2000).execute()
+        # Newest first so a cap drops the oldest, not the latest; flipped back below.
+        .order("measured_at", desc=True).limit(2000).execute()
     )
-    rows = (res.data if res else None) or []
+    rows = list(reversed((res.data if res else None) or []))
     athlete = (
         db.table("athletes").select("goal_weight_kg, ftp_watts, measurement_units")
         .eq("id", athlete_id).maybe_single().execute()
@@ -233,13 +240,23 @@ def save_garmin_weigh_ins(db: Any, athlete_id: str, rows: list[dict[str, Any]]) 
     """
     Upsert Garmin weigh-ins. deleted_at isn't in the payload, so a re-sync never
     restores one the athlete deleted. A real Garmin weigh-in replaces the time-less
-    'daily:' copy the trigger made of the same day's Garmin weight.
+    'daily:' copy the trigger made of the same day's Garmin weight; when the athlete
+    had deleted that copy, the real one arrives deleted too.
     """
     if not rows:
         return 0
-    payload = [{**r, "athlete_id": athlete_id} for r in rows]
-    db.table(TABLE).upsert(payload, on_conflict="athlete_id,source,external_id").execute()
     days = sorted({r["date"] for r in rows})
+    gone = (
+        db.table(TABLE).select("date").eq("athlete_id", athlete_id).eq("source", "garmin")
+        .like("external_id", "daily:%").not_.is_("deleted_at", "null").in_("date", days).execute()
+    )
+    dismissed_days = {str(r["date"])[:10] for r in ((gone.data if gone else None) or [])}
+    now = datetime.now(timezone.utc).isoformat()
+    live = [{**r, "athlete_id": athlete_id} for r in rows if r["date"] not in dismissed_days]
+    dismissed = [{**r, "athlete_id": athlete_id, "deleted_at": now} for r in rows if r["date"] in dismissed_days]
+    for batch in (live, dismissed):
+        if batch:
+            db.table(TABLE).upsert(batch, on_conflict="athlete_id,source,external_id").execute()
     for d in days:
         db.table(TABLE).delete().eq("athlete_id", athlete_id).eq("source", "garmin").eq("date", d).like(
             "external_id", "daily:%"

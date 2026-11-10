@@ -157,20 +157,11 @@ def external_id_for(athlete_id: str, start: datetime) -> str:
 
 
 def _zone_pcts(window: DetectedWindow, athlete: dict[str, Any]) -> dict[str, int]:
-    from app.services.hr_zones import get_athlete_zones
+    from app.services.hr_zones import compute_zone_distribution, get_athlete_zones
 
-    zones = get_athlete_zones(athlete)
-    secs = {z.zone: 0.0 for z in zones}
-    for (_, bpm), w in zip(window.samples, window.weights):
-        for z in zones:
-            if z.min_bpm <= bpm < z.max_bpm:
-                secs[z.zone] += w
-                break
-        else:
-            # Above the top zone's bound counts as the top zone; below Z1 as Z1.
-            secs[zones[-1].zone if bpm >= zones[-1].min_bpm else zones[0].zone] += w
-    total = sum(window.weights) or 1.0
-    return {f"hr_zone_{z}_pct": int(round(s / total * 100)) for z, s in secs.items() if 1 <= z <= 5}
+    # The series is evenly spaced (Garmin: 2 min), so equal sample weights are right.
+    dist = compute_zone_distribution([b for _, b in window.samples], get_athlete_zones(athlete))
+    return {f"hr_zone_{z}_pct": int(round(dist.get(f"Z{z}", 0.0))) for z in range(1, 6)}
 
 
 def _anchors(series: HeartRateSeries, athlete: dict[str, Any], day: date) -> tuple[int | None, int | None]:
@@ -205,7 +196,7 @@ async def detect_and_save_for_day(db: Any, athlete_id: str, day: date) -> dict[s
         span_end = series.end_at + timedelta(seconds=DEFAULT_SAMPLE_SEC + RECORDED_PAD_SEC)
         workouts = (
             db.table("workouts")
-            .select("id,source,external_id,started_at,ended_at,duration_seconds")
+            .select("id,source,external_id,started_at,ended_at,duration_seconds,avg_hr,max_hr")
             .eq("athlete_id", athlete_id)
             .lt("started_at", span_end.isoformat())
             .gte("started_at", (span_start - timedelta(hours=24)).isoformat())
@@ -248,7 +239,15 @@ async def detect_and_save_for_day(db: Any, athlete_id: str, day: date) -> dict[s
     ]
     wanted = {external_id_for(athlete_id, w.start) for w in keep}
 
+    stored = {str(r.get("external_id")): r for r in detected_rows}
     for w in keep:
+        prev = stored.get(external_id_for(athlete_id, w.start))
+        if prev is not None and _span(prev) == (w.start, w.end) and (prev.get("avg_hr"), prev.get("max_hr")) == (
+            w.avg_hr, w.max_hr
+        ):
+            # Unchanged since the last pass: re-saving would make the caller rebuild the
+            # athlete's whole TSS history every hourly sync for nothing.
+            continue
         payload = WorkoutPayload(
             source=SOURCE,
             external_id=external_id_for(athlete_id, w.start),

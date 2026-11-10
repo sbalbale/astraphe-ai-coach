@@ -784,20 +784,26 @@ class _WeightDb:
         return _WeightQuery(self, name)
 
 
-def test_manual_weight_recorded_when_it_differs_from_latest_reading():
-    db = _WeightDb(latest=85.05, today_rows=[{"metric_sources": {"hrv_rmssd": "whoop", "weight_kg": "whoop"}}])
+def test_manual_weight_recorded_as_a_weigh_in_when_it_differs_from_latest_reading(monkeypatch):
+    # A weigh-in (which also sets today's daily weight), not a direct daily write: that
+    # was lost on a day that already had a weigh-in.
+    from app.services import weight as weight_service
+
+    calls = []
+    monkeypatch.setattr(weight_service, "log_weigh_in", lambda db, aid, kg: calls.append((aid, kg)))
+    db = _WeightDb(latest=85.05)
     assert athlete_router._record_manual_weight_sync(db, "athlete-1", 83.914) is True
-    [(table, payload, conflict)] = db.upserts
-    assert table == "biometrics" and conflict == "athlete_id,date"
-    assert payload["weight_kg"] == 83.91
-    assert payload["metric_sources"] == {"hrv_rmssd": "whoop", "weight_kg": "manual"}
-    assert len(payload["date"]) == 10
+    assert calls == [("athlete-1", 83.91)]
+    assert db.upserts == []
 
 
-def test_manual_weight_recorded_when_there_are_no_readings():
-    db = _WeightDb(latest=None)
-    assert athlete_router._record_manual_weight_sync(db, "athlete-1", 70.0) is True
-    assert db.upserts[0][1]["metric_sources"] == {"weight_kg": "manual"}
+def test_manual_weight_recorded_when_there_are_no_readings(monkeypatch):
+    from app.services import weight as weight_service
+
+    calls = []
+    monkeypatch.setattr(weight_service, "log_weigh_in", lambda db, aid, kg: calls.append(kg))
+    assert athlete_router._record_manual_weight_sync(_WeightDb(latest=None), "athlete-1", 70.0) is True
+    assert calls == [70.0]
 
 
 def test_manual_weight_skipped_when_it_matches_latest_reading():

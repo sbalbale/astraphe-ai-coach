@@ -282,7 +282,12 @@ def delete_workout(
         db.table("workouts").delete().eq("id", workout_id).eq("athlete_id", athlete_id).execute()
         if existing.data.get("source") == HR_DETECTED_SOURCE:
             # Not a workout after all: don't detect this window again on the next sync.
-            dismiss_detection(db, athlete_id, existing.data)
+            # Best effort: the delete has happened, so its TSS / strain refresh below
+            # must still run and the client must not see a failure.
+            try:
+                dismiss_detection(db, athlete_id, existing.data)
+            except Exception as e:
+                print(f"[workouts] Failed to record dismissed detection: {e!r}")
         # Like PATCH: the deleted TSS must leave CTL/ATL/TSB and that day's strain
         # (a deleted duplicate otherwise kept counting until some later sync).
         background_tasks.add_task(recalculate_tss_history, athlete_id, db)

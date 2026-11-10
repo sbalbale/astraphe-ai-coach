@@ -356,3 +356,32 @@ def test_build_heart_rate_day_without_series():
     ):
         p = hrs.build_heart_rate_day(_Db(), "a1", date(2026, 11, 8))
     assert p["samples"] == [] and p["source"] is None and p["avg_hr"] is None and p["workouts"] == []
+
+
+def test_unchanged_detection_is_not_saved_again():
+    # An hourly re-run with nothing new must not re-save (the caller would rebuild the
+    # whole TSS history on any "changed" count).
+    w0 = det.detect_windows(SESSION, REST, MAX)[0]
+    stored = {
+        "id": "d1", "source": "hr_detected", "external_id": det.external_id_for("a1", w0.start),
+        "started_at": w0.start.isoformat(), "ended_at": w0.end.isoformat(),
+        "avg_hr": w0.avg_hr, "max_hr": w0.max_hr,
+    }
+    result, saved, strain = _run(_Db(athletes=[ATHLETE], workouts=[stored]), SESSION)
+    assert result == {"saved": 0, "removed": 0}
+    saved.assert_not_called()
+    strain.assert_not_called()
+
+
+def test_failed_dismissal_still_deletes_cleanly():
+    _client(_RouterDb(dict(DETECTED_ROW)))
+    try:
+        with patch.object(workouts_router, "dismiss_detection", side_effect=RuntimeError("db")), patch.object(
+            workouts_router, "recalculate_tss_history"
+        ) as recalc, patch.object(workouts_router, "_refresh_daily_strain_for_instant_sync"):
+            with TestClient(app) as client:
+                res = client.delete("/v1/workouts/w1")
+    finally:
+        app.dependency_overrides = {}
+    assert res.status_code == 200
+    recalc.assert_called_once()

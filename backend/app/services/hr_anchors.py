@@ -37,15 +37,19 @@ def refresh_measured_resting_hr(db: Any, athlete_id: str, today: date | None = N
     (the profile keeps its value; the next synced day fills it in).
     """
     today = today or datetime.now(timezone.utc).date()
+    from app.services.algorithms import calculate_rhr_baseline
+
+    # Same window and baseline as the sync (process_and_save_biometrics), so switching
+    # back gives the value the next synced day would set.
     res = (
-        db.table("biometrics").select("resting_hr").eq("athlete_id", athlete_id)
+        db.table("biometrics").select("date, resting_hr").eq("athlete_id", athlete_id)
         .gte("date", (today - timedelta(days=RHR_WINDOW_DAYS)).isoformat())
-        .lte("date", today.isoformat()).execute()
+        .lte("date", today.isoformat()).order("date").execute()
     )
     vals = [int(r["resting_hr"]) for r in ((res.data if res else None) or []) if r.get("resting_hr")]
     if len(vals) < MIN_RHR_READINGS:
         return None
-    rhr = int(round(sum(vals) / len(vals)))
+    rhr = int(round(calculate_rhr_baseline(vals)))
     db.table("athletes").update({"resting_hr": rhr, "resting_hr_source": "measured"}).eq("id", athlete_id).execute()
     return rhr
 

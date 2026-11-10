@@ -14,7 +14,6 @@ from pydantic import ValidationError
 
 from app.models.athlete import AthleteProfileUpdate
 from app.services.hr_zones import get_athlete_zones, optional_canonical_hr_zone_method
-from app.services.time_utils import coerce_timezone_offset_min, local_datetime_from_timezone_offset
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +44,10 @@ def normalize_profile_update(update_data: dict[str, Any]) -> dict[str, Any]:
         if data.get("resting_hr"):
             data["resting_hr_source"] = "manual"
         else:
-            data.pop("resting_hr")  # clearing it: keep the measured value
+            # Clearing it goes back to the measured value (as clearing max HR goes back to
+            # the estimate), rather than leaving the old entry pinned.
+            data.pop("resting_hr")
+            data["resting_hr_source"] = "measured"
     if "threshold_hr" in data and data.get("threshold_hr") is not None:
         try:
             if int(data["threshold_hr"]) > 0:
@@ -125,41 +127,13 @@ def record_manual_weight_sync(db: Any, athlete_id: str, weight_kg: float) -> boo
     if latest is not None and abs(latest - weight_kg) < 0.05:
         return False
 
-    offset = None
-    try:
-        res = db.table("athletes").select("timezone_offset_min").eq("id", athlete_id).maybe_single().execute()
-        row = getattr(res, "data", None) if res else None
-        if isinstance(row, dict):
-            offset = row.get("timezone_offset_min")
-    except Exception:
-        pass
-    today = local_datetime_from_timezone_offset(coerce_timezone_offset_min(offset)).date().isoformat()
+    # A real weigh-in (timestamped now), which also sets today's daily weight. Writing
+    # the daily weight directly was lost when today already had a weigh-in: the
+    # biometrics trigger skips a day that has one, and the next recompute of the day
+    # restored the earlier value.
+    from app.services.weight import log_weigh_in
 
-    metric_sources: dict = {}
-    try:
-        res = (
-            db.table("biometrics")
-            .select("metric_sources")
-            .eq("athlete_id", athlete_id)
-            .eq("date", today)
-            .limit(1)
-            .execute()
-        )
-        if res.data and isinstance(res.data[0].get("metric_sources"), dict):
-            metric_sources = dict(res.data[0]["metric_sources"])
-    except Exception:
-        pass
-    metric_sources["weight_kg"] = "manual"
-
-    db.table("biometrics").upsert(
-        {
-            "athlete_id": athlete_id,
-            "date": today,
-            "weight_kg": round(float(weight_kg), 2),
-            "metric_sources": metric_sources,
-        },
-        on_conflict="athlete_id,date",
-    ).execute()
+    log_weigh_in(db, athlete_id, round(float(weight_kg), 2))
     return True
 
 

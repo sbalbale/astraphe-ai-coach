@@ -16,12 +16,26 @@ class _Q:
 
     def __init__(self, db, name):
         self.db, self.name, self.filters, self.op, self.payload, self.single = db, name, {}, "select", None, False
+        self.null_filters = []
 
     def select(self, *_a, **_k):
         return self
 
     def eq(self, f, v):
         self.filters[f] = v
+        return self
+
+    @property
+    def not_(self):
+        self._negate = True
+        return self
+
+    def is_(self, f, v):
+        # is_(f, "null"), optionally after .not_
+        want_null = str(v) == "null"
+        neg = getattr(self, "_negate", False)
+        self._negate = False
+        self.null_filters.append((f, want_null != neg))
         return self
 
     def __getattr__(self, _a):  # gte / is_ / order / limit / like ...
@@ -48,7 +62,9 @@ class _Q:
         return self
 
     def _match(self, r):
-        return all(str(r.get(f)) == str(v) for f, v in self.filters.items())
+        return all(str(r.get(f)) == str(v) for f, v in self.filters.items()) and all(
+            (r.get(f) is None) == want_null for f, want_null in self.null_filters
+        )
 
     def execute(self):
         rows = self.db.rows.setdefault(self.name, [])
@@ -105,7 +121,11 @@ def test_refresh_daily_weight_sets_and_clears():
     upsert = [c for c in db.calls if c[1] == "upsert"][0][2]
     assert upsert["weight_kg"] == 80.0 and upsert["metric_sources"] == {"weight_kg": "garmin", "hrv_rmssd": "garmin"}
 
-    db = _Db(weigh_ins=[], biometrics=[{"athlete_id": "a", "date": "2026-11-08", "weight_kg": 70.0, "metric_sources": {"weight_kg": "manual"}}])
+    # its weigh-in was deleted -> the daily weight it set goes too
+    db = _Db(
+        weigh_ins=[{"athlete_id": "a", "date": "2026-11-08", "weight_kg": 70.0, "source": "manual", "measured_at": "t", "deleted_at": "x"}],
+        biometrics=[{"athlete_id": "a", "date": "2026-11-08", "weight_kg": 70.0, "metric_sources": {"weight_kg": "manual"}}],
+    )
     assert w.refresh_daily_weight(db, "a", date(2026, 11, 8)) is None
     assert db.rows["biometrics"][0]["weight_kg"] is None
     assert db.rows["biometrics"][0]["metric_sources"] == {}
@@ -206,7 +226,7 @@ def test_normalize_profile_resting_hr_source():
 
     assert norm({"resting_hr": 48})["resting_hr_source"] == "manual"
     assert norm({"resting_hr": 48, "resting_hr_source": "measured"}) == {"resting_hr_source": "measured"}
-    assert norm({"resting_hr": None}) == {}
+    assert norm({"resting_hr": None}) == {"resting_hr_source": "measured"}  # cleared: back to measured
 
 
 def test_refresh_measured_resting_hr():
@@ -217,3 +237,26 @@ def test_refresh_measured_resting_hr():
     assert refresh_measured_resting_hr(db, "a", date(2026, 11, 9)) == 51
     assert db.rows["athletes"][0] == {"id": "a", "resting_hr": 51, "resting_hr_source": "measured"}
     assert refresh_measured_resting_hr(_Db(biometrics=[{"resting_hr": 50}]), "a", date(2026, 11, 9)) is None
+
+
+# ---- review fixes ------------------------------------------------------------------
+
+
+def test_refresh_keeps_a_device_weight_with_no_weigh_in_behind_it():
+    # WHOOP repeated its value, so the trigger made no weigh-in; an app weigh-in on the
+    # day is then deleted. The WHOOP weight must survive.
+    db = _Db(
+        weigh_ins=[{"athlete_id": "a", "date": "2026-11-08", "weight_kg": 79.6, "source": "manual", "measured_at": "t", "deleted_at": "x"}],
+        biometrics=[{"athlete_id": "a", "date": "2026-11-08", "weight_kg": 80.0, "metric_sources": {"weight_kg": "whoop"}}],
+    )
+    assert w.refresh_daily_weight(db, "a", date(2026, 11, 8)) is None
+    assert db.rows["biometrics"][0]["weight_kg"] == 80.0
+
+
+def test_garmin_sync_keeps_a_deleted_days_weigh_in_deleted():
+    db = _Db(weigh_ins=[{"athlete_id": "a", "source": "garmin", "date": "2026-09-01", "external_id": "daily:2026-09-01", "deleted_at": "x"}])
+    # the fake ignores like / not_ / in_ filters, so the query finds the deleted daily row
+    with patch.object(w, "refresh_daily_weight"):
+        w.save_garmin_weigh_ins(db, "a", w.parse_garmin_weigh_ins(GARMIN))
+    upserted = [c[2] for c in db.calls if c[1] == "upsert"]
+    assert len(upserted) == 1 and upserted[0][0]["deleted_at"]
