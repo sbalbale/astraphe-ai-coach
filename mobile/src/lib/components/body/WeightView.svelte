@@ -556,7 +556,16 @@
             <span aria-hidden="true" class="absolute top-0 bottom-0 w-px bg-[rgba(237,235,230,0.4)] pointer-events-none" style="left: {(X(hover.o) / 10).toFixed(2)}%"></span>
             <span aria-hidden="true" class="absolute w-2.5 h-2.5 -ml-[5px] -mt-[5px] rounded-full bg-text0 pointer-events-none shadow-[0_0_0_3px_var(--bg2)]" style="left: {(X(hover.o) / 10).toFixed(2)}%; top: {(Y(hv) / 2).toFixed(2)}%"></span>
           {/if}
-          <div role="presentation" onpointerdown={pMove} onpointermove={pMove} onpointerleave={() => (hover = null)} class="absolute inset-0 cursor-crosshair touch-none"></div>
+          <!-- Touch: tap / drag sideways to read, the reading stays after lifting; vertical swipes scroll. -->
+          <div
+            role="presentation"
+            onpointerdown={pMove}
+            onpointermove={pMove}
+            onpointerleave={(e) => { if (e.pointerType === 'mouse') hover = null; }}
+            oncontextmenu={(e) => e.preventDefault()}
+            class="absolute inset-0 cursor-crosshair touch-pan-y select-none"
+            style="-webkit-touch-callout: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent"
+          ></div>
         </div>
         <div aria-hidden="true" class="relative h-3.5 font-mono text-[10px] text-text3">
           {#each ticks as t (t.o)}

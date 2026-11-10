@@ -130,28 +130,12 @@
       const history = athleteStore.metrics?.trainingLoadData?.find((m: any) => isoDate(m?.date) === dateStr);
       const dow = format(d, 'EE');
       const dayLabel = dow === 'Thu' ? 'Th' : dow.charAt(0);
-      const bioStrain = Number(b?.strain_score);
-      const hasBioStrain = Number.isFinite(bioStrain) && bioStrain > 0;
-
-      // Workout-derived strain when biometrics strain is missing or stale (0 before zones synced).
+      // The day's strain (workouts + all-day heart rate) and what built it: the same
+      // dayStrain the wide layout uses, so the ring, bars and breakdown agree.
       const workoutsForDay = athleteStore.workouts?.filter((w: any) => localDay(w?.started_at) === dateStr) || [];
       const hasWorkout = workoutsForDay.length > 0;
-      const workoutStrainScore = Math.min(
-        100,
-        Math.round(
-          workoutsForDay.reduce((acc: number, w: any) => {
-            const s = Number(w?.strain_score);
-            if (!Number.isNaN(s) && s > 0) return acc + s;
-            const tss = Number(w?.tss);
-            if (!Number.isNaN(tss) && tss > 0) return acc + (tss / 150) * 100;
-            return acc;
-          }, 0),
-        ),
-      );
-      const computedScore =
-        hasWorkout || !hasBioStrain
-          ? Math.max(hasBioStrain ? Math.round(bioStrain) : 0, workoutStrainScore)
-          : Math.round(bioStrain);
+      const strain = dayStrain(b, workoutsForDay);
+      const computedScore = strain.score;
 
       return {
         date: dateStr,
@@ -164,6 +148,7 @@
         atl: loadValue(history?.atl, dateStr === todayStr ? athleteStore.atl : null),
         tsb: loadValue(history?.tsb, dateStr === todayStr ? athleteStore.tsb : null),
         workouts: workoutsForDay,
+        strain,
         // Only show "no strain data" when a workout exists but we still can't compute strain.
         missing: hasWorkout && computedScore === 0,
         data: b
@@ -349,7 +334,7 @@
       tone="blue"
       eyebrow="Not set up"
       title="Track your strain"
-      message="Strain is how hard your day was, built from your workouts' heart-rate zones. Connect Garmin or WHOOP, or log sessions by hand."
+      message="Strain is how hard your day was: your workouts' heart-rate zones plus time spent active the rest of the day. Connect Garmin or WHOOP, or log sessions by hand."
       actionLabel="Connect an app"
       onAction={() => goto('/profile/connections')}
       secondaryLabel="Log an activity"
@@ -364,7 +349,7 @@
       tone="amber"
       eyebrow="Waiting for sync"
       title="No strain yet"
-      message="Your apps are connected. Strain appears after your first workout syncs, usually within a few minutes of finishing."
+      message="Your apps are connected. Strain appears once a workout, or a day of all-day heart rate, syncs."
       actionLabel={checking ? 'Checking…' : 'Check sync now'}
       onAction={checkSync}
       secondaryLabel="Log an activity"
@@ -401,11 +386,11 @@
     </dl>
 
     <!-- Contributing activities -->
-    {#if d.workouts && d.workouts.length > 0}
+    {#if (d.workouts && d.workouts.length > 0) || d.strain.activity > 0}
       <section aria-label="Contributing activities" class="flex flex-col gap-2">
         <span class="font-mono text-[11px] tracking-[0.14em] text-text2">CONTRIBUTING</span>
-        {#each d.workouts as w (w.id || w.started_at)}
-          {@const strainVal = Math.round(workoutStrainContribution(w))}
+        {#each d.workouts as w, i (w.id || w.started_at)}
+          {@const strainVal = d.strain.workouts[i]?.value ?? 0}
           {@const tssVal = Number.isFinite(Number(w?.tss)) ? Math.round(Number(w.tss)) : null}
           {@const zp = [1, 2, 3, 4, 5].map((z) => Number(w?.[`hr_zone_${z}_pct`]) || 0)}
           <button type="button" class="flex flex-col gap-2.5 px-4 py-3.5 rounded-[18px] bg-bg1 border border-border text-left w-full cursor-pointer" onclick={() => openWorkoutDetails(w)}>
@@ -425,6 +410,15 @@
             </span>
           </button>
         {/each}
+        {#if d.strain.activity > 0}
+          <div class="flex flex-col gap-2.5 px-4 py-3.5 rounded-[18px] bg-bg1 border border-border">
+            <span class="flex justify-between items-baseline">
+              <span class="text-sm font-medium text-text0">Daily activity</span>
+              <span class="font-mono text-xs text-text1">+{d.strain.activity}</span>
+            </span>
+            <span class="text-xs text-text2">Time active outside workouts, from your all-day heart rate</span>
+          </div>
+        {/if}
       </section>
     {:else}
       <div class="flex gap-3 items-start px-4 py-3.5 rounded-[18px] bg-bg1 border border-dashed border-border">

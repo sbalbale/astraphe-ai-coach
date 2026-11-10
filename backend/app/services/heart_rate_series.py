@@ -67,6 +67,37 @@ def parse_garmin_heart_rate_values(heart_rates: dict[str, Any] | None) -> list[t
     return sorted(out.items())
 
 
+# Garmin fills a stretch with no optical signal (sensor lost contact, often right after a
+# workout) by repeating the last value: on real data, 92 minutes of exactly 123 bpm, then
+# 90 and 72. Real 2-minute averages wander more than this, so a run this long and this
+# flat is treated as missing for detection and day strain (the chart still shows it).
+FLATLINE_MIN_SAMPLES = 10
+FLATLINE_TOLERANCE_BPM = 1
+FLATLINE_MAX_GAP_SEC = 5 * 60
+
+
+def drop_flatlines(samples: list[tuple[datetime, int]]) -> list[tuple[datetime, int]]:
+    """``samples`` without runs of >= FLATLINE_MIN_SAMPLES consecutive readings within
+    ±FLATLINE_TOLERANCE_BPM of the run's first value. Pure."""
+    out: list[tuple[datetime, int]] = []
+    run: list[tuple[datetime, int]] = []
+
+    def flush() -> None:
+        if len(run) < FLATLINE_MIN_SAMPLES:
+            out.extend(run)
+
+    for p in samples:
+        if run and abs(p[1] - run[0][1]) <= FLATLINE_TOLERANCE_BPM and (
+            (p[0] - run[-1][0]).total_seconds() <= FLATLINE_MAX_GAP_SEC
+        ):
+            run.append(p)
+        else:
+            flush()
+            run = [p]
+    flush()
+    return out
+
+
 def save_series(
     db: Any,
     athlete_id: str,

@@ -397,19 +397,10 @@ def _workout_duration_seconds_from_row(row: dict) -> int:
 
 
 def _compute_daily_strain_from_workout_rows(rows: list[dict]) -> int:
-    day_zone_minutes = {1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0, 5: 0.0}
-    for w in rows:
-        dur_sec = _workout_duration_seconds_from_row(w)
-        if not dur_sec:
-            continue
-        # Strength load counts with the same neuromuscular multiplier as the workout's own
-        # strain (compute_strain_score scales linearly before saturating, so scaling the
-        # session's zone minutes is equivalent).
-        scale = NEUROMUSCULAR_MULTIPLIER if w.get("sport") == "strength" else 1.0
-        for z in range(1, 6):
-            pct = w.get(f"hr_zone_{z}_pct") or 0
-            day_zone_minutes[z] += (float(pct) / 100.0) * (dur_sec / 60.0) * scale
-    return compute_strain_score(day_zone_minutes)
+    """Strain from workouts alone (no all-day heart rate); see app.services.day_strain."""
+    from app.services.day_strain import workout_zone_minutes
+
+    return compute_strain_score(workout_zone_minutes(rows))
 
 def _compute_sleep_score_without_architecture(actual_sleep_min: float, sleep_need_min: float, awake_min: float = 0.0) -> int:
     """Backup sleep score when a provider gives duration but no REM/deep/light stages."""
@@ -478,7 +469,10 @@ def _refresh_daily_strain_for_day_sync(
         .execute()
     )
     rows = (res.data if res else None) or []
-    strain = _compute_daily_strain_from_workout_rows(rows)
+    # Workouts plus all-day heart rate outside them (app.services.day_strain).
+    from app.services.day_strain import compute_day_strain
+
+    strain = compute_day_strain(db, athlete_id, day, rows)
     db.table("biometrics").update({"strain_score": strain}).eq("athlete_id", athlete_id).eq(
         "date", day.isoformat()
     ).execute()
@@ -528,14 +522,23 @@ def fetch_rows_newest_first(build_query: Any, column: str, page_size: int = _PAG
 
 
 def refresh_all_daily_strain_sync(db: Any, athlete_id: str) -> dict[str, int]:
-    """Fast path: refresh biometrics.strain_score for every day that has a workout."""
+    """
+    Fast path: refresh biometrics.strain_score for every day that has a workout or an
+    all-day heart rate series (day strain counts the series too, so rest days change).
+    """
     rows = _fetch_all_rows(
         lambda: db.table("workouts").select("started_at").eq("athlete_id", athlete_id).order("started_at")
     )
     from app.services.time_utils import fetch_athlete_timezone_offset_min
 
     offset = fetch_athlete_timezone_offset_min(db, athlete_id)
-    days = _workout_dates_for_athlete(rows, offset)
+    series_days = _fetch_all_rows(
+        lambda: db.table("heart_rate_series").select("date").eq("athlete_id", athlete_id).order("date")
+    )
+    days = sorted(
+        set(_workout_dates_for_athlete(rows, offset))
+        | {date.fromisoformat(str(r["date"])[:10]) for r in series_days if r.get("date")}
+    )
     for d in days:
         _refresh_daily_strain_for_day_sync(db, athlete_id, d, offset_min=offset)
     return {"days": len(days)}
@@ -1546,7 +1549,7 @@ def _process_and_save_biometrics(
     if existing_res and existing_res.data:
         existing = existing_res.data
 
-    # 7.5 Calculate Daily Astraphe Strain from Workouts (the athlete's local day)
+    # 7.5 Daily Astraphe strain: workouts + all-day heart rate (the athlete's local day)
     _day_start_utc, _day_end_utc = _local_day_window_utc(
         payload.date, int((athlete_data or {}).get("timezone_offset_min") or 0)
     )
@@ -1562,7 +1565,9 @@ def _process_and_save_biometrics(
         .execute()
     )
     day_rows = (day_workouts_res.data if day_workouts_res else None) or []
-    astraphe_strain_score = _compute_daily_strain_from_workout_rows(day_rows)
+    from app.services.day_strain import compute_day_strain
+
+    astraphe_strain_score = compute_day_strain(db, athlete_id, payload.date, day_rows)
 
     metric_sources = dict(existing.get("metric_sources") or {})
     incoming_source = payload.source or "manual"

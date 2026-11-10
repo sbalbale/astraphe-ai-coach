@@ -30,10 +30,19 @@
 
   const isToday = $derived(day === format(new Date(), 'yyyy-MM-dd'));
   const heading = $derived(isToday ? "What built today's strain" : `What built ${format(parseISO(day), 'EEEE')}'s strain`);
-  const workoutTotal = $derived(strain.workouts.reduce((a, p) => a + p.value, 0));
-  /** Bar segments as % of the 0–100 scale: workouts (accent) then activity (steel). */
-  const workoutPct = $derived(Math.min(strain.score, workoutTotal));
-  const activityPct = $derived(Math.max(0, Math.min(100, strain.score) - workoutPct));
+  /**
+   * Bar segments on the 0–100 scale: activity strain (all workouts, light blue), then day
+   * strain (all-day activity outside workouts, blue-grey), then the unused rest of the scale.
+   * Styled like the Heart-rate zones bar (separate rounded pills, 3 px gaps).
+   */
+  const barSegments = $derived.by(() => {
+    const segs = [
+      { color: 'var(--blue)', pct: strain.workouts.reduce((a, p) => a + p.value, 0) },
+      { color: 'var(--steel)', pct: strain.activity }
+    ].filter((s) => s.pct > 0);
+    const rest = 100 - segs.reduce((a, s) => a + s.pct, 0);
+    return rest > 0 ? [...segs, { color: 'var(--border)', pct: rest }] : segs;
+  });
   const maxDay = $derived(Math.max(100, ...days.map((d) => d.score)));
 
   function share(v: number): number {
@@ -50,11 +59,11 @@
       <h2 class="m-0 font-display font-normal text-[26px]">{heading}</h2>
       <span class="font-mono text-[11px] text-text2">{strain.score} / 100</span>
     </div>
-    <div class="relative h-3.5 rounded-[7px] bg-border overflow-hidden" aria-hidden="true">
-      <span class="absolute left-0 top-0 bottom-0 bg-blue rounded-[7px]" style="width: {workoutPct}%"></span>
-      {#if activityPct > 0}
-        <span class="absolute top-0 bottom-0 bg-steel {workoutPct > 0 ? 'rounded-r-[7px]' : 'rounded-[7px]'}" style="left: {workoutPct}%; width: {activityPct}%"></span>
-      {/if}
+    <!-- One pill per row below (workouts, then daily activity), then the unused scale. -->
+    <div class="flex gap-[3px] h-2.5" aria-hidden="true">
+      {#each barSegments as seg, i (i)}
+        <span class="rounded-[3px]" style="flex: {seg.pct} 1 0; min-width: 4px; background: {seg.color}"></span>
+      {/each}
     </div>
     {#if strain.workouts.length === 0 && strain.activity === 0}
       <p class="m-0 text-[13px] text-text2">No workouts or all-day activity recorded for this day.</p>
@@ -73,7 +82,7 @@
       <div class="flex flex-col gap-2 px-4 py-3.5 rounded-2xl bg-bg1 border border-rail-border">
         <span class="flex justify-between"><span class="text-[14px] font-medium">Daily activity</span><span class="font-mono text-[14px] text-text1">+{strain.activity}</span></span>
         <span aria-hidden="true" class="h-1.5 rounded-[3px] bg-border"><span class="block h-1.5 rounded-[3px] bg-steel" style="width: {share(strain.activity)}%"></span></span>
-        <span class="text-[12px] text-text2">All-day strain from your wearable, beyond logged workouts</span>
+        <span class="text-[12px] text-text2">Time active outside workouts, from your all-day heart rate</span>
       </div>
     {/if}
   </section>
