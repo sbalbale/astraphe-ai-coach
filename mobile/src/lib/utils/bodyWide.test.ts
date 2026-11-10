@@ -104,3 +104,17 @@ describe('workoutMeta / hourTicks', () => {
     expect(ticks[ticks.length - 1].pct).toBeLessThan(100);
   });
 });
+
+describe('workoutZoneColor', () => {
+  it('uses the zone of the average intensity, like the zones bar', async () => {
+    const { workoutZoneColor } = await import('./bodyWide');
+    expect(workoutZoneColor({ hr_zone_1_pct: 80, hr_zone_2_pct: 20 })).toBe('var(--zone-1)');
+    expect(workoutZoneColor({ hr_zone_3_pct: 30, hr_zone_4_pct: 60, hr_zone_5_pct: 10 })).toBe('var(--zone-4)');
+    expect(workoutZoneColor({ hr_zone_5_pct: 100 })).toBe('var(--zone-5)');
+  });
+
+  it('falls back to the accent without zone data', async () => {
+    const { workoutZoneColor } = await import('./bodyWide');
+    expect(workoutZoneColor({ tss: 40 })).toBe('var(--blue)');
+  });
+});

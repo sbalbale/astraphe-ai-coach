@@ -82,6 +82,23 @@ export function workoutStrainContribution(w: Record<string, any>): number {
   return tss !== null ? (tss / 150) * 100 : 0;
 }
 
+/**
+ * Colour for a workout's strain segment: the HR zone of its average intensity (time in
+ * zone weighted by zone number, rounded), as the zones bar colours them. The accent when
+ * the workout has no zone data (a hand-logged session).
+ */
+export function workoutZoneColor(w: Record<string, any>): string {
+  let weighted = 0;
+  let total = 0;
+  for (let z = 1; z <= 5; z++) {
+    const pct = Number(w?.[`hr_zone_${z}_pct`]) || 0;
+    weighted += z * pct;
+    total += pct;
+  }
+  if (total <= 0) return 'var(--blue)';
+  return `var(--zone-${Math.min(5, Math.max(1, Math.round(weighted / total)))})`;
+}
+
 export type DayStrain = {
   score: number;
   /** Each workout's share of the day's score (they and `activity` add up to `score`). */
