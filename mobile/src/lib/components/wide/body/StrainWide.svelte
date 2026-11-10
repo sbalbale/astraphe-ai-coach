@@ -5,7 +5,7 @@
    */
   import { format, parseISO } from 'date-fns';
   import { formCssColor } from '$lib/scoreColors';
-  import { workoutMeta, workoutZoneColor, type DayStrain } from '$lib/utils/bodyWide';
+  import { workoutMeta, type DayStrain } from '$lib/utils/bodyWide';
 
   type Day = { date: string; score: number };
   let {
@@ -31,13 +31,13 @@
   const isToday = $derived(day === format(new Date(), 'yyyy-MM-dd'));
   const heading = $derived(isToday ? "What built today's strain" : `What built ${format(parseISO(day), 'EEEE')}'s strain`);
   /**
-   * Bar segments on the 0–100 scale, in list order: each workout in the zone colour of its
-   * intensity, then daily activity (steel), then the unused rest of the scale as an empty
-   * pill. Styled like the Heart-rate zones bar (separate rounded pills, 3 px gaps).
+   * Bar segments on the 0–100 scale: activity strain (all workouts, light blue), then day
+   * strain (all-day activity outside workouts, blue-grey), then the unused rest of the scale.
+   * Styled like the Heart-rate zones bar (separate rounded pills, 3 px gaps).
    */
   const barSegments = $derived.by(() => {
     const segs = [
-      ...strain.workouts.map((p) => ({ color: workoutZoneColor(p.workout), pct: p.value })),
+      { color: 'var(--blue)', pct: strain.workouts.reduce((a, p) => a + p.value, 0) },
       { color: 'var(--steel)', pct: strain.activity }
     ].filter((s) => s.pct > 0);
     const rest = 100 - segs.reduce((a, s) => a + s.pct, 0);
@@ -74,7 +74,7 @@
         class="flex flex-col gap-2 px-4 py-3.5 rounded-2xl bg-bg1 border border-rail-border no-underline text-text0 hover:border-popover-border"
       >
         <span class="flex justify-between gap-3"><span class="text-[14px] font-medium truncate">{p.workout.title || 'Workout'}</span><span class="font-mono text-[14px] text-blue">+{p.value}</span></span>
-        <span aria-hidden="true" class="h-1.5 rounded-[3px] bg-border"><span class="block h-1.5 rounded-[3px]" style="width: {share(p.value)}%; background: {workoutZoneColor(p.workout)}"></span></span>
+        <span aria-hidden="true" class="h-1.5 rounded-[3px] bg-border"><span class="block h-1.5 rounded-[3px] bg-blue" style="width: {share(p.value)}%"></span></span>
         <span class="text-[12px] text-text2">{[workoutMeta(p.workout), 'open workout'].filter(Boolean).join(' · ')}</span>
       </a>
     {/each}
