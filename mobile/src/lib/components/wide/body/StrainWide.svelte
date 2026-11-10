@@ -30,10 +30,13 @@
 
   const isToday = $derived(day === format(new Date(), 'yyyy-MM-dd'));
   const heading = $derived(isToday ? "What built today's strain" : `What built ${format(parseISO(day), 'EEEE')}'s strain`);
-  const workoutTotal = $derived(strain.workouts.reduce((a, p) => a + p.value, 0));
-  /** Bar segments as % of the 0–100 scale: workouts (accent) then activity (steel). */
-  const workoutPct = $derived(Math.min(strain.score, workoutTotal));
-  const activityPct = $derived(Math.max(0, Math.min(100, strain.score) - workoutPct));
+  /** Bar segments as % of the 0–100 scale, in list order: each workout, then activity. */
+  const barSegments = $derived(
+    [
+      ...strain.workouts.map((p) => ({ kind: 'workout' as const, pct: p.value })),
+      { kind: 'activity' as const, pct: strain.activity }
+    ].filter((s) => s.pct > 0)
+  );
   const maxDay = $derived(Math.max(100, ...days.map((d) => d.score)));
 
   function share(v: number): number {
@@ -50,11 +53,16 @@
       <h2 class="m-0 font-display font-normal text-[26px]">{heading}</h2>
       <span class="font-mono text-[11px] text-text2">{strain.score} / 100</span>
     </div>
-    <div class="relative h-3.5 rounded-[7px] bg-border overflow-hidden" aria-hidden="true">
-      <span class="absolute left-0 top-0 bottom-0 bg-blue rounded-[7px]" style="width: {workoutPct}%"></span>
-      {#if activityPct > 0}
-        <span class="absolute top-0 bottom-0 bg-steel {workoutPct > 0 ? 'rounded-r-[7px]' : 'rounded-[7px]'}" style="left: {workoutPct}%; width: {activityPct}%"></span>
-      {/if}
+    <!-- One segment per row below (workouts, then daily activity), on the 0-100 scale.
+         The track clips the left end; only the last filled segment rounds its right end,
+         so segments meet flush with a hairline gap instead of rounded caps overlapping. -->
+    <div class="relative h-3.5 rounded-[7px] bg-border overflow-hidden flex gap-[2px]" aria-hidden="true">
+      {#each barSegments as seg, i (i)}
+        <span
+          class="h-full shrink-0 {seg.kind === 'activity' ? 'bg-steel' : 'bg-blue'} {i === barSegments.length - 1 ? 'rounded-r-[7px]' : ''}"
+          style="width: {seg.pct}%"
+        ></span>
+      {/each}
     </div>
     {#if strain.workouts.length === 0 && strain.activity === 0}
       <p class="m-0 text-[13px] text-text2">No workouts or all-day activity recorded for this day.</p>
