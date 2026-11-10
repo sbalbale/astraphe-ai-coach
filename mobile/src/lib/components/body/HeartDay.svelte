@@ -346,7 +346,7 @@
       <div class="bg-bg2 border border-border rounded-[24px] p-6 flex flex-col gap-1.5">
         <span class="text-[14px] font-medium">No heart rate for this day</span>
         <span class="text-[13px] leading-[1.45] text-text1">
-          All-day heart rate comes from a connected Garmin. It syncs about once an hour, so today fills in as the day goes.
+          All-day heart rate comes from a connected Garmin. It arrives each time your watch syncs with Garmin Connect, so today fills in through the day.
         </span>
       </div>
     {:else}
