@@ -378,3 +378,30 @@ def test_backward_compat_helpers_read_from_config():
     assert _run_async(deps.get_current_user_tier(config=config)) == "trial"
     assert _run_async(deps.get_current_gemini_model(config=config)) == "model-a"
     assert _run_async(deps.get_current_gemini_analysis_model(config=config)) == "model-b"
+
+
+def test_user_db_is_reused_per_token_and_never_shared_between_tokens(monkeypatch):
+    from unittest.mock import MagicMock
+
+    from app import dependencies as deps
+
+    made = []
+
+    def fake_get_db():
+        c = MagicMock()
+        made.append(c)
+        return c
+
+    monkeypatch.setattr(deps, "get_db", fake_get_db)
+    monkeypatch.setattr(deps, "_user_db_cache", deps.OrderedDict())
+    monkeypatch.setattr(deps, "_USER_DB_CACHE_MAX", 2)
+
+    a1 = deps._user_db_for_token("tok-a")
+    assert deps._user_db_for_token("tok-a") is a1          # reused: no new client
+    b = deps._user_db_for_token("tok-b")
+    assert b is not a1                                        # another user's token never shares
+    a1.postgrest.auth.assert_called_once_with("tok-a")
+    b.postgrest.auth.assert_called_once_with("tok-b")
+    deps._user_db_for_token("tok-c")                          # over the cap: least recent (a) dropped
+    assert "tok-a" not in deps._user_db_cache and len(deps._user_db_cache) == 2
+    assert len(made) == 3

@@ -2,6 +2,8 @@ import asyncio
 import base64
 import json
 import logging
+import threading
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any, Callable, TypeVar
 
@@ -132,9 +134,32 @@ def _with_auth_token(db: Client, token: str) -> Client:
             pass
     return db
 
+# Building a supabase client costs ~300 ms (fresh httpx clients, each loading the CA
+# bundle), and every authenticated request built one. A client carries exactly one
+# user's JWT, so it's reused for that same token only; tokens rotate about hourly, so
+# the cache holds the recently active sessions and the oldest are dropped.
+_USER_DB_CACHE_MAX = 256
+_user_db_cache: "OrderedDict[str, Client]" = OrderedDict()
+_user_db_lock = threading.Lock()
+
+
+def _user_db_for_token(token: str) -> Client:
+    with _user_db_lock:
+        db = _user_db_cache.get(token)
+        if db is not None:
+            _user_db_cache.move_to_end(token)
+            return db
+    db = _with_auth_token(get_db(), token)
+    with _user_db_lock:
+        _user_db_cache[token] = db
+        _user_db_cache.move_to_end(token)
+        while len(_user_db_cache) > _USER_DB_CACHE_MAX:
+            _user_db_cache.popitem(last=False)
+    return db
+
+
 async def get_user_db(credentials: HTTPAuthorizationCredentials = Security(security)) -> Client:
-    token = credentials.credentials
-    return _with_auth_token(get_db(), token)
+    return _user_db_for_token(credentials.credentials)
 
 
 async def _run_supabase_call(fn, *args, timeout: float = SUPABASE_CALL_TIMEOUT_SECONDS):
