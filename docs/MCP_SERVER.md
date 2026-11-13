@@ -99,7 +99,9 @@ Concretely:
   registration (`allow_dynamic_registration`) is **on** in production — any MCP client can
   self-register without a maintainer manually issuing it a client ID/secret first. Local
   dev defaults to off (see the comment in `supabase/config.toml`); flip it locally if
-  you're specifically testing the DCR flow itself.
+  you're specifically testing the DCR flow itself. The MCP server advertises DCR only
+  when its own `MCP_ALLOW_DYNAMIC_CLIENT_REGISTRATION` is true (default `false`), so
+  production sets both.
 - `mcp-server/astraphe_mcp/auth/token_verifier.py` validates bearer tokens the same way
   every other Astraphe request does: `db.auth.get_user(token)` (delegates verification to
   Supabase Auth itself — nothing here manually decodes a JWT).
@@ -210,7 +212,8 @@ Requirements beyond a standard Astraphe self-host ([SETUP.md](./SETUP.md)):
 3. Copy `mcp-server/.env.example` to `mcp-server/.env` and fill in your Supabase project's
    URL/anon key, plus `MCP_ISSUER_URL` (your project's `/auth/v1`) and `MCP_RESOURCE_URL`
    (the public URL you'll expose this server at — see the [Transport](#transport) section's
-   note on why this has to match exactly).
+   note on why this has to match exactly). Optional: `MCP_ALLOW_DYNAMIC_CLIENT_REGISTRATION`
+   (default `false`) and `MCP_RATE_LIMIT_RPM` (default 30).
 4. Register at least one OAuth client for testing if you're keeping Dynamic Client
    Registration off (see [Rollout](#rollout) — production runs with it on):
    ```

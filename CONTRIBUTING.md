@@ -1,6 +1,6 @@
 # Contributing to ASTRAPHE
 
-Thank you for your interest in contributing! This guide covers everything you need to get started.
+Thank you for your interest in contributing! This guide covers what you need to get started.
 
 ## Development Setup
 
@@ -8,16 +8,16 @@ See [docs/SETUP.md](./docs/SETUP.md) for the complete local development setup gu
 
 ```bash
 # 1. Prerequisites: Docker, Node.js 20+, Python 3.12, pnpm 10+
-# 2. Start Supabase local stack
+# 2. Install the Supabase CLI and start the local stack (applies migrations)
+npm install
 npx supabase start
-npx supabase db push
 
-# 3. Start Redis (optional but recommended)
+# 3. Start Redis (optional)
 docker compose up -d redis
 
 # 4. Configure backend
 cp backend/.env.example backend/.env
-# Edit backend/.env with your Supabase keys (from supabase status)
+# Edit backend/.env: APP_ENV=development, plus Supabase keys from `npx supabase status`
 
 # 5. Start backend
 cd backend
@@ -26,8 +26,9 @@ source .venv/bin/activate   # On Windows: .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8000
 
-# 6. Configure and start mobile frontend
+# 6. Configure and start the frontend
 cd ../mobile
+cp .env.example .env
 pnpm install
 pnpm run dev
 ```
@@ -35,10 +36,12 @@ pnpm run dev
 ## Workflow
 
 1. **Fork** the repository and create a branch from `main`.
-2. **Branch naming:** `feature/<description>`, `fix/<description>`, `docs/<description>`.
-3. **Commit messages:** Use [Conventional Commits](https://www.conventionalcommits.org/):
+2. **Branch naming:** `feat/<description>`, `fix/<description>`, `docs/<description>`.
+3. **Commit messages:** use [Conventional Commits](https://www.conventionalcommits.org/), with a scope where it helps (e.g. `fix(heart-rate): ...`):
    - `feat:` new feature
    - `fix:` bug fix
+   - `perf:` performance improvement
+   - `style:` visual/UI styling changes
    - `docs:` documentation changes
    - `refactor:` code restructuring (no behavior change)
    - `test:` adding or updating tests
@@ -47,51 +50,52 @@ pnpm run dev
 
 ## Code Style
 
+There is no linter or formatter configuration checked in for either the backend or the frontend; match the style of the code around your change.
+
 ### Python (Backend)
 
-- **Formatter:** We use `ruff`. Run before committing:
+- **Tests:** new features should include tests. Run from the repo root:
   ```bash
-  cd backend
-  ruff check .
-  ruff format .
+  python -m pytest
+  python -m pytest --cov=app   # CI enforces 80% coverage
   ```
-- **Type checking:** Run `mypy` on changed modules.
-- **Tests:** All new features should include tests. Run:
-  ```bash
-  cd backend
-  python -m pytest tests -v
-  ```
-- **Docstrings:** Every public function must have a docstring describing purpose, parameters, and return value.
+- **Docstrings:** public functions should have a docstring describing what they do.
 
 ### TypeScript / Svelte (Mobile)
 
-- **Type checking:** Run `pnpm run check` before committing.
-- **Testing:** Unit tests with Vitest. Run `pnpm run test`.
-- **Linting:** Follow the Svelte/ESLint config in `mobile/`.
-- **Components:** One component per file. Use Svelte 5 runes (`$state`, `$derived`) for reactive state.
+- **Type checking:** run `pnpm run check` before committing (CI does not run it).
+- **Testing:** unit tests with Vitest: `pnpm run test`, or `pnpm run test:coverage` for the CI thresholds (80% lines, 75% branches).
+- **Components:** one component per file. Use Svelte 5 runes (`$state`, `$derived`) for reactive state.
 
 ## Testing
 
-- **Backend:** Run `cd backend && python -m pytest tests -v`. New features require unit tests.
-- **Mobile:** Run `cd mobile && pnpm run test`. Focus on utility functions and data transformations.
+- **Backend:** `python -m pytest` from the repo root. The suite ignores `backend/.env` and mocks external services, so no keys are needed.
+- **MCP server:** `python -m pytest` in `mcp-server/` (CI enforces 80% coverage).
+- **Mobile:** `cd mobile && pnpm run test`.
+- **Photon bridge:** `cd photon-bridge && npm test`.
+
+Every pull request runs these suites and builds the Docker images in CI; see [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md#contributor-ci).
 
 ## Architecture Overview
 
-- `backend/` — FastAPI service (Python 3.12, FastAPI, Pydantic v2)
-- `mobile/` — Svelte 5 + SvelteKit PWA (TypeScript, Tailwind)
-- `supabase/` — Database migrations, RLS policies, seed data
-- `docs/` — Architecture, API reference, deployment, and setup docs
+- `backend/` — FastAPI service (Python 3.12, Pydantic v2)
+- `mobile/` — Svelte 5 + SvelteKit app, served as a static PWA and wrapped for iOS with Capacitor (TypeScript, Tailwind)
+- `mcp-server/` — MCP server exposing athlete data to MCP clients
+- `photon-bridge/` — Node bridge for the iMessage coach channel
+- `supabase/` — database migrations, RLS policies, auth email templates, seed data
+- `docs/` — architecture, API reference, deployment, and setup docs
 
 ## Pull Requests
 
 - Ensure all tests pass.
+- Migrations must be backward-compatible with the previous release (additive changes), because production applies them before deploying the new API. See [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md).
 - Update documentation if behavior changes.
 - Describe the what and why in the PR description.
 - Reference any related issues.
 
 ## Getting Help
 
-- Check [docs/SETUP.md](./docs/SETUP.md) for common setup issues.
+- Check [docs/SETUP.md](./docs/SETUP.md#common-problems) for common setup problems.
 - Check existing issues before opening a new one.
 - Feel free to ask questions in PR discussions.
 

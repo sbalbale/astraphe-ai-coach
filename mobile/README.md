@@ -1,42 +1,39 @@
-# sv
+# ASTRAPHE app
 
-Everything you need to build a Svelte project, powered by [`sv`](https://github.com/sveltejs/cli).
+The ASTRAPHE frontend: a Svelte 5 + SvelteKit app built as a static site (`@sveltejs/adapter-static`, output in `build/`, SPA fallback `index.html`). It is served as a PWA on Firebase Hosting and wrapped for iOS with Capacitor. There is no Android project yet.
 
-## Creating a project
+Use **pnpm** (10+, Node 20+). A preinstall check blocks npm and yarn.
 
-If you're seeing this, you've probably already done this step. Congrats!
-
-```sh
-# create a new project
-npx sv create my-app
-```
-
-To recreate this project with the same configuration:
+## Setup
 
 ```sh
-# recreate this project
-npx sv@0.15.1 create --template minimal --types ts --no-install ./
+cp .env.example .env   # VITE_SUPABASE_URL, VITE_SUPABASE_KEY, VITE_API_URL, VITE_VAPID_PUBLIC_KEY
+pnpm install
+pnpm run dev           # http://localhost:5173
 ```
 
-## Developing
+The app talks to the FastAPI backend at `VITE_API_URL` and to Supabase Auth directly. See [docs/SETUP.md](../docs/SETUP.md) for running the backend and local Supabase.
 
-Once you've created a project and installed dependencies with `npm install` (or `pnpm install` or `yarn`), start a development server:
+## Scripts
+
+| Command | Purpose |
+|---|---|
+| `pnpm run dev` | Vite dev server |
+| `pnpm run build` | Static production build into `build/` (then removes every HTML file except `index.html`, so Firebase serves a single SPA shell) |
+| `pnpm run preview` | Preview the production build |
+| `pnpm run check` | `svelte-check` type checking |
+| `pnpm run test` | Vitest |
+| `pnpm run test:coverage` | Vitest with coverage thresholds (80% lines, 75% branches), as CI runs it |
+| `pnpm run icons` | Regenerate PWA icons |
+
+## iOS
 
 ```sh
-npm run dev
-
-# or start the server and open the app in a new browser tab
-npm run dev -- --open
+pnpm run build
+npx cap sync ios
+npx cap open ios
 ```
 
-## Building
+## Deployment
 
-To create a production version of your app:
-
-```sh
-npm run build
-```
-
-You can preview the production build with `npm run preview`.
-
-> To deploy your app, you may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment.
+Merges to `main` deploy `build/` to Firebase Hosting through `scripts/deploy-firebase-hosting-rest.mjs`; pull requests get a preview channel. See [docs/DEPLOYMENT.md](../docs/DEPLOYMENT.md). More on the app's structure is in [docs/MOBILE.md](../docs/MOBILE.md).

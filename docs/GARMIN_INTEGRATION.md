@@ -15,8 +15,14 @@ Implemented pieces:
 - Encrypted session persistence in `oauth_tokens` — never the password.
 - Historical backfill of activities and daily biometrics.
 - FIT download + `fitdecode` parsing into Strava-shaped streams/laps.
-- Hourly background poll loop for recent activities + biometrics, with a
-  cooldown on 429s (see Rate-Limit Mitigations).
+- Multisport activities (triathlon etc.) split into one workout per leg,
+  transitions dropped.
+- All-day heart rate (2-minute averages) stored per day in `heart_rate_series`,
+  then used for workout auto-detection and day strain.
+- Sleep stage segments and naps.
+- Weigh-ins (Index scale or entered in Garmin Connect) into `weigh_ins`.
+- Background poll loop for recent activities + biometrics, with a cooldown on
+  429s (see Rate-Limit Mitigations).
 - Mobile Connect/Unlink modal on Profile → Connected Apps.
 - Sport mapping from Garmin Connect `activityType.typeKey` values.
 - Canonical merge via the existing `processing.py` engine, which already
@@ -29,6 +35,8 @@ Backend settings (`backend/app/config.py`):
 ```env
 # Active community-login integration
 GARMIN_SYNC_POLL_HOURS=1
+# Overrides the hours setting when set (production uses 15)
+GARMIN_SYNC_POLL_MINUTES=
 # Fernet key encrypting oauth_tokens.access_token/refresh_token for every
 # provider (WHOOP, Strava, intervals.icu, Garmin), not just this one —
 # required in production. See app/services/token_crypto.py.
@@ -56,20 +64,24 @@ Connect / MFA / backfill ([`backend/app/routers/garmin_sync.py`](../backend/app/
 
 - `POST /v1/sync/garmin/connect` — body `{ username, password, days? }`.
   Returns `{ status: "success", ... }` or `{ mfa_required: true, state_token }`.
+  Limited to 5 attempts per hour.
 - `POST /v1/sync/garmin/connect/mfa` — body `{ state_token, mfa_code, days? }`.
-- `POST /v1/sync/garmin/backfill?days=90` — manual re-sync for the authenticated athlete.
+  Limited to 10 attempts per hour.
+- `POST /v1/sync/garmin/backfill?days=90` — manual re-sync for the authenticated
+  athlete (1-365 days, 3 per hour).
 
-Shared sync routes ([`backend/app/routers/sync.py`](../backend/app/routers/sync.py)),
-already provider-generic and needed no Garmin-specific changes:
+Shared sync routes ([`backend/app/routers/sync.py`](../backend/app/routers/sync.py)):
 
 - `GET /v1/sync/status` — includes `integrations.garmin.connected`.
 - `DELETE /v1/sync/garmin` — unlink and drop the stored session.
+- `POST /v1/sync/refresh-strain` — recompute day strain for every day with a
+  workout or an all-day heart-rate series.
 
 Legacy (unused) official webhook:
 
 - `POST /v1/sync/garmin/webhook` — parses the official Health API push-notification
-  shape. Nothing can trigger it today (no OAuth1.0a authorize/callback route
-  exists), left in place for a possible future official-API path.
+  shape. Returns 404 unless `GARMIN_WEBHOOK_SECRET` is set; nothing triggers it
+  today (no OAuth1.0a authorize/callback route exists).
 
 ## Data Model
 
@@ -87,6 +99,13 @@ Garmin contributes to:
   `garmin_activity_id` (unique fast-path dedup column, mirrors
   `strava_activity_id`), `elevation_gain_m`, and `calories`.
 - `activity_streams` / `activity_laps`: FIT-derived streams and laps (same keys as Strava).
+- `heart_rate_series`: one row per athlete, day and source with the day's
+  all-day heart rate (`source='garmin'`, ranked above WHOOP and HealthKit when
+  several exist).
+- `workouts` with `source='hr_detected'`: workouts detected from that series
+  (see Workout Detection below).
+- `weigh_ins`: Garmin weigh-ins (`source='garmin'`). A weigh-in the athlete
+  deleted stays deleted on re-sync.
 - `biometrics`: sleep / HRV / resting HR / SpO2 / skin temp deviation merged
   per-field via `metric_sources` (a JSONB map of field → winning source) —
   there's no single row-level `source` column. A day where Garmin's HRV value
@@ -124,7 +143,7 @@ Garmin has no self-serve OAuth for this product. Connection is credential-based:
 Mobile profile/connections → Connect Garmin
   -> POST /v1/sync/garmin/connect { username, password, days }
   -> backend calls garminconnect login (never stores the password)
-  -> if MFA: hold the pending client in-process, return { mfa_required, state_token }
+  -> if MFA: hold the pending login (in-process + Redis), return { mfa_required, state_token }
        -> POST /v1/sync/garmin/connect/mfa { state_token, mfa_code, days }
   -> persist the encrypted session in oauth_tokens
   -> schedule background backfill
@@ -155,20 +174,41 @@ Connect / backfill / poll tick
   -> map summary → WorkoutPayload(source="garmin")
   -> process_and_save_workout (canonical merge/dedup)
   -> download ORIGINAL FIT → parse streams/laps → activity_streams / activity_laps
-  -> fetch sleep (incl. SpO2, skin temp deviation) / HRV / resting HR per day
-  -> process_and_save_biometrics
+  -> per day: fetch sleep (incl. SpO2, skin temp deviation) / HRV / heart rates
+       -> save sleep stage segments and naps
+       -> save the all-day heart-rate series, run workout detection,
+          refresh the day's strain
+       -> process_and_save_biometrics
+  -> fetch weigh-ins for the window (one call)
+  -> recompute CTL/ATL once if detections changed
 ```
 
 Polling:
 
 - Started at FastAPI startup (`garmin.poll_loop`, wired in `main.py`).
-- Cadence: `GARMIN_SYNC_POLL_HOURS` (default 1h) — hourly, so sleep/recovery
-  data is fresh soon after waking rather than stale for hours.
+- Cadence: `GARMIN_SYNC_POLL_MINUTES` when set (production uses 15), else
+  `GARMIN_SYNC_POLL_HOURS` (default 1). Each tick reuses the stored session, so
+  shorter cadences only spend the lighter API rate limit, not the login one.
 - Window: recent 2 days (`POLL_WINDOW_DAYS`) of activities + biometrics —
   small on purpose, so a missed tick's Garmin-quota spend stays cheap.
 - Multi-replica safe: each tick claims `oauth_tokens.refresh_lock_expires_at`
   per athlete (mirrors WHOOP's proactive-refresh claim pattern) before
   syncing, so only one replica works a given athlete at a time.
+
+## Workout Detection And Day Strain
+
+Garmin's `get_heart_rates` response (already fetched for resting HR) carries
+the day's 2-minute heart rate. After saving it, `hr_activity_detection` looks
+for unrecorded sessions: at least 10 minutes at or above 40% of heart-rate
+reserve, cool spells up to 6 minutes bridged, never within ±5 minutes of a
+recorded workout. Activities sync before biometrics, so recorded workouts are
+already there to defer to; a recorded workout arriving later replaces an
+overlapping detection. Runs where Garmin repeats the same value (sensor lost
+contact) are dropped first (`heart_rate_series.drop_flatlines`).
+
+The day's strain is then recomputed: workouts' zone minutes plus all-day
+minutes at or above 50% of max HR outside workouts. Today's series grows
+through the day, so each poll pass refreshes it. Formulas: `docs/ALGORITHMS.md`.
 
 ## Deduplication
 
@@ -189,12 +229,12 @@ General priority, both for workout fields and biometrics (`SOURCE_PRIORITY` in
 `processing.py`), highest to lowest:
 
 ```
-garmin > whoop > intervals_icu > strava > healthkit > manual
+garmin > whoop > intervals_icu > strava > healthkit > manual > hr_detected
 ```
 
-(Manual entry is trusted over everything for `weight_kg`/`height_cm` specifically —
-those are the one exception, since a user-entered value is more reliable than
-any device estimate.)
+(Manual entry is trusted over every device for `weight_kg` and `height_cm`, since a user-entered
+value is more reliable than any device estimate. `hr_detected` is last: any
+recorded workout wins.)
 
 ## Sport Mapping
 
@@ -207,10 +247,10 @@ yet covered — unknown keys fall back to `other`, they don't error):
 | `run` | `running`, `trail_running`, `treadmill_running`, `virtual_run` |
 | `bike` | `cycling`, `indoor_cycling`, `mountain_biking`, `e_bike_ride` |
 | `swim` | `swimming`, `lap_swimming`, `open_water_swimming` |
-| `strength` | `strength_training`, `hiit`, `indoor_cardio` |
-| `row` | `rowing`, `indoor_rowing` |
-| `mobility` | `yoga`, `pilates`, `stretching` |
-| `other` | `walking`, `hiking`, unknown keys |
+| `strength` | `strength_training`, `hiit`, `indoor_cardio`, `elliptical` |
+| `row` | `rowing`, `indoor_rowing`, any key containing `rowing` |
+| `mobility` | `yoga`, `pilates`, `stretching`, `breathwork` |
+| `other` | `walking`, `hiking`, `multi_sport`, unknown keys |
 
 ## Rate-Limit Mitigations
 
@@ -231,8 +271,8 @@ retrying. Mitigations:
   made for that pass.
 - The poll loop then holds that athlete's sync lock for
   `GARMIN_RATE_LIMIT_COOLDOWN_SEC` (30 minutes) instead of releasing it
-  normally, so the *next* poll tick (an hour later, by default) skips that
-  athlete rather than immediately retrying into the same limit.
+  normally, so poll ticks inside that window skip the athlete rather than
+  retrying into the same limit.
 - During manual testing, avoid rapid reconnect loops against a personal account.
 
 ## Remaining Work

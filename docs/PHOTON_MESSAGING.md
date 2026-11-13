@@ -19,13 +19,21 @@ iPhone <-> Photon (iMessage line) <-gRPC-> photon-bridge (Node, 1 replica)
 Photon has no webhooks or HTTP send API (only the TypeScript `spectrum-ts` gRPC SDK), so the
 bridge holds the stream. Run **exactly one** bridge replica per Photon project.
 
-- Inbound: `routers/messaging.py` -> `services/messaging.handle_inbound_text`. Reuses
-  `routers/coach._run_coach_response_and_notify` with a `reply_sink` that texts instead of pushing.
-  Inbound ids are deduped in `messaging_events`.
+- Inbound: `routers/messaging.py` -> `services/messaging.handle_inbound_text`. Checks the
+  `X-Photon-Bridge-Token` header and the allow-listed sender, then reuses
+  `routers/coach._run_coach_response_and_notify` (on `GEMINI_ANALYSIS_MODEL`) with a `reply_sink`
+  that texts instead of pushing, in the athlete's latest conversation. Inbound ids are deduped in
+  `messaging_events`; more than `PHOTON_MAX_INBOUND_PER_MINUTE` (default 10, per process) gets a
+  "slow down" text instead of a reply.
 - `/new` (or `/new chat`) by text starts a fresh conversation and opens it with the app's own chat-open message (`ai_coach.build_initialization_message`: proactive anomaly warning, else a context-aware greeting), stored as the first coach message so the app shows it too.
-- Post-workout: `services/processing.process_and_save_workout` -> `messaging.maybe_text_workout`.
-  Garmin triggers it from `garmin._save_one_activity` after the FIT download has filled in zones, TSS and laps (its ingest always sets `skip_tss_recalc`). Skips workouts older than `PHOTON_WORKOUT_MAX_AGE_HOURS`, shorter
-  than `PHOTON_MIN_WORKOUT_MINUTES`, or already texted (`workouts.notified_at`, claimed atomically).
+- Post-workout: the text is the coach's post-workout debrief (`services/coach_notifications.post_workout_debrief`),
+  spawned from `processing.process_and_save_workout` (unless `skip_tss_recalc`). Garmin triggers it
+  from `garmin._save_one_activity` after the FIT download has filled in zones, TSS and laps (its
+  ingest always sets `skip_tss_recalc`). The same reply opens a coach thread with a push when the
+  athlete's debrief notification is on, and is texted while their `texts` notification setting is
+  `active` (default). Skips workouts that ended more than `PHOTON_WORKOUT_MAX_AGE_HOURS` ago, are
+  shorter than `PHOTON_MIN_WORKOUT_MINUTES`, or were already notified (`workouts.notified_at`; each
+  debrief is also claimed once in `notification_log`).
 
 ## Setup
 
@@ -41,11 +49,14 @@ bridge holds the stream. Run **exactly one** bridge replica per Photon project.
    | `PHOTON_BRIDGE_TOKEN` | long random string, shared with the bridge |
    | `PHOTON_BRIDGE_URL` | bridge URL reachable from the backend (default `http://photon-bridge:8790`) |
    | `PHOTON_MIN_WORKOUT_MINUTES` / `PHOTON_WORKOUT_MAX_AGE_HOURS` | optional, default 10 / 12 |
+   | `PHOTON_MAX_INBOUND_PER_MINUTE` | optional, default 10 |
 
 4. Bridge env: `PHOTON_PROJECT_ID`, `PHOTON_PROJECT_SECRET`, `PHOTON_BRIDGE_TOKEN` (same as backend),
-   `BACKEND_URL` (the backend's in-cluster URL), `PHOTON_ALLOWED_NUMBER`.
+   `BACKEND_URL` (the backend's in-cluster URL), `PHOTON_ALLOWED_NUMBER`, optional `PORT`
+   (default 8790).
 5. Build/deploy `photon-bridge/` (`docker build -t astraphe-photon-bridge photon-bridge`) with
-   `replicas: 1`. Keep the bridge's `/send` port private to the cluster.
+   `replicas: 1`. Keep the bridge's `/send` port private to the cluster. `GET /healthz` is the
+   health check.
 
 The channel is inert until `PHOTON_ATHLETE_ID`, `PHOTON_ALLOWED_NUMBER` and `PHOTON_BRIDGE_TOKEN`
 are all set.
@@ -84,6 +95,3 @@ CI (`deploy.yml`) builds `ghcr.io/sbalbale/astraphe-photon-bridge` and rolls it 
 
 The migration (`20261020120000_photon_messaging.sql`) also marks workouts that started before 2026-10-20 (EDT) as already notified, so the first deploy does not text about history. It is additive and applied automatically by the
 `migrate` job on merge, before the new backend rolls out.
-- Workouts that sync together are texted one at a time, in order (an `asyncio.Lock` in
-  `messaging.py`), so the second note can see the first. The lock is per process; across backend
-  replicas two different workouts could still be composed concurrently.

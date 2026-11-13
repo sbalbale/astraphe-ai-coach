@@ -120,8 +120,8 @@ async def garmin_connect_mfa(
     """
     Complete a Garmin login that returned ``mfa_required``.
 
-    Must be called against the same backend process that returned the
-    ``state_token`` — see the MFA session note in ``app/services/garmin.py``.
+    The pending login is kept in Redis (encrypted), so any replica can finish it;
+    see the MFA session note in ``app/services/garmin.py``.
     """
     try:
         client = await asyncio.to_thread(

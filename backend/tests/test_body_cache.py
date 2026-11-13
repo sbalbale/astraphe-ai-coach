@@ -54,7 +54,7 @@ def test_miss_set_hit_and_version_bump_retires():
         _run(body_cache.set_cached("b2", "weight:2026-11-08", {"y": 2}, 60))
         _run(body_cache.bump_body_cache("a1"))
         assert _run(body_cache.get_cached("b2", "weight:2026-11-08")) == {"y": 2}
-    # prod runs noeviction with no maxmemory: every payload key must expire
+    # prod is volatile-lru: only keys with a TTL can be evicted, so every payload key must expire
     assert all(k in r.ttls for k in r.data if k.startswith("body:"))
 
 

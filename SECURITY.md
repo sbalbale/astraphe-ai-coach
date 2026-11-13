@@ -27,15 +27,18 @@ The following are in scope for security reports:
 - Database schema and RLS policies
 - Mobile app data handling and storage
 - CI/CD pipeline and secret management
+- MCP server and iMessage (Photon) channel
 
 ## Known Security Measures
 
 - All database tables with user data enforce PostgreSQL Row Level Security (RLS).
-- Authentication uses Supabase Auth with access token validation on every protected route.
-- API rate limiting is enforced per-IP and per-athlete via Redis (or process-local fallback).
-- Debug/admin endpoints are disabled in production.
-- Secrets are managed via environment variables or cloud secret managers.
-- Security headers (CSP, HSTS, X-Frame-Options, etc.) are applied to all responses.
+- Authentication uses Supabase Auth; every protected API route validates the access token. Email confirmation and password reset use the PKCE flow.
+- Provider OAuth tokens (WHOOP, Strava, intervals.icu, Garmin) are encrypted at rest with a Fernet key (`OAUTH_TOKEN_ENCRYPTION_KEY`); the API refuses to start in production without it.
+- WHOOP and Garmin webhooks are signature-verified; Strava webhooks (which carry no signature) are checked against known athletes.
+- API rate limiting is enforced per IP and, for AI and other expensive endpoints, per user, via Redis (or an in-process fallback for a single instance).
+- Debug endpoints and the interactive API docs are disabled in production. Admin endpoints require `app_metadata.is_admin`.
+- Secrets are supplied through environment variables, never committed.
+- The API adds security headers (HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy) to every response; the Firebase-hosted frontend also sets a Content-Security-Policy.
 
 ## What to Avoid
 
