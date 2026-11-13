@@ -32,7 +32,7 @@ jobs:
           FIREBASE_PROJECT: astrapheai
           FIREBASE_SITE: astrapheai
           FIREBASE_CHANNEL_ID: pr-${{ github.event.pull_request.number }}
-          FIREBASE_CHANNEL_TTL: 604800s
+          FIREBASE_CHANNEL_TTL: 259200s # 3 days; closed PRs are deleted by firebase-hosting-preview-cleanup.yml
         run: node scripts/deploy-firebase-hosting-rest.mjs
       - name: Comment Firebase Hosting preview URL
         if: ${{ steps.deploy.outputs.hosting_url != '' }}

@@ -1,0 +1,67 @@
+name: Clean up Firebase Hosting preview channels
+
+# PR previews deploy to `pr-<number>` channels (firebase-hosting-pull-request.yml).
+# Nothing removed them, so a burst of PRs filled the site's channel quota and every
+# later preview failed with "channel quota reached" (HTTP 429).
+#  - pull_request closed: delete that PR's channel right away.
+#  - workflow_dispatch / weekly schedule: sweep channels for any PR that isn't open.
+
+on:
+  pull_request:
+    types: [closed]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Only list what would be deleted"
+        type: boolean
+        default: false
+  schedule:
+    - cron: "17 6 * * 1" # Mondays 06:17 UTC
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: firebase-preview-cleanup-${{ github.event.pull_request.number || 'sweep' }}
+  cancel-in-progress: false
+
+jobs:
+  delete_closed_pr_channel:
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Delete preview channel
+        working-directory: mobile
+        env:
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_ASTRAPHEAI }}
+          FIREBASE_PROJECT: astrapheai
+          FIREBASE_SITE: astrapheai
+          FIREBASE_CHANNEL_ID: pr-${{ github.event.pull_request.number }}
+        run: node scripts/cleanup-firebase-preview-channels.mjs
+
+  sweep_stale_channels:
+    if: ${{ github.event_name != 'pull_request' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Find open PRs
+        id: open
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # Fail the job (rather than sweeping everything) if the open-PR lookup fails.
+        run: |
+          set -euo pipefail
+          numbers=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 200 --json number --jq '[.[].number] | join(",")')
+          echo "Open PRs: ${numbers:-none}"
+          echo "numbers=${numbers}" >> "$GITHUB_OUTPUT"
+      - name: Delete channels for PRs that aren't open
+        working-directory: mobile
+        env:
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_ASTRAPHEAI }}
+          FIREBASE_PROJECT: astrapheai
+          FIREBASE_SITE: astrapheai
+          KEEP_PR_NUMBERS: ${{ steps.open.outputs.numbers }}
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+        run: node scripts/cleanup-firebase-preview-channels.mjs
